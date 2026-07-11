@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd" xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>dev.uika</groupId>
+  <artifactId>uika-cli</artifactId>
+  <version>0.1.0-test</version>
+  <packaging>pom</packaging>
+  <name>uika-cli</name>
+  <description>Native uika command-line binaries</description>
+  <url>https://github.com/exoego/uika</url>
+  <licenses>
+    <license>
+      <name>Apache License 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+    </license>
+  </licenses>
+  <scm>
+    <connection>scm:git:https://github.com/exoego/uika.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/exoego/uika.git</developerConnection>
+    <url>https://github.com/exoego/uika</url>
+  </scm>
+</project>

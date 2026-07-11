@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CompilerConfiguration">
+    <bytecodeTargetLevel>
+      <module name="uika-gradle-plugin" target="21" />
+      <module name="uika-gradle-plugin.main" target="17" />
+      <module name="uika-gradle-plugin.test" target="17" />
+    </bytecodeTargetLevel>
+  </component>
+</project>

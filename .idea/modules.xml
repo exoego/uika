@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/sbt-plugin/.idea/modules/sbt-plugin/sbt-uika.iml" filepath="$PROJECT_DIR$/sbt-plugin/.idea/modules/sbt-plugin/sbt-uika.iml" />
+      <module fileurl="file://$PROJECT_DIR$/sbt-plugin/.idea/modules/sbt-plugin/sbt-uika.main.iml" filepath="$PROJECT_DIR$/sbt-plugin/.idea/modules/sbt-plugin/sbt-uika.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/sbt-plugin/.idea/modules/sbt-plugin/sbt-uika.sbt-uika-build.iml" filepath="$PROJECT_DIR$/sbt-plugin/.idea/modules/sbt-plugin/sbt-uika.sbt-uika-build.iml" />
+      <module fileurl="file://$PROJECT_DIR$/sbt-plugin/.idea/modules/sbt-plugin/sbt-uika.test.iml" filepath="$PROJECT_DIR$/sbt-plugin/.idea/modules/sbt-plugin/sbt-uika.test.iml" />
+      <module fileurl="file://$PROJECT_DIR$/uika.iml" filepath="$PROJECT_DIR$/uika.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/uika-gradle-plugin.iml" filepath="$PROJECT_DIR$/.idea/modules/uika-gradle-plugin.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/uika-gradle-plugin.main.iml" filepath="$PROJECT_DIR$/.idea/modules/uika-gradle-plugin.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/uika-gradle-plugin.test.iml" filepath="$PROJECT_DIR$/.idea/modules/uika-gradle-plugin.test.iml" />
+    </modules>
+  </component>
+</project>
