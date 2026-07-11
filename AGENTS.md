@@ -8,7 +8,7 @@ not be relearned by experiment.
 ## Development
 
 - Measure with release builds; debug builds are ~10x slower. The `memstats`
-  feature replaces mimalloc with the counting allocator in `src/memstats.rs`,
+  feature replaces mimalloc with the counting allocator in `cli/src/memstats.rs`,
   so never use it for throughput benchmarks.
 - Regression-test parser and ordering changes by diffing `uika dump <jar>`
   output before/after. Dump order follows physical entry offsets, so sort both
@@ -82,28 +82,28 @@ pass-2 classes are typically below 0.1% of the scan.
 
 ## Module Map
 
-| Path                 | Role                                                                                                                                                  |
-|----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `src/classfile.rs`   | Minimal class-file parser: constant pool + headers, Code scanned only for reference opcodes, Utf8 borrowed, ASCII unconverted.                        |
-| `src/input.rs`       | JAR/class-dir loading. Fast path: parse central directory, group offset spans, one `pread` per span, parallel inflate. Falls back to the `zip` crate. |
-| `src/window.rs`      | Fallback `Read + Seek` reader with two LRU windows (the `zip` crate seeks between central directory and local headers).                               |
-| `src/intern.rs`      | `Sym = u32` interning in sharded bump arenas kept for process lifetime. Never sort/compare output by Sym id — interning order is nondeterministic.    |
-| `src/model.rs`       | Core data model: `MemberKey`, `ClassApi`, `BreakingChange`, `SymbolRef`, `Violation`.                                                                 |
-| `src/extract.rs`     | `RawClass` -> API surface / hierarchy data / reference records; owner filter applied inline to avoid throwaway allocations.                           |
-| `src/index.rs`       | `ApiIndex`, `ClassGraph`, `Scope`; member/interface tables in shared arenas with range refs and binary search.                                        |
-| `src/check.rs`       | Two-pass orchestration: `scan_target_paths`, `collect_wanted`, `fetch_members`, verdicts.                                                             |
-| `src/diff.rs`        | Pure old/new API diff. Private members are indexed but excluded from reports.                                                                         |
-| `src/report.rs`      | Text and JSON report formatting.                                                                                                                      |
-| `src/memstats.rs`    | Feature-gated counting allocator.                                                                                                                     |
-| `src/gradle.rs`      | Reads dump v1/v2 and computes dependency changes. One coordinate may map to several versions (modules can resolve differently).                       |
-| `src/cli.rs`         | clap definitions: `diff`, `check`, `upgrade-check`, `dump`.                                                                                           |
-| `src/lib.rs`         | Command dispatch; `run_check` is shared by `check`/`upgrade-check`. `src/main.rs` picks mimalloc or the memstats allocator.                           |
-| `jvm-plugin-core/`   | Shared dump model + v1/v2 reader/writer (`ClasspathDump`, `DumpFormat`) and CLI fetch/run helper (`UikaCli`). Compiled into each plugin by source inclusion; not a published artifact. |
-| `gradle-plugin/`     | Java Gradle plugin. `localGroovy()` only, `options.release = 17`, merges per-module fragments into the v2 dump.                                       |
-| `sbt-plugin/`        | sbt `AutoPlugin` (`sbt-uika`, Scala 2.12). Tested via `scripted`.                                                                                     |
-| `maven-plugin/`      | Aggregator goal `uika:dump-classpath`. Tested via maven-invoker-plugin.                                                                               |
-| `binary-publishing/` | Gradle project publishing native CLI ZIPs to GitHub Packages (`net.exoego.uika:uika-cli`, per-platform classifiers).                                  |
-| `Makefile`           | Cross-component builds and checks; Gradle/sbt/Maven run via `mise exec`, pinned by `.mise.toml`.                                                      |
+| Path                   | Role                                                                                                                                                  |
+|------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `cli/src/classfile.rs` | Minimal class-file parser: constant pool + headers, Code scanned only for reference opcodes, Utf8 borrowed, ASCII unconverted.                        |
+| `cli/src/input.rs`     | JAR/class-dir loading. Fast path: parse central directory, group offset spans, one `pread` per span, parallel inflate. Falls back to the `zip` crate. |
+| `cli/src/window.rs`    | Fallback `Read + Seek` reader with two LRU windows (the `zip` crate seeks between central directory and local headers).                               |
+| `cli/src/intern.rs`    | `Sym = u32` interning in sharded bump arenas kept for process lifetime. Never sort/compare output by Sym id — interning order is nondeterministic.    |
+| `cli/src/model.rs`     | Core data model: `MemberKey`, `ClassApi`, `BreakingChange`, `SymbolRef`, `Violation`.                                                                 |
+| `cli/src/extract.rs`   | `RawClass` -> API surface / hierarchy data / reference records; owner filter applied inline to avoid throwaway allocations.                           |
+| `cli/src/index.rs`     | `ApiIndex`, `ClassGraph`, `Scope`; member/interface tables in shared arenas with range refs and binary search.                                        |
+| `cli/src/check.rs`     | Two-pass orchestration: `scan_target_paths`, `collect_wanted`, `fetch_members`, verdicts.                                                             |
+| `cli/src/diff.rs`      | Pure old/new API diff. Private members are indexed but excluded from reports.                                                                         |
+| `cli/src/report.rs`    | Text and JSON report formatting.                                                                                                                      |
+| `cli/src/memstats.rs`  | Feature-gated counting allocator.                                                                                                                     |
+| `cli/src/gradle.rs`    | Reads dump v1/v2 and computes dependency changes. One coordinate may map to several versions (modules can resolve differently).                       |
+| `cli/src/cli.rs`       | clap definitions: `diff`, `check`, `upgrade-check`, `dump`.                                                                                           |
+| `cli/src/lib.rs`       | Command dispatch; `run_check` is shared by `check`/`upgrade-check`. `cli/src/main.rs` picks mimalloc or the memstats allocator.                       |
+| `jvm-plugin-core/`     | Shared dump model + v1/v2 reader/writer (`ClasspathDump`, `DumpFormat`) and CLI fetch/run helper (`UikaCli`). Compiled into each plugin by source inclusion; not a published artifact. |
+| `gradle-plugin/`       | Java Gradle plugin. `localGroovy()` only, `options.release = 17`, merges per-module fragments into the v2 dump.                                       |
+| `sbt-plugin/`          | sbt `AutoPlugin` (`sbt-uika`, Scala 2.12). Tested via `scripted`.                                                                                     |
+| `maven-plugin/`        | Aggregator goal `uika:dump-classpath`. Tested via maven-invoker-plugin.                                                                               |
+| `binary-publishing/`   | Gradle project publishing native CLI ZIPs to GitHub Packages (`net.exoego.uika:uika-cli`, per-platform classifiers).                                  |
+| `Makefile`             | Cross-component builds and checks; Gradle/sbt/Maven run via `mise exec`, pinned by `.mise.toml`.                                                      |
 
 ## Gradle Plugin Notes
 

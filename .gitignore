@@ -1,6 +1,9 @@
 **/.gradle/
 **/build/
-!**/build/**/pom-default.xml
 **/dist/
 **/target/
+**/.bsp/
+sbt-plugin/.idea/
+*.iml
 .mise.local.toml
+.DS_Store

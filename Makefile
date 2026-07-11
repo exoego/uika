@@ -12,7 +12,7 @@ MAVEN ?= mise exec -- mvn
 GRADLE_PLUGIN_DIR ?= gradle-plugin
 SBT_PLUGIN_DIR ?= sbt-plugin
 MAVEN_PLUGIN_DIR ?= maven-plugin
-UIKA_VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+UIKA_VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' cli/Cargo.toml | head -1)
 TMPDIR ?= /tmp
 SBT_CACHE_DIR ?= $(TMPDIR)/uika-sbt
 SBT_FLAGS ?= -Dsbt.supershell=false -batch \
