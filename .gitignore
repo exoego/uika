@@ -1,5 +1,6 @@
-**/target
-**/build
-**/.gradle
-**/dist
+**/.gradle/
+**/build/
+!**/build/**/pom-default.xml
+**/dist/
+**/target/
 .mise.local.toml
