@@ -3,7 +3,7 @@
 	gradle-build gradle-check gradle-test gradle-clean \
 	sbt-compile sbt-scripted sbt-clean \
 	maven-verify maven-clean \
-	native-publish-local native-publish-github
+	native-publish-local stage-all
 
 CARGO ?= cargo
 GRADLE ?= mise exec -- gradle
@@ -35,7 +35,8 @@ help:
 		'  make gradle-check' \
 		'  make sbt-scripted' \
 		'  make maven-verify' \
-		'  make native-publish-local UIKA_VERSION=0.1.0'
+		'  make native-publish-local UIKA_VERSION=0.1.0' \
+		'  make stage-all UIKA_VERSION=0.1.0'
 
 build: cargo-build gradle-build sbt-compile maven-verify
 
@@ -95,5 +96,10 @@ maven-clean:
 native-publish-local:
 	$(GRADLE) -p binary-publishing publishToMavenLocal -PuikaVersion=$(UIKA_VERSION)
 
-native-publish-github:
-	$(GRADLE) -p binary-publishing publish -PuikaVersion=$(UIKA_VERSION)
+# Stage every Maven artifact locally; JReleaser signs and uploads the result
+# (see jreleaser.yml). binary-publishing expects ZIPs under dist/native/<classifier>/.
+stage-all:
+	$(GRADLE) -p binary-publishing publishAllPublicationsToStagingRepository -PuikaVersion=$(UIKA_VERSION)
+	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) publishAllPublicationsToStagingRepository -PuikaVersion=$(UIKA_VERSION)
+	cd $(SBT_PLUGIN_DIR) && $(SBT) $(SBT_FLAGS) 'set ThisBuild / version := "$(UIKA_VERSION)"' publish
+	$(MAVEN) -f $(MAVEN_PLUGIN_DIR)/pom.xml -B -Prelease -Drevision=$(UIKA_VERSION) -DskipTests -Dinvoker.skip=true deploy

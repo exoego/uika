@@ -1,0 +1,163 @@
+name: Publish release
+
+# Publishing a GitHub release triggers the whole pipeline: build native
+# binaries, stage every Maven artifact locally, then JReleaser uploads one
+# signed deployment to Maven Central and attaches the ZIPs to the release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, without a leading v"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    name: Resolve and verify version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Resolve version and check Cargo.toml
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          cargo_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' cli/Cargo.toml | head -1)"
+          if [[ "$cargo_version" != "$version" ]]; then
+            echo "::error file=cli/Cargo.toml::cli/Cargo.toml version ($cargo_version) does not match the release version ($version); bump it before releasing so 'uika --version' reports the released version."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.classifier }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    env:
+      UIKA_VERSION: ${{ needs.version.outputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            classifier: linux-x86_64
+            binary: uika
+          - os: macos-14
+            classifier: macos-aarch64
+            binary: uika
+          - os: macos-13
+            classifier: macos-x86_64
+            binary: uika
+          - os: windows-latest
+            classifier: windows-x86_64
+            binary: uika.exe
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          classifier="${{ matrix.classifier }}"
+          staging="dist/native/$classifier/uika-${UIKA_VERSION}-$classifier"
+          mkdir -p "$staging"
+          cp "target/release/${{ matrix.binary }}" "$staging/uika"
+          chmod 0755 "$staging/uika"
+          (cd "dist/native/$classifier" && zip -r "uika-${UIKA_VERSION}-$classifier.zip" "uika-${UIKA_VERSION}-$classifier")
+
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $classifier = "${{ matrix.classifier }}"
+          $staging = "dist/native/$classifier/uika-$env:UIKA_VERSION-$classifier"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Copy-Item "target/release/${{ matrix.binary }}" "$staging/uika.exe"
+          Compress-Archive -Path $staging -DestinationPath "dist/native/$classifier/uika-$env:UIKA_VERSION-$classifier.zip" -Force
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-${{ matrix.classifier }}
+          path: dist/native/${{ matrix.classifier }}/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish to Maven Central
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    env:
+      UIKA_VERSION: ${{ needs.version.outputs.version }}
+      JRELEASER_PROJECT_VERSION: ${{ needs.version.outputs.version }}
+      JRELEASER_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      JRELEASER_MAVENCENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+      JRELEASER_MAVENCENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+      JRELEASER_GPG_SECRET_KEY: ${{ secrets.JRELEASER_GPG_SECRET_KEY }}
+      JRELEASER_GPG_PUBLIC_KEY: ${{ secrets.JRELEASER_GPG_PUBLIC_KEY }}
+      JRELEASER_GPG_PASSPHRASE: ${{ secrets.JRELEASER_GPG_PASSPHRASE }}
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: native-*
+          path: dist/native
+          merge-multiple: false
+
+      - name: Normalize artifact layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/native/{linux-x86_64,macos-aarch64,macos-x86_64,windows-x86_64}
+          for classifier in linux-x86_64 macos-aarch64 macos-x86_64 windows-x86_64; do
+            found="$(find "dist/native/native-$classifier" -name "uika-${UIKA_VERSION}-$classifier.zip" -print -quit)"
+            test -n "$found"
+            cp "$found" "dist/native/$classifier/"
+          done
+
+      - name: Stage Maven artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mise exec -- gradle -p binary-publishing publishAllPublicationsToStagingRepository -PuikaVersion="$UIKA_VERSION"
+          mise exec -- gradle -p gradle-plugin publishAllPublicationsToStagingRepository -PuikaVersion="$UIKA_VERSION"
+          (cd sbt-plugin && mise exec -- sbt -Dsbt.supershell=false -batch \
+            "set ThisBuild / version := \"$UIKA_VERSION\"" publish)
+          mise exec -- mvn -f maven-plugin/pom.xml -B -Prelease -Drevision="$UIKA_VERSION" \
+            -DskipTests -Dinvoker.skip=true deploy
+
+      - name: Deploy to Maven Central
+        run: mise exec -- jreleaser deploy
+
+      - name: Attach native binaries to the GitHub release
+        if: github.event_name == 'release'
+        run: mise exec -- jreleaser release
+
+      - name: Upload JReleaser logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jreleaser-logs
+          path: out/jreleaser/trace.log
+          if-no-files-found: ignore

@@ -3,6 +3,8 @@
 **/dist/
 **/target/
 **/.bsp/
+**/.flattened-pom.xml
+/out/
 sbt-plugin/.idea/
 *.iml
 .mise.local.toml
