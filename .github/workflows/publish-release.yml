@@ -18,15 +18,13 @@ permissions:
 
 jobs:
   version:
-    name: Resolve and verify version
+    name: Resolve version
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.resolve.outputs.version }}
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      - name: Resolve version and check Cargo.toml
+      - name: Resolve version from the release tag
         id: resolve
         shell: bash
         run: |
@@ -35,11 +33,6 @@ jobs:
             version="${{ inputs.version }}"
           else
             version="${GITHUB_REF_NAME#v}"
-          fi
-          cargo_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' cli/Cargo.toml | head -1)"
-          if [[ "$cargo_version" != "$version" ]]; then
-            echo "::error file=cli/Cargo.toml::cli/Cargo.toml version ($cargo_version) does not match the release version ($version); bump it before releasing so 'uika --version' reports the released version."
-            exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 

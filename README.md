@@ -302,21 +302,20 @@ Everything under the `net.exoego.uika` group — the native CLI ZIPs
 `windows-x86_64`), the Gradle plugin, the sbt plugin, and the Maven plugin —
 is published to Maven Central in one shot when a GitHub release is published.
 
-Release procedure:
+Release procedure: create a GitHub release with tag `vX.Y.Z` — that is all.
+`.github/workflows/publish-release.yml` builds each platform on its native
+runner, stages all Maven artifacts locally, then JReleaser signs everything
+in-memory and uploads a single deployment to the Central Portal
+(all-or-nothing validation) and attaches the ZIPs to the GitHub release.
 
-1. Bump `version` in `cli/Cargo.toml` (the single hardcoded version; the
-   workflow refuses to run if it does not match the tag, so `uika --version`
-   always reports the released version).
-2. Create a GitHub release with tag `vX.Y.Z`.
-3. `.github/workflows/publish-release.yml` builds each platform on its native
-   runner, stages all Maven artifacts locally, then JReleaser signs everything
-   in-memory and uploads a single deployment to the Central Portal
-   (all-or-nothing validation) and attaches the ZIPs to the GitHub release.
-
-Versions are derived from the tag; no other source file is rewritten. Every
-module publishes to a local `staging-deploy` directory (JVM plugin versions
-are injected via `-PuikaVersion` / `set ThisBuild / version` / `-Drevision`),
-and `jreleaser.yml` lists those directories as staging repositories.
+Versions are derived from the tag alone; no source file is rewritten.
+`cli/Cargo.toml` stays at the `0.0.0-dev` placeholder — release builds embed
+the tag version into `uika --version` at compile time through the
+`UIKA_VERSION` environment variable (`option_env!` in `cli/src/cli.rs`), and
+JVM plugin versions are injected via `-PuikaVersion` /
+`set ThisBuild / version` / `-Drevision`. Every module publishes to a local
+`staging-deploy` directory, and `jreleaser.yml` lists those directories as
+staging repositories.
 
 Required repository secrets: `MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD`
 (a [Central Portal token](https://central.sonatype.com/account) for the

@@ -5,7 +5,9 @@ use std::path::PathBuf;
 #[command(
     name = "uika",
     about = "Unseen Incompatibility, Kick Away: catch NoSuchMethodError and friends statically before you ship",
-    version
+    // Release builds inject the version from the git tag via UIKA_VERSION at
+    // compile time; Cargo.toml stays at the 0.0.0-dev placeholder.
+    version = option_env!("UIKA_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
 )]
 pub struct Cli {
     #[command(subcommand)]

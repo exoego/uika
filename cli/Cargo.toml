@@ -1,6 +1,9 @@
 [package]
 name = "uika"
-version = "0.1.0"
+# Placeholder for dev builds only. Released binaries get their real version
+# from the git tag: the release workflow exports UIKA_VERSION and cli.rs
+# embeds it at compile time.
+version = "0.0.0-dev"
 edition = "2024"
 
 [features]
