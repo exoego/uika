@@ -25,7 +25,20 @@ prepareStubRepo := {
       out.closeEntry()
     } finally out.close()
   }
-  // The stub leaves a marker next to the --before argument ($3) to prove it ran.
-  publish("9.9.9", "#!/bin/sh\necho ran > \"$3.marker\"\nexit 0\n")
+  // The stub leaves a marker next to the --before argument ($3) to prove it ran; the echoed
+  // line must surface through the task logger (checked by checkCliOutputLogged).
+  publish("9.9.9", "#!/bin/sh\necho ran > \"$3.marker\"\necho \"uika-stub: dependency changes: 0\"\nexit 0\n")
   publish("9.9.8", "#!/bin/sh\nexit 1\n")
+}
+
+lazy val checkCliOutputLogged = taskKey[Unit]("Asserts the stub CLI's output went through the task logger")
+
+// log.info from uikaUpgradeCheck is persisted to the task's streams file. Inherited stdio
+// would bypass the logger entirely (and is lost under an sbt server), so finding the echoed
+// line in the streams proves the output took the logger path.
+checkCliOutputLogged := {
+  val marker = "uika-stub: dependency changes: 0"
+  val outs = ((baseDirectory.value / "target") ** "out").get.filter(_.isFile)
+  if (!outs.exists(f => IO.read(f).contains(marker)))
+    sys.error(s"CLI output did not reach the task logger (searched ${outs.size} stream files)")
 }

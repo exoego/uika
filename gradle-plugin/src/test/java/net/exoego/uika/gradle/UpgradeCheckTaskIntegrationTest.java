@@ -43,15 +43,17 @@ final class UpgradeCheckTaskIntegrationTest {
                 System.getProperty("os.name", "").toLowerCase().contains("windows"),
                 "stub binary is a shell script");
 
-        // Stub leaves a marker next to the --before file; ProcessBuilder.inheritIO output
-        // is not reliably visible in the TestKit build output.
+        // The marker proves the stub ran; the echoed lines must reach the build output
+        // through the task's logger (inherited stdio dies with the daemon).
         publishStubCli(CLEAN_VERSION, """
                 #!/bin/sh
                 echo ran > "$3.marker"
+                echo "uika-stub: dependency changes: 0"
                 exit 0
                 """);
         publishStubCli(VIOLATION_VERSION, """
                 #!/bin/sh
+                echo "VIOLATION in stub.jar"
                 exit 1
                 """);
 
@@ -83,12 +85,16 @@ final class UpgradeCheckTaskIntegrationTest {
         assertEquals(TaskOutcome.SUCCESS, task.getOutcome());
         assertTrue(Files.exists(Path.of(before + ".marker")),
                 "stub binary was not executed with --before " + before);
+        assertTrue(result.getOutput().contains("uika-stub: dependency changes: 0"),
+                () -> "CLI output did not reach the build log:\n" + result.getOutput());
     }
 
     @Test
     void violationExitCodeFailsTheBuild() {
         BuildResult result = runner(VIOLATION_VERSION).buildAndFail();
 
+        assertTrue(result.getOutput().contains("VIOLATION in stub.jar"),
+                () -> "CLI violation report did not reach the build log:\n" + result.getOutput());
         assertTrue(result.getOutput().contains("broken references"),
                 () -> "unexpected failure output:\n" + result.getOutput());
     }

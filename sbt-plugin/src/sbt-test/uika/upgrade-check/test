@@ -1,8 +1,10 @@
-# Stub CLI exits 0: the task must succeed and the stub must actually have run.
+# Stub CLI exits 0: the task must succeed, the stub must actually have run, and its
+# output must have gone through the task logger.
 > prepareStubRepo
 $ touch before.json after.json
 > uikaUpgradeCheck before.json after.json
 $ exists before.json.marker
+> checkCliOutputLogged
 
 # Stub CLI exits 1 (violations found): the task must fail.
 > set ThisBuild / uikaCliVersion := "9.9.8"

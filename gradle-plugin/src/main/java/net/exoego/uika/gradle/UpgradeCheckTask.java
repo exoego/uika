@@ -72,7 +72,8 @@ public abstract class UpgradeCheckTask extends DefaultTask {
 
         int exit = UikaCli.runUpgradeCheck(binary,
                 getBeforeFile().get().getAsFile().toPath(),
-                getAfterFile().get().getAsFile().toPath());
+                getAfterFile().get().getAsFile().toPath(),
+                getLogger()::lifecycle);
         if (exit == 1) {
             throw new GradleException("uika upgrade-check found broken references (see output above)");
         }
