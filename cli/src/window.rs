@@ -18,8 +18,14 @@ pub trait ReadAt {
 }
 
 impl ReadAt for std::fs::File {
+    #[cfg(unix)]
     fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
         std::os::unix::fs::FileExt::read_at(self, buf, offset)
+    }
+
+    #[cfg(windows)]
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
+        std::os::windows::fs::FileExt::seek_read(self, buf, offset)
     }
 
     fn len(&self) -> u64 {
