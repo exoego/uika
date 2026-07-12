@@ -21,6 +21,9 @@ publishing {
         create<MavenPublication>("uikaCli") {
             artifactId = "uika-cli"
             pom {
+                // No main artifact, only classified ZIPs; "pom" packaging keeps
+                // Maven Central from demanding sources/javadoc jars.
+                packaging = "pom"
                 name.set("uika-cli")
                 description.set("Native uika command-line binaries")
                 url.set("https://github.com/exoego/uika")
@@ -28,6 +31,13 @@ publishing {
                     license {
                         name.set("Apache License 2.0")
                         url.set("https://www.apache.org/licenses/LICENSE-2.0")
+                    }
+                }
+                developers {
+                    developer {
+                        id.set("exoego")
+                        name.set("TATSUNO Yasuhiro")
+                        url.set("https://github.com/exoego")
                     }
                 }
                 scm {
@@ -48,13 +58,10 @@ publishing {
     }
 
     repositories {
+        // Local staging directory; JReleaser signs and uploads it to Maven Central.
         maven {
-            name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/exoego/uika")
-            credentials {
-                username = providers.environmentVariable("GITHUB_ACTOR").orNull
-                password = providers.environmentVariable("GITHUB_TOKEN").orNull
-            }
+            name = "staging"
+            url = uri(layout.buildDirectory.dir("staging-deploy"))
         }
     }
 }

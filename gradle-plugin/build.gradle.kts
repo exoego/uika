@@ -33,6 +33,16 @@ tasks.withType<JavaCompile>().configureEach {
     options.release = 17
 }
 
+// Maven Central requires sources and javadoc jars alongside every jar artifact.
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
+tasks.withType<Javadoc>().configureEach {
+    (options as StandardJavadocDocletOptions).addStringOption("Xdoclint:none", "-quiet")
+}
+
 // uikaUpgradeCheck defaults the CLI version to the plugin's own version, read from here.
 tasks.jar {
     manifest {
@@ -49,19 +59,45 @@ gradlePlugin {
         create("uika") {
             id = "net.exoego.uika"
             implementationClass = "net.exoego.uika.gradle.UikaPlugin"
+            displayName = "uika Gradle plugin"
+            description = "Gradle plugin for writing uika resolved classpath dumps and running upgrade checks"
         }
     }
 }
 
 publishing {
-    repositories {
-        maven {
-            name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/exoego/uika")
-            credentials {
-                username = providers.environmentVariable("GITHUB_ACTOR").orNull
-                password = providers.environmentVariable("GITHUB_TOKEN").orNull
+    // Applies to the main publication and the plugin-marker publication; Maven
+    // Central validates the full metadata set on both POMs.
+    publications.withType<MavenPublication>().configureEach {
+        pom {
+            name.set("uika-gradle-plugin")
+            description.set("Gradle plugin for writing uika resolved classpath dumps and running upgrade checks")
+            url.set("https://github.com/exoego/uika")
+            licenses {
+                license {
+                    name.set("Apache License 2.0")
+                    url.set("https://www.apache.org/licenses/LICENSE-2.0")
+                }
             }
+            developers {
+                developer {
+                    id.set("exoego")
+                    name.set("TATSUNO Yasuhiro")
+                    url.set("https://github.com/exoego")
+                }
+            }
+            scm {
+                connection.set("scm:git:https://github.com/exoego/uika.git")
+                developerConnection.set("scm:git:ssh://git@github.com/exoego/uika.git")
+                url.set("https://github.com/exoego/uika")
+            }
+        }
+    }
+    repositories {
+        // Local staging directory; JReleaser signs and uploads it to Maven Central.
+        maven {
+            name = "staging"
+            url = uri(layout.buildDirectory.dir("staging-deploy"))
         }
     }
 }

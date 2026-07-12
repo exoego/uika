@@ -2,3 +2,5 @@
 gradle = "9.6.1"
 sbt = "1.12.12"
 maven = "3.9.16"
+# aqua backend mislabels the native binary; the asdf plugin installs a working shim.
+"asdf:joschi/asdf-jreleaser" = "1.25.0"

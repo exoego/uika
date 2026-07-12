@@ -102,7 +102,8 @@ pass-2 classes are typically below 0.1% of the scan.
 | `gradle-plugin/`       | Java Gradle plugin. `localGroovy()` only, `options.release = 17`, merges per-module fragments into the v2 dump.                                       |
 | `sbt-plugin/`          | sbt `AutoPlugin` (`sbt-uika`, Scala 2.12). Tested via `scripted`.                                                                                     |
 | `maven-plugin/`        | Aggregator goal `uika:dump-classpath`. Tested via maven-invoker-plugin.                                                                               |
-| `binary-publishing/`   | Gradle project publishing native CLI ZIPs to GitHub Packages (`net.exoego.uika:uika-cli`, per-platform classifiers).                                  |
+| `binary-publishing/`   | Gradle project staging native CLI ZIPs (`net.exoego.uika:uika-cli`, per-platform classifiers, packaging `pom`) for Maven Central.                     |
+| `jreleaser.yml`        | Signs all locally staged artifacts in-memory and uploads them to Maven Central as one deployment; also attaches CLI ZIPs to the GitHub release.       |
 | `Makefile`             | Cross-component builds and checks; Gradle/sbt/Maven run via `mise exec`, pinned by `.mise.toml`.                                                      |
 
 ## Gradle Plugin Notes

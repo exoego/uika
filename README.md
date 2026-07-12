@@ -295,17 +295,42 @@ OpenTelemetry, Selenium/Guava, okhttp-digest/OkHttp, Koin) against unmodified
 JARs from Maven Central, vendored under `tests/fixtures/` (see its README for
 coordinates, checksums, and licensing).
 
-## Publishing native binaries
+## Publishing (Maven Central)
 
-`.github/workflows/publish-native-binaries.yml` builds each platform on its
-native GitHub Actions runner and publishes the ZIPs to GitHub Packages
-(`https://maven.pkg.github.com/exoego/uika`) as `net.exoego.uika:uika-cli:<version>`
-with classifiers `linux-x86_64`, `macos-aarch64`, `macos-x86_64`, and
-`windows-x86_64`.
+Everything under the `net.exoego.uika` group — the native CLI ZIPs
+(`uika-cli` with classifiers `linux-x86_64`, `macos-aarch64`, `macos-x86_64`,
+`windows-x86_64`), the Gradle plugin, the sbt plugin, and the Maven plugin —
+is published to Maven Central in one shot when a GitHub release is published.
+
+Release procedure:
+
+1. Bump `version` in `cli/Cargo.toml` (the single hardcoded version; the
+   workflow refuses to run if it does not match the tag, so `uika --version`
+   always reports the released version).
+2. Create a GitHub release with tag `vX.Y.Z`.
+3. `.github/workflows/publish-release.yml` builds each platform on its native
+   runner, stages all Maven artifacts locally, then JReleaser signs everything
+   in-memory and uploads a single deployment to the Central Portal
+   (all-or-nothing validation) and attaches the ZIPs to the GitHub release.
+
+Versions are derived from the tag; no other source file is rewritten. Every
+module publishes to a local `staging-deploy` directory (JVM plugin versions
+are injected via `-PuikaVersion` / `set ThisBuild / version` / `-Drevision`),
+and `jreleaser.yml` lists those directories as staging repositories.
+
+Required repository secrets: `MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD`
+(a [Central Portal token](https://central.sonatype.com/account) for the
+verified `net.exoego` namespace) and `JRELEASER_GPG_SECRET_KEY` /
+`JRELEASER_GPG_PUBLIC_KEY` / `JRELEASER_GPG_PASSPHRASE` (ASCII-armored key
+pair; publish the public key to `keyserver.ubuntu.com` so Central can verify
+signatures).
+
+Local verification:
 
 ```console
-$ make native-publish-local UIKA_VERSION=0.1.0    # dry-run; expects ZIPs under dist/native/<classifier>/
-$ make native-publish-github UIKA_VERSION=0.1.0   # needs GITHUB_ACTOR / GITHUB_TOKEN (packages: write)
+$ make native-publish-local UIKA_VERSION=0.1.0   # publish CLI ZIPs to ~/.m2; expects ZIPs under dist/native/<classifier>/
+$ make stage-all UIKA_VERSION=0.1.0              # stage all Maven artifacts locally
+$ mise exec -- jreleaser deploy --dry-run        # needs JRELEASER_* env vars; validates POMs and signs without uploading
 ```
 
 ## Known limitations (PoC)

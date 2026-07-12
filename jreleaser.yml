@@ -1,0 +1,57 @@
+# Release pipeline: every module publishes to a local staging directory, then
+# JReleaser signs everything in-memory and uploads it to Maven Central as a
+# single deployment (all-or-nothing validation on the Central Portal).
+#
+# The version comes from the release tag via JRELEASER_PROJECT_VERSION; nothing
+# is rewritten in the sources. See .github/workflows/publish-release.yml.
+
+project:
+  name: uika
+  description: Binary-compatibility checker for JVM dependency upgrades
+  links:
+    homepage: https://github.com/exoego/uika
+  authors:
+    - TATSUNO Yasuhiro
+  license: Apache-2.0
+  inceptionYear: "2026"
+  languages:
+    java:
+      groupId: net.exoego.uika
+
+signing:
+  active: ALWAYS
+  armored: true
+  mode: MEMORY
+
+release:
+  github:
+    owner: exoego
+    name: uika
+    tagName: "v{{projectVersion}}"
+    # The release is created by hand in the GitHub UI; only attach the native
+    # CLI ZIPs to it, never touch tag, title, or body.
+    skipTag: true
+    overwrite: false
+    update:
+      enabled: true
+      sections:
+        - ASSETS
+    changelog:
+      enabled: false
+
+files:
+  globs:
+    - pattern: dist/native/*/uika-*.zip
+
+deploy:
+  maven:
+    mavenCentral:
+      uika:
+        active: RELEASE
+        url: https://central.sonatype.com/api/v1/publisher
+        applyMavenCentralRules: true
+        stagingRepositories:
+          - binary-publishing/build/staging-deploy
+          - gradle-plugin/build/staging-deploy
+          - sbt-plugin/target/staging-deploy
+          - maven-plugin/target/staging-deploy
