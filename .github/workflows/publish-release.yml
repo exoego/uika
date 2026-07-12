@@ -6,12 +6,6 @@ name: Publish release
 on:
   release:
     types: [published]
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Version to publish, without a leading v"
-        required: true
-        type: string
 
 permissions:
   contents: write
@@ -29,12 +23,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            version="${{ inputs.version }}"
-          else
-            version="${GITHUB_REF_NAME#v}"
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.classifier }}
@@ -140,11 +129,7 @@ jobs:
           mise exec -- mvn -f maven-plugin/pom.xml -B -Prelease -Drevision="$UIKA_VERSION" \
             -DskipTests -Dinvoker.skip=true deploy
 
-      - name: Deploy to Maven Central
-        run: mise exec -- jreleaser deploy
-
-      - name: Attach native binaries to the GitHub release
-        if: github.event_name == 'release'
+      - name: Deploy to Maven Central and update the GitHub release
         run: mise exec -- jreleaser release
 
       - name: Upload JReleaser logs
