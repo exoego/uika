@@ -15,17 +15,25 @@ if (os.contains("linux")) {
 }
 
 def version = "9.9.9"
+
+// Two caches survive between runs and would shadow an edited stub: the extracted binary
+// (extractBinary skips existing files) and the it-repo copy of the ZIP (Maven never
+// re-fetches a cached release version).
+new File(basedir, "target").deleteDir()
+new File(localRepositoryPath, "net/exoego/uika/uika-cli").deleteDir()
+
 def dir = new File(basedir, "repo/net/exoego/uika/uika-cli/$version")
 dir.mkdirs()
 new File(dir, "uika-cli-${version}.pom").text =
     "<project><modelVersion>4.0.0</modelVersion><groupId>net.exoego.uika</groupId>" +
     "<artifactId>uika-cli</artifactId><version>$version</version><packaging>pom</packaging></project>"
 
-// The stub leaves a marker next to the --before argument ($3) to prove it ran.
+// The stub leaves a marker next to the --before argument ($3) to prove it ran; the echoed
+// line must surface in the build log through the mojo's logger.
 def zip = new File(dir, "uika-cli-$version-${classifier}.zip")
 new ZipOutputStream(zip.newOutputStream()).withCloseable { out ->
     out.putNextEntry(new ZipEntry("uika-$version-$classifier/uika"))
-    out.write('#!/bin/sh\necho ran > "$3.marker"\nexit 0\n'.getBytes("UTF-8"))
+    out.write('#!/bin/sh\necho ran > "$3.marker"\necho "uika-stub: dependency changes: 0"\nexit 0\n'.getBytes("UTF-8"))
     out.closeEntry()
 }
 

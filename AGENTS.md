@@ -131,10 +131,17 @@ pass-2 classes are typically below 0.1% of the scan.
   defaulting to the plugin's own version — Implementation-Version manifest
   attribute in the Gradle/sbt jars, `${plugin.version}` in Maven — so one
   coordinate bump updates both; never hardcode a CLI version or URL.
+- CLI output must flow through each tool's logger (the line consumer passed to
+  `UikaCli.runUpgradeCheck`). Never revert to `inheritIO`: a child process
+  inheriting file descriptors writes past the tool's log capture, and under a
+  Gradle daemon, sbt server, or mvnd the report silently disappears.
 - Their tests stub uika-cli with a shell-script ZIP in a file-based Maven repo
   (Gradle TestKit + sbt scripted + Maven invoker; invoker needs `-U` because
   target/it-repo caches resolution failures across runs, and its pre-build
-  hook script must be named `prebuild.groovy`).
+  hook script must be named `prebuild.groovy`). An edited stub is shadowed by
+  two caches, so the upgrade-check prebuild purges both: the clone's `target/`
+  (extractBinary skips an already-extracted binary) and the it-repo `uika-cli`
+  entry (Maven never re-fetches a cached release version).
 - Run builds via `make gradle-check` / `make sbt-scripted` / `make
   maven-verify` (mise-pinned). Without mise, any target project's Gradle
   wrapper works: `/path/to/project/gradlew -p gradle-plugin publishToMavenLocal`.

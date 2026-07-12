@@ -68,7 +68,8 @@ public final class UpgradeCheckMojo extends AbstractMojo {
         int exit;
         try {
             Path binary = UikaCli.extractBinary(zip.toPath(), installDir);
-            exit = UikaCli.runUpgradeCheck(binary, before.toPath(), after.toPath());
+            exit = UikaCli.runUpgradeCheck(binary, before.toPath(), after.toPath(),
+                    line -> getLog().info(line));
         } catch (IOException e) {
             throw new MojoExecutionException("failed to run uika upgrade-check", e);
         } catch (InterruptedException e) {

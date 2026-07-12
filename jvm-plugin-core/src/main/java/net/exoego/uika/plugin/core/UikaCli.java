@@ -1,12 +1,16 @@
 package net.exoego.uika.plugin.core;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Consumer;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -75,16 +79,26 @@ public final class UikaCli {
     }
 
     /**
-     * Runs {@code uika upgrade-check} inheriting stdout/stderr. Returns the CLI exit code:
+     * Runs {@code uika upgrade-check}, passing each line of the CLI's merged stdout/stderr to
+     * {@code output}. The report must go through the build tool's own logger: a child process
+     * that inherits file descriptors writes past the tool's log capture, so under a Gradle
+     * daemon, an sbt server, or mvnd the user would never see it. Returns the CLI exit code:
      * 0 = clean, 1 = violations found, 2 = error.
      */
-    public static int runUpgradeCheck(Path binary, Path before, Path after)
-            throws IOException, InterruptedException {
+    public static int runUpgradeCheck(Path binary, Path before, Path after,
+            Consumer<String> output) throws IOException, InterruptedException {
         ProcessBuilder builder = new ProcessBuilder(List.of(
                 binary.toString(), "upgrade-check",
                 "--before", before.toString(),
                 "--after", after.toString()));
-        builder.inheritIO();
-        return builder.start().waitFor();
+        builder.redirectErrorStream(true);
+        Process process = builder.start();
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+            for (String line = reader.readLine(); line != null; line = reader.readLine()) {
+                output.accept(line);
+            }
+        }
+        return process.waitFor();
     }
 }

@@ -48,7 +48,7 @@ object UikaPlugin extends AutoPlugin {
         .find(_.getName.endsWith(".zip"))
         .getOrElse(sys.error(s"uika-cli zip not found among ${files.mkString(", ")}"))
       val binary = UikaCli.extractBinary(zip.toPath, (uikaDir / s"cli-$version-$classifier").toPath)
-      UikaCli.runUpgradeCheck(binary, file(args.head).toPath, file(args(1)).toPath) match {
+      UikaCli.runUpgradeCheck(binary, file(args.head).toPath, file(args(1)).toPath, (line: String) => log.info(line)) match {
         case 0 => ()
         case 1 => sys.error("uika upgrade-check found broken references (see output above)")
         case n => sys.error(s"uika upgrade-check failed with exit code $n")
