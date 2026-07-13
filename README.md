@@ -1,5 +1,7 @@
 # Uika (Unseen Incompatibility, Kick Away)
 
+[![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-cli%2Fmaven-metadata.xml&label=Maven%20Central)](https://central.sonatype.com/namespace/net.exoego.uika)
+
 Catches `NoSuchMethodError` and friends statically, before you ship.
 
 ## The problem
@@ -145,51 +147,63 @@ reused, and no separate install step is needed. The CLI version defaults to
 the plugin's own version, so a single coordinate in the build (which Renovate,
 Dependabot, or Scala Steward bumps) updates both.
 
-### Gradle (`gradle-plugin/`)
+### Gradle (`gradle-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-gradle-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-gradle-plugin)
 
-Implemented in Java. Works with Groovy and Kotlin DSL builds (Gradle 9 /
-JVM 17+).
+Works with Groovy and Kotlin DSL builds (Gradle 9 / JVM 17+).
+
+```kotlin
+// settings.gradle.kts
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+```
+
+```kotlin
+// build.gradle.kts
+plugins {
+    id("net.exoego.uika") version "0.0.3"
+}
+```
 
 ```console
-$ gradle -p gradle-plugin publishToMavenLocal
-$ ./gradlew -I uika-init.gradle.kts uikaDumpClasspath -PuikaOutput=/tmp/after.json
-$ ./gradlew -I uika-init.gradle.kts uikaUpgradeCheck \
+$ ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
+$ ./gradlew uikaUpgradeCheck \
       -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json   # -PuikaCliVersion=x.y.z to override
 ```
 
-The `-I` init script applies the plugin without touching the target repository:
+### sbt (`sbt-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fsbt-uika_2.12_1.0%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/sbt-uika_2.12_1.0)
 
-```kotlin
-initscript {
-    repositories { mavenLocal() }
-    dependencies { classpath("net.exoego.uika:uika-gradle-plugin:0.1.0") }
-}
-rootProject { apply<net.exoego.uika.gradle.UikaPlugin>() }
+```scala
+addSbtPlugin("net.exoego.uika" % "sbt-uika" % "0.0.3")
 ```
 
-### sbt (`sbt-plugin/`)
-
-An `AutoPlugin` that activates on all projects once on the plugin classpath:
-
 ```console
-$ cd sbt-plugin && sbt publishLocal
-$ echo 'addSbtPlugin("net.exoego.uika" % "sbt-uika" % "0.1.0")' >> project/plugins.sbt
 $ sbt uikaDumpClasspath   # writes target/uika/classpath.json (override via the uikaOutput setting)
 $ sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"   # uikaCliVersion setting to override
 ```
 
-### Maven (`maven-plugin/`)
+### Maven (`maven-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-maven-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-maven-plugin)
 
-```console
-$ mvn -f maven-plugin/pom.xml install
-$ mvn net.exoego.uika:uika-maven-plugin:0.1.0:dump-classpath -Duika.output=/tmp/classpath.json
-$ mvn net.exoego.uika:uika-maven-plugin:0.1.0:upgrade-check \
-      -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json   # -Duika.cliVersion to override
+```xml
+<build>
+  <plugins>
+    <plugin>
+      <groupId>net.exoego.uika</groupId>
+      <artifactId>uika-maven-plugin</artifactId>
+      <version>0.0.3</version>
+    </plugin>
+  </plugins>
+</build>
 ```
 
-Declaring the plugin in the root `pom.xml` lets you invoke the shorter
-`mvn uika:dump-classpath` / `mvn uika:upgrade-check` and keeps the version in
-the build where bots bump it.
+```console
+$ mvn uika:dump-classpath -Duika.output=/tmp/classpath.json
+$ mvn uika:upgrade-check \
+      -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json   # -Duika.cliVersion to override
+```
 
 ### GitHub Actions
 
@@ -201,8 +215,14 @@ where the baseline comes from another runner). The check task downloads the
 CLI binary through the build, so the workflow installs nothing and pins no
 version.
 
+The job checks out the base commit to dump it, so the plugin must already be
+declared there too — except on the PR that introduces this workflow, whose
+base branch has no plugin yet. That baseline step is expected to fail there,
+so it's marked `continue-on-error` and the final check step is skipped
+instead of failing the PR.
+
 ```yaml
-name: uika
+name: dependency binary incompatibility check
 on: pull_request
 
 jobs:
@@ -218,58 +238,78 @@ jobs:
           java-version: 21
 
       - name: Dump baseline classpath (base branch)
+        id: baseline
+        continue-on-error: true
         run: |
           git checkout ${{ github.event.pull_request.base.sha }}
-          ./gradlew -I uika-init.gradle.kts uikaDumpClasspath -PuikaOutput=/tmp/before.json
+          if ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json; then
+            status=0
+          else
+            status=1
+          fi
           git checkout -
+          exit $status
 
       - name: Dump PR classpath
-        run: ./gradlew -I uika-init.gradle.kts uikaDumpClasspath -PuikaOutput=/tmp/after.json
+        run: ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
 
       - name: Check broken references
+        if: steps.baseline.outcome == 'success'
         run: >
-          ./gradlew -I uika-init.gradle.kts uikaUpgradeCheck
+          ./gradlew uikaUpgradeCheck
           -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
         # a violation fails the job and blocks the merge
 ```
 
-For sbt (the plugin must be in `project/plugins.sbt` on both branches), replace
-the three uika steps with:
+For sbt (the plugin must be in `project/plugins.sbt` on both branches, with the
+same bootstrap handling), replace the three uika steps with:
 
 ```yaml
       - name: Dump baseline classpath (base branch)
+        id: baseline
+        continue-on-error: true
         run: |
           git checkout ${{ github.event.pull_request.base.sha }}
-          sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/before.json
+          if sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/before.json; then
+            status=0
+          else
+            status=1
+          fi
           git checkout -
+          exit $status
 
       - name: Dump PR classpath
         run: sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json
 
       - name: Check broken references
+        if: steps.baseline.outcome == 'success'
         run: sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"
 ```
 
 For Maven (with the plugin declared in the root `pom.xml` so the version lives
-in the build):
+in the build, and the same bootstrap handling):
 
 ```yaml
       - name: Dump baseline classpath (base branch)
+        id: baseline
+        continue-on-error: true
         run: |
           git checkout ${{ github.event.pull_request.base.sha }}
-          mvn -q uika:dump-classpath -Duika.output=/tmp/before.json
+          if mvn -q uika:dump-classpath -Duika.output=/tmp/before.json; then
+            status=0
+          else
+            status=1
+          fi
           git checkout -
+          exit $status
 
       - name: Dump PR classpath
         run: mvn -q uika:dump-classpath -Duika.output=/tmp/after.json
 
       - name: Check broken references
+        if: steps.baseline.outcome == 'success'
         run: mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json
 ```
-
-The build must be able to resolve the `net.exoego.uika` plugin and `uika-cli` ZIP
-from its configured repositories. Until they are on Maven Central, that means
-the usual GitHub Packages credentials in the build configuration.
 
 ### Dump format
 
