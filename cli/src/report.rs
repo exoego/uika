@@ -173,6 +173,18 @@ fn write_violation_groups(out: &mut String, violations: &[&Violation]) {
                     }
                 };
                 writeln!(out, "    -> {}: {target}", v.reason).unwrap();
+                if let Some(s) = &v.suggestion {
+                    if let Some(rb) = &s.referenced_by {
+                        writeln!(out, "       referenced by: {rb}").unwrap();
+                    }
+                    writeln!(
+                        out,
+                        "       removed by:    {} {} -> {}",
+                        s.removed_by, s.before, s.after
+                    )
+                    .unwrap();
+                    writeln!(out, "       suggestion:    {}", s.advice).unwrap();
+                }
             }
         }
     }

@@ -132,6 +132,9 @@ dependency changes: 1
 VIOLATION in .../opentelemetry-exporter-sender-okhttp-1.42.1.jar
   io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil
     -> class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
+       referenced by: io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1
+       removed by:    io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
+       suggestion:    align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
 
 ⚠️  not proven reachable (no static path found; may still load via reflection)
 VIOLATION in .../some-transitive-dep.jar
@@ -160,6 +163,18 @@ purely by external configuration stays invisible), a signal to deprioritize
 rather than a guarantee. With no application roots (a bare
 `check --classpath ...`) there is nothing to rank from, so the report stays a
 single flat list.
+
+### Actionable suggestions
+
+`upgrade-check` also attributes each break to the two artifacts involved and
+proposes a fix: which coordinate holds the broken reference (`referenced by`),
+which coordinate's version bump removed the symbol (`removed by`), and what to
+do (`suggestion`). When the referencing artifact and the removed one share a
+group (a version skew inside one library family, like OpenTelemetry core vs its
+incubator), the advice leads with aligning the whole group via its BOM;
+otherwise it suggests upgrading the referencer or pinning the removed coordinate
+back. This needs coordinates, so it appears only for `upgrade-check` (the dumps
+carry them), not for a bare `check --classpath`.
 
 ## Build-tool plugins
 

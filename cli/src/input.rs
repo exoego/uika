@@ -36,6 +36,45 @@ pub fn load(path: &Path) -> Result<Vec<LoadedClass>> {
     Ok(classes)
 }
 
+/// List the internal class names (no ".class" suffix) in a JAR/dir without inflating entry
+/// data. For upgrade-check suggestions, which only need names from the small changed-library
+/// set; reading the central directory (or dir walk) avoids the cost of inflating every class.
+pub fn class_entry_names(path: &Path) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut push = |entry: &str| {
+        if is_scannable(entry)
+            && let Some(name) = entry.strip_suffix(".class")
+        {
+            names.push(name.to_string());
+        }
+    };
+    if path.is_dir() {
+        for entry in WalkDir::new(path).into_iter().flatten() {
+            if entry.file_type().is_file() {
+                let rel = entry
+                    .path()
+                    .strip_prefix(path)
+                    .unwrap_or(entry.path())
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                push(&rel);
+            }
+        }
+        return names;
+    }
+    let Ok(file) = File::open(path) else {
+        return names;
+    };
+    let reader = WindowedReader::new(file, 256 * 1024);
+    let Ok(archive) = ZipArchive::new(reader) else {
+        return names;
+    };
+    for entry in archive.file_names() {
+        push(entry);
+    }
+    names
+}
+
 /// Load at most batch_size classes at a time and pass them to the callback.
 /// Streaming API that caps concurrently held inflated bytes to one batch.
 /// Large buffers miss malloc's small-object cache and bounce through mmap/munmap (sys time),

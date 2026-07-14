@@ -120,6 +120,22 @@ pass-2 classes are typically below 0.1% of the scan.
   depend on parse order (determinism); non-class strings become dead `Sym`s that
   BFS never marks.
 
+## Suggestions (upgrade-check only)
+
+- `suggest::annotate` fills `Violation.suggestion` after `run_check`, in
+  `cmd_upgrade_check` where coordinates exist. Plain `check` has only file paths,
+  so its violations stay `suggestion = None` and `report.rs` prints nothing extra.
+- `referenced_by` comes from a dump `file-display-string -> "g:n:v"` map (both
+  before and after sides). `removed_by` comes from mapping the violation's owner
+  class to a changed coordinate by reading the before-side JARs' class names
+  (`input::load`, first-wins) — a small, best-effort scan that never blocks the
+  report on read failure.
+- Advice: same-group referencer and owner (a skew inside one library family,
+  e.g. otel core vs incubator) leads with "align the group via its BOM";
+  cross-group leads with upgrade-the-referencer-or-pin-the-owner. This mirrors
+  the real fixes found for the OpenTelemetry case (BOM-align the 41 skew breaks;
+  handle the cross-group firestore/grpc one separately).
+
 ## Module Map
 
 | Path                   | Role                                                                                                                                                  |
@@ -133,6 +149,7 @@ pass-2 classes are typically below 0.1% of the scan.
 | `cli/src/index.rs`     | `ApiIndex`, `ClassGraph`, `Scope`; member/interface tables in shared arenas with range refs and binary search.                                        |
 | `cli/src/check.rs`     | Two-pass orchestration: `scan_target_paths`, `collect_wanted`, `fetch_members`, verdicts.                                                             |
 | `cli/src/reach.rs`     | Class-load reachability (on when app roots exist): `META-INF/services` collection + BFS from app roots over the `ClassGraph` edge arena. Ranks, never drops. |
+| `cli/src/suggest.rs`   | upgrade-check only: attribute each violation to referencing/removing coordinates (via dump `file->coordinate` and old-jar `class->coordinate`) and build fix advice. |
 | `cli/src/diff.rs`      | Pure old/new API diff. Private members are indexed but excluded from reports.                                                                         |
 | `cli/src/report.rs`    | Text and JSON report formatting.                                                                                                                      |
 | `cli/src/memstats.rs`  | Feature-gated counting allocator.                                                                                                                     |

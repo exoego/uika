@@ -163,4 +163,22 @@ pub struct Violation {
     /// None when reachability was not computed (no --reachability / no app roots).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reachable: Option<bool>,
+    /// Actionable fix hint attributing the break to the artifacts involved. Only populated by
+    /// upgrade-check (where dumps carry coordinates); None otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<Suggestion>,
+}
+
+/// Which artifacts a violation involves and how to fix it. Coordinates are "group:name[:version]".
+#[derive(Debug, Clone, Serialize)]
+pub struct Suggestion {
+    /// Coordinate of the artifact whose class holds the broken reference. None for app build outputs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub referenced_by: Option<String>,
+    /// Coordinate whose version change removed the symbol, and its before -> after versions.
+    pub removed_by: String,
+    pub before: String,
+    pub after: String,
+    /// Human-readable fix advice.
+    pub advice: String,
 }

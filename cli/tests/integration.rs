@@ -299,6 +299,63 @@ fn upgrade_check_reproduces_otel_incident_from_dumps() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// upgrade-check attributes the DaemonThreadFactory break to the two artifacts involved:
+/// the referencing sender JAR and the sdk-common coordinate whose bump removed the class.
+#[test]
+fn upgrade_check_suggestion_attributes_the_break() {
+    let old_sc = fixture("opentelemetry-sdk-common-1.42.1.jar");
+    let new_sc = fixture("opentelemetry-sdk-common-1.60.1.jar");
+    let sender = fixture("opentelemetry-exporter-sender-okhttp-1.42.1.jar");
+
+    let dir = std::env::temp_dir().join(format!("uika-suggest-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dump = |version: &str, file: &std::path::Path| {
+        format!(
+            r#"{{"modules":[{{"module":":app","classesDirs":[],"artifacts":[
+                {{"group":"io.opentelemetry","name":"opentelemetry-sdk-common","version":"{version}","file":"{}"}},
+                {{"group":"io.opentelemetry","name":"opentelemetry-exporter-sender-okhttp","version":"1.42.1","file":"{}"}}
+            ]}}]}}"#,
+            file.display(),
+            sender.display(),
+        )
+    };
+    let before_path = dir.join("before.json");
+    let after_path = dir.join("after.json");
+    std::fs::write(&before_path, dump("1.42.1", &old_sc)).unwrap();
+    std::fs::write(&after_path, dump("1.60.1", &new_sc)).unwrap();
+
+    let before = uika::gradle::load_dump(&before_path).unwrap();
+    let after = uika::gradle::load_dump(&after_path).unwrap();
+    let changes = uika::gradle::diff_dumps(&before, &after);
+    let mut report = uika::run_check(
+        &changes.old_jars,
+        &changes.new_jars,
+        &after.scan_targets,
+        &after.app_roots,
+    )
+    .unwrap();
+    uika::suggest::annotate(&mut report.violations, &before, &after, &changes.changes);
+
+    let s = report.violations[0]
+        .suggestion
+        .as_ref()
+        .expect("violation should carry a suggestion");
+    assert_eq!(
+        s.referenced_by.as_deref(),
+        Some("io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1")
+    );
+    assert_eq!(s.removed_by, "io.opentelemetry:opentelemetry-sdk-common");
+    assert_eq!(s.before, "1.42.1");
+    assert_eq!(s.after, "1.60.1");
+    // Same group -> advice leads with alignment.
+    assert!(
+        s.advice.starts_with("align all io.opentelemetry artifacts"),
+        "advice: {}",
+        s.advice
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The ktor-io / coroutines break (see detects_ktor_io_break_against_coroutines_1_11):
 /// the same violation is reachable when the referencing JAR is an application root, and not
 /// proven reachable when the only root is an unrelated JAR that never references it. ktor-io
