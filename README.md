@@ -26,23 +26,39 @@ nobody recompiles.
 
 ## Prior art
 
-### API diff tools: [Revapi](https://revapi.org/), [JAPICC](https://github.com/lvc/japi-compliance-checker), [MiMa](https://github.com/scala-garden/mima)
+### API diff tools: 
 
-These diff two versions of one library and report API changes that could
-break some consumer. Good for the library maintainer gating a release
-(`uika diff` covers the same ground). They cannot tell which changes break
-**your** app: they never see the consumer's classpath, so a member moved to
-a superclass or supplied by another artifact is still reported as breaking
-when nothing breaks.
+These diff two versions of one library and report the API changes between
+them, and they are excellent at that job. Each brings its own strengths:
+[Revapi](https://revapi.org/) models the API use-chain and extends beyond 
+Java to XML and other configuration. [japicmp](https://github.com/siom79/japicmp)
+also advises which semantic-versioning part to bump.
+[roseau](https://github.com/alien-tools/roseau) builds its API model from
+either source or bytecode with a strong focus on speed and accuracy.
+And [MiMa](https://github.com/scala-garden/mima) supports Scala-specific features.
 
-### Classpath validators: [Linkage Checker](https://github.com/GoogleCloudPlatform/cloud-opensource-java), [missinglink](https://github.com/spotify/missinglink)
+`uika diff` covers the same ground more narrowly, and any of these is a good
+choice a consumer can run against the two versions of a dependency to see
+what changed. By design they answer "what changed in this library", not
+"which of those changes break **my** app": they report every API change
+whether your code, or another artifact on a flattened classpath, actually
+depends on it. That second question is the one uika takes up, and it is 
+complementary to these tools rather than a replacement.
 
-These scan a resolved classpath for references that will not link. Good for
-auditing a whole dependency tree at a point in time (Linkage Checker mainly
-serves Google's own library ecosystem, and missinglink is Maven-only). They
-have no notion of an upgrade: every run reports all pre-existing
-inconsistencies, dead code included, so gating a build on them means
-maintaining exclusion lists.
+### Classpath validators
+
+These scan a fully resolved classpath for references that will not link, which
+is exactly what you want for auditing a whole dependency tree at a point in
+time. Both are solid at that: [Linkage Checker](https://github.com/GoogleCloudPlatform/cloud-opensource-java),
+grew out of Google's own library ecosystem, and [missinglink](https://github.com/spotify/missinglink) out of
+Spotify's Maven builds.
+
+Because they analyze a single snapshot rather than an upgrade, every run
+surfaces all pre-existing inconsistencies, including references in code
+paths that never execute, so using one as a per-PR upgrade gate tends to
+need a curated exclusion list. 
+
+Uika narrows the same analysis to the breakage the upgrade itself introduces.
 
 ### Where uika fits
 
@@ -51,9 +67,14 @@ resolve each real reference on your classpath the way the JVM links. Only
 breakage introduced by the upgrade is reported, which keeps a PR gate on
 Renovate/Dependabot/Scala Steward bumps quiet with no exclusion list. Gradle, sbt, and
 Maven plugins produce the classpath dumps (neither validator supports sbt),
-and detection covers visibility narrowing, static<->instance mismatches, and
+and detection covers visibility narrowing, static <-> instance mismatches, and
 newly-final classes/members as well as removals. It is also a
 dependency-free static binary: no JVM, about 7s for a 2M-class classpath.
+
+[BENCHMARKS.md](BENCHMARKS.md) has measured head-to-head runs against these
+tools on the same inputs: wall time, peak memory, and what each one reports,
+including how uika narrows to the references an upgrade actually broke while a
+snapshot linkage check also surfaces pre-existing, unrelated errors.
 
 ## Usage
 
