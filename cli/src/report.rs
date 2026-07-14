@@ -150,11 +150,10 @@ pub fn diff_json(changes: &[BreakingChange]) -> Result<String> {
     })?)
 }
 
-pub fn check_text(report: &CheckReport) -> String {
-    let mut out = String::new();
-    // Format in stable source -> source_class -> violations order.
+/// Write violations grouped in stable source -> source_class -> reference order.
+fn write_violation_groups(out: &mut String, violations: &[&Violation]) {
     let mut grouped: BTreeMap<&str, BTreeMap<&str, Vec<&Violation>>> = BTreeMap::new();
-    for v in &report.violations {
+    for &v in violations {
         grouped
             .entry(v.source.as_str())
             .or_default()
@@ -164,9 +163,9 @@ pub fn check_text(report: &CheckReport) -> String {
     }
     for (source, by_class) in &grouped {
         writeln!(out, "VIOLATION in {source}").unwrap();
-        for (class, violations) in by_class {
+        for (class, vs) in by_class {
             writeln!(out, "  {class}").unwrap();
-            for v in violations {
+            for v in vs {
                 let target = match (&v.reference.kind, &v.reference.member) {
                     (RefKind::Class, _) | (_, None) => v.reference.owner.to_string(),
                     (_, Some(m)) => {
@@ -177,6 +176,48 @@ pub fn check_text(report: &CheckReport) -> String {
             }
         }
     }
+}
+
+pub fn check_text(report: &CheckReport) -> String {
+    let mut out = String::new();
+    let has_body = !report.violations.is_empty();
+    // Partition once (reused for both the sections and the summary count).
+    let reach_note = if report.reachability_computed {
+        // Reachable first (likely to break), then the ones we could not prove reachable
+        // (no static path found, but reflection may still load them).
+        let (reachable, unproven): (Vec<&Violation>, Vec<&Violation>) = report
+            .violations
+            .iter()
+            .partition(|v| v.reachable != Some(false));
+        if !reachable.is_empty() {
+            writeln!(out, "💥 reachable from the application (likely to break)").unwrap();
+            write_violation_groups(&mut out, &reachable);
+        }
+        if !unproven.is_empty() {
+            if !reachable.is_empty() {
+                writeln!(out).unwrap();
+            }
+            writeln!(
+                out,
+                "⚠️  not proven reachable (no static path found; may still load via reflection)"
+            )
+            .unwrap();
+            write_violation_groups(&mut out, &unproven);
+        }
+        // Only annotate the summary once there is something to rank.
+        if has_body {
+            format!(
+                " (💥 {} reachable, ⚠️ {} not proven reachable)",
+                reachable.len(),
+                unproven.len()
+            )
+        } else {
+            String::new()
+        }
+    } else {
+        write_violation_groups(&mut out, &report.violations.iter().collect::<Vec<_>>());
+        String::new()
+    };
     let unknown_note = if report.unknown_refs > 0 {
         format!(
             ", {} unverified (hierarchy escapes scope)",
@@ -187,8 +228,8 @@ pub fn check_text(report: &CheckReport) -> String {
     };
     writeln!(
         out,
-        "{}scanned {} classes, {} broken reference(s){unknown_note}",
-        if grouped.is_empty() { "" } else { "\n" },
+        "{}scanned {} classes, {} broken reference(s){reach_note}{unknown_note}",
+        if has_body { "\n" } else { "" },
         report.scanned_classes,
         report.violations.len()
     )

@@ -20,6 +20,8 @@ pub struct CheckReport {
     pub scanned_classes: usize,
     /// Number of references that reached a type outside the index and could not be proven unbroken.
     pub unknown_refs: usize,
+    /// True when class-load reachability was computed, so each violation carries a reachable flag.
+    pub reachability_computed: bool,
 }
 
 /// Pass-1 result for one class. Does not carry member tables
@@ -33,6 +35,9 @@ pub struct ParsedTarget {
     pub entry_override: Option<String>,
     /// Only references whose owner exists in the old index (= automatically scoped to the checked library).
     pub refs: Vec<SymbolRef>,
+    /// Class-load edges for reachability (constant-pool classes + forName-shaped strings).
+    /// Empty unless edge collection is enabled.
+    pub edges: Vec<Sym>,
 }
 
 pub struct ParsedTargets {
@@ -43,7 +48,14 @@ pub struct ParsedTargets {
 
 /// Pass 1: parse loaded classes in parallel and extract hierarchy plus references to old.
 /// Hierarchy extraction is also skipped for class names already present in `known`.
-pub fn parse_targets(classes: &[LoadedClass], old: &ApiIndex, known: &ClassGraph) -> ParsedTargets {
+/// Class-load edges are collected only when `collect_edges` is set (reachability mode),
+/// since they cost extra memory proportional to the whole scanned classpath.
+pub fn parse_targets(
+    classes: &[LoadedClass],
+    old: &ApiIndex,
+    known: &ClassGraph,
+    collect_edges: bool,
+) -> ParsedTargets {
     let results: Vec<Result<ParsedTarget, String>> = classes
         .par_iter()
         .map(|lc| {
@@ -63,12 +75,18 @@ pub fn parse_targets(classes: &[LoadedClass], old: &ApiIndex, known: &ClassGraph
                     Some(lc.entry_name.clone())
                 };
             let refs = extract_refs(&rc, |owner| old.contains_class(owner)).map_err(with_ctx)?;
+            let edges = if collect_edges {
+                crate::extract::extract_edges(&rc, class_name)
+            } else {
+                Vec::new()
+            };
             Ok(ParsedTarget {
                 source: lc.source,
                 class_name,
                 hierarchy,
                 entry_override,
                 refs,
+                edges,
             })
         })
         .collect();
@@ -114,16 +132,20 @@ impl ScanResult {
     /// Fold parsed results into the graph (duplicate class names are first-wins = JVM classpath resolution order).
     fn merge(&mut self, parsed: ParsedTargets) {
         for t in parsed.targets {
-            if !t.refs.is_empty() {
-                self.records.push((t.source, t.class_name, t.refs));
-            }
             if let Some((super_name, interfaces)) = t.hierarchy
-                && self
-                    .graph
-                    .insert_if_absent(t.class_name, super_name, &interfaces, t.source)
+                && self.graph.insert_if_absent(
+                    t.class_name,
+                    super_name,
+                    &interfaces,
+                    &t.edges,
+                    t.source,
+                )
                 && let Some(entry) = t.entry_override
             {
                 self.entry_overrides.insert(t.class_name, entry);
+            }
+            if !t.refs.is_empty() {
+                self.records.push((t.source, t.class_name, t.refs));
             }
         }
         self.warnings.extend(parsed.warnings);
@@ -135,7 +157,11 @@ impl ScanResult {
 /// them into the hierarchy graph. Since no member tables are kept, peak memory is
 /// bounded by the graph plus one chunk of temporaries.
 /// Chunks are processed in path order, so duplicate-class winners are deterministic.
-pub fn scan_target_paths(paths: &[PathBuf], old: &ApiIndex) -> Result<ScanResult> {
+pub fn scan_target_paths(
+    paths: &[PathBuf],
+    old: &ApiIndex,
+    collect_edges: bool,
+) -> Result<ScanResult> {
     let chunk_size = std::env::var("UIKA_CHUNK")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -154,7 +180,7 @@ pub fn scan_target_paths(paths: &[PathBuf], old: &ApiIndex) -> Result<ScanResult
                     scanned_classes: 0,
                 };
                 crate::input::for_each_batch(p, 512, |batch| {
-                    let parsed = parse_targets(&batch, old, known);
+                    let parsed = parse_targets(&batch, old, known, collect_edges);
                     acc.targets.extend(parsed.targets);
                     acc.warnings.extend(parsed.warnings);
                     acc.scanned_classes += parsed.scanned_classes;
@@ -284,8 +310,18 @@ fn fetch_members(scan: &ScanResult, wanted: &FxHashSet<Sym>) -> (ApiIndex, Vec<S
 /// positives for moves to another artifact or copies bundled into fat JARs. The old side
 /// is composed the same way to reduce Unknown results when a library hierarchy escapes to
 /// a classpath-side parent.
-pub fn check_scanned(scan: ScanResult, old: &ApiIndex, new: &ApiIndex) -> CheckReport {
+pub fn check_scanned(
+    scan: ScanResult,
+    old: &ApiIndex,
+    new: &ApiIndex,
+    reach: Option<crate::reach::ReachInputs>,
+) -> CheckReport {
     crate::memstats::report("after pass 1 (graph + reference records)");
+    // Compute reachability marks before the graph is consumed below. Cheap relative to
+    // the scan (one BFS over the class-load edge arena already built in pass 1).
+    let reach_result = reach
+        .as_ref()
+        .map(|r| crate::reach::reachable_classes(&scan.graph, r));
     let mut wanted = collect_wanted(&scan, old, new);
     collect_final_wanted(old, new, &scan.graph, &mut wanted);
     let (fetched, fetch_warnings) = fetch_members(&scan, &wanted);
@@ -334,6 +370,7 @@ pub fn check_scanned(scan: ScanResult, old: &ApiIndex, new: &ApiIndex) -> CheckR
                             source_class: class_name,
                             reference,
                             reason: reason.to_string(),
+                            reachable: None,
                         });
                     }
                 }
@@ -342,21 +379,39 @@ pub fn check_scanned(scan: ScanResult, old: &ApiIndex, new: &ApiIndex) -> CheckR
     }
     add_final_violations(old, new, &fetched, &graph, &mut violations, &mut seen);
 
+    if let Some(result) = &reach_result {
+        for v in &mut violations {
+            v.reachable = Some(crate::reach::is_reachable(&result.marks, v.source_class));
+        }
+        // App roots were supplied but none matched a scanned class (e.g. build outputs were
+        // not compiled): every violation then falls into "not proven reachable", which would
+        // read as "0 reachable" and be misleading. Say so explicitly.
+        if !result.app_root_matched {
+            all_warnings.push(
+                "reachability: no application root matched a scanned class \
+                 (were the project's build outputs compiled?); \
+                 all violations are reported as not proven reachable"
+                    .to_string(),
+            );
+        }
+    }
+
     crate::memstats::report("after verdict");
     CheckReport {
         violations,
         warnings: all_warnings,
         scanned_classes,
         unknown_refs,
+        reachability_computed: reach_result.is_some(),
     }
 }
 
-/// Check consumer-side classes (pass 1 + pass 2 + verdict).
+/// Check consumer-side classes (pass 1 + pass 2 + verdict). Reachability is not computed here.
 pub fn check(targets: &[LoadedClass], old: &ApiIndex, new: &ApiIndex) -> CheckReport {
     let mut scan = ScanResult::new();
-    let parsed = parse_targets(targets, old, &scan.graph);
+    let parsed = parse_targets(targets, old, &scan.graph, false);
     scan.merge(parsed);
-    check_scanned(scan, old, new)
+    check_scanned(scan, old, new, None)
 }
 
 enum RefVerdict {
@@ -495,6 +550,7 @@ fn add_final_violations(
                     source_class: class_name,
                     reference,
                     reason: "class became final".to_string(),
+                    reachable: None,
                 });
             }
         }
@@ -530,6 +586,7 @@ fn add_final_violations(
                         source_class: class_name,
                         reference,
                         reason: "method became final".to_string(),
+                        reachable: None,
                     });
                 }
             }
@@ -786,7 +843,13 @@ mod tests {
         let new = ApiIndex::build([]);
         let fetched = ApiIndex::build([class("lib/C", &[("m", "()V")])]);
         let mut graph = ClassGraph::new();
-        graph.insert_if_absent(intern("lib/C"), Some(object_sym()), &[], intern("fat.jar"));
+        graph.insert_if_absent(
+            intern("lib/C"),
+            Some(object_sym()),
+            &[],
+            &[],
+            intern("fat.jar"),
+        );
         let v = verdict(
             method_ref("lib/C", "m", "()V"),
             intern("app/Use"),
@@ -821,7 +884,13 @@ mod tests {
         c.super_name = Some(intern("cp/Base"));
         let new = ApiIndex::build([c]);
         let mut graph = ClassGraph::new();
-        graph.insert_if_absent(intern("cp/Base"), Some(object_sym()), &[], intern("cp.jar"));
+        graph.insert_if_absent(
+            intern("cp/Base"),
+            Some(object_sym()),
+            &[],
+            &[],
+            intern("cp.jar"),
+        );
         let v = verdict(
             method_ref("lib/C", "m", "()V"),
             intern("app/Use"),

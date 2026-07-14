@@ -195,12 +195,15 @@ fn find_member(members: &[(MemberKey, u16)], key: MemberKey) -> Option<u16> {
 pub struct ClassGraph {
     nodes: FxHashMap<ClassName, GraphNode>,
     interfaces: Vec<Sym>,
+    /// Class-load edge arena for reachability. Empty unless edge collection is enabled.
+    refs: Vec<Sym>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct GraphNode {
     pub super_name: Option<ClassName>,
     interfaces: (u32, u16),
+    refs: (u32, u16),
     /// Origin selected by first-wins (JAR/directory path). Reread location for pass 2.
     pub source: Sym,
 }
@@ -210,6 +213,7 @@ impl ClassGraph {
         Self {
             nodes: FxHashMap::default(),
             interfaces: Vec::new(),
+            refs: Vec::new(),
         }
     }
 
@@ -219,17 +223,20 @@ impl ClassGraph {
         name: ClassName,
         super_name: Option<ClassName>,
         interfaces: &[Sym],
+        refs: &[Sym],
         source: Sym,
     ) -> bool {
         if self.nodes.contains_key(&name) {
             return false;
         }
         let range = append_range_sym(&mut self.interfaces, interfaces);
+        let refs = append_range_sym(&mut self.refs, refs);
         self.nodes.insert(
             name,
             GraphNode {
                 super_name,
                 interfaces: range,
+                refs,
                 source,
             },
         );
@@ -260,9 +267,14 @@ impl ClassGraph {
         range(&self.interfaces, node.interfaces)
     }
 
+    pub fn refs_of(&self, node: &GraphNode) -> &[Sym] {
+        range(&self.refs, node.refs)
+    }
+
     pub fn shrink_to_fit(&mut self) {
         self.nodes.shrink_to_fit();
         self.interfaces.shrink_to_fit();
+        self.refs.shrink_to_fit();
     }
 }
 

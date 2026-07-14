@@ -16,11 +16,29 @@ const CLASS_MAGIC: u32 = 0xCAFE_BABE;
 #[derive(Debug, Clone, Copy)]
 pub enum CpEntry<'a> {
     Utf8(&'a [u8]),
-    Class { name: u16 },
-    Fieldref { class: u16, name_and_type: u16 },
-    Methodref { class: u16, name_and_type: u16 },
-    InterfaceMethodref { class: u16, name_and_type: u16 },
-    NameAndType { name: u16, descriptor: u16 },
+    Class {
+        name: u16,
+    },
+    Fieldref {
+        class: u16,
+        name_and_type: u16,
+    },
+    Methodref {
+        class: u16,
+        name_and_type: u16,
+    },
+    InterfaceMethodref {
+        class: u16,
+        name_and_type: u16,
+    },
+    NameAndType {
+        name: u16,
+        descriptor: u16,
+    },
+    /// String constant. Kept for reachability's Class.forName-style heuristic.
+    Str {
+        utf8: u16,
+    },
     Unusable,
     Other,
 }
@@ -94,8 +112,9 @@ impl<'a> RawClass<'a> {
                     cp.push(CpEntry::Other);
                     CpEntry::Unusable
                 }
-                8 | 16 | 19 | 20 => {
-                    // String / MethodType / Module / Package
+                8 => CpEntry::Str { utf8: r.u16()? },
+                16 | 19 | 20 => {
+                    // MethodType / Module / Package
                     r.skip(2)?;
                     CpEntry::Other
                 }

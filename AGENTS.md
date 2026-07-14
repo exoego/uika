@@ -84,6 +84,42 @@ pass-2 classes are typically below 0.1% of the scan.
 - `module-info.class` and `META-INF/versions/` entries are skipped by
   `input.rs::is_scannable`.
 
+## Reachability
+
+- Ranks violations by whether the referencing class is class-load reachable from
+  the application, without hiding any: `Violation.reachable` is `Some(false)`
+  only when no static path reaches the class. It is an over-approximation, so
+  "not proven reachable" (⚠️) is a deprioritize hint, never grounds to drop a
+  violation (reflection from external config is invisible). Same conservative
+  stance as Unknown. `report.rs` splits the text report into a reachable (💥)
+  section then a ⚠️ section.
+- On automatically, gated by app roots, not a flag: `run_check` computes
+  `reachability = !app_roots.is_empty()` (single policy site). `upgrade-check`
+  dumps and `check --app` have roots (on); a bare `check --classpath` has none
+  (off, flat list, `reachable = None`). This also keeps the 2M-class
+  classpath-only stress run from paying the cost. If roots are supplied but none
+  match a scanned class (unbuilt build outputs), `reachable_classes` reports
+  `app_root_matched = false` and `check_scanned` emits a warning instead of
+  silently reporting every violation as not-proven-reachable.
+- Roots are the application: `--app` targets and dump `classesDirs`
+  (`Universe.app_roots`). App sources are matched by interning the root path's
+  display string, the same string `input.rs` interns as a class's `source`, so a
+  root only contributes if it is also a scan target.
+- Edges (`reach.rs`, BFS over `Sym`-indexed bool marks): constant-pool `Class`
+  constants + hierarchy (super/interfaces) + class-name-shaped string constants
+  (`extract.rs::slashed_class_name`, a `Class.forName` over-approximation) +
+  `META-INF/services` providers. A provider whose service interface is outside
+  the scanned scope (JDK SPI like `java.sql.Driver`) becomes a root, because the
+  runtime can instantiate it unobserved.
+- Edges are collected in pass 1 only when reachability is on
+  (`parse_targets(..., collect_edges)`), stored in a shared arena on
+  `ClassGraph` like interfaces. They cost ~10-33% extra RSS (up to ~130MB on the
+  2M-class stress workload) with negligible extra time, so keep them gated on the
+  root-driven flag rather than always building them.
+- Class-name-shaped strings are interned unconditionally so an edge does not
+  depend on parse order (determinism); non-class strings become dead `Sym`s that
+  BFS never marks.
+
 ## Module Map
 
 | Path                   | Role                                                                                                                                                  |
@@ -96,11 +132,12 @@ pass-2 classes are typically below 0.1% of the scan.
 | `cli/src/extract.rs`   | `RawClass` -> API surface / hierarchy data / reference records; owner filter applied inline to avoid throwaway allocations.                           |
 | `cli/src/index.rs`     | `ApiIndex`, `ClassGraph`, `Scope`; member/interface tables in shared arenas with range refs and binary search.                                        |
 | `cli/src/check.rs`     | Two-pass orchestration: `scan_target_paths`, `collect_wanted`, `fetch_members`, verdicts.                                                             |
+| `cli/src/reach.rs`     | Class-load reachability (on when app roots exist): `META-INF/services` collection + BFS from app roots over the `ClassGraph` edge arena. Ranks, never drops. |
 | `cli/src/diff.rs`      | Pure old/new API diff. Private members are indexed but excluded from reports.                                                                         |
 | `cli/src/report.rs`    | Text and JSON report formatting.                                                                                                                      |
 | `cli/src/memstats.rs`  | Feature-gated counting allocator.                                                                                                                     |
 | `cli/src/gradle.rs`    | Reads dump v1/v2 and computes dependency changes. One coordinate may map to several versions (modules can resolve differently).                       |
-| `cli/src/cli.rs`       | clap definitions: `diff`, `check`, `upgrade-check`, `dump`.                                                                                           |
+| `cli/src/cli.rs`       | clap definitions: `diff`, `check`, `upgrade-check`, `dump` (`check`/`upgrade-check` take `--reachability`).                                           |
 | `cli/src/lib.rs`       | Command dispatch; `run_check` is shared by `check`/`upgrade-check`. `cli/src/main.rs` picks mimalloc or the memstats allocator.                       |
 | `jvm-plugin-core/`     | Shared dump model + v1/v2 reader/writer (`ClasspathDump`, `DumpFormat`) and CLI fetch/run helper (`UikaCli`). Compiled into each plugin by source inclusion; not a published artifact. |
 | `gradle-plugin/`       | Java Gradle plugin. `localGroovy()` only, `options.release = 17`, merges per-module fragments into the v2 dump.                                       |
@@ -161,6 +198,10 @@ pass-2 classes are typically below 0.1% of the scan.
   input path order.
 - Keep old/new library indexing simple and complete — the two-pass savings are
   for the huge consumer classpath, not the small compared-library set.
+- Reachability edges are the one arena proportional to the whole scan that is
+  not always built; keep them gated behind `collect_edges` (driven by app-root
+  presence) so a bare classpath-only run never pays the ~130MB (2M-class stress)
+  cost.
 
 ## Benchmark Expectations
 

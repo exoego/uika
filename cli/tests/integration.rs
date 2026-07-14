@@ -274,8 +274,13 @@ fn upgrade_check_reproduces_otel_incident_from_dumps() {
     assert_eq!(changes.old_jars, vec![old_sc]);
     assert_eq!(changes.new_jars, vec![new_sc]);
 
-    let report =
-        uika::run_check(&changes.old_jars, &changes.new_jars, &after.scan_targets).unwrap();
+    let report = uika::run_check(
+        &changes.old_jars,
+        &changes.new_jars,
+        &after.scan_targets,
+        &after.app_roots,
+    )
+    .unwrap();
     assert_eq!(
         report.violations.len(),
         1,
@@ -292,6 +297,48 @@ fn upgrade_check_reproduces_otel_incident_from_dumps() {
         "io/opentelemetry/sdk/internal/DaemonThreadFactory"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The ktor-io / coroutines break (see detects_ktor_io_break_against_coroutines_1_11):
+/// the same violation is reachable when the referencing JAR is an application root, and not
+/// proven reachable when the only root is an unrelated JAR that never references it. ktor-io
+/// has no service providers, so BlockingAdapter is only reachable through an explicit root.
+#[test]
+fn reachability_tiers_violation_by_app_roots() {
+    let old = fixture("kotlinx-coroutines-core-jvm-1.7.1.jar");
+    let new = fixture("kotlinx-coroutines-core-jvm-1.11.0.jar");
+    let ktor_io = fixture("ktor-io-jvm-2.3.13.jar");
+    // Unrelated to ktor/coroutines: a real, scanned root that never reaches BlockingAdapter.
+    let unrelated = fixture("koin-logger-slf4j-3.2.2.jar");
+
+    let reachable = uika::run_check(
+        std::slice::from_ref(&old),
+        std::slice::from_ref(&new),
+        std::slice::from_ref(&ktor_io),
+        std::slice::from_ref(&ktor_io),
+    )
+    .unwrap();
+    assert_eq!(reachable.violations.len(), 1);
+    assert_eq!(
+        reachable.violations[0].reachable,
+        Some(true),
+        "referencing JAR as an app root should make the violation reachable"
+    );
+
+    let targets = [ktor_io.clone(), unrelated.clone()];
+    let unreachable = uika::run_check(
+        std::slice::from_ref(&old),
+        std::slice::from_ref(&new),
+        &targets,
+        std::slice::from_ref(&unrelated),
+    )
+    .unwrap();
+    assert_eq!(unreachable.violations.len(), 1);
+    assert_eq!(
+        unreachable.violations[0].reachable,
+        Some(false),
+        "a root that never references BlockingAdapter should leave it not proven reachable"
+    );
 }
 
 #[test]
