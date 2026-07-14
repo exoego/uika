@@ -33,6 +33,11 @@ import static net.exoego.uika.plugin.core.DumpFormat.quote;
 @DisableCachingByDefault(because = "Classpath resolution is environment-dependent and cheap to rerun")
 public abstract class DumpModuleClasspathTask extends DefaultTask {
 
+    public DumpModuleClasspathTask() {
+        // The declared inputs cannot see the resolution result; an up-to-date hit would reuse a stale dump.
+        getOutputs().upToDateWhen(task -> false);
+    }
+
     @OutputFile
     public abstract RegularFileProperty getOutputFile();
 
