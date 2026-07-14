@@ -371,6 +371,7 @@ pub fn check_scanned(
                             reference,
                             reason: reason.to_string(),
                             reachable: None,
+                            suggestion: None,
                         });
                     }
                 }
@@ -551,6 +552,7 @@ fn add_final_violations(
                     reference,
                     reason: "class became final".to_string(),
                     reachable: None,
+                    suggestion: None,
                 });
             }
         }
@@ -587,6 +589,7 @@ fn add_final_violations(
                         reference,
                         reason: "method became final".to_string(),
                         reachable: None,
+                        suggestion: None,
                     });
                 }
             }

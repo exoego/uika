@@ -11,6 +11,7 @@ pub mod memstats;
 pub mod model;
 pub mod reach;
 pub mod report;
+pub mod suggest;
 pub mod window;
 
 use anyhow::Result;
@@ -181,12 +182,20 @@ fn cmd_upgrade_check(before: &Path, after: &Path, json: bool) -> Result<i32> {
     // Scan target = the full after runtime classpath + build outputs.
     // Check removed/changed old versions as --old and new versions as --new in one batch.
     // Reachability ranks against the dump's own build outputs (run_check turns it on when present).
-    let result = run_check(
+    let mut result = run_check(
         &changes.old_jars,
         &changes.new_jars,
         &after_universe.scan_targets,
         &after_universe.app_roots,
     )?;
+    // Attribute each break to the artifacts involved and propose a fix (coordinates only exist
+    // for upgrade-check, so this lives here rather than in the shared run_check).
+    suggest::annotate(
+        &mut result.violations,
+        &before_universe,
+        &after_universe,
+        &changes.changes,
+    );
     if json {
         println!("{}", report::upgrade_json(&changes.changes, Some(&result))?);
     } else {
