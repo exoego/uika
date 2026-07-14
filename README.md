@@ -2,6 +2,7 @@
 
 [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-cli%2Fmaven-metadata.xml&label=Maven%20Central)](https://central.sonatype.com/namespace/net.exoego.uika)
 
+Ultra-fast and low-memory LinkageError checker for JVM.
 Catches `NoSuchMethodError` and friends statically, before you ship.
 
 ## The problem
@@ -10,31 +11,24 @@ When dependency resolution picks conflicting versions, an API that a library
 was compiled against can vanish from the runtime classpath and fail at runtime
 with `NoSuchMethodError` / `NoClassDefFoundError`.
 
-Real example: Ktor 2.3.13 calls kotlinx-coroutines 1.7.1's
-`EventLoopKt.processNextEventInCurrentThread()`, an internal API that is
-`public` at the bytecode level. When Gradle resolves coroutines to 1.11.0, the
-method is gone and every Ktor HTTP request dies at runtime. With Renovate,
-Dependabot, or Scala Steward bumping versions constantly, auditing transitive
-dependencies by hand does not scale. Uika catches this at PR time.
+With modern practice of using Dependabot, Renovate, or Scala Steward bumping
+versions constantly, auditing transitive dependencies by hand does not scale.
 
-No compilation is needed for the library-vs-library half of the problem: every
-reference is recorded in the referencing binary's constant pool, so distributed
-JARs can be checked against each other as-is. References from your own code are
-the compiler's job: it recompiles on a bump PR anyway (`--app` covers compiled
-output when needed). Uika handles the half the compiler never sees: binaries
-nobody recompiles.
+Uika catches this at PR time by analyzing every class/method reference recorded
+in the referencing binary's constant pool.
 
 ## Prior art
 
-### API diff tools: 
+### API diff tools
 
-These diff two versions of one library and report the API changes between
-them, and they are excellent at that job. Each brings its own strengths:
-[Revapi](https://revapi.org/) models the API use-chain and extends beyond 
-Java to XML and other configuration. [japicmp](https://github.com/siom79/japicmp)
-also advises which semantic-versioning part to bump.
-[roseau](https://github.com/alien-tools/roseau) builds its API model from
-either source or bytecode with a strong focus on speed and accuracy.
+There are many tools to inspect binary incompatibility. These diff two versions
+of one library and report the API changes between them, and they are excellent
+at that job.
+
+Each brings its own strengths: [Revapi](https://revapi.org/) models the API use-chain and
+extends beyond Java to XML and other configuration. [japicmp](https://github.com/siom79/japicmp) also advises
+which semantic-versioning part to bump. [roseau](https://github.com/alien-tools/roseau) builds its API model from
+either source or bytecode with a strong focus on speed and accuracy. 
 And [MiMa](https://github.com/scala-garden/mima) supports Scala-specific features.
 
 `uika diff` covers the same ground more narrowly, and any of these is a good
@@ -42,16 +36,14 @@ choice a consumer can run against the two versions of a dependency to see
 what changed. By design they answer "what changed in this library", not
 "which of those changes break **my** app": they report every API change
 whether your code, or another artifact on a flattened classpath, actually
-depends on it. That second question is the one uika takes up, and it is 
+depends on it. That second question is the one Uika takes up, and it is 
 complementary to these tools rather than a replacement.
 
 ### Classpath validators
 
-These scan a fully resolved classpath for references that will not link, which
-is exactly what you want for auditing a whole dependency tree at a point in
-time. Both are solid at that: [Linkage Checker](https://github.com/GoogleCloudPlatform/cloud-opensource-java),
-grew out of Google's own library ecosystem, and [missinglink](https://github.com/spotify/missinglink) out of
-Spotify's Maven builds.
+Other tools scan a fully resolved classpath for references that will not link,
+which is exactly what you want for auditing a whole dependency tree at a point in
+time. Both are solid at that: Google's [Linkage Checker](https://github.com/GoogleCloudPlatform/cloud-opensource-java), and Spotify's [missinglink](https://github.com/spotify/missinglink).
 
 Because they analyze a single snapshot rather than an upgrade, every run
 surfaces all pre-existing inconsistencies, including references in code
@@ -60,16 +52,16 @@ need a curated exclusion list.
 
 Uika narrows the same analysis to the breakage the upgrade itself introduces.
 
-### Where uika fits
+### Where Uika fits
 
 Uika does both halves in one step: diff the changed library old vs new, then
 resolve each real reference on your classpath the way the JVM links. Only
 breakage introduced by the upgrade is reported, which keeps a PR gate on
-Renovate/Dependabot/Scala Steward bumps quiet with no exclusion list. Gradle, sbt, and
-Maven plugins produce the classpath dumps (neither validator supports sbt),
+Renovate/Dependabot/Scala Steward bumps quiet with no exclusion list. Gradle,
+sbt, and Maven plugins produce the classpath dumps (neither validator supports sbt),
 and detection covers visibility narrowing, static <-> instance mismatches, and
 newly-final classes/members as well as removals. It is also a
-dependency-free static binary: no JVM, about 7s for a 2M-class classpath.
+dependency-free static binary: no JVM.
 
 [BENCHMARKS.md](BENCHMARKS.md) has measured head-to-head runs against these
 tools on the same inputs: wall time, peak memory, and what each one reports,
@@ -131,7 +123,7 @@ $ uika diff old.jar new.jar [--json]
 
 # Find usages of breaking changes across classpath JARs / your build output
 # (--old/--new may be repeated to check several changed libraries in one run)
-# Exit codes: 0 = clean, 1 = violations found (see --fail-on below), 2 = error
+# Exit codes: 0 = clean, 1 = violations found, 2 = error
 $ uika check --old kotlinx-coroutines-core-jvm-1.7.1.jar \
              --new kotlinx-coroutines-core-jvm-1.11.0.jar \
              --classpath ktor-io-jvm-2.3.13.jar:other-dep.jar \
@@ -270,7 +262,7 @@ tasks.withType<UpgradeCheckTask>().configureEach {
 ```console
 $ ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
 $ ./gradlew uikaUpgradeCheck \
-      -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json   # -PuikaFailOn / -PuikaCliVersion to override
+      -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json   # -PuikaCliVersion=x.y.z to override
 ```
 
 ### sbt (`sbt-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fsbt-uika_2.12_1.0%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/sbt-uika_2.12_1.0)
@@ -287,7 +279,7 @@ ThisBuild / uikaFailOn := "reachable"
 
 ```console
 $ sbt uikaDumpClasspath   # writes target/uika/classpath.json (override via the uikaOutput setting)
-$ sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"   # uikaFailOn / uikaCliVersion settings to override
+$ sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"   # uikaCliVersion setting to override
 ```
 
 ### Maven (`maven-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-maven-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-maven-plugin)
@@ -311,26 +303,24 @@ $ sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"   # uikaFailOn / uikaC
 ```console
 $ mvn uika:dump-classpath -Duika.output=/tmp/classpath.json
 $ mvn uika:upgrade-check \
-      -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json   # -Duika.failOn / -Duika.cliVersion to override
+      -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json   # -Duika.cliVersion to override
 ```
 
-### GitHub Actions
+## PR gate on GitHub Actions
 
-A PR-triggered job can resolve both sides on the same runner: dump the base
-branch, dump the PR, and compare. The PR side is compiled first so its build
-outputs anchor the reachability ranking (violations reachable from your own
-code are surfaced first); the baseline only needs dependency resolution, so it
-stays compile-free. Since both dumps are local, `uikaResolveClasspath` is not
-needed (it is only for the split pattern in
-[Usage](#ci-gate-on-dependency-update-prs-the-main-use-case), where the baseline
-comes from another runner). The check task downloads the CLI binary through the
-build, so the workflow installs nothing and pins no version.
+A typical setup involves:
+
+1. Dump the base branch and run `uikaResolveClasspath` to output the resolved dependency.
+2. Dump the PR branch, compile and run `uikaResolveClasspath`.
+3. Compare the two dumps.
 
 The job checks out the base commit to dump it, so the plugin must already be
-declared there too — except on the PR that introduces this workflow, whose
+declared there too, except on the PR that introduces this workflow, whose
 base branch has no plugin yet. That baseline step is expected to fail there,
 so it's marked `continue-on-error` and the final check step is skipped
 instead of failing the PR.
+
+For Gradle:
 
 ```yaml
 name: dependency binary incompatibility check
@@ -340,13 +330,9 @@ jobs:
   upgrade-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
+      - uses: actions/checkout@v7
+
+      # ... You may need to setup Java/Gradle/Maven/Sbt here ....
 
       - name: Dump baseline classpath (base branch)
         id: baseline
@@ -374,8 +360,7 @@ jobs:
         # a violation fails the job and blocks the merge
 ```
 
-For sbt (the plugin must be in `project/plugins.sbt` on both branches, with the
-same bootstrap handling), replace the three uika steps with:
+For sbt:
 
 ```yaml
       - name: Dump baseline classpath (base branch)
@@ -400,8 +385,7 @@ same bootstrap handling), replace the three uika steps with:
         run: sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"
 ```
 
-For Maven (with the plugin declared in the root `pom.xml` so the version lives
-in the build, and the same bootstrap handling):
+For Maven:
 
 ```yaml
       - name: Dump baseline classpath (base branch)
@@ -426,24 +410,91 @@ in the build, and the same bootstrap handling):
         run: mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json
 ```
 
-### Dump format
+## As CLI
 
-The v2 format deduplicates artifacts into a single table with path-prefix
-roots (a 59-module project's 2.6MB v1 dump becomes 140KB). Uika reads both v1
-and v2.
+### Local check before pushing
 
-```json
-{"version": 2,
- "roots": ["/Users/.../modules-2/files-2.1/", "/repo/"],
- "artifacts": [
-   {"group": "io.ktor", "name": "ktor-io-jvm", "version": "2.3.13",
-    "root": 0, "path": "io.ktor/ktor-io-jvm/2.3.13/c72b.../ktor-io-jvm-2.3.13.jar"}
- ],
- "modules": [
-   {"module": ":app", "classesDirs": [{"root": 1, "path": "app/build/classes/kotlin/main"}],
-    "artifactRefs": [0]}
- ]}
+After bumping `libs.versions.toml`, verify with resolution only, no
+compilation:
+
+```console
+$ git stash && ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json && git stash pop
+$ ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
+$ ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
 ```
+
+### Ad-hoc investigation
+
+"What breaks between these two versions, and who dies?" needs only the JAR
+files. Uika is a static binary and does not need a JVM:
+
+```console
+$ uika diff old.jar new.jar
+$ uika check --old old.jar --new new.jar --classpath ~/.gradle/caches/.../suspect.jar
+```
+
+### Command reference
+
+```console
+# List breaking changes between old/new versions of a library
+# (removals, access narrowing, static/instance changes, newly-final classes/members)
+$ uika diff old.jar new.jar [--json]
+
+# Find usages of breaking changes across classpath JARs / your build output
+# (--old/--new may be repeated to check several changed libraries in one run)
+# Exit codes: 0 = clean, 1 = violations found, 2 = error
+$ uika check --old kotlinx-coroutines-core-jvm-1.7.1.jar \
+             --new kotlinx-coroutines-core-jvm-1.11.0.jar \
+             --classpath ktor-io-jvm-2.3.13.jar:other-dep.jar \
+             --app build/classes/kotlin/main
+VIOLATION in ktor-io-jvm-2.3.13.jar
+  io/ktor/utils/io/jvm/javaio/BlockingAdapter
+    -> method removed: kotlinx/coroutines/EventLoopKt.processNextEventInCurrentThread ()J
+
+scanned 372 classes, 1 broken reference(s), 5 unverified (hierarchy escapes scope)
+
+# Detect broken references caused by every artifact whose version changed.
+# When application roots are known (build outputs in the dump, or --app), violations
+# are ranked: reachable first, then the ones no static path reaches.
+$ uika upgrade-check --before /tmp/before.json --after /tmp/after.json
+dependency changes: 1
+  CHANGED io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
+
+💥 reachable from the application (likely to break)
+VIOLATION in .../opentelemetry-exporter-sender-okhttp-1.42.1.jar
+  io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil
+    -> class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
+       referenced by: io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1
+       removed by:    io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
+       suggestion:    align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
+
+⚠️  not proven reachable (no static path found; may still load via reflection)
+VIOLATION in .../some-transitive-dep.jar
+  ...
+
+scanned 168496 classes, 42 broken reference(s) (💥 25 reachable, ⚠️ 17 not proven reachable)
+
+# Debugging aid: dump the extracted API surface of a JAR
+$ uika dump some.jar
+```
+
+### Reachability ranking
+
+A changed library often drags in transitive JARs the application never touches,
+so a run can report violations in code that is present on the classpath but
+never loaded. When application roots are available (the module `classesDirs` in
+a dump, or `--app` build outputs), uika walks the class-load graph from them and
+splits the report into two sections: reachable violations (💥, likely to break)
+first, then the ones it could not prove reachable (⚠️). Edges are constant-pool
+class references, superclass/interface links, class-name-shaped string constants
+(an over-approximation of `Class.forName`), and `META-INF/services` providers.
+
+It never hides a violation: reachability is an over-approximation, so ⚠️ means
+"no static path from the application reaches this class" (reflection driven
+purely by external configuration stays invisible), a signal to deprioritize
+rather than a guarantee. With no application roots (a bare
+`check --classpath ...`) there is nothing to rank from, so the report stays a
+single flat list.
 
 ## How it works
 
@@ -481,42 +532,9 @@ OpenTelemetry, Selenium/Guava, okhttp-digest/OkHttp, Koin) against unmodified
 JARs from Maven Central, vendored under `cli/tests/fixtures/` (see its README
 for coordinates, checksums, and licensing).
 
-## Publishing (Maven Central)
+## Publishing
 
-Everything under the `net.exoego.uika` group is published to Maven Central in
-one shot when a GitHub release is published: the native CLI ZIPs (`uika-cli`
-with classifiers `linux-x86_64`, `macos-aarch64`, `macos-x86_64`,
-`windows-x86_64`), the Gradle plugin, the sbt plugin, and the Maven plugin.
-
-Release procedure: create a GitHub release with tag `vX.Y.Z`. That is all.
-`.github/workflows/publish-release.yml` builds each platform on its native
-runner, stages all Maven artifacts locally, then JReleaser signs everything
-in-memory and uploads a single deployment to the Central Portal
-(all-or-nothing validation) and attaches the ZIPs to the GitHub release.
-
-Versions are derived from the tag alone. No source file is rewritten.
-`cli/Cargo.toml` stays at the `0.0.0-dev` placeholder: release builds embed
-the tag version into `uika --version` at compile time through the
-`UIKA_VERSION` environment variable (`option_env!` in `cli/src/cli.rs`), and
-JVM plugin versions are injected via `-PuikaVersion` /
-`set ThisBuild / version` / `-Drevision`. Every module publishes to a local
-`staging-deploy` directory, and `jreleaser.yml` lists those directories as
-staging repositories.
-
-Required repository secrets: `MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD`
-(a [Central Portal token](https://central.sonatype.com/account) for the
-verified `net.exoego` namespace) and `JRELEASER_GPG_SECRET_KEY` /
-`JRELEASER_GPG_PUBLIC_KEY` / `JRELEASER_GPG_PASSPHRASE` (ASCII-armored key
-pair). Publish the public key to `keyserver.ubuntu.com` so Central can verify
-signatures.
-
-Local verification:
-
-```console
-$ make native-publish-local UIKA_VERSION=0.1.0   # publish CLI ZIPs to ~/.m2 (expects ZIPs under dist/native/<classifier>/)
-$ make stage-all UIKA_VERSION=0.1.0              # stage all Maven artifacts locally
-$ mise exec -- jreleaser deploy --dry-run        # needs JRELEASER_* env vars. Validates POMs and signs without uploading
-```
+Refer [PUBLISHING.md](PUBLISHING.md).
 
 ## Known limitations (PoC)
 
