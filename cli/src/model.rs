@@ -169,6 +169,14 @@ pub struct Violation {
     pub suggestion: Option<Suggestion>,
 }
 
+/// Whether a violation's `reachable` flag puts it in the 💥 group: proven-reachable
+/// (`Some(true)`) and unproven (`None`) both count; only proven-not-reachable (`Some(false)`)
+/// does not. This is the single boundary shared by the report's 💥/⚠️ split and `--fail-on
+/// reachable` gating, so the CI gate always matches the displayed grouping.
+pub fn counts_as_reachable(reachable: Option<bool>) -> bool {
+    reachable != Some(false)
+}
+
 /// Which artifacts a violation involves and how to fix it. Coordinates are "group:name[:version]".
 #[derive(Debug, Clone, Serialize)]
 pub struct Suggestion {

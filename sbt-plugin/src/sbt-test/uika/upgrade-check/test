@@ -5,6 +5,7 @@ $ touch before.json after.json
 > uikaUpgradeCheck before.json after.json
 $ exists before.json.marker
 > checkCliOutputLogged
+> checkFailOnPassed
 
 # Stub CLI exits 1 (violations found): the task must fail.
 > set ThisBuild / uikaCliVersion := "9.9.8"

@@ -42,6 +42,10 @@ public abstract class UpgradeCheckTask extends DefaultTask {
     @Input
     public abstract Property<String> getCliVersion();
 
+    /** When to fail the build: {@code never}, {@code reachable}, or {@code any} (default). */
+    @Input
+    public abstract Property<String> getFailOn();
+
     /** Where the binary is extracted, scoped by version and classifier below this directory. */
     @Internal
     public abstract DirectoryProperty getInstallDir();
@@ -73,6 +77,7 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         int exit = UikaCli.runUpgradeCheck(binary,
                 getBeforeFile().get().getAsFile().toPath(),
                 getAfterFile().get().getAsFile().toPath(),
+                getFailOn().getOrElse("any"),
                 getLogger()::lifecycle);
         if (exit == 1) {
             throw new GradleException("uika upgrade-check found broken references (see output above)");

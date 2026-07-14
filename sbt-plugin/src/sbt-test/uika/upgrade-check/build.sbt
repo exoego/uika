@@ -4,6 +4,9 @@ ThisBuild / scalaVersion := "2.12.21"
 // below, which publishes 9.9.9 (exit 0) and 9.9.8 (exit 1, i.e. violations found).
 ThisBuild / uikaCliVersion := "9.9.9"
 
+// Declarative config in build.sbt (not the default "any"): must reach the CLI as --fail-on.
+ThisBuild / uikaFailOn := "reachable"
+
 resolvers += "uika-stub" at (baseDirectory.value / "repo").toURI.toString
 
 lazy val prepareStubRepo = taskKey[Unit]("Writes stub uika-cli ZIPs into the file-based test repository")
@@ -25,10 +28,20 @@ prepareStubRepo := {
       out.closeEntry()
     } finally out.close()
   }
-  // The stub leaves a marker next to the --before argument ($3) to prove it ran; the echoed
+  // The stub leaves a marker next to the --before argument ($3) to prove it ran and records
+  // its full argument list ($3.args) so checkFailOnPassed can assert the flags; the echoed
   // line must surface through the task logger (checked by checkCliOutputLogged).
-  publish("9.9.9", "#!/bin/sh\necho ran > \"$3.marker\"\necho \"uika-stub: dependency changes: 0\"\nexit 0\n")
+  publish("9.9.9", "#!/bin/sh\necho ran > \"$3.marker\"\necho \"$@\" > \"$3.args\"\necho \"uika-stub: dependency changes: 0\"\nexit 0\n")
   publish("9.9.8", "#!/bin/sh\nexit 1\n")
+}
+
+lazy val checkFailOnPassed = taskKey[Unit]("Asserts the uikaFailOn setting reached the CLI as --fail-on")
+
+// The build.sbt setting uikaFailOn := "reachable" must be forwarded to the CLI invocation.
+checkFailOnPassed := {
+  val args = IO.read(baseDirectory.value / "before.json.args")
+  if (!args.contains("--fail-on reachable"))
+    sys.error(s"uikaFailOn setting was not forwarded to the CLI: $args")
 }
 
 lazy val checkCliOutputLogged = taskKey[Unit]("Asserts the stub CLI's output went through the task logger")

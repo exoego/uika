@@ -15,7 +15,8 @@ pub mod suggest;
 pub mod window;
 
 use anyhow::Result;
-use cli::{Cli, Command};
+use check::CheckReport;
+use cli::{Cli, Command, FailOn};
 use index::ApiIndex;
 use model::{ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC, ACC_STATIC};
 use std::path::{Path, PathBuf};
@@ -30,6 +31,7 @@ pub fn run(cli: Cli) -> Result<i32> {
             app,
             classpath_file,
             json,
+            fail_on,
         } => {
             let mut targets: Vec<PathBuf> = classpath;
             let mut app_roots: Vec<PathBuf> = app.clone();
@@ -39,13 +41,14 @@ pub fn run(cli: Cli) -> Result<i32> {
                 app_roots.extend(universe.app_roots);
                 targets.extend(universe.scan_targets);
             }
-            cmd_check(&old, &new, &targets, &app_roots, json)
+            cmd_check(&old, &new, &targets, &app_roots, json, fail_on)
         }
         Command::UpgradeCheck {
             before,
             after,
             json,
-        } => cmd_upgrade_check(&before, &after, json),
+            fail_on,
+        } => cmd_upgrade_check(&before, &after, json, fail_on),
         Command::Dump { path } => cmd_dump(&path),
     }
 }
@@ -89,6 +92,7 @@ fn cmd_check(
     targets: &[PathBuf],
     app_roots: &[PathBuf],
     json: bool,
+    fail_on: FailOn,
 ) -> Result<i32> {
     let result = run_check(old, new, targets, app_roots)?;
     if json {
@@ -96,7 +100,41 @@ fn cmd_check(
     } else {
         print!("{}", report::check_text(&result));
     }
-    Ok(if result.violations.is_empty() { 0 } else { 1 })
+    Ok(exit_code(&result, fail_on))
+}
+
+/// Map a finished check to a process exit code per the selected policy. The report itself is
+/// always printed in full; this only decides whether the run fails the caller (e.g. CI).
+fn exit_code(result: &CheckReport, fail_on: FailOn) -> i32 {
+    if should_fail(
+        result.violations.iter().map(|v| v.reachable),
+        result.app_roots_matched,
+        fail_on,
+    ) {
+        1
+    } else {
+        0
+    }
+}
+
+/// Exit policy over each violation's reachability flag. `Reachable` counts a violation unless it
+/// is proven not reachable (`Some(false)`), so when reachability was not computed (all `None`) it
+/// degrades to `Any`, matching the conservative stance that an unproven case is never dropped.
+/// `app_roots_matched == Some(false)` means app roots were supplied but none matched a scanned
+/// class, so the not-proven-reachable labels have no basis (nothing was walked from); `Reachable`
+/// then also degrades to `Any` rather than passing every violation off as unreachable.
+fn should_fail(
+    mut reachables: impl Iterator<Item = Option<bool>>,
+    app_roots_matched: Option<bool>,
+    fail_on: FailOn,
+) -> bool {
+    match fail_on {
+        FailOn::Never => false,
+        FailOn::Reachable if app_roots_matched != Some(false) => {
+            reachables.any(model::counts_as_reachable)
+        }
+        FailOn::Reachable | FailOn::Any => reachables.next().is_some(),
+    }
 }
 
 /// Build old/new indexes, scan, then evaluate. Shared by upgrade-check and check.
@@ -165,7 +203,7 @@ pub fn run_check(
 }
 
 /// Compare before/after dependency dumps and check all changed artifacts at once.
-fn cmd_upgrade_check(before: &Path, after: &Path, json: bool) -> Result<i32> {
+fn cmd_upgrade_check(before: &Path, after: &Path, json: bool, fail_on: FailOn) -> Result<i32> {
     let before_universe = gradle::load_dump(before)?;
     let after_universe = gradle::load_dump(after)?;
     let changes = gradle::diff_dumps(&before_universe, &after_universe);
@@ -201,7 +239,7 @@ fn cmd_upgrade_check(before: &Path, after: &Path, json: bool) -> Result<i32> {
     } else {
         print!("{}", report::upgrade_text(&changes.changes, Some(&result)));
     }
-    Ok(if result.violations.is_empty() { 0 } else { 1 })
+    Ok(exit_code(&result, fail_on))
 }
 
 fn cmd_dump(path: &Path) -> Result<i32> {
@@ -279,5 +317,63 @@ fn flags_str(access: u16) -> String {
         format!("{visibility} static")
     } else {
         visibility.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FailOn, should_fail};
+
+    /// `matched` is the app-root match state: None = reachability off, Some(true)/Some(false)
+    /// = on and whether any app root matched a scanned class.
+    fn fail(reachables: &[Option<bool>], matched: Option<bool>, fail_on: FailOn) -> bool {
+        should_fail(reachables.iter().copied(), matched, fail_on)
+    }
+
+    #[test]
+    fn never_always_passes() {
+        assert!(!fail(&[Some(true), Some(false), None], None, FailOn::Never));
+        assert!(!fail(&[Some(false)], Some(false), FailOn::Never));
+        assert!(!fail(&[], None, FailOn::Never));
+    }
+
+    #[test]
+    fn any_fails_on_any_violation() {
+        assert!(!fail(&[], None, FailOn::Any));
+        assert!(fail(&[Some(false)], Some(true), FailOn::Any));
+        assert!(fail(&[None], None, FailOn::Any));
+        assert!(fail(&[Some(true)], Some(true), FailOn::Any));
+    }
+
+    #[test]
+    fn reachable_fails_only_on_reachable_or_unknown() {
+        assert!(!fail(&[], Some(true), FailOn::Reachable));
+        // Proven not reachable does not fail (app roots matched).
+        assert!(!fail(
+            &[Some(false), Some(false)],
+            Some(true),
+            FailOn::Reachable
+        ));
+        // Proven reachable fails.
+        assert!(fail(
+            &[Some(false), Some(true)],
+            Some(true),
+            FailOn::Reachable
+        ));
+        // Reachability not computed (no app roots) degrades to Any.
+        assert!(fail(&[None], None, FailOn::Reachable));
+    }
+
+    #[test]
+    fn reachable_fails_when_app_roots_supplied_but_unmatched() {
+        // App roots given but none matched a scanned class: every violation is Some(false),
+        // but the labels have no basis, so Reachable degrades to Any and fails.
+        assert!(fail(
+            &[Some(false), Some(false)],
+            Some(false),
+            FailOn::Reachable
+        ));
+        // Still nothing to fail on with zero violations.
+        assert!(!fail(&[], Some(false), FailOn::Reachable));
     }
 }

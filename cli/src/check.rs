@@ -22,6 +22,11 @@ pub struct CheckReport {
     pub unknown_refs: usize,
     /// True when class-load reachability was computed, so each violation carries a reachable flag.
     pub reachability_computed: bool,
+    /// Whether any application root matched a scanned class, when reachability was computed.
+    /// None when reachability was not computed; Some(false) means app roots were supplied but
+    /// none matched (e.g. build outputs not compiled), so the not-proven-reachable labels are
+    /// untrustworthy.
+    pub app_roots_matched: Option<bool>,
 }
 
 /// Pass-1 result for one class. Does not carry member tables
@@ -404,6 +409,7 @@ pub fn check_scanned(
         scanned_classes,
         unknown_refs,
         reachability_computed: reach_result.is_some(),
+        app_roots_matched: reach_result.as_ref().map(|r| r.app_root_matched),
     }
 }
 

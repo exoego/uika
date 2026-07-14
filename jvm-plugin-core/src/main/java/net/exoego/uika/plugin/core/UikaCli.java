@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
@@ -83,14 +84,22 @@ public final class UikaCli {
      * {@code output}. The report must go through the build tool's own logger: a child process
      * that inherits file descriptors writes past the tool's log capture, so under a Gradle
      * daemon, an sbt server, or mvnd the user would never see it. Returns the CLI exit code:
-     * 0 = clean, 1 = violations found, 2 = error.
+     * 0 = clean, 1 = violations found (per {@code failOn}), 2 = error.
+     *
+     * @param failOn when the CLI should exit non-zero ({@code never}, {@code reachable}, or
+     *     {@code any}); passed through as {@code --fail-on}. Null or blank leaves the CLI default.
      */
-    public static int runUpgradeCheck(Path binary, Path before, Path after,
+    public static int runUpgradeCheck(Path binary, Path before, Path after, String failOn,
             Consumer<String> output) throws IOException, InterruptedException {
-        ProcessBuilder builder = new ProcessBuilder(List.of(
+        List<String> command = new ArrayList<>(List.of(
                 binary.toString(), "upgrade-check",
                 "--before", before.toString(),
                 "--after", after.toString()));
+        if (failOn != null && !failOn.isBlank()) {
+            command.add("--fail-on");
+            command.add(failOn);
+        }
+        ProcessBuilder builder = new ProcessBuilder(command);
         builder.redirectErrorStream(true);
         Process process = builder.start();
         try (BufferedReader reader = new BufferedReader(

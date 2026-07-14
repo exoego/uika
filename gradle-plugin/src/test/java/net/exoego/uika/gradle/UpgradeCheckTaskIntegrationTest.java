@@ -44,10 +44,13 @@ final class UpgradeCheckTaskIntegrationTest {
                 "stub binary is a shell script");
 
         // The marker proves the stub ran; the echoed lines must reach the build output
-        // through the task's logger (inherited stdio dies with the daemon).
+        // through the task's logger (inherited stdio dies with the daemon). The args file
+        // captures the full invocation so tests can assert the flags passed to the CLI
+        // ($3 is the --before path).
         publishStubCli(CLEAN_VERSION, """
                 #!/bin/sh
                 echo ran > "$3.marker"
+                echo "$@" > "$3.args"
                 echo "uika-stub: dependency changes: 0"
                 exit 0
                 """);
@@ -87,6 +90,58 @@ final class UpgradeCheckTaskIntegrationTest {
                 "stub binary was not executed with --before " + before);
         assertTrue(result.getOutput().contains("uika-stub: dependency changes: 0"),
                 () -> "CLI output did not reach the build log:\n" + result.getOutput());
+        // Default policy is the strictest; the plugin passes it explicitly.
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(args.contains("--fail-on any"),
+                () -> "expected default --fail-on any in CLI invocation: " + args);
+    }
+
+    @Test
+    void passesFailOnToCli() throws Exception {
+        BuildResult result = runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION,
+                        "-PuikaFailOn=reachable")
+                .build();
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(args.contains("--fail-on reachable"),
+                () -> "-PuikaFailOn was not forwarded to the CLI: " + args);
+    }
+
+    @Test
+    void failOnConfigurableFromBuildScript() throws Exception {
+        // Declarative config in build.gradle.kts (the task DSL), no -PuikaFailOn.
+        write(projectDir.resolve("build.gradle.kts"), """
+                import net.exoego.uika.gradle.UpgradeCheckTask
+
+                plugins {
+                    id("net.exoego.uika")
+                }
+
+                repositories {
+                    maven {
+                        url = uri("%s")
+                        metadataSources { artifact() }
+                    }
+                }
+
+                tasks.withType<UpgradeCheckTask>().configureEach {
+                    failOn.set("reachable")
+                }
+                """.formatted(repoDir.toUri()));
+
+        BuildResult result = runner(CLEAN_VERSION).build();
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(args.contains("--fail-on reachable"),
+                () -> "build-script failOn was not forwarded to the CLI: " + args);
     }
 
     @Test

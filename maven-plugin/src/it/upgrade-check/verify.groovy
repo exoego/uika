@@ -1,6 +1,12 @@
 def marker = new File(basedir, "before.json.marker")
 assert marker.isFile() : "stub uika binary did not run: $marker"
 
+// The <failOn>reachable</failOn> in the POM must reach the CLI as --fail-on reachable.
+def args = new File(basedir, "before.json.args")
+assert args.isFile() : "stub did not record its arguments: $args"
+assert args.text.contains("--fail-on reachable") :
+    "POM <configuration><failOn> was not forwarded to the CLI: ${args.text}"
+
 def log = new File(basedir, "build.log")
 assert log.isFile() : "invoker build log not found: $log"
 // The [INFO] prefix proves the line went through the mojo's logger. Inherited stdio also

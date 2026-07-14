@@ -28,12 +28,13 @@ new File(dir, "uika-cli-${version}.pom").text =
     "<project><modelVersion>4.0.0</modelVersion><groupId>net.exoego.uika</groupId>" +
     "<artifactId>uika-cli</artifactId><version>$version</version><packaging>pom</packaging></project>"
 
-// The stub leaves a marker next to the --before argument ($3) to prove it ran; the echoed
-// line must surface in the build log through the mojo's logger.
+// The stub leaves a marker next to the --before argument ($3) to prove it ran and records its
+// full argument list ($3.args) so verify.groovy can assert the flags passed to the CLI; the
+// echoed line must surface in the build log through the mojo's logger.
 def zip = new File(dir, "uika-cli-$version-${classifier}.zip")
 new ZipOutputStream(zip.newOutputStream()).withCloseable { out ->
     out.putNextEntry(new ZipEntry("uika-$version-$classifier/uika"))
-    out.write('#!/bin/sh\necho ran > "$3.marker"\necho "uika-stub: dependency changes: 0"\nexit 0\n'.getBytes("UTF-8"))
+    out.write('#!/bin/sh\necho ran > "$3.marker"\necho "$@" > "$3.args"\necho "uika-stub: dependency changes: 0"\nexit 0\n'.getBytes("UTF-8"))
     out.closeEntry()
 }
 

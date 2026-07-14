@@ -80,6 +80,8 @@ public class UikaPlugin implements Plugin<Project> {
                     task.getCliVersion().convention(own);
                 }
             }
+            Object failOn = root.findProperty("uikaFailOn");
+            task.getFailOn().convention(failOn != null ? failOn.toString() : "any");
             task.getInstallDir().convention(root.getLayout().getBuildDirectory().dir("uika/cli"));
             task.notCompatibleWithConfigurationCache("resolves detached configurations at execution time (PoC)");
         });
