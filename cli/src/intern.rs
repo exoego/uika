@@ -19,6 +19,19 @@ impl Sym {
     pub fn as_str(self) -> &'static str {
         pool().table.read().unwrap()[self.0 as usize]
     }
+
+    /// Stable index into the intern table (for Sym-indexed side tables like reachability marks).
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Current intern table size (upper bound for Sym::index).
+pub fn table_len() -> usize {
+    let Some(pool) = POOL.get() else {
+        return 0;
+    };
+    pool.table.read().unwrap().len()
 }
 
 impl std::fmt::Display for Sym {

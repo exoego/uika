@@ -159,4 +159,8 @@ pub struct Violation {
     pub source_class: ClassName,
     pub reference: SymbolRef,
     pub reason: String,
+    /// Whether the referencing class is class-load reachable from the application.
+    /// None when reachability was not computed (no --reachability / no app roots).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reachable: Option<bool>,
 }

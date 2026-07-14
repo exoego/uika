@@ -66,7 +66,8 @@ on every push. The PR job only resolves its own side.
 # --- On push to develop (baseline generation) ---
 $ ./gradlew uikaDumpClasspath -PuikaOutput=classpath.json   # store as artifact keyed by SHA
 
-# --- On the PR job (after the normal build) ---
+# --- On the PR job (after the normal build, so build outputs exist and
+#     anchor the reachability ranking) ---
 $ ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
 $ fetch-artifact <merge-base SHA> classpath.json > /tmp/before.json   # CI-specific retrieval
 $ ./gradlew uikaResolveClasspath \
@@ -120,18 +121,45 @@ VIOLATION in ktor-io-jvm-2.3.13.jar
 
 scanned 372 classes, 1 broken reference(s), 5 unverified (hierarchy escapes scope)
 
-# Detect broken references caused by every artifact whose version changed
+# Detect broken references caused by every artifact whose version changed.
+# When application roots are known (build outputs in the dump, or --app), violations
+# are ranked: reachable first, then the ones no static path reaches.
 $ uika upgrade-check --before /tmp/before.json --after /tmp/after.json
 dependency changes: 1
   CHANGED io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
 
+💥 reachable from the application (likely to break)
 VIOLATION in .../opentelemetry-exporter-sender-okhttp-1.42.1.jar
   io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil
     -> class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
 
+⚠️  not proven reachable (no static path found; may still load via reflection)
+VIOLATION in .../some-transitive-dep.jar
+  ...
+
+scanned 168496 classes, 42 broken reference(s) (💥 25 reachable, ⚠️ 17 not proven reachable)
+
 # Debugging aid: dump the extracted API surface of a JAR
 $ uika dump some.jar
 ```
+
+### Reachability ranking
+
+A changed library often drags in transitive JARs the application never touches,
+so a run can report violations in code that is present on the classpath but
+never loaded. When application roots are available (the module `classesDirs` in
+a dump, or `--app` build outputs), uika walks the class-load graph from them and
+splits the report into two sections: reachable violations (💥, likely to break)
+first, then the ones it could not prove reachable (⚠️). Edges are constant-pool
+class references, superclass/interface links, class-name-shaped string constants
+(an over-approximation of `Class.forName`), and `META-INF/services` providers.
+
+It never hides a violation: reachability is an over-approximation, so ⚠️ means
+"no static path from the application reaches this class" (reflection driven
+purely by external configuration stays invisible), a signal to deprioritize
+rather than a guarantee. With no application roots (a bare
+`check --classpath ...`) there is nothing to rank from, so the report stays a
+single flat list.
 
 ## Build-tool plugins
 
@@ -208,12 +236,14 @@ $ mvn uika:upgrade-check \
 ### GitHub Actions
 
 A PR-triggered job can resolve both sides on the same runner: dump the base
-branch, dump the PR, and compare. Resolution needs no compilation, and since
-both dumps are local, `uikaResolveClasspath` is not needed (it is only for the
-split pattern in [Usage](#ci-gate-on-dependency-update-prs-the-main-use-case),
-where the baseline comes from another runner). The check task downloads the
-CLI binary through the build, so the workflow installs nothing and pins no
-version.
+branch, dump the PR, and compare. The PR side is compiled first so its build
+outputs anchor the reachability ranking (violations reachable from your own
+code are surfaced first); the baseline only needs dependency resolution, so it
+stays compile-free. Since both dumps are local, `uikaResolveClasspath` is not
+needed (it is only for the split pattern in
+[Usage](#ci-gate-on-dependency-update-prs-the-main-use-case), where the baseline
+comes from another runner). The check task downloads the CLI binary through the
+build, so the workflow installs nothing and pins no version.
 
 The job checks out the base commit to dump it, so the plugin must already be
 declared there too — except on the PR that introduces this workflow, whose
@@ -251,7 +281,9 @@ jobs:
           exit $status
 
       - name: Dump PR classpath
-        run: ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
+        # Compile so the PR module build outputs exist: they anchor reachability
+        # ranking (violations reachable from your code are surfaced first).
+        run: ./gradlew classes uikaDumpClasspath -PuikaOutput=/tmp/after.json
 
       - name: Check broken references
         if: steps.baseline.outcome == 'success'
@@ -279,7 +311,8 @@ same bootstrap handling), replace the three uika steps with:
           exit $status
 
       - name: Dump PR classpath
-        run: sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json
+        # compile first so the build outputs anchor reachability ranking
+        run: sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json
 
       - name: Check broken references
         if: steps.baseline.outcome == 'success'
@@ -304,7 +337,8 @@ in the build, and the same bootstrap handling):
           exit $status
 
       - name: Dump PR classpath
-        run: mvn -q uika:dump-classpath -Duika.output=/tmp/after.json
+        # compile first so the build outputs anchor reachability ranking
+        run: mvn -q compile uika:dump-classpath -Duika.output=/tmp/after.json
 
       - name: Check broken references
         if: steps.baseline.outcome == 'success'

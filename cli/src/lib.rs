@@ -9,6 +9,7 @@ pub mod input;
 pub mod intern;
 pub mod memstats;
 pub mod model;
+pub mod reach;
 pub mod report;
 pub mod window;
 
@@ -30,11 +31,14 @@ pub fn run(cli: Cli) -> Result<i32> {
             json,
         } => {
             let mut targets: Vec<PathBuf> = classpath;
+            let mut app_roots: Vec<PathBuf> = app.clone();
             targets.extend(app);
             for dump in &classpath_file {
-                targets.extend(gradle::load_dump(dump)?.scan_targets);
+                let universe = gradle::load_dump(dump)?;
+                app_roots.extend(universe.app_roots);
+                targets.extend(universe.scan_targets);
             }
-            cmd_check(&old, &new, &targets, json)
+            cmd_check(&old, &new, &targets, &app_roots, json)
         }
         Command::UpgradeCheck {
             before,
@@ -78,8 +82,14 @@ fn cmd_diff(old: &Path, new: &Path, json: bool) -> Result<i32> {
     Ok(0)
 }
 
-fn cmd_check(old: &[PathBuf], new: &[PathBuf], targets: &[PathBuf], json: bool) -> Result<i32> {
-    let result = run_check(old, new, targets)?;
+fn cmd_check(
+    old: &[PathBuf],
+    new: &[PathBuf],
+    targets: &[PathBuf],
+    app_roots: &[PathBuf],
+    json: bool,
+) -> Result<i32> {
+    let result = run_check(old, new, targets, app_roots)?;
     if json {
         println!("{}", report::check_json(&result)?);
     } else {
@@ -89,11 +99,16 @@ fn cmd_check(old: &[PathBuf], new: &[PathBuf], targets: &[PathBuf], json: bool) 
 }
 
 /// Build old/new indexes, scan, then evaluate. Shared by upgrade-check and check.
+/// Reachability ranking is only meaningful with application roots to walk from, so it turns
+/// on exactly when they are present (--app or dump build outputs); when on, pass 1 also
+/// collects class-load edges and each violation is tagged with whether its class is reachable.
 pub fn run_check(
     old: &[PathBuf],
     new: &[PathBuf],
     targets: &[PathBuf],
+    app_roots: &[PathBuf],
 ) -> Result<check::CheckReport> {
+    let reachability = !app_roots.is_empty();
     memstats::report("start");
     let old_index = build_index_multi(old)?;
     let new_index = build_index_multi(new)?;
@@ -123,10 +138,27 @@ pub fn run_check(
         .cloned()
         .collect();
 
+    // Build reachability inputs before the scan so pass 1 collects class-load edges only
+    // when needed. Service files are read from the same scan targets.
+    let reach = if reachability {
+        let (services, warnings) = reach::collect_services(&paths);
+        warn_all(&warnings);
+        let app_sources = app_roots
+            .iter()
+            .map(|p| intern::intern(&p.display().to_string()))
+            .collect();
+        Some(reach::ReachInputs {
+            app_sources,
+            services,
+        })
+    } else {
+        None
+    };
+
     // Read and parse in parallel by chunk, then merge directly into the index.
-    let scanned = check::scan_target_paths(&paths, &old_index)?;
+    let scanned = check::scan_target_paths(&paths, &old_index, reachability)?;
     memstats::report("after scan target indexing");
-    let result = check::check_scanned(scanned, &old_index, &new_index);
+    let result = check::check_scanned(scanned, &old_index, &new_index, reach);
     warn_all(&result.warnings);
     Ok(result)
 }
@@ -148,10 +180,12 @@ fn cmd_upgrade_check(before: &Path, after: &Path, json: bool) -> Result<i32> {
 
     // Scan target = the full after runtime classpath + build outputs.
     // Check removed/changed old versions as --old and new versions as --new in one batch.
+    // Reachability ranks against the dump's own build outputs (run_check turns it on when present).
     let result = run_check(
         &changes.old_jars,
         &changes.new_jars,
         &after_universe.scan_targets,
+        &after_universe.app_roots,
     )?;
     if json {
         println!("{}", report::upgrade_json(&changes.changes, Some(&result))?);

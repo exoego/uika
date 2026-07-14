@@ -41,6 +41,8 @@ struct ArtifactDump {
 pub struct Universe {
     /// Scan targets: artifact files + build outputs (deduplicated, in first-seen order).
     pub scan_targets: Vec<PathBuf>,
+    /// Application build outputs (module classesDirs). Reachability roots.
+    pub app_roots: Vec<PathBuf>,
     /// Artifacts with coordinates: (group, name) -> version -> file.
     /// If modules resolve differently, multiple versions can appear for the same coordinate.
     pub versions: BTreeMap<(String, String), BTreeMap<String, PathBuf>>,
@@ -96,6 +98,7 @@ pub fn load_dump(path: &Path) -> Result<Universe> {
 
 fn from_v1(dump: ClasspathDump) -> Universe {
     let mut scan_targets = Vec::new();
+    let mut app_roots = Vec::new();
     let mut seen = BTreeSet::new();
     let mut versions: BTreeMap<(String, String), BTreeMap<String, PathBuf>> = BTreeMap::new();
     for module in dump.modules {
@@ -113,6 +116,7 @@ fn from_v1(dump: ClasspathDump) -> Universe {
             }
         }
         for dir in module.classes_dirs {
+            app_roots.push(dir.clone());
             if seen.insert(dir.clone()) {
                 scan_targets.push(dir);
             }
@@ -120,6 +124,7 @@ fn from_v1(dump: ClasspathDump) -> Universe {
     }
     Universe {
         scan_targets,
+        app_roots,
         versions,
     }
 }
@@ -134,6 +139,7 @@ fn from_v2(dump: DumpV2) -> Result<Universe> {
     };
 
     let mut scan_targets = Vec::new();
+    let mut app_roots = Vec::new();
     let mut seen = BTreeSet::new();
     let mut versions: BTreeMap<(String, String), BTreeMap<String, PathBuf>> = BTreeMap::new();
     // The entity table is deduplicated, so first-seen order is table order.
@@ -154,6 +160,7 @@ fn from_v2(dump: DumpV2) -> Result<Universe> {
     for module in &dump.modules {
         for dir in &module.classes_dirs {
             let dir = rooted(dir.root, &dir.path)?;
+            app_roots.push(dir.clone());
             if seen.insert(dir.clone()) {
                 scan_targets.push(dir);
             }
@@ -161,6 +168,7 @@ fn from_v2(dump: DumpV2) -> Result<Universe> {
     }
     Ok(Universe {
         scan_targets,
+        app_roots,
         versions,
     })
 }
@@ -300,6 +308,7 @@ mod tests {
         }
         Universe {
             scan_targets,
+            app_roots: Vec::new(),
             versions,
         }
     }

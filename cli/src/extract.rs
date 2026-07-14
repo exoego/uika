@@ -180,6 +180,56 @@ fn ref_from_cp_entry(
     }))
 }
 
+/// Class-load edges for reachability: every Class constant (arrays unwrapped to element
+/// types) plus string constants shaped like binary class names ("com.foo.Bar"), which
+/// over-approximates Class.forName / ServiceLoader-style dynamic loading. Shaped strings
+/// are interned unconditionally so the edge does not depend on whether the named class
+/// was parsed before or after this one (determinism); non-class strings become dead
+/// symbols that reachability simply never marks.
+pub fn extract_edges(rc: &RawClass, self_name: Sym) -> Vec<Sym> {
+    let mut edges = Vec::new();
+    for entry in rc.cp() {
+        let sym = match *entry {
+            CpEntry::Class { name } => match rc.utf8(name) {
+                Ok(raw) => object_class_of(&raw).map(intern),
+                Err(_) => None,
+            },
+            CpEntry::Str { utf8 } => match rc.utf8(utf8) {
+                Ok(raw) => slashed_class_name(&raw).map(|s| intern(&s)),
+                Err(_) => None,
+            },
+            _ => None,
+        };
+        if let Some(sym) = sym
+            && sym != self_name
+        {
+            edges.push(sym);
+        }
+    }
+    edges.sort_unstable();
+    edges.dedup();
+    edges
+}
+
+/// "com.foo.Bar" -> Some("com/foo/Bar") when shaped like a binary class name:
+/// dot-separated Java identifier segments (ASCII), at least one dot.
+fn slashed_class_name(s: &str) -> Option<String> {
+    if s.len() < 3 || s.len() > 300 || !s.contains('.') {
+        return None;
+    }
+    for segment in s.split('.') {
+        let bytes = segment.as_bytes();
+        let valid = matches!(bytes.first(), Some(b) if b.is_ascii_alphabetic() || *b == b'_' || *b == b'$')
+            && bytes[1..]
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'$');
+        if !valid {
+            return None;
+        }
+    }
+    Some(s.replace('.', "/"))
+}
+
 /// Extract the object class name from a Class entry name.
 /// "foo/Bar" -> Some("foo/Bar"), "[[Lfoo/Bar;" -> Some("foo/Bar"), "[I" -> None
 fn object_class_of(raw: &str) -> Option<&str> {
@@ -192,7 +242,7 @@ fn object_class_of(raw: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::object_class_of;
+    use super::{object_class_of, slashed_class_name};
 
     #[test]
     fn object_class_of_unwraps_arrays() {
@@ -201,5 +251,20 @@ mod tests {
         assert_eq!(object_class_of("[[Lfoo/Bar;"), Some("foo/Bar"));
         assert_eq!(object_class_of("[I"), None);
         assert_eq!(object_class_of("[[J"), None);
+    }
+
+    #[test]
+    fn slashed_class_name_accepts_binary_names_only() {
+        assert_eq!(
+            slashed_class_name("com.foo.Bar$Baz").as_deref(),
+            Some("com/foo/Bar$Baz")
+        );
+        assert_eq!(slashed_class_name("os.name").as_deref(), Some("os/name")); // Package-shaped: dead symbol, harmless.
+        assert_eq!(slashed_class_name("Bar"), None); // No dot.
+        assert_eq!(slashed_class_name("com..Bar"), None); // Empty segment.
+        assert_eq!(slashed_class_name("com.foo.Bar Baz"), None); // Space.
+        assert_eq!(slashed_class_name("com/foo/Bar"), None); // Already slashed: not a forName argument shape.
+        assert_eq!(slashed_class_name("1.2.3"), None); // Segments cannot start with digits.
+        assert_eq!(slashed_class_name("a.b().c"), None);
     }
 }
