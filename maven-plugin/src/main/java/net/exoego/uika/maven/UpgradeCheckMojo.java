@@ -40,6 +40,10 @@ public final class UpgradeCheckMojo extends AbstractMojo {
     @Parameter(property = "uika.cliVersion", defaultValue = "${plugin.version}")
     private String cliVersion;
 
+    /** When to fail the build: {@code never}, {@code reachable}, or {@code any} (default). */
+    @Parameter(property = "uika.failOn", defaultValue = "any")
+    private String failOn;
+
     @Parameter(defaultValue = "${repositorySystemSession}", readonly = true, required = true)
     private RepositorySystemSession repositorySession;
 
@@ -68,7 +72,7 @@ public final class UpgradeCheckMojo extends AbstractMojo {
         int exit;
         try {
             Path binary = UikaCli.extractBinary(zip.toPath(), installDir);
-            exit = UikaCli.runUpgradeCheck(binary, before.toPath(), after.toPath(),
+            exit = UikaCli.runUpgradeCheck(binary, before.toPath(), after.toPath(), failOn,
                     line -> getLog().info(line));
         } catch (IOException e) {
             throw new MojoExecutionException("failed to run uika upgrade-check", e);

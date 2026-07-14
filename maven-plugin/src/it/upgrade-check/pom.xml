@@ -27,6 +27,10 @@
         <groupId>net.exoego.uika</groupId>
         <artifactId>uika-maven-plugin</artifactId>
         <version>@project.version@</version>
+        <!-- Declarative config in the POM (not a -D property): must reach the CLI fail-on flag. -->
+        <configuration>
+          <failOn>reachable</failOn>
+        </configuration>
       </plugin>
     </plugins>
   </build>

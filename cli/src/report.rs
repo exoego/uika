@@ -1,5 +1,5 @@
 use crate::check::CheckReport;
-use crate::model::{BreakingChange, RefKind, Violation};
+use crate::model::{BreakingChange, RefKind, Violation, counts_as_reachable};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -200,7 +200,7 @@ pub fn check_text(report: &CheckReport) -> String {
         let (reachable, unproven): (Vec<&Violation>, Vec<&Violation>) = report
             .violations
             .iter()
-            .partition(|v| v.reachable != Some(false));
+            .partition(|v| counts_as_reachable(v.reachable));
         if !reachable.is_empty() {
             writeln!(out, "💥 reachable from the application (likely to break)").unwrap();
             write_violation_groups(&mut out, &reachable);

@@ -131,7 +131,7 @@ $ uika diff old.jar new.jar [--json]
 
 # Find usages of breaking changes across classpath JARs / your build output
 # (--old/--new may be repeated to check several changed libraries in one run)
-# Exit codes: 0 = clean, 1 = violations found, 2 = error
+# Exit codes: 0 = clean, 1 = violations found (see --fail-on below), 2 = error
 $ uika check --old kotlinx-coroutines-core-jvm-1.7.1.jar \
              --new kotlinx-coroutines-core-jvm-1.11.0.jar \
              --classpath ktor-io-jvm-2.3.13.jar:other-dep.jar \
@@ -185,6 +185,26 @@ rather than a guarantee. With no application roots (a bare
 `check --classpath ...`) there is nothing to rank from, so the report stays a
 single flat list.
 
+### Exit code policy (`--fail-on`)
+
+`check` and `upgrade-check` always print the full report; `--fail-on` only
+controls whether the run exits non-zero (so CI fails). It has three values:
+
+- `any` (default, strictest): exit 1 if any violation is found.
+- `reachable`: exit 1 only when a reachable violation exists (💥). Violations
+  that are not proven reachable (⚠️) do not fail the run.
+- `never`: always exit 0, reporting violations as warnings only.
+
+Because reachability is an over-approximation (reflection driven purely by
+external configuration is invisible), `reachable` treats a violation whose
+reachability could not be determined as reachable, consistent with the
+report's 💥 grouping. Two cases feed into that: with no application roots
+nothing is walked, so `reachable` behaves like `any`; and when application
+roots are supplied but none matched a scanned class (the build outputs were
+not compiled, so the ⚠️ labels have no basis), `reachable` again falls back
+to `any` rather than passing every violation off as unreachable. Errors always
+exit 2 regardless of `--fail-on`.
+
 ### Actionable suggestions
 
 `upgrade-check` also attributes each break to the two artifacts involved and
@@ -211,6 +231,14 @@ reused, and no separate install step is needed. The CLI version defaults to
 the plugin's own version, so a single coordinate in the build (which Renovate,
 Dependabot, or Scala Steward bumps) updates both.
 
+The upgrade-check task fails the build on any violation by default. This maps
+to the CLI's [`--fail-on`](#exit-code-policy---fail-on) policy
+(`never` / `reachable` / `any`, default `any`): use `reachable` to gate only on
+violations reachable from your own build outputs, or `never` to report without
+ever failing the build. Set it in the build file (shown per tool below), or on
+the command line when it is not fixed there (`-PuikaFailOn=`, `set uikaFailOn :=`,
+`-Duika.failOn=`).
+
 ### Gradle (`gradle-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-gradle-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-gradle-plugin)
 
 Works with Groovy and Kotlin DSL builds (Gradle 9 / JVM 17+).
@@ -227,26 +255,39 @@ pluginManagement {
 
 ```kotlin
 // build.gradle.kts
+import net.exoego.uika.gradle.UpgradeCheckTask
+
 plugins {
     id("net.exoego.uika") version "VERSION_PLACEHOLDER"
+}
+
+// Optional: fail only on reachable violations instead of the default `any`.
+tasks.withType<UpgradeCheckTask>().configureEach {
+    failOn.set("reachable")
 }
 ```
 
 ```console
 $ ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
 $ ./gradlew uikaUpgradeCheck \
-      -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json   # -PuikaCliVersion=x.y.z to override
+      -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json   # -PuikaFailOn / -PuikaCliVersion to override
 ```
 
 ### sbt (`sbt-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fsbt-uika_2.12_1.0%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/sbt-uika_2.12_1.0)
 
 ```scala
+// project/plugins.sbt
 addSbtPlugin("net.exoego.uika" % "sbt-uika" % "VERSION_PLACEHOLDER")
+```
+
+```scala
+// build.sbt — optional: fail only on reachable violations instead of the default `any`
+ThisBuild / uikaFailOn := "reachable"
 ```
 
 ```console
 $ sbt uikaDumpClasspath   # writes target/uika/classpath.json (override via the uikaOutput setting)
-$ sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"   # uikaCliVersion setting to override
+$ sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"   # uikaFailOn / uikaCliVersion settings to override
 ```
 
 ### Maven (`maven-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-maven-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-maven-plugin)
@@ -258,6 +299,10 @@ $ sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"   # uikaCliVersion set
       <groupId>net.exoego.uika</groupId>
       <artifactId>uika-maven-plugin</artifactId>
       <version>VERSION_PLACEHOLDER</version>
+      <!-- Optional: fail only on reachable violations instead of the default `any`. -->
+      <configuration>
+        <failOn>reachable</failOn>
+      </configuration>
     </plugin>
   </plugins>
 </build>
@@ -266,7 +311,7 @@ $ sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"   # uikaCliVersion set
 ```console
 $ mvn uika:dump-classpath -Duika.output=/tmp/classpath.json
 $ mvn uika:upgrade-check \
-      -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json   # -Duika.cliVersion to override
+      -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json   # -Duika.failOn / -Duika.cliVersion to override
 ```
 
 ### GitHub Actions
