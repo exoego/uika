@@ -174,6 +174,7 @@ mod tests {
                     .map(|(n, d, acc)| (MemberKey::new(n, d), *acc)),
             ),
             fields: build_members([]),
+            nest_host: None,
         }
     }
 
@@ -189,6 +190,7 @@ mod tests {
                     .iter()
                     .map(|(n, d, acc)| (MemberKey::new(n, d), *acc)),
             ),
+            nest_host: None,
         }
     }
 

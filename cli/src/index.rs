@@ -40,6 +40,7 @@ pub struct ResolvedMember {
 pub struct ClassEntry {
     pub access: u16,
     pub super_name: Option<ClassName>,
+    pub nest_host: Option<ClassName>,
     interfaces: (u32, u16),
     methods: (u32, u16),
     fields: (u32, u16),
@@ -77,6 +78,7 @@ impl ApiIndex {
         let entry = ClassEntry {
             access: api.access,
             super_name: api.super_name,
+            nest_host: api.nest_host,
             interfaces: append_range_sym(&mut self.interfaces, &api.interfaces),
             methods: append_range(&mut self.members, &api.methods),
             fields: append_range(&mut self.members, &api.fields),
@@ -202,6 +204,8 @@ pub struct ClassGraph {
 #[derive(Debug, Clone, Copy)]
 pub struct GraphNode {
     pub super_name: Option<ClassName>,
+    /// NestHost attribute target (nestmate private access); None when absent.
+    pub nest_host: Option<ClassName>,
     interfaces: (u32, u16),
     refs: (u32, u16),
     /// Origin selected by first-wins (JAR/directory path). Reread location for pass 2.
@@ -224,6 +228,7 @@ impl ClassGraph {
         super_name: Option<ClassName>,
         interfaces: &[Sym],
         refs: &[Sym],
+        nest_host: Option<ClassName>,
         source: Sym,
     ) -> bool {
         if self.nodes.contains_key(&name) {
@@ -235,6 +240,7 @@ impl ClassGraph {
             name,
             GraphNode {
                 super_name,
+                nest_host,
                 interfaces: range,
                 refs,
                 source,
@@ -309,6 +315,11 @@ impl<'a> Scope<'a> {
 
     pub fn class_access(&self, name: ClassName) -> Option<u16> {
         self.class(name).map(|(_, entry)| entry.access)
+    }
+
+    /// Outer None = class not in scope; inner None = class has no NestHost attribute.
+    pub fn class_nest_host(&self, name: ClassName) -> Option<Option<ClassName>> {
+        self.class(name).map(|(_, entry)| entry.nest_host)
     }
 
     /// Simplified JVMS 5.4.3.2 / 5.4.3.3. Check member existence by walking the owner,
@@ -418,6 +429,7 @@ mod tests {
                     .map(|(n, d)| (MemberKey::new(n, d), ACC_PUBLIC)),
             ),
             fields: build_members([]),
+            nest_host: None,
         }
     }
 
