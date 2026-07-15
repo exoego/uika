@@ -150,8 +150,70 @@ pub fn diff_json(changes: &[BreakingChange]) -> Result<String> {
     })?)
 }
 
-/// Write violations grouped in stable source -> source_class -> reference order.
+/// The referenced symbol as shown on a violation line: bare owner for a class reference,
+/// otherwise "owner.member descriptor".
+fn ref_target(v: &Violation) -> String {
+    match (&v.reference.kind, &v.reference.member) {
+        (RefKind::Class, _) | (_, None) => v.reference.owner.to_string(),
+        (_, Some(m)) => format!("{}.{} {}", v.reference.owner, m.name, m.descriptor),
+    }
+}
+
+/// Write a set of violations. upgrade-check violations carry a suggestion, so they are grouped by
+/// the fix (one 💡 block lists every reference a single piece of advice covers) instead of
+/// repeating the advice per reference. Plain `check` has no suggestions and keeps the
+/// source -> class listing. In a mixed run the attributed groups come first, then the rest.
 fn write_violation_groups(out: &mut String, violations: &[&Violation]) {
+    let (with_sugg, without): (Vec<&Violation>, Vec<&Violation>) = violations
+        .iter()
+        .copied()
+        .partition(|v| v.suggestion.is_some());
+    write_suggestion_groups(out, &with_sugg);
+    if !with_sugg.is_empty() && !without.is_empty() {
+        writeln!(out).unwrap();
+    }
+    write_source_groups(out, &without);
+}
+
+/// One 💡 block per distinct fix. Identical advice implies the same removed_by / referenced_by /
+/// before / after (the advice string embeds the coordinates and changed versions), so the header
+/// is built from any member of the group. Groups are ordered by advice and references within a
+/// group by class/target/reason, keeping the output deterministic.
+fn write_suggestion_groups(out: &mut String, violations: &[&Violation]) {
+    let mut grouped: BTreeMap<&str, Vec<&Violation>> = BTreeMap::new();
+    for &v in violations {
+        let advice = v.suggestion.as_ref().unwrap().advice.as_str();
+        grouped.entry(advice).or_default().push(v);
+    }
+    for vs in grouped.values() {
+        let s = vs[0].suggestion.as_ref().unwrap();
+        writeln!(out, "💡 {}", s.advice).unwrap();
+        writeln!(
+            out,
+            "   removed by: {} {} -> {}",
+            s.removed_by, s.before, s.after
+        )
+        .unwrap();
+        if let Some(rb) = &s.referenced_by {
+            writeln!(out, "   referenced by: {rb}").unwrap();
+        }
+        let mut refs = vs.clone();
+        refs.sort_by_cached_key(|v| (v.source_class.as_str(), ref_target(v), v.reason.as_str()));
+        for v in refs {
+            writeln!(
+                out,
+                "   -> {}  {}: {}",
+                v.source_class,
+                v.reason,
+                ref_target(v)
+            )
+            .unwrap();
+        }
+    }
+}
+
+/// Stable source -> source_class -> reference listing for violations without a suggestion.
+fn write_source_groups(out: &mut String, violations: &[&Violation]) {
     let mut grouped: BTreeMap<&str, BTreeMap<&str, Vec<&Violation>>> = BTreeMap::new();
     for &v in violations {
         grouped
@@ -166,25 +228,7 @@ fn write_violation_groups(out: &mut String, violations: &[&Violation]) {
         for (class, vs) in by_class {
             writeln!(out, "  {class}").unwrap();
             for v in vs {
-                let target = match (&v.reference.kind, &v.reference.member) {
-                    (RefKind::Class, _) | (_, None) => v.reference.owner.to_string(),
-                    (_, Some(m)) => {
-                        format!("{}.{} {}", v.reference.owner, m.name, m.descriptor)
-                    }
-                };
-                writeln!(out, "    -> {}: {target}", v.reason).unwrap();
-                if let Some(s) = &v.suggestion {
-                    if let Some(rb) = &s.referenced_by {
-                        writeln!(out, "       referenced by: {rb}").unwrap();
-                    }
-                    writeln!(
-                        out,
-                        "       removed by:    {} {} -> {}",
-                        s.removed_by, s.before, s.after
-                    )
-                    .unwrap();
-                    writeln!(out, "       suggestion:    {}", s.advice).unwrap();
-                }
+                writeln!(out, "    -> {}: {}", v.reason, ref_target(v)).unwrap();
             }
         }
     }
@@ -329,4 +373,146 @@ pub fn check_json(report: &CheckReport) -> Result<String> {
         total: report.violations.len(),
         unknown_refs: report.unknown_refs,
     })?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::intern::intern;
+    use crate::model::{Suggestion, SymbolRef};
+
+    fn class_violation(
+        source_class: &str,
+        owner: &str,
+        reason: &str,
+        reachable: Option<bool>,
+        advice: Option<&str>,
+    ) -> Violation {
+        Violation {
+            source: intern("consumer.jar"),
+            source_class: intern(source_class),
+            reference: SymbolRef {
+                kind: RefKind::Class,
+                owner: intern(owner),
+                member: None,
+                expected_static: None,
+                field_write: None,
+            },
+            reason: reason.to_string(),
+            reachable,
+            suggestion: advice.map(|a| Suggestion {
+                referenced_by: Some("g:referencer:1".to_string()),
+                removed_by: "g:owner".to_string(),
+                before: "1".to_string(),
+                after: "2".to_string(),
+                advice: a.to_string(),
+            }),
+        }
+    }
+
+    fn report(violations: Vec<Violation>) -> CheckReport {
+        CheckReport {
+            violations,
+            warnings: Vec::new(),
+            scanned_classes: 100,
+            unknown_refs: 0,
+            reachability_computed: true,
+            app_roots_matched: Some(true),
+        }
+    }
+
+    /// Several references sharing one piece of advice collapse into a single 💡 block, and the
+    /// block is ordered before a distinct one; a violation without a suggestion falls back to the
+    /// source listing.
+    #[test]
+    fn suggestions_group_by_advice() {
+        let r = report(vec![
+            class_violation(
+                "a/Foo",
+                "x/GoneA",
+                "class removed",
+                Some(true),
+                Some("ADVICE_A"),
+            ),
+            class_violation(
+                "a/Bar",
+                "x/GoneB",
+                "class removed",
+                Some(true),
+                Some("ADVICE_A"),
+            ),
+            class_violation(
+                "a/Baz",
+                "x/GoneC",
+                "class removed",
+                Some(true),
+                Some("ADVICE_B"),
+            ),
+        ]);
+        let out = check_text(&r);
+        // Shared advice printed once, both references listed under it.
+        assert_eq!(out.matches("💡 ADVICE_A").count(), 1, "\n{out}");
+        assert_eq!(out.matches("💡 ADVICE_B").count(), 1, "\n{out}");
+        assert!(
+            out.contains("   -> a/Foo  class removed: x/GoneA"),
+            "\n{out}"
+        );
+        assert!(
+            out.contains("   -> a/Bar  class removed: x/GoneB"),
+            "\n{out}"
+        );
+        // Deterministic order: ADVICE_A group before ADVICE_B group.
+        assert!(
+            out.find("ADVICE_A").unwrap() < out.find("ADVICE_B").unwrap(),
+            "\n{out}"
+        );
+    }
+
+    /// The same advice covering both a reachable and an unproven reference appears once per
+    /// section, since the report splits into 💥 / ⚠️ before grouping.
+    #[test]
+    fn shared_advice_repeats_once_per_reachability_section() {
+        let r = report(vec![
+            class_violation(
+                "a/Foo",
+                "x/Gone",
+                "class removed",
+                Some(true),
+                Some("ADVICE_A"),
+            ),
+            class_violation(
+                "a/Bar",
+                "x/Gone",
+                "class removed",
+                Some(false),
+                Some("ADVICE_A"),
+            ),
+        ]);
+        let out = check_text(&r);
+        assert_eq!(out.matches("💡 ADVICE_A").count(), 2, "\n{out}");
+        let reachable = out.find("reachable from the application").unwrap();
+        let unproven = out.find("not proven reachable").unwrap();
+        assert!(reachable < unproven);
+        // Foo (reachable) sits in the 💥 section, Bar (unproven) in the ⚠️ section.
+        assert!(out.find("a/Foo").unwrap() < unproven, "\n{out}");
+        assert!(out.find("a/Bar").unwrap() > unproven, "\n{out}");
+    }
+
+    /// Violations without a suggestion keep the source -> class listing.
+    #[test]
+    fn unattributed_violation_uses_source_listing() {
+        let mut r = report(vec![class_violation(
+            "a/Foo",
+            "x/Gone",
+            "class removed",
+            None,
+            None,
+        )]);
+        r.reachability_computed = false;
+        let out = check_text(&r);
+        assert!(out.contains("VIOLATION in consumer.jar"), "\n{out}");
+        assert!(out.contains("  a/Foo"), "\n{out}");
+        assert!(out.contains("    -> class removed: x/Gone"), "\n{out}");
+        assert!(!out.contains("💡"), "\n{out}");
+    }
 }

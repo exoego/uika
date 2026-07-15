@@ -125,6 +125,15 @@ pass-2 classes are typically below 0.1% of the scan.
 - `suggest::annotate` fills `Violation.suggestion` after `run_check`, in
   `cmd_upgrade_check` where coordinates exist. Plain `check` has only file paths,
   so its violations stay `suggestion = None` and `report.rs` prints nothing extra.
+- `report.rs` is suggestion-first for attributed violations: it groups them by
+  `advice` string (one 💡 block lists every reference a fix covers) instead of
+  repeating the advice per reference. Identical `advice` implies identical
+  `removed_by`/`referenced_by`/`before`/`after` (the advice embeds the
+  coordinates and changed versions), so the header is built from any group
+  member. Grouping is done inside each reachability section, so a fix spanning
+  both tiers prints once under 💥 and once under ⚠️. Violations with no
+  suggestion (plain `check`, or unattributed upgrade-check leftovers) fall back
+  to the `source -> class` listing.
 - `referenced_by` comes from a dump `file-display-string -> "g:n:v"` map (both
   before and after sides). `removed_by` comes from mapping the violation's owner
   class to a changed coordinate by reading the before-side JARs' class names
