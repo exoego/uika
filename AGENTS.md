@@ -85,6 +85,14 @@ pass-2 classes are typically below 0.1% of the scan.
   are compared instead of re-running `is_accessible` against old because the
   subclass walk only sees scanned classes and would demote real
   protected->private narrowing to pre-existing.
+- Private access allows nestmates (JVMS 5.4.4, Java 11+): both classes must
+  share a nest host, read from the NestHost attribute (a class without one
+  hosts itself). Hosts live on ClassGraph nodes (+8B/node, ~4MB at the stress
+  workload's 431K-node graph; hosts are existing class names so interning does
+  not grow) and on ClassEntry for resolution-scope classes; a class outside
+  both scopes defaults to hosting itself, denying private access. NestMembers
+  is not validated: the one-sided check errs toward not reporting, the same
+  direction as Unknown.
 - Newly-final classes/methods break scanned subclasses/overriders even without
   a constant-pool reference; `check.rs::add_final_violations` walks the class
   graph for these.
@@ -159,7 +167,7 @@ pass-2 classes are typically below 0.1% of the scan.
 
 | Path                   | Role                                                                                                                                                  |
 |------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `cli/src/classfile.rs` | Minimal class-file parser: constant pool + headers, Code scanned only for reference opcodes, Utf8 borrowed, ASCII unconverted.                        |
+| `cli/src/classfile.rs` | Minimal class-file parser: constant pool + headers, Code scanned only for reference opcodes, NestHost read from the class attribute table, Utf8 borrowed, ASCII unconverted.                        |
 | `cli/src/input.rs`     | JAR/class-dir loading. Fast path: parse central directory, group offset spans, one `pread` per span, parallel inflate. Falls back to the `zip` crate. |
 | `cli/src/window.rs`    | Fallback `Read + Seek` reader with two LRU windows (the `zip` crate seeks between central directory and local headers).                               |
 | `cli/src/intern.rs`    | `Sym = u32` interning in sharded bump arenas kept for process lifetime. Never sort/compare output by Sym id — interning order is nondeterministic.    |

@@ -48,7 +48,15 @@ pub fn extract_api(rc: &RawClass) -> Result<ClassApi> {
         interfaces,
         methods,
         fields,
+        nest_host: nest_host_of(rc)?,
     })
+}
+
+fn nest_host_of(rc: &RawClass) -> Result<Option<Sym>> {
+    if rc.nest_host == 0 {
+        return Ok(None);
+    }
+    Ok(Some(intern(&rc.class_name(rc.nest_host)?)))
 }
 
 /// Extract the internal name of this_class.
@@ -58,7 +66,7 @@ pub fn class_name_of(rc: &RawClass) -> Result<Sym> {
 
 /// For pass 1: extract only the information needed for the hierarchy graph.
 /// The point is to avoid touching (and interning) member names and descriptors.
-pub fn extract_hierarchy(rc: &RawClass) -> Result<(Sym, Option<Sym>, Vec<Sym>)> {
+pub fn extract_hierarchy(rc: &RawClass) -> Result<(Sym, Option<Sym>, Vec<Sym>, Option<Sym>)> {
     let name = intern(&rc.class_name(rc.this_class)?);
     let super_name = if rc.super_class == 0 {
         None
@@ -70,7 +78,7 @@ pub fn extract_hierarchy(rc: &RawClass) -> Result<(Sym, Option<Sym>, Vec<Sym>)> 
         .iter()
         .map(|&i| Ok(intern(&rc.class_name(i)?)))
         .collect::<Result<Vec<_>>>()?;
-    Ok((name, super_name, interfaces))
+    Ok((name, super_name, interfaces, nest_host_of(rc)?))
 }
 
 /// Enumerate symbol references from the constant pool and return only those whose owner

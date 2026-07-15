@@ -34,8 +34,9 @@ pub struct CheckReport {
 pub struct ParsedTarget {
     pub source: Sym,
     pub class_name: Sym,
+    /// (super, interfaces, nest host).
     /// None for same-name classes already in the graph (duplicate from another version).
-    pub hierarchy: Option<(Option<Sym>, Vec<Sym>)>,
+    pub hierarchy: Option<(Option<Sym>, Vec<Sym>, Option<Sym>)>,
     /// Only set when the entry name differs from "{class_name}.class" (directory outputs, etc.). Used for pass-2 rereads.
     pub entry_override: Option<String>,
     /// Only references whose owner exists in the old index (= automatically scoped to the checked library).
@@ -70,8 +71,9 @@ pub fn parse_targets(
             let hierarchy = if known.contains(class_name) {
                 None
             } else {
-                let (_, super_name, interfaces) = extract_hierarchy(&rc).map_err(with_ctx)?;
-                Some((super_name, interfaces))
+                let (_, super_name, interfaces, nest_host) =
+                    extract_hierarchy(&rc).map_err(with_ctx)?;
+                Some((super_name, interfaces, nest_host))
             };
             let entry_override =
                 if lc.entry_name.strip_suffix(".class") == Some(class_name.as_str()) {
@@ -137,12 +139,13 @@ impl ScanResult {
     /// Fold parsed results into the graph (duplicate class names are first-wins = JVM classpath resolution order).
     fn merge(&mut self, parsed: ParsedTargets) {
         for t in parsed.targets {
-            if let Some((super_name, interfaces)) = t.hierarchy
+            if let Some((super_name, interfaces, nest_host)) = t.hierarchy
                 && self.graph.insert_if_absent(
                     t.class_name,
                     super_name,
                     &interfaces,
                     &t.edges,
+                    nest_host,
                     t.source,
                 )
                 && let Some(entry) = t.entry_override
@@ -453,7 +456,7 @@ fn verdict(
     }
     if r.member.is_none()
         && let Some(access) = runtime.class_access(r.owner)
-        && !is_accessible(access, r.owner, source_class, graph)
+        && !is_accessible(access, r.owner, source_class, runtime, graph)
     {
         // Narrowing is relative to old: a reference equally inaccessible before the
         // change is pre-existing inconsistency (e.g. nest-internal private references
@@ -498,7 +501,7 @@ fn verdict(
                     _ => return RefVerdict::Ok,
                 }
             }
-            if !is_accessible(found.access, found.owner, source_class, graph) {
+            if !is_accessible(found.access, found.owner, source_class, runtime, graph) {
                 // Same old-relative gate as the class-access case above.
                 return match old.resolve_member(r.owner, member, kind) {
                     MemberResolution::Found(old_found)
@@ -702,12 +705,21 @@ fn access_level(access: u16) -> AccessLevel {
     }
 }
 
-fn is_accessible(access: u16, owner: Sym, source_class: Sym, graph: &ClassGraph) -> bool {
+fn is_accessible(
+    access: u16,
+    owner: Sym,
+    source_class: Sym,
+    runtime: &Scope,
+    graph: &ClassGraph,
+) -> bool {
     if access & ACC_PUBLIC != 0 {
         return true;
     }
     if access & ACC_PRIVATE != 0 {
-        return owner == source_class;
+        // Nestmates share private access (JVMS 5.4.4, Java 11+): both classes must
+        // have the same nest host, read from the NestHost attribute (self when absent).
+        return owner == source_class
+            || nest_host_of(owner, runtime, graph) == nest_host_of(source_class, runtime, graph);
     }
     if same_package(owner, source_class) {
         return true;
@@ -717,6 +729,16 @@ fn is_accessible(access: u16, owner: Sym, source_class: Sym, graph: &ClassGraph)
 
 fn same_package(a: Sym, b: Sym) -> bool {
     package_name(a.as_str()) == package_name(b.as_str())
+}
+
+/// A class without a NestHost attribute is its own nest host. Scanned classes are
+/// looked up in the graph, resolution-scope classes in the runtime scope; a class
+/// outside both defaults to hosting itself (conservative: forbids private access).
+fn nest_host_of(class: Sym, runtime: &Scope, graph: &ClassGraph) -> Sym {
+    if let Some(node) = graph.get(class) {
+        return node.nest_host.unwrap_or(class);
+    }
+    runtime.class_nest_host(class).flatten().unwrap_or(class)
 }
 
 fn package_name(name: &str) -> &str {
@@ -757,6 +779,7 @@ mod tests {
                     .map(|(n, d)| (MemberKey::new(n, d), ACC_PUBLIC)),
             ),
             fields: build_members([]),
+            nest_host: None,
         }
     }
 
@@ -772,6 +795,7 @@ mod tests {
                     .map(|(n, d, acc)| (MemberKey::new(n, d), *acc)),
             ),
             fields: build_members([]),
+            nest_host: None,
         }
     }
 
@@ -787,6 +811,7 @@ mod tests {
                     .iter()
                     .map(|(n, d, acc)| (MemberKey::new(n, d), *acc)),
             ),
+            nest_host: None,
         }
     }
 
@@ -901,6 +926,7 @@ mod tests {
             Some(object_sym()),
             &[],
             &[],
+            None,
             intern("fat.jar"),
         );
         let v = verdict(
@@ -942,6 +968,7 @@ mod tests {
             Some(object_sym()),
             &[],
             &[],
+            None,
             intern("cp.jar"),
         );
         let v = verdict(
@@ -993,6 +1020,58 @@ mod tests {
             &ClassGraph::new(),
         );
         assert!(matches!(v, RefVerdict::Ok));
+    }
+
+    #[test]
+    fn nest_internal_private_access_is_legal_even_when_narrowed() {
+        // public -> private is a real narrowing, but a nestmate (same nest host per
+        // the NestHost attribute) keeps private access at runtime (JVMS 5.4.4).
+        let old = ApiIndex::build([class_with_fields("lib/C", &[("x", "I", ACC_PUBLIC)])]);
+        let new = ApiIndex::build([class_with_fields("lib/C", &[("x", "I", ACC_PRIVATE)])]);
+        let mut graph = ClassGraph::new();
+        graph.insert_if_absent(
+            intern("lib/C$Builder"),
+            Some(object_sym()),
+            &[],
+            &[],
+            Some(intern("lib/C")),
+            intern("cp.jar"),
+        );
+        graph.insert_if_absent(
+            intern("lib/C"),
+            Some(object_sym()),
+            &[],
+            &[],
+            None,
+            intern("cp.jar"),
+        );
+        let v = verdict(
+            field_write_ref("lib/C", "x", "I"),
+            intern("lib/C$Builder"),
+            &Scope::new(vec![&old]),
+            &Scope::new(vec![&new]),
+            &graph,
+        );
+        assert!(matches!(v, RefVerdict::Ok));
+    }
+
+    #[test]
+    fn shared_name_prefix_is_not_a_nest() {
+        // Classes without nest attributes are their own nest hosts: neither a
+        // name-prefix lookalike nor a same-simple-name class in another package
+        // gains private access.
+        let old = ApiIndex::build([class_with_fields("lib/C", &[("x", "I", ACC_PUBLIC)])]);
+        let new = ApiIndex::build([class_with_fields("lib/C", &[("x", "I", ACC_PRIVATE)])]);
+        for source in ["lib/CX", "other/C$Inner"] {
+            let v = verdict(
+                field_write_ref("lib/C", "x", "I"),
+                intern(source),
+                &Scope::new(vec![&old]),
+                &Scope::new(vec![&new]),
+                &ClassGraph::new(),
+            );
+            assert_eq!(broken(v).unwrap().1, "field access narrowed", "{source}");
+        }
     }
 
     #[test]

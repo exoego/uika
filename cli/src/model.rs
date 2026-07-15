@@ -47,6 +47,8 @@ pub struct ClassApi {
     pub interfaces: Vec<ClassName>,
     pub methods: Members,
     pub fields: Members,
+    /// NestHost attribute target (nestmate private access); None when absent.
+    pub nest_host: Option<ClassName>,
 }
 
 impl ClassApi {

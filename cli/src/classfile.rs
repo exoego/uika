@@ -66,6 +66,8 @@ pub struct RawClass<'a> {
     pub interfaces: Vec<u16>,
     pub fields: Vec<RawMember>,
     pub methods: Vec<RawMember>,
+    /// Class index of the NestHost attribute target; 0 when absent.
+    pub nest_host: u16,
 }
 
 impl<'a> RawClass<'a> {
@@ -145,7 +147,10 @@ impl<'a> RawClass<'a> {
 
         let fields = r.members(&cp)?;
         let methods = r.members(&cp)?;
-        // Stop without reading class attributes (SourceFile, InnerClasses, etc. are not needed).
+        // Of the class attributes only NestHost is read (nestmate private access);
+        // the rest are skipped by length. Best effort: a truncated attribute table
+        // yields "no nest host" instead of a parse error.
+        let nest_host = r.nest_host_attr(&cp).unwrap_or(0);
 
         Ok(Self {
             cp,
@@ -155,6 +160,7 @@ impl<'a> RawClass<'a> {
             interfaces,
             fields,
             methods,
+            nest_host,
         })
     }
 
@@ -253,6 +259,20 @@ impl<'a> Reader<'a> {
             });
         }
         Ok(members)
+    }
+
+    fn nest_host_attr(&mut self, cp: &[CpEntry<'a>]) -> Result<u16> {
+        let count = self.u16()?;
+        let mut host = 0u16;
+        for _ in 0..count {
+            let name_index = self.u16()?;
+            let len = self.u32()? as usize;
+            let body = self.take(len)?;
+            if cp_utf8(cp, name_index) == Some(b"NestHost") && body.len() == 2 {
+                host = u16::from_be_bytes([body[0], body[1]]);
+            }
+        }
+        Ok(host)
     }
 
     fn member_attributes(&mut self, cp: &[CpEntry<'a>]) -> Result<Vec<RawCodeRef>> {
@@ -419,6 +439,73 @@ mod tests {
         assert_eq!(rc.methods.len(), 1);
         assert_eq!(rc.utf8(rc.methods[0].name_index).unwrap(), "m");
         assert_eq!(rc.utf8(rc.methods[0].descriptor_index).unwrap(), "()V");
+    }
+
+    /// NestHost attribute on a minimal class: class a/B$C with NestHost a/B.
+    #[test]
+    fn parses_nest_host_attribute() {
+        let mut b: Vec<u8> = Vec::new();
+        b.extend(0xCAFE_BABEu32.to_be_bytes());
+        b.extend([0, 0, 0, 55]); // major 55 (Java 11)
+        b.extend(8u16.to_be_bytes()); // cp_count (entries 1..7)
+        let utf8 = |b: &mut Vec<u8>, s: &str| {
+            b.push(1);
+            b.extend((s.len() as u16).to_be_bytes());
+            b.extend(s.as_bytes());
+        };
+        utf8(&mut b, "a/B$C"); // #1
+        utf8(&mut b, "java/lang/Object"); // #2
+        utf8(&mut b, "a/B"); // #3
+        b.push(7); // #4 Class -> #1
+        b.extend(1u16.to_be_bytes());
+        b.push(7); // #5 Class -> #2
+        b.extend(2u16.to_be_bytes());
+        b.push(7); // #6 Class -> #3 (nest host)
+        b.extend(3u16.to_be_bytes());
+        utf8(&mut b, "NestHost"); // #7
+        b.extend(0x0020u16.to_be_bytes()); // access: super
+        b.extend(4u16.to_be_bytes()); // this_class
+        b.extend(5u16.to_be_bytes()); // super_class
+        b.extend(0u16.to_be_bytes()); // interfaces
+        b.extend(0u16.to_be_bytes()); // fields
+        b.extend(0u16.to_be_bytes()); // methods
+        b.extend(1u16.to_be_bytes()); // class attrs: 1
+        b.extend(7u16.to_be_bytes()); // name -> #7 "NestHost"
+        b.extend(2u32.to_be_bytes()); // len 2
+        b.extend(6u16.to_be_bytes()); // host_class_index -> #6
+
+        let rc = RawClass::parse(&b).unwrap();
+        assert_eq!(rc.class_name(rc.this_class).unwrap(), "a/B$C");
+        assert_eq!(rc.class_name(rc.nest_host).unwrap(), "a/B");
+    }
+
+    /// A class file truncated right after the method table (no class-attribute
+    /// section) still parses, with no nest host.
+    #[test]
+    fn missing_class_attributes_mean_no_nest_host() {
+        let mut b: Vec<u8> = Vec::new();
+        b.extend(0xCAFE_BABEu32.to_be_bytes());
+        b.extend([0, 0, 0, 52]);
+        b.extend(4u16.to_be_bytes()); // cp_count (entries 1..3)
+        let utf8 = |b: &mut Vec<u8>, s: &str| {
+            b.push(1);
+            b.extend((s.len() as u16).to_be_bytes());
+            b.extend(s.as_bytes());
+        };
+        utf8(&mut b, "a/B"); // #1
+        b.push(7); // #2 Class -> #1
+        b.extend(1u16.to_be_bytes());
+        utf8(&mut b, "unused"); // #3
+        b.extend(0x0021u16.to_be_bytes());
+        b.extend(2u16.to_be_bytes()); // this_class
+        b.extend(0u16.to_be_bytes()); // super_class (Object-style 0 to keep it tiny)
+        b.extend(0u16.to_be_bytes()); // interfaces
+        b.extend(0u16.to_be_bytes()); // fields
+        b.extend(0u16.to_be_bytes()); // methods
+        // no class attribute section at all
+
+        let rc = RawClass::parse(&b).unwrap();
+        assert_eq!(rc.nest_host, 0);
     }
 
     #[test]

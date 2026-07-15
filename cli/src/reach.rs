@@ -196,7 +196,14 @@ mod tests {
         let mut graph = ClassGraph::new();
         for (name, refs, source) in edges {
             let refs: Vec<Sym> = refs.iter().map(|r| intern(r)).collect();
-            graph.insert_if_absent(intern(name), Some(object_sym()), &[], &refs, intern(source));
+            graph.insert_if_absent(
+                intern(name),
+                Some(object_sym()),
+                &[],
+                &refs,
+                None,
+                intern(source),
+            );
         }
         graph
     }
@@ -245,6 +252,7 @@ mod tests {
             Some(intern("lib/Base")),
             &[intern("lib/Iface")],
             &[],
+            None,
             intern("app-dir"),
         );
         graph.insert_if_absent(
@@ -252,9 +260,10 @@ mod tests {
             Some(object_sym()),
             &[],
             &[],
+            None,
             intern("lib.jar"),
         );
-        graph.insert_if_absent(intern("lib/Iface"), None, &[], &[], intern("lib.jar"));
+        graph.insert_if_absent(intern("lib/Iface"), None, &[], &[], None, intern("lib.jar"));
         let marks = reachable_classes(&graph, &inputs(&["app-dir"], vec![])).marks;
         assert!(is_reachable(&marks, intern("lib/Base")));
         assert!(is_reachable(&marks, intern("lib/Iface")));
