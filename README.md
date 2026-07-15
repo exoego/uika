@@ -142,16 +142,15 @@ dependency changes: 1
   CHANGED io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
 
 💥 reachable from the application (likely to break)
-VIOLATION in .../opentelemetry-exporter-sender-okhttp-1.42.1.jar
-  io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil
-    -> class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
-       referenced by: io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1
-       removed by:    io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
-       suggestion:    align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
+💡 align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
+   removed by: io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
+   referenced by: io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1
+   -> io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil  class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
+   -> io/opentelemetry/exporter/sender/okhttp/internal/OkHttpGrpcSender  class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
 
 ⚠️  not proven reachable (no static path found; may still load via reflection)
-VIOLATION in .../some-transitive-dep.jar
-  ...
+💡 ...
+   -> ...
 
 scanned 168496 classes, 42 broken reference(s) (💥 25 reachable, ⚠️ 17 not proven reachable)
 
@@ -200,14 +199,18 @@ exit 2 regardless of `--fail-on`.
 ### Actionable suggestions
 
 `upgrade-check` also attributes each break to the two artifacts involved and
-proposes a fix: which coordinate holds the broken reference (`referenced by`),
-which coordinate's version bump removed the symbol (`removed by`), and what to
-do (`suggestion`). When the referencing artifact and the removed one share a
-group (a version skew inside one library family, like OpenTelemetry core vs its
+proposes a fix. Because one version bump usually breaks many references the same
+way, the report is suggestion-first: each distinct fix (💡) is printed once as a
+header (with the coordinate whose bump removed the symbol, `removed by`, and the
+one holding the reference, `referenced by`), followed by every reference it
+covers. When the referencing artifact and the removed one share a group (a
+version skew inside one library family, like OpenTelemetry core vs its
 incubator), the advice leads with aligning the whole group via its BOM;
 otherwise it suggests upgrading the referencer or pinning the removed coordinate
-back. This needs coordinates, so it appears only for `upgrade-check` (the dumps
-carry them), not for a bare `check --classpath`.
+back. Grouping happens within each reachability section, so a fix that covers
+both reachable and not-proven-reachable references appears once under 💥 and once
+under ⚠️. This needs coordinates, so it appears only for `upgrade-check` (the
+dumps carry them), not for a bare `check --classpath`.
 
 ## Build-tool plugins
 
@@ -461,16 +464,15 @@ dependency changes: 1
   CHANGED io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
 
 💥 reachable from the application (likely to break)
-VIOLATION in .../opentelemetry-exporter-sender-okhttp-1.42.1.jar
-  io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil
-    -> class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
-       referenced by: io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1
-       removed by:    io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
-       suggestion:    align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
+💡 align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
+   removed by: io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
+   referenced by: io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1
+   -> io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil  class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
+   -> io/opentelemetry/exporter/sender/okhttp/internal/OkHttpGrpcSender  class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
 
 ⚠️  not proven reachable (no static path found; may still load via reflection)
-VIOLATION in .../some-transitive-dep.jar
-  ...
+💡 ...
+   -> ...
 
 scanned 168496 classes, 42 broken reference(s) (💥 25 reachable, ⚠️ 17 not proven reachable)
 
