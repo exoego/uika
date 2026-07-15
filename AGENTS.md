@@ -75,6 +75,16 @@ pass-2 classes are typically below 0.1% of the scan.
   (protected needs a subclass, package-private the same package),
   static↔instance mismatches use the opcode-derived expectation, and a write to
   a newly-final field is a violation.
+- Access narrowing is old-relative, like the static/final checks: report only
+  when the access level decreased versus old resolution (private <
+  package-private < protected < public). Equally inaccessible on both sides is
+  pre-existing. The big real-world source is Java 11+ nest-internal private
+  references (protobuf builders, anonymous enum bodies) when a copy of the
+  checked library is itself scanned as classpath — a coordinate rename leaves
+  the removed side pair-less, so the identical new JAR enters the scan. Levels
+  are compared instead of re-running `is_accessible` against old because the
+  subclass walk only sees scanned classes and would demote real
+  protected->private narrowing to pre-existing.
 - Newly-final classes/methods break scanned subclasses/overriders even without
   a constant-pool reference; `check.rs::add_final_violations` walks the class
   graph for these.
@@ -257,7 +267,7 @@ Expected on a 10-core Apple Silicon Mac:
 
 | Workload                                              |                      Result |  Time |    RSS |
 |-------------------------------------------------------|-----------------------------:|------:|-------:|
-| Stress: ~1,873 JARs / 1.8M classes                    | ~462 broken / 564 unverified | ~4.9s | ~400MB |
+| Stress: ~2,489 JARs / 2.2M classes                    | ~1050 broken / 1626 unverified | ~9.5s | ~490MB |
 | Real project: ~50 modules / 48.5K classes + 38 JARs   |   ~1 broken / 347 unverified | ~0.9s | ~110MB |
 
 Traps already hit in this repository:

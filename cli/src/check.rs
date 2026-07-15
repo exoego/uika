@@ -455,7 +455,18 @@ fn verdict(
         && let Some(access) = runtime.class_access(r.owner)
         && !is_accessible(access, r.owner, source_class, graph)
     {
-        return RefVerdict::Broken(r, "class access narrowed");
+        // Narrowing is relative to old: a reference equally inaccessible before the
+        // change is pre-existing inconsistency (e.g. nest-internal private references
+        // in a renamed copy of the checked library), not breakage introduced by it.
+        // Levels are compared instead of re-running is_accessible against old because
+        // the subclass walk only sees scanned classes and would demote real narrowing.
+        return match old.class_access(r.owner) {
+            Some(old_access) if access_level(access) < access_level(old_access) => {
+                RefVerdict::Broken(r, "class access narrowed")
+            }
+            Some(_) => RefVerdict::Ok,
+            None => RefVerdict::Unknown,
+        };
     }
     let Some(member) = r.member else {
         return RefVerdict::Ok; // Class references are OK if the owner remains.
@@ -488,14 +499,23 @@ fn verdict(
                 }
             }
             if !is_accessible(found.access, found.owner, source_class, graph) {
-                return RefVerdict::Broken(
-                    r,
-                    if kind == MemberKind::Field {
-                        "field access narrowed"
-                    } else {
-                        "method access narrowed"
-                    },
-                );
+                // Same old-relative gate as the class-access case above.
+                return match old.resolve_member(r.owner, member, kind) {
+                    MemberResolution::Found(old_found)
+                        if access_level(found.access) < access_level(old_found.access) =>
+                    {
+                        RefVerdict::Broken(
+                            r,
+                            if kind == MemberKind::Field {
+                                "field access narrowed"
+                            } else {
+                                "method access narrowed"
+                            },
+                        )
+                    }
+                    MemberResolution::Unknown => RefVerdict::Unknown,
+                    _ => RefVerdict::Ok,
+                };
             }
             if kind == MemberKind::Field
                 && r.field_write == Some(true)
@@ -656,6 +676,30 @@ fn first_ancestor_with_final_methods(
             .or_else(|| new.classes.get(&class).and_then(|entry| entry.super_name));
     }
     None
+}
+
+/// JVMS visibility for the narrowing comparison. The derived Ord follows
+/// variant declaration order, so it encodes the access lattice.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum AccessLevel {
+    Private,
+    PackagePrivate,
+    Protected,
+    Public,
+}
+
+fn access_level(access: u16) -> AccessLevel {
+    // The flag bits are mutually exclusive per JVMS 4.1; precedence below only
+    // matters for malformed class files.
+    if access & ACC_PUBLIC != 0 {
+        AccessLevel::Public
+    } else if access & ACC_PROTECTED != 0 {
+        AccessLevel::Protected
+    } else if access & ACC_PRIVATE != 0 {
+        AccessLevel::Private
+    } else {
+        AccessLevel::PackagePrivate
+    }
 }
 
 fn is_accessible(access: u16, owner: Sym, source_class: Sym, graph: &ClassGraph) -> bool {
@@ -908,6 +952,119 @@ mod tests {
             &graph,
         );
         assert!(matches!(v, RefVerdict::Unknown));
+    }
+
+    fn class_ref(owner: &str) -> SymbolRef {
+        SymbolRef {
+            kind: RefKind::Class,
+            owner: intern(owner),
+            member: None,
+            expected_static: None,
+            field_write: None,
+        }
+    }
+
+    #[test]
+    fn member_access_narrowed_from_public_is_reported() {
+        let old = ApiIndex::build([class_with_fields("lib/C", &[("x", "I", ACC_PUBLIC)])]);
+        let new = ApiIndex::build([class_with_fields("lib/C", &[("x", "I", ACC_PRIVATE)])]);
+        let v = verdict(
+            field_write_ref("lib/C", "x", "I"),
+            intern("app/Use"),
+            &Scope::new(vec![&old]),
+            &Scope::new(vec![&new]),
+            &ClassGraph::new(),
+        );
+        assert_eq!(broken(v).unwrap().1, "field access narrowed");
+    }
+
+    #[test]
+    fn member_equally_inaccessible_in_old_is_not_reported() {
+        // A renamed copy of the library on the scanned classpath: its nest-internal
+        // private references resolve as private against both sides. Pre-existing,
+        // not narrowing.
+        let old = ApiIndex::build([class_with_fields("lib/C", &[("x", "I", ACC_PRIVATE)])]);
+        let new = ApiIndex::build([class_with_fields("lib/C", &[("x", "I", ACC_PRIVATE)])]);
+        let v = verdict(
+            field_write_ref("lib/C", "x", "I"),
+            intern("lib/C$Builder"),
+            &Scope::new(vec![&old]),
+            &Scope::new(vec![&new]),
+            &ClassGraph::new(),
+        );
+        assert!(matches!(v, RefVerdict::Ok));
+    }
+
+    #[test]
+    fn protected_to_private_is_reported_without_hierarchy_proof() {
+        // The old side is compared by access level, not by re-running is_accessible:
+        // the subclass walk only sees scanned classes, so a chain through the library
+        // would wrongly demote real narrowing to pre-existing.
+        let old = ApiIndex::build([class_with_method_access(
+            "lib/C",
+            &[("m", "()V", ACC_PROTECTED)],
+        )]);
+        let new = ApiIndex::build([class_with_method_access(
+            "lib/C",
+            &[("m", "()V", ACC_PRIVATE)],
+        )]);
+        let v = verdict(
+            method_ref("lib/C", "m", "()V"),
+            intern("app/Sub"),
+            &Scope::new(vec![&old]),
+            &Scope::new(vec![&new]),
+            &ClassGraph::new(),
+        );
+        assert_eq!(broken(v).unwrap().1, "method access narrowed");
+    }
+
+    #[test]
+    fn narrowing_is_unknown_when_old_resolution_escapes_scope() {
+        let mut c = class("lib/C", &[]);
+        c.super_name = Some(intern("ext/Base"));
+        let old = ApiIndex::build([c]);
+        let new = ApiIndex::build([class_with_method_access(
+            "lib/C",
+            &[("m", "()V", ACC_PRIVATE)],
+        )]);
+        let v = verdict(
+            method_ref("lib/C", "m", "()V"),
+            intern("app/Use"),
+            &Scope::new(vec![&old]),
+            &Scope::new(vec![&new]),
+            &ClassGraph::new(),
+        );
+        assert!(matches!(v, RefVerdict::Unknown));
+    }
+
+    #[test]
+    fn class_access_narrowed_only_when_old_was_wider() {
+        let package_private = || {
+            let mut c = class("lib/C", &[]);
+            c.access = 0;
+            c
+        };
+        let new = ApiIndex::build([package_private()]);
+
+        let old_public = ApiIndex::build([class("lib/C", &[])]);
+        let v = verdict(
+            class_ref("lib/C"),
+            intern("app/Use"),
+            &Scope::new(vec![&old_public]),
+            &Scope::new(vec![&new]),
+            &ClassGraph::new(),
+        );
+        assert_eq!(broken(v).unwrap().1, "class access narrowed");
+
+        let old_same = ApiIndex::build([package_private()]);
+        let v = verdict(
+            class_ref("lib/C"),
+            intern("app/Use"),
+            &Scope::new(vec![&old_same]),
+            &Scope::new(vec![&new]),
+            &ClassGraph::new(),
+        );
+        assert!(matches!(v, RefVerdict::Ok));
     }
 
     #[test]

@@ -20,6 +20,10 @@ reports are reproduced from these exact binaries:
 - koin-logger-slf4j 3.2.2 overrides `Logger.log(Level, String)`. koin-core
   3.3.0 made that method final
   (`IncompatibleClassChangeError`; InsertKoinIO/koin#1489)
+- caffeine 3.2.3 is compiled for Java 11+, so its nest-internal private
+  references (anonymous enum bodies calling the private enum constructor, etc.)
+  appear as cross-class private accesses in bytecode. Used as a false-positive
+  guard: a coordinate rename of the identical JAR must report nothing
 
 ## Contents
 
@@ -40,6 +44,7 @@ reports are reproduced from these exact binaries:
 | `io.insert-koin:koin-core-jvm:3.2.2` | `1684443e89400c62cddcaf8c740c6f214c0217baa7c182532bcdaec1524b0fd4` |
 | `io.insert-koin:koin-core-jvm:3.3.0` | `9196b5fda5c463f06429bfd5b4b96e6bab11cca1dbd12d4f9a6b555391ec081d` |
 | `io.insert-koin:koin-logger-slf4j:3.2.2` | `9a3304f6144ad012c0e6a21e410337078b0e5c044a065354799b606dd71cf765` |
+| `com.github.ben-manes.caffeine:caffeine:3.2.3` | `ca70c90a5d1ce1511880ce9c93d4ad22108f61111d3daf91eb52762b571bd179` |
 
 ## Licensing
 
@@ -54,5 +59,6 @@ Version 2.0 (see `LICENSE-APACHE-2.0.txt` in this directory):
 - OkHttp — Copyright Square, Inc.
 - okhttp-digest — Copyright Rainer Burgstaller
 - Koin — Copyright Kotzilla and Koin project contributors
+- Caffeine — Copyright Ben Manes
 
 These JARs are test data only; they are not linked into or shipped with uika.

@@ -356,6 +356,54 @@ fn upgrade_check_suggestion_attributes_the_break() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A coordinate rename (publishing the same library under a dev coordinate): the old
+/// coordinate is REMOVED with no new-side pair, and the identical JAR re-enters as a
+/// plain scan target. Its nest-internal private references (Java 11+ nestmates, e.g.
+/// anonymous enum bodies calling the private enum constructor) resolve as private
+/// against both sides — pre-existing, not access narrowing. Before the old-relative
+/// gate this reported 13 false "access narrowed" violations from caffeine alone.
+#[test]
+fn coordinate_rename_of_identical_jar_reports_nothing() {
+    let caffeine = fixture("caffeine-3.2.3.jar");
+
+    let dir = std::env::temp_dir().join(format!("uika-rename-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let copy = dir.join("caffeine-dev-abc123.jar");
+    std::fs::copy(&caffeine, &copy).unwrap();
+    let dump = |name: &str, version: &str, file: &std::path::Path| {
+        format!(
+            r#"{{"modules":[{{"module":":app","classesDirs":[],"artifacts":[
+                {{"group":"com.github.ben-manes.caffeine","name":"{name}","version":"{version}","file":"{}"}}
+            ]}}]}}"#,
+            file.display(),
+        )
+    };
+    let before_path = dir.join("before.json");
+    let after_path = dir.join("after.json");
+    std::fs::write(&before_path, dump("caffeine", "3.2.3", &caffeine)).unwrap();
+    std::fs::write(&after_path, dump("caffeine-dev", "abc123", &copy)).unwrap();
+
+    let before = uika::gradle::load_dump(&before_path).unwrap();
+    let after = uika::gradle::load_dump(&after_path).unwrap();
+    let changes = uika::gradle::diff_dumps(&before, &after);
+    assert_eq!(changes.old_jars, vec![caffeine]);
+    assert!(changes.new_jars.is_empty());
+
+    let report = uika::run_check(
+        &changes.old_jars,
+        &changes.new_jars,
+        &after.scan_targets,
+        &after.app_roots,
+    )
+    .unwrap();
+    assert!(
+        report.violations.is_empty(),
+        "violations: {:?}",
+        report.violations
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The ktor-io / coroutines break (see detects_ktor_io_break_against_coroutines_1_11):
 /// the same violation is reachable when the referencing JAR is an application root, and not
 /// proven reachable when the only root is an unrelated JAR that never references it. ktor-io
