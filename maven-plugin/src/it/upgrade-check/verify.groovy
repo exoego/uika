@@ -7,6 +7,10 @@ assert args.isFile() : "stub did not record its arguments: $args"
 assert args.text.contains("--fail-on reachable") :
     "POM <configuration><failOn> was not forwarded to the CLI: ${args.text}"
 
+def excludeFile = new File(basedir, "uika-exclude.toml")
+assert args.text.contains("--exclude-file ${excludeFile.absolutePath}") :
+    "POM <configuration><excludeFiles> was not forwarded to the CLI: ${args.text}"
+
 def log = new File(basedir, "build.log")
 assert log.isFile() : "invoker build log not found: $log"
 // The [INFO] prefix proves the line went through the mojo's logger. Inherited stdio also

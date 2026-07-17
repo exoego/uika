@@ -164,7 +164,11 @@ report:
 So even on a clean tree, the snapshot tool mixes pre-existing dead-code noise
 with the upgrade-caused break, while the upgrade-diff tool narrows to what the
 bump changed. Gating a build on the snapshot means maintaining an exclusion
-list for the noise.
+list for noise that never goes away. uika's own
+[`--exclude-file`](README.md#excluding-known-false-positives---exclude-file)
+is narrower in scope: it suppresses a specific, investigated reference inside
+a break the upgrade actually introduced (e.g. a reflection-only field access),
+not permanent unrelated noise like the conscrypt/bouncycastle case above.
 
 ## 3. Stress: large flat classpath (~2,400 JARs / ~2M classes)
 

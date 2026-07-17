@@ -62,6 +62,10 @@ pub enum Command {
         /// Included artifacts and build outputs are added to the scan targets
         #[arg(long)]
         classpath_file: Vec<PathBuf>,
+        /// TOML file(s) of known false positives to suppress (e.g. reflection-only member
+        /// access). May be specified multiple times; rules from all files are merged
+        #[arg(long)]
+        exclude_file: Vec<PathBuf>,
         #[arg(long)]
         json: bool,
         /// When to exit non-zero: never, reachable (only reachable violations),
@@ -79,6 +83,10 @@ pub enum Command {
         /// Resolved classpath JSON after the update
         #[arg(long)]
         after: PathBuf,
+        /// TOML file(s) of known false positives to suppress (e.g. reflection-only member
+        /// access). May be specified multiple times; rules from all files are merged
+        #[arg(long)]
+        exclude_file: Vec<PathBuf>,
         #[arg(long)]
         json: bool,
         /// When to exit non-zero: never, reachable (only reachable violations),

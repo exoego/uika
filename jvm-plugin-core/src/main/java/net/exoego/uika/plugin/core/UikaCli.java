@@ -88,9 +88,12 @@ public final class UikaCli {
      *
      * @param failOn when the CLI should exit non-zero ({@code never}, {@code reachable}, or
      *     {@code any}); passed through as {@code --fail-on}. Null or blank leaves the CLI default.
+     * @param excludeFiles TOML files of known false positives to suppress, passed through as
+     *     repeated {@code --exclude-file} flags. Null or empty adds nothing.
      */
     public static int runUpgradeCheck(Path binary, Path before, Path after, String failOn,
-            Consumer<String> output) throws IOException, InterruptedException {
+            List<Path> excludeFiles, Consumer<String> output)
+            throws IOException, InterruptedException {
         List<String> command = new ArrayList<>(List.of(
                 binary.toString(), "upgrade-check",
                 "--before", before.toString(),
@@ -98,6 +101,12 @@ public final class UikaCli {
         if (failOn != null && !failOn.isBlank()) {
             command.add("--fail-on");
             command.add(failOn);
+        }
+        if (excludeFiles != null) {
+            for (Path excludeFile : excludeFiles) {
+                command.add("--exclude-file");
+                command.add(excludeFile.toString());
+            }
         }
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.redirectErrorStream(true);

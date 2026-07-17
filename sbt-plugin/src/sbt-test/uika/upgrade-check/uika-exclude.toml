@@ -1,0 +1,3 @@
+[[exclude]]
+owner = "lib/C"
+reason = "test fixture for the uikaExcludeFiles scripted test"

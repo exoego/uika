@@ -20,6 +20,9 @@ pub struct CheckReport {
     pub scanned_classes: usize,
     /// Number of references that reached a type outside the index and could not be proven unbroken.
     pub unknown_refs: usize,
+    /// Number of violations dropped by --exclude-file rules. Always 0 here; the caller
+    /// (lib.rs::run_check) applies exclude rules after check_scanned returns and overwrites this.
+    pub suppressed: usize,
     /// True when class-load reachability was computed, so each violation carries a reachable flag.
     pub reachability_computed: bool,
     /// Whether any application root matched a scanned class, when reachability was computed.
@@ -411,6 +414,7 @@ pub fn check_scanned(
         warnings: all_warnings,
         scanned_classes,
         unknown_refs,
+        suppressed: 0,
         reachability_computed: reach_result.is_some(),
         app_roots_matched: reach_result.as_ref().map(|r| r.app_root_matched),
     }
