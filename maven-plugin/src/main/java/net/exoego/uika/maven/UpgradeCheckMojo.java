@@ -18,6 +18,7 @@ import org.eclipse.aether.resolution.ArtifactResolutionException;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -44,6 +45,14 @@ public final class UpgradeCheckMojo extends AbstractMojo {
     @Parameter(property = "uika.failOn", defaultValue = "any")
     private String failOn;
 
+    /**
+     * TOML files of known false positives to suppress, passed as repeated {@code --exclude-file}.
+     * Configured as a nested list ({@code <excludeFiles><excludeFile>...</excludeFile></excludeFiles>})
+     * since Maven properties do not support lists.
+     */
+    @Parameter
+    private List<File> excludeFiles = new ArrayList<>();
+
     @Parameter(defaultValue = "${repositorySystemSession}", readonly = true, required = true)
     private RepositorySystemSession repositorySession;
 
@@ -69,11 +78,12 @@ public final class UpgradeCheckMojo extends AbstractMojo {
 
         Path installDir = Path.of(session.getExecutionRootDirectory(),
                 "target", "uika", "cli-" + cliVersion + "-" + classifier);
+        List<Path> excludeFilePaths = excludeFiles.stream().map(File::toPath).toList();
         int exit;
         try {
             Path binary = UikaCli.extractBinary(zip.toPath(), installDir);
             exit = UikaCli.runUpgradeCheck(binary, before.toPath(), after.toPath(), failOn,
-                    line -> getLog().info(line));
+                    excludeFilePaths, line -> getLog().info(line));
         } catch (IOException e) {
             throw new MojoExecutionException("failed to run uika upgrade-check", e);
         } catch (InterruptedException e) {

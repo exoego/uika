@@ -7,6 +7,9 @@ ThisBuild / uikaCliVersion := "9.9.9"
 // Declarative config in build.sbt (not the default "any"): must reach the CLI as --fail-on.
 ThisBuild / uikaFailOn := "reachable"
 
+// Declarative config in build.sbt: must reach the CLI as repeated --exclude-file flags.
+ThisBuild / uikaExcludeFiles := Seq(baseDirectory.value / "uika-exclude.toml")
+
 resolvers += "uika-stub" at (baseDirectory.value / "repo").toURI.toString
 
 lazy val prepareStubRepo = taskKey[Unit]("Writes stub uika-cli ZIPs into the file-based test repository")
@@ -42,6 +45,16 @@ checkFailOnPassed := {
   val args = IO.read(baseDirectory.value / "before.json.args")
   if (!args.contains("--fail-on reachable"))
     sys.error(s"uikaFailOn setting was not forwarded to the CLI: $args")
+}
+
+lazy val checkExcludeFilesPassed = taskKey[Unit]("Asserts the uikaExcludeFiles setting reached the CLI as --exclude-file")
+
+// The build.sbt setting uikaExcludeFiles must be forwarded to the CLI invocation.
+checkExcludeFilesPassed := {
+  val args = IO.read(baseDirectory.value / "before.json.args")
+  val expected = (baseDirectory.value / "uika-exclude.toml").getAbsolutePath
+  if (!args.contains(s"--exclude-file $expected"))
+    sys.error(s"uikaExcludeFiles setting was not forwarded to the CLI: $args")
 }
 
 lazy val checkCliOutputLogged = taskKey[Unit]("Asserts the stub CLI's output went through the task logger")

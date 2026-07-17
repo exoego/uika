@@ -27,9 +27,13 @@
         <groupId>net.exoego.uika</groupId>
         <artifactId>uika-maven-plugin</artifactId>
         <version>@project.version@</version>
-        <!-- Declarative config in the POM (not a -D property): must reach the CLI fail-on flag. -->
+        <!-- Declarative config in the POM (not a -D property): must reach the CLI fail-on flag
+             and the exclude file list. -->
         <configuration>
           <failOn>reachable</failOn>
+          <excludeFiles>
+            <excludeFile>${project.basedir}/uika-exclude.toml</excludeFile>
+          </excludeFiles>
         </configuration>
       </plugin>
     </plugins>

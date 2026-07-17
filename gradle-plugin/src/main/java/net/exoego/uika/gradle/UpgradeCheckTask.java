@@ -5,12 +5,15 @@ import org.gradle.api.DefaultTask;
 import org.gradle.api.GradleException;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.ModuleDependency;
+import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.InputFile;
+import org.gradle.api.tasks.InputFiles;
 import org.gradle.api.tasks.Internal;
+import org.gradle.api.tasks.Optional;
 import org.gradle.api.tasks.PathSensitive;
 import org.gradle.api.tasks.PathSensitivity;
 import org.gradle.api.tasks.TaskAction;
@@ -18,6 +21,7 @@ import org.gradle.work.DisableCachingByDefault;
 
 import java.io.File;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -45,6 +49,12 @@ public abstract class UpgradeCheckTask extends DefaultTask {
     /** When to fail the build: {@code never}, {@code reachable}, or {@code any} (default). */
     @Input
     public abstract Property<String> getFailOn();
+
+    /** TOML files of known false positives to suppress, passed as repeated {@code --exclude-file}. */
+    @InputFiles
+    @Optional
+    @PathSensitive(PathSensitivity.NONE)
+    public abstract ConfigurableFileCollection getExcludeFiles();
 
     /** Where the binary is extracted, scoped by version and classifier below this directory. */
     @Internal
@@ -74,10 +84,14 @@ public abstract class UpgradeCheckTask extends DefaultTask {
                 .resolve(version + "-" + classifier);
         Path binary = UikaCli.extractBinary(zip.toPath(), installDir);
 
+        List<Path> excludeFiles = getExcludeFiles().getFiles().stream()
+                .map(File::toPath)
+                .toList();
         int exit = UikaCli.runUpgradeCheck(binary,
                 getBeforeFile().get().getAsFile().toPath(),
                 getAfterFile().get().getAsFile().toPath(),
                 getFailOn().getOrElse("any"),
+                excludeFiles,
                 getLogger()::lifecycle);
         if (exit == 1) {
             throw new GradleException("uika upgrade-check found broken references (see output above)");

@@ -17,6 +17,7 @@ object UikaPlugin extends AutoPlugin {
     val uikaOutput = settingKey[File]("Output file for uikaDumpClasspath")
     val uikaCliVersion = settingKey[String]("uika-cli version for uikaUpgradeCheck (defaults to the plugin's own version)")
     val uikaFailOn = settingKey[String]("When uikaUpgradeCheck fails the build: never, reachable, or any (default)")
+    val uikaExcludeFiles = settingKey[Seq[File]]("TOML files of known false positives to suppress, passed as repeated --exclude-file")
     val uikaUpgradeCheck = inputKey[Unit]("Runs uika upgrade-check: uikaUpgradeCheck <before.json> <after.json>")
   }
 
@@ -29,6 +30,7 @@ object UikaPlugin extends AutoPlugin {
     // default must not throw during project load.
     uikaCliVersion := Option(getClass.getPackage.getImplementationVersion).getOrElse(""),
     uikaFailOn := "any",
+    uikaExcludeFiles := Seq.empty,
     uikaUpgradeCheck := {
       val args = Def.spaceDelimited("<before.json> <after.json>").parsed
       if (args.length != 2) sys.error("usage: uikaUpgradeCheck <before.json> <after.json>")
@@ -50,7 +52,8 @@ object UikaPlugin extends AutoPlugin {
         .find(_.getName.endsWith(".zip"))
         .getOrElse(sys.error(s"uika-cli zip not found among ${files.mkString(", ")}"))
       val binary = UikaCli.extractBinary(zip.toPath, (uikaDir / s"cli-$version-$classifier").toPath)
-      UikaCli.runUpgradeCheck(binary, file(args.head).toPath, file(args(1)).toPath, uikaFailOn.value, (line: String) => log.info(line)) match {
+      val excludeFiles = uikaExcludeFiles.value.map(_.toPath).asJava
+      UikaCli.runUpgradeCheck(binary, file(args.head).toPath, file(args(1)).toPath, uikaFailOn.value, excludeFiles, (line: String) => log.info(line)) match {
         case 0 => ()
         case 1 => sys.error("uika upgrade-check found broken references (see output above)")
         case n => sys.error(s"uika upgrade-check failed with exit code $n")

@@ -196,6 +196,47 @@ not compiled, so the ⚠️ labels have no basis), `reachable` again falls back
 to `any` rather than passing every violation off as unreachable. Errors always
 exit 2 regardless of `--fail-on`.
 
+### Excluding known false positives (`--exclude-file`)
+
+Some violations are real breaks in the referenced API but never actually
+matter at runtime, because the only reference resolves through reflection
+the tool cannot see (see [Reachability ranking](#reachability-ranking)).
+commons-logging's `LogFactoryImpl` is the recurring example: it reflectively
+scans a `String[]` of class names at init, so a field like
+`classesToDiscover` shows up as removed even though no bytecode reference to
+it survives.
+
+`--fail-on reachable` already keeps that kind of violation from failing the
+build, but it is still printed on every run. `--exclude-file <path>`
+(repeatable; rules from every file given are merged) drops specific known
+false positives from the report entirely, with a required reason so the
+entry documents itself for whoever reads it next:
+
+```toml
+# uika-exclude.toml
+[[exclude]]
+owner = "org/apache/commons/logging/impl/LogFactoryImpl"
+member = "classesToDiscover"
+reason = "reflectively scanned by LogFactoryImpl at init; never referenced from bytecode"
+
+# owner may end with a single trailing '*' to match a whole package/class prefix;
+# member is optional, and when set matches by name only (covers every overload).
+[[exclude]]
+owner = "org/apache/commons/logging/*"
+reason = "commons-logging uses reflection-based class discovery throughout"
+```
+
+`owner`/`member` use the exact JVM internal names shown in the report itself
+(`/`-separated, `$` for nested classes), so an entry can be copy-pasted
+straight out of a `VIOLATION in ...` or `💡` block. The summary line reports
+how many violations were suppressed (`N suppressed by --exclude-file`), and
+a rule that matched nothing prints a warning, so stale entries do not go
+unnoticed as the checked libraries change.
+
+This is for false positives you have actually investigated, not a shortcut
+around triaging `⚠️  not proven reachable` violations wholesale; use
+`--fail-on reachable` for that instead.
+
 ### Actionable suggestions
 
 `upgrade-check` also attributes each break to the two artifacts involved and
@@ -234,6 +275,11 @@ ever failing the build. Set it in the build file (shown per tool below), or on
 the command line when it is not fixed there (`-PuikaFailOn=`, `set uikaFailOn :=`,
 `-Duika.failOn=`).
 
+Known false positives can be suppressed the same way via
+[`--exclude-file`](#excluding-known-false-positives---exclude-file):
+`excludeFiles` (Gradle task DSL, or `-PuikaExcludeFile=` for a single file),
+`uikaExcludeFiles` (sbt), or `<excludeFiles>` (Maven).
+
 ### Gradle (`gradle-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-gradle-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-gradle-plugin)
 
 Works with Groovy and Kotlin DSL builds (Gradle 9 / JVM 17+).
@@ -256,9 +302,11 @@ plugins {
     id("net.exoego.uika") version "VERSION_PLACEHOLDER"
 }
 
-// Optional: fail only on reachable violations instead of the default `any`.
+// Optional: fail only on reachable violations instead of the default `any`, and
+// suppress known false positives.
 tasks.withType<UpgradeCheckTask>().configureEach {
     failOn.set("reachable")
+    excludeFiles.from("uika-exclude.toml")
 }
 ```
 
@@ -276,8 +324,10 @@ addSbtPlugin("net.exoego.uika" % "sbt-uika" % "VERSION_PLACEHOLDER")
 ```
 
 ```scala
-// build.sbt — optional: fail only on reachable violations instead of the default `any`
+// build.sbt — optional: fail only on reachable violations instead of the default `any`,
+// and suppress known false positives.
 ThisBuild / uikaFailOn := "reachable"
+ThisBuild / uikaExcludeFiles := Seq(baseDirectory.value / "uika-exclude.toml")
 ```
 
 ```console
@@ -294,9 +344,13 @@ $ sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"   # uikaCliVersion set
       <groupId>net.exoego.uika</groupId>
       <artifactId>uika-maven-plugin</artifactId>
       <version>VERSION_PLACEHOLDER</version>
-      <!-- Optional: fail only on reachable violations instead of the default `any`. -->
+      <!-- Optional: fail only on reachable violations instead of the default `any`, and
+           suppress known false positives. -->
       <configuration>
         <failOn>reachable</failOn>
+        <excludeFiles>
+          <excludeFile>${project.basedir}/uika-exclude.toml</excludeFile>
+        </excludeFiles>
       </configuration>
     </plugin>
   </plugins>

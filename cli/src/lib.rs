@@ -2,6 +2,7 @@ pub mod check;
 pub mod classfile;
 pub mod cli;
 pub mod diff;
+pub mod exclude;
 pub mod extract;
 pub mod gradle;
 pub mod index;
@@ -30,6 +31,7 @@ pub fn run(cli: Cli) -> Result<i32> {
             classpath,
             app,
             classpath_file,
+            exclude_file,
             json,
             fail_on,
         } => {
@@ -41,14 +43,23 @@ pub fn run(cli: Cli) -> Result<i32> {
                 app_roots.extend(universe.app_roots);
                 targets.extend(universe.scan_targets);
             }
-            cmd_check(&old, &new, &targets, &app_roots, json, fail_on)
+            cmd_check(
+                &old,
+                &new,
+                &targets,
+                &app_roots,
+                &exclude_file,
+                json,
+                fail_on,
+            )
         }
         Command::UpgradeCheck {
             before,
             after,
+            exclude_file,
             json,
             fail_on,
-        } => cmd_upgrade_check(&before, &after, json, fail_on),
+        } => cmd_upgrade_check(&before, &after, &exclude_file, json, fail_on),
         Command::Dump { path } => cmd_dump(&path),
     }
 }
@@ -91,10 +102,12 @@ fn cmd_check(
     new: &[PathBuf],
     targets: &[PathBuf],
     app_roots: &[PathBuf],
+    exclude_file: &[PathBuf],
     json: bool,
     fail_on: FailOn,
 ) -> Result<i32> {
-    let result = run_check(old, new, targets, app_roots)?;
+    let exclude_rules = exclude::load(exclude_file)?;
+    let result = run_check(old, new, targets, app_roots, &exclude_rules)?;
     if json {
         println!("{}", report::check_json(&result)?);
     } else {
@@ -141,11 +154,14 @@ fn should_fail(
 /// Reachability ranking is only meaningful with application roots to walk from, so it turns
 /// on exactly when they are present (--app or dump build outputs); when on, pass 1 also
 /// collects class-load edges and each violation is tagged with whether its class is reachable.
+/// `exclude_rules` is applied last, after verdicts and reachability, so it is the single place
+/// that decides which known false positives to drop (mirrors reachability's "one policy site").
 pub fn run_check(
     old: &[PathBuf],
     new: &[PathBuf],
     targets: &[PathBuf],
     app_roots: &[PathBuf],
+    exclude_rules: &[exclude::ExcludeRule],
 ) -> Result<check::CheckReport> {
     let reachability = !app_roots.is_empty();
     memstats::report("start");
@@ -197,13 +213,28 @@ pub fn run_check(
     // Read and parse in parallel by chunk, then merge directly into the index.
     let scanned = check::scan_target_paths(&paths, &old_index, reachability)?;
     memstats::report("after scan target indexing");
-    let result = check::check_scanned(scanned, &old_index, &new_index, reach);
+    let mut result = check::check_scanned(scanned, &old_index, &new_index, reach);
+    let stats = exclude::filter(&mut result.violations, exclude_rules);
+    result.suppressed = stats.suppressed;
+    result.warnings.extend(
+        stats
+            .unused
+            .into_iter()
+            .map(|u| format!("exclude rule matched nothing: {u}")),
+    );
     warn_all(&result.warnings);
     Ok(result)
 }
 
 /// Compare before/after dependency dumps and check all changed artifacts at once.
-fn cmd_upgrade_check(before: &Path, after: &Path, json: bool, fail_on: FailOn) -> Result<i32> {
+fn cmd_upgrade_check(
+    before: &Path,
+    after: &Path,
+    exclude_file: &[PathBuf],
+    json: bool,
+    fail_on: FailOn,
+) -> Result<i32> {
+    let exclude_rules = exclude::load(exclude_file)?;
     let before_universe = gradle::load_dump(before)?;
     let after_universe = gradle::load_dump(after)?;
     let changes = gradle::diff_dumps(&before_universe, &after_universe);
@@ -225,6 +256,7 @@ fn cmd_upgrade_check(before: &Path, after: &Path, json: bool, fail_on: FailOn) -
         &changes.new_jars,
         &after_universe.scan_targets,
         &after_universe.app_roots,
+        &exclude_rules,
     )?;
     // Attribute each break to the artifacts involved and propose a fix (coordinates only exist
     // for upgrade-check, so this lives here rather than in the shared run_check).

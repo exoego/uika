@@ -282,9 +282,14 @@ pub fn check_text(report: &CheckReport) -> String {
     } else {
         String::new()
     };
+    let suppressed_note = if report.suppressed > 0 {
+        format!(", {} suppressed by --exclude-file", report.suppressed)
+    } else {
+        String::new()
+    };
     writeln!(
         out,
-        "{}scanned {} classes, {} broken reference(s){reach_note}{unknown_note}",
+        "{}scanned {} classes, {} broken reference(s){reach_note}{unknown_note}{suppressed_note}",
         if has_body { "\n" } else { "" },
         report.scanned_classes,
         report.violations.len()
@@ -344,6 +349,8 @@ struct UpgradeJson<'a> {
     scanned_classes: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     unknown_refs: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suppressed: Option<usize>,
 }
 
 pub fn upgrade_json(
@@ -355,6 +362,7 @@ pub fn upgrade_json(
         violations: result.map(|r| r.violations.as_slice()),
         scanned_classes: result.map(|r| r.scanned_classes),
         unknown_refs: result.map(|r| r.unknown_refs),
+        suppressed: result.map(|r| r.suppressed),
     })?)
 }
 
@@ -364,6 +372,7 @@ struct CheckJson<'a> {
     scanned_classes: usize,
     total: usize,
     unknown_refs: usize,
+    suppressed: usize,
 }
 
 pub fn check_json(report: &CheckReport) -> Result<String> {
@@ -372,6 +381,7 @@ pub fn check_json(report: &CheckReport) -> Result<String> {
         scanned_classes: report.scanned_classes,
         total: report.violations.len(),
         unknown_refs: report.unknown_refs,
+        suppressed: report.suppressed,
     })?)
 }
 
@@ -416,6 +426,7 @@ mod tests {
             warnings: Vec::new(),
             scanned_classes: 100,
             unknown_refs: 0,
+            suppressed: 0,
             reachability_computed: true,
             app_roots_matched: Some(true),
         }
@@ -514,5 +525,24 @@ mod tests {
         assert!(out.contains("  a/Foo"), "\n{out}");
         assert!(out.contains("    -> class removed: x/Gone"), "\n{out}");
         assert!(!out.contains("💡"), "\n{out}");
+    }
+
+    /// The summary line notes suppressed violations only when the count is nonzero.
+    #[test]
+    fn suppressed_note_appears_only_when_nonzero() {
+        let mut r = report(vec![class_violation(
+            "a/Foo",
+            "x/Gone",
+            "class removed",
+            Some(true),
+            None,
+        )]);
+        r.suppressed = 3;
+        let out = check_text(&r);
+        assert!(out.contains("3 suppressed by --exclude-file"), "\n{out}");
+
+        r.suppressed = 0;
+        let out = check_text(&r);
+        assert!(!out.contains("suppressed"), "\n{out}");
     }
 }

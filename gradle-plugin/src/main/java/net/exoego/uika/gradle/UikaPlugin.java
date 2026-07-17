@@ -82,6 +82,10 @@ public class UikaPlugin implements Plugin<Project> {
             }
             Object failOn = root.findProperty("uikaFailOn");
             task.getFailOn().convention(failOn != null ? failOn.toString() : "any");
+            Object excludeFile = root.findProperty("uikaExcludeFile");
+            if (excludeFile != null) {
+                task.getExcludeFiles().from(root.file(excludeFile.toString()));
+            }
             task.getInstallDir().convention(root.getLayout().getBuildDirectory().dir("uika/cli"));
             task.notCompatibleWithConfigurationCache("resolves detached configurations at execution time (PoC)");
         });

@@ -145,6 +145,65 @@ final class UpgradeCheckTaskIntegrationTest {
     }
 
     @Test
+    void passesExcludeFileToCli() throws Exception {
+        Path excludeFile = write(projectDir.resolve("uika-exclude.toml"), """
+                [[exclude]]
+                owner = "lib/C"
+                reason = "test"
+                """);
+
+        BuildResult result = runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION,
+                        "-PuikaExcludeFile=" + excludeFile)
+                .build();
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(args.contains("--exclude-file " + excludeFile),
+                () -> "-PuikaExcludeFile was not forwarded to the CLI: " + args);
+    }
+
+    @Test
+    void excludeFilesConfigurableFromBuildScript() throws Exception {
+        Path excludeFile = write(projectDir.resolve("uika-exclude.toml"), """
+                [[exclude]]
+                owner = "lib/C"
+                reason = "test"
+                """);
+        // Declarative config in build.gradle.kts (the task DSL), no -PuikaExcludeFile.
+        write(projectDir.resolve("build.gradle.kts"), """
+                import net.exoego.uika.gradle.UpgradeCheckTask
+
+                plugins {
+                    id("net.exoego.uika")
+                }
+
+                repositories {
+                    maven {
+                        url = uri("%s")
+                        metadataSources { artifact() }
+                    }
+                }
+
+                tasks.withType<UpgradeCheckTask>().configureEach {
+                    excludeFiles.from("%s")
+                }
+                """.formatted(repoDir.toUri(), excludeFile.toString().replace("\\", "\\\\")));
+
+        BuildResult result = runner(CLEAN_VERSION).build();
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(args.contains("--exclude-file " + excludeFile),
+                () -> "build-script excludeFiles was not forwarded to the CLI: " + args);
+    }
+
+    @Test
     void violationExitCodeFailsTheBuild() {
         BuildResult result = runner(VIOLATION_VERSION).buildAndFail();
 
@@ -180,8 +239,8 @@ final class UpgradeCheckTaskIntegrationTest {
         }
     }
 
-    private static void write(Path path, String text) throws IOException {
+    private static Path write(Path path, String text) throws IOException {
         Files.createDirectories(path.getParent());
-        Files.writeString(path, text, StandardCharsets.UTF_8);
+        return Files.writeString(path, text, StandardCharsets.UTF_8);
     }
 }
