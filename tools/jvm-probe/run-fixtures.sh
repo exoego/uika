@@ -45,5 +45,13 @@ run koin-core-logger-slf4j \
 run okhttp-digest \
     okhttp-3.14.1.jar okhttp-4.0.1.jar \
     okhttp-digest-1.21.jar ":$KOTLIN"
+# pact's "class became final" violation is graph-walk, so it never appears in
+# the verdict stream; this scenario still answer-checks the reference verdicts.
+run pact-junit5-version-lag \
+    junit5-4.2.3.jar junit5-4.2.2.jar \
+    junit5spring-4.2.3.jar ":$KOTLIN"
+run jetty-util-http-skew \
+    jetty-util-9.3.26.v20190403.jar jetty-util-10.0.26.jar \
+    jetty-http-9.4.49.v20220914.jar
 
 echo "probe finished: no false-positive candidates on the fixture scenarios"

@@ -456,6 +456,78 @@ fn reachability_tiers_violation_by_app_roots() {
     );
 }
 
+/// pact-foundation/pact-jvm#1338:
+/// junit5spring 4.2.3 subclasses PactVerificationExtension, which junit5 4.2.3
+/// opened up but 4.2.2 still declares final (Kotlin classes start final). When
+/// the runtime classpath lags at junit5 4.2.2 the subclass cannot load
+/// (IncompatibleClassChangeError). old = the compile-time binding (4.2.3),
+/// new = the lagging runtime resolution (4.2.2).
+#[test]
+fn detects_pact_class_became_final_under_version_lag() {
+    let old_jar = fixture("junit5-4.2.3.jar");
+    let new_jar = fixture("junit5-4.2.2.jar");
+    let spring = fixture("junit5spring-4.2.3.jar");
+
+    let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
+    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+
+    let changes = diff(&old_index, &new_index);
+    assert!(
+        changes.iter().any(|c| matches!(
+            c,
+            BreakingChange::ClassBecameFinal { class }
+                if class.as_str() == "au/com/dius/pact/provider/junit5/PactVerificationExtension"
+        )),
+        "PactVerificationExtension final change is missing from diff"
+    );
+
+    let report = check(&load(&spring).unwrap(), &old_index, &new_index);
+    assert!(
+        report.violations.iter().any(|v| {
+            v.source_class.as_str()
+                == "au/com/dius/pact/provider/spring/junit5/PactVerificationSpringExtension"
+                && v.reference.owner.as_str()
+                    == "au/com/dius/pact/provider/junit5/PactVerificationExtension"
+                && v.reason == "class became final"
+        }),
+        "violations: {:?}",
+        report.violations
+    );
+}
+
+/// Jetty module version skew: jetty-util 10 made ArrayTrie/ArrayTernaryTrie
+/// package-private (and removed the Trie interface) while jetty-http 9.4 still
+/// references them, producing IllegalAccessError/NoClassDefFoundError when the
+/// modules mix on one classpath.
+#[test]
+fn detects_jetty_util_class_access_narrowing() {
+    let old_jar = fixture("jetty-util-9.3.26.v20190403.jar");
+    let new_jar = fixture("jetty-util-10.0.26.jar");
+    let http = fixture("jetty-http-9.4.49.v20220914.jar");
+
+    let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
+    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+
+    let report = check(&load(&http).unwrap(), &old_index, &new_index);
+    assert!(
+        report.violations.iter().any(|v| {
+            v.source_class.as_str() == "org/eclipse/jetty/http/MimeTypes"
+                && v.reference.owner.as_str() == "org/eclipse/jetty/util/ArrayTrie"
+                && v.reason == "class access narrowed"
+        }),
+        "violations: {:?}",
+        report.violations
+    );
+    assert!(
+        report.violations.iter().any(|v| {
+            v.reference.owner.as_str() == "org/eclipse/jetty/util/Trie"
+                && v.reason == "class removed"
+        }),
+        "violations: {:?}",
+        report.violations
+    );
+}
+
 #[test]
 fn unrelated_jar_reports_no_violations() {
     let old_jar = fixture("kotlinx-coroutines-core-jvm-1.7.1.jar");

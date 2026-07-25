@@ -1,0 +1,484 @@
+{
+  "violations": [
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpHeaderValue",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/ArrayTrie"
+      },
+      "reason": "class access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpHeaderValue",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/Trie"
+      },
+      "reason": "class removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpHeaderValue",
+      "reference": {
+        "kind": "method",
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "member": {
+          "name": "<init>",
+          "descriptor": "()V"
+        },
+        "expected_static": false
+      },
+      "reason": "method removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpScheme",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/ArrayTrie"
+      },
+      "reason": "class access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpScheme",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/Trie"
+      },
+      "reason": "class removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpScheme",
+      "reference": {
+        "kind": "method",
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "member": {
+          "name": "<init>",
+          "descriptor": "()V"
+        },
+        "expected_static": false
+      },
+      "reason": "method removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/MimeTypes",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/ArrayTrie"
+      },
+      "reason": "class access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/MimeTypes",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/Trie"
+      },
+      "reason": "class removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/MimeTypes",
+      "reference": {
+        "kind": "method",
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "member": {
+          "name": "<init>",
+          "descriptor": "(I)V"
+        },
+        "expected_static": false
+      },
+      "reason": "method access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpFields",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie"
+      },
+      "reason": "class access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpFields",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/Trie"
+      },
+      "reason": "class removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpFields",
+      "reference": {
+        "kind": "method",
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie",
+        "member": {
+          "name": "<init>",
+          "descriptor": "()V"
+        },
+        "expected_static": false
+      },
+      "reason": "method removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/ResourceHttpContent",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/Trie"
+      },
+      "reason": "class removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpGenerator",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/ArrayTrie"
+      },
+      "reason": "class access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpGenerator",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/Trie"
+      },
+      "reason": "class removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpGenerator",
+      "reference": {
+        "kind": "method",
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "member": {
+          "name": "<init>",
+          "descriptor": "(I)V"
+        },
+        "expected_static": false
+      },
+      "reason": "method access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpField",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/Trie"
+      },
+      "reason": "class removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpURI",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/ArrayTrie"
+      },
+      "reason": "class access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpURI",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/Trie"
+      },
+      "reason": "class removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpURI",
+      "reference": {
+        "kind": "method",
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "member": {
+          "name": "<init>",
+          "descriptor": "()V"
+        },
+        "expected_static": false
+      },
+      "reason": "method removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/PathMap",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie"
+      },
+      "reason": "class access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/PathMap",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/Trie"
+      },
+      "reason": "class removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/PathMap",
+      "reference": {
+        "kind": "method",
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie",
+        "member": {
+          "name": "<init>",
+          "descriptor": "(Z)V"
+        },
+        "expected_static": false
+      },
+      "reason": "method access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/PathMap",
+      "reference": {
+        "kind": "method",
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie",
+        "member": {
+          "name": "<init>",
+          "descriptor": "(Lorg/eclipse/jetty/util/ArrayTernaryTrie;D)V"
+        },
+        "expected_static": false
+      },
+      "reason": "method removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpVersion",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/ArrayTrie"
+      },
+      "reason": "class access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpVersion",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/Trie"
+      },
+      "reason": "class removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpVersion",
+      "reference": {
+        "kind": "method",
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "member": {
+          "name": "<init>",
+          "descriptor": "()V"
+        },
+        "expected_static": false
+      },
+      "reason": "method removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpHeader",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/ArrayTrie"
+      },
+      "reason": "class access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpHeader",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/Trie"
+      },
+      "reason": "class removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpHeader",
+      "reference": {
+        "kind": "method",
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "member": {
+          "name": "<init>",
+          "descriptor": "(I)V"
+        },
+        "expected_static": false
+      },
+      "reason": "method access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpMethod",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/ArrayTrie"
+      },
+      "reason": "class access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpMethod",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie"
+      },
+      "reason": "class access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpMethod",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/Trie"
+      },
+      "reason": "class removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpMethod",
+      "reference": {
+        "kind": "method",
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "member": {
+          "name": "<init>",
+          "descriptor": "(I)V"
+        },
+        "expected_static": false
+      },
+      "reason": "method access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpMethod",
+      "reference": {
+        "kind": "method",
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie",
+        "member": {
+          "name": "<init>",
+          "descriptor": "(ZI)V"
+        },
+        "expected_static": false
+      },
+      "reason": "method access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpParser",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie"
+      },
+      "reason": "class access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpParser",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/ArrayTrie"
+      },
+      "reason": "class access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpParser",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/Trie"
+      },
+      "reason": "class removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpParser",
+      "reference": {
+        "kind": "method",
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie",
+        "member": {
+          "name": "<init>",
+          "descriptor": "(I)V"
+        },
+        "expected_static": false
+      },
+      "reason": "method removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/HttpParser",
+      "reference": {
+        "kind": "method",
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "member": {
+          "name": "<init>",
+          "descriptor": "(I)V"
+        },
+        "expected_static": false
+      },
+      "reason": "method access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/pathmap/PathMappings",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie"
+      },
+      "reason": "class access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/pathmap/PathMappings",
+      "reference": {
+        "kind": "class",
+        "owner": "org/eclipse/jetty/util/Trie"
+      },
+      "reason": "class removed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/pathmap/PathMappings",
+      "reference": {
+        "kind": "method",
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie",
+        "member": {
+          "name": "<init>",
+          "descriptor": "(Z)V"
+        },
+        "expected_static": false
+      },
+      "reason": "method access narrowed"
+    },
+    {
+      "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
+      "source_class": "org/eclipse/jetty/http/pathmap/PathMappings",
+      "reference": {
+        "kind": "method",
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie",
+        "member": {
+          "name": "<init>",
+          "descriptor": "(Lorg/eclipse/jetty/util/ArrayTernaryTrie;D)V"
+        },
+        "expected_static": false
+      },
+      "reason": "method removed"
+    }
+  ],
+  "scanned_classes": 109,
+  "total": 44,
+  "unknown_refs": 14,
+  "suppressed": 0
+}

@@ -122,3 +122,33 @@ fn golden_okhttp_digest() {
         ),
     );
 }
+
+/// pact junit5spring 4.2.3 subclasses a class junit5 4.2.3 opened but 4.2.2
+/// still declares final; runtime lag at 4.2.2 breaks the subclass
+/// (pact-jvm#1338, IncompatibleClassChangeError). old = compile-time binding.
+#[test]
+fn golden_pact_junit5_version_lag() {
+    assert_golden(
+        "pact-junit5-version-lag",
+        &scenario_json(
+            "junit5-4.2.3.jar",
+            "junit5-4.2.2.jar",
+            "junit5spring-4.2.3.jar",
+        ),
+    );
+}
+
+/// jetty-util 10 made the Trie classes package-private and removed the Trie
+/// interface while jetty-http 9.4 still references them (module version skew,
+/// IllegalAccessError/NoClassDefFoundError).
+#[test]
+fn golden_jetty_util_http_skew() {
+    assert_golden(
+        "jetty-util-http-skew",
+        &scenario_json(
+            "jetty-util-9.3.26.v20190403.jar",
+            "jetty-util-10.0.26.jar",
+            "jetty-http-9.4.49.v20220914.jar",
+        ),
+    );
+}

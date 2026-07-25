@@ -165,14 +165,21 @@ public final class Probe {
     static Result probe(Rec rec, ClassLoader loader) {
         try {
             Class<?> owner = Class.forName(dots(rec.ref().owner()), false, loader);
-            if (rec.ref().kind().equals("class")) return Result.LINKS;
             MethodHandles.Lookup lookup = lookupFor(rec, loader);
+            if (rec.ref().kind().equals("class")) {
+                // Class.forName performs no access check; accessClass models the
+                // JVMS 5.4.3.1 CONSTANT_Class resolution check from the referencing
+                // class (a package-private owner in another package must fail).
+                lookup.accessClass(owner);
+                return Result.LINKS;
+            }
             return switch (rec.ref().kind()) {
                 case "method", "interface_method" -> probeMethod(rec.ref(), owner, lookup, loader);
                 case "field" -> probeField(rec, owner, lookup, loader);
                 default -> new Result(Outcome.SKIP, "unknown kind " + rec.ref().kind());
             };
-        } catch (ClassNotFoundException | TypeNotPresentException | LinkageError e) {
+        } catch (ClassNotFoundException | IllegalAccessException | TypeNotPresentException
+                 | LinkageError e) {
             return Result.fails(e);
         } catch (Throwable t) {
             return new Result(Outcome.ERROR, t.toString());

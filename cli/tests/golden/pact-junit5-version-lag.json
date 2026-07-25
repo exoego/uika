@@ -1,0 +1,17 @@
+{
+  "violations": [
+    {
+      "source": "tests/fixtures/junit5spring-4.2.3.jar",
+      "source_class": "au/com/dius/pact/provider/spring/junit5/PactVerificationSpringExtension",
+      "reference": {
+        "kind": "class",
+        "owner": "au/com/dius/pact/provider/junit5/PactVerificationExtension"
+      },
+      "reason": "class became final"
+    }
+  ],
+  "scanned_classes": 10,
+  "total": 1,
+  "unknown_refs": 5,
+  "suppressed": 0
+}
