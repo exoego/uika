@@ -1,4 +1,4 @@
-.PHONY: help build check test fmt fmt-check clean \
+.PHONY: help build check test fmt fmt-check clean probe \
 	cargo-build cargo-release cargo-test cargo-fmt cargo-fmt-check \
 	gradle-build gradle-check gradle-test gradle-clean \
 	sbt-compile sbt-scripted sbt-clean \
@@ -6,6 +6,7 @@
 	native-publish-local stage-all
 
 CARGO ?= cargo
+JAVA ?= mise exec -- java
 GRADLE ?= mise exec -- gradle
 SBT ?= mise exec -- sbt
 MAVEN ?= mise exec -- mvn
@@ -32,6 +33,7 @@ help:
 		'' \
 		'Useful direct targets:' \
 		'  make cargo-release' \
+		'  make probe        Answer-check fixture verdicts against a real JVM' \
 		'  make gradle-check' \
 		'  make sbt-scripted' \
 		'  make maven-verify' \
@@ -65,6 +67,11 @@ cargo-fmt:
 
 cargo-fmt-check:
 	$(CARGO) fmt -- --check
+
+# Debug binary on purpose: probe verdicts are optimization-independent, the
+# fixtures are tiny, and cargo test has already built target/debug in CI.
+probe: cargo-build
+	UIKA=target/debug/uika JAVA="$(JAVA)" sh tools/jvm-probe/run-fixtures.sh
 
 gradle-build:
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) build

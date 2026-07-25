@@ -1,0 +1,22 @@
+{
+  "violations": [
+    {
+      "source": "tests/fixtures/koin-logger-slf4j-3.2.2.jar",
+      "source_class": "org/koin/logger/SLF4JLogger",
+      "reference": {
+        "kind": "method",
+        "owner": "org/koin/core/logger/Logger",
+        "member": {
+          "name": "log",
+          "descriptor": "(Lorg/koin/core/logger/Level;Ljava/lang/String;)V"
+        },
+        "expected_static": false
+      },
+      "reason": "method became final"
+    }
+  ],
+  "scanned_classes": 3,
+  "total": 1,
+  "unknown_refs": 5,
+  "suppressed": 0
+}

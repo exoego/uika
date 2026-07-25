@@ -326,6 +326,7 @@ pub fn check_scanned(
     old: &ApiIndex,
     new: &ApiIndex,
     reach: Option<crate::reach::ReachInputs>,
+    mut verdicts: Option<&mut crate::verdicts::VerdictWriter>,
 ) -> CheckReport {
     crate::memstats::report("after pass 1 (graph + reference records)");
     // Compute reachability marks before the graph is consumed below. Cheap relative to
@@ -371,7 +372,18 @@ pub fn check_scanned(
     let mut seen: FxHashSet<(Sym, Sym, SymbolRef)> = FxHashSet::default();
     for (source, class_name, refs) in records {
         for r in refs {
-            match verdict(r, class_name, &old_scope, &runtime_scope, &graph) {
+            let v = verdict(r, class_name, &old_scope, &runtime_scope, &graph);
+            if let Some(w) = verdicts.as_deref_mut() {
+                let (name, reason) = match &v {
+                    RefVerdict::Ok => ("ok", None),
+                    RefVerdict::Unknown => ("unknown", None),
+                    RefVerdict::Broken(_, reason) => ("broken", Some(*reason)),
+                };
+                // The raw reference, not the collapsed one a Broken verdict may carry:
+                // the stream is an evaluation surface and keeps what the bytecode says.
+                w.record(source, class_name, &r, name, reason);
+            }
+            match v {
                 RefVerdict::Ok => {}
                 RefVerdict::Unknown => unknown_refs += 1,
                 RefVerdict::Broken(reference, reason) => {
@@ -390,6 +402,22 @@ pub fn check_scanned(
         }
     }
     add_final_violations(old, new, &fetched, &graph, &mut violations, &mut seen);
+
+    // Canonical order, sorted by string value (never Sym ids): the reference loop
+    // is already deterministic, but add_final_violations discovers violations in
+    // FxHashMap iteration order, which varies run to run. Sorting here makes the
+    // JSON report (and the golden files pinning it) reproducible.
+    violations.sort_by_cached_key(|v| {
+        (
+            v.source.as_str(),
+            v.source_class.as_str(),
+            v.reference.owner.as_str(),
+            v.reference
+                .member
+                .map(|m| (m.name.as_str(), m.descriptor.as_str())),
+            v.reason.clone(),
+        )
+    });
 
     if let Some(result) = &reach_result {
         for v in &mut violations {
@@ -425,7 +453,7 @@ pub fn check(targets: &[LoadedClass], old: &ApiIndex, new: &ApiIndex) -> CheckRe
     let mut scan = ScanResult::new();
     let parsed = parse_targets(targets, old, &scan.graph, false);
     scan.merge(parsed);
-    check_scanned(scan, old, new, None)
+    check_scanned(scan, old, new, None, None)
 }
 
 enum RefVerdict {

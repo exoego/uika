@@ -1,0 +1,22 @@
+{
+  "violations": [
+    {
+      "source": "tests/fixtures/okhttp-digest-1.21.jar",
+      "source_class": "com/burgstaller/okhttp/digest/DigestAuthenticator",
+      "reference": {
+        "kind": "method",
+        "owner": "okhttp3/internal/http/RequestLine",
+        "member": {
+          "name": "requestPath",
+          "descriptor": "(Lokhttp3/HttpUrl;)Ljava/lang/String;"
+        },
+        "expected_static": true
+      },
+      "reason": "member changed from static to instance"
+    }
+  ],
+  "scanned_classes": 28,
+  "total": 1,
+  "unknown_refs": 0,
+  "suppressed": 0
+}

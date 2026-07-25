@@ -13,6 +13,47 @@ not be relearned by experiment.
 - Regression-test parser and ordering changes by diffing `uika dump <jar>`
   output before/after. Dump order follows physical entry offsets, so sort both
   sides first if the change can affect read order.
+- Golden regression: `cli/tests/golden.rs` pins the full check JSON for the
+  fixture scenarios, so any detection shift fails `cargo test` first. Inspect
+  the diff, verify the semantic change is intended, then re-bless with
+  `UIKA_BLESS=1 cargo test --test golden`. Golden inputs use crate-relative
+  fixture paths (`cli/tests/common/mod.rs::fixture`) so the JSON stays
+  machine-independent; keep it that way. `check_scanned` sorts violations by
+  string value before returning, so the JSON report is canonical — without
+  that sort, graph-walk violations surface in FxHashMap order and the goldens
+  would go flaky at two or more became-final violations.
+- The scenario table (name, old, new, consumer, probe-only extra classpath) is
+  single-sourced in `cli/tests/scenarios.tsv`, read by both `golden.rs` and
+  `tools/jvm-probe/run-fixtures.sh`. Add scenarios there, plus a named golden
+  test and a blessed golden file.
+- `check --verdicts-json <path>` (also on upgrade-check) streams every
+  reference verdict (ok/unknown/broken) as JSON Lines for evaluation. The
+  stream carries the raw constant-pool reference (never the collapsed Class
+  ref a "class removed" violation reports), is written before --exclude-file
+  filtering, and does not include graph-walk final violations (class/method
+  became final). One line per reference record — call-site duplicates are not
+  deduped, so line counts exceed violation counts. It streams one line at a
+  time, so it adds no RSS proportional to the scan. A write failure lets the
+  scan finish but fails the command afterwards; a truncated stream must never
+  pass silently, because the probe would answer-check only a prefix.
+- `make probe` (tools/jvm-probe/run-fixtures.sh, debug binary — verdicts are
+  optimization-independent) answer-checks the fixture scenarios against a real
+  JVM: Probe.java resolves each distinct verdict record via
+  `MethodHandles.privateLookupIn` + findVirtual/findStatic/findGetter... on the
+  new-side classpath and fails on any broken verdict the JVM links (false
+  positive). Broken records that fail on BOTH sides are listed inconclusive,
+  not treated as confirmation (the probe could not reproduce the old-side
+  linkage uika resolved against). ok/unknown records that fail on new are FN
+  candidates only when the old side links them; failing on both sides is
+  pre-existing breakage uika deliberately does not report, and an old-side
+  probe ERROR is surfaced instead of being folded into pre-existing. The
+  koin and pact breaks are graph-walk violations and therefore not probeable;
+  their coverage lives in the integration tests. The probe is evidence, not
+  truth: findVirtual does not model invokespecial, final-field writes are
+  probed as reads when the writer is the declaring class, and an unloadable
+  referencing class downgrades to a caller-context-free public lookup. The
+  Kotlin fixtures need kotlin-stdlib on the probe classpath (vendored in
+  fixtures); the JDK is pinned in `.mise.toml` (probe needs 16+).
 - Tuning knobs: `UIKA_CHUNK` (paths processed concurrently in pass 1; default =
   rayon threads), `UIKA_WINDOW` (fallback zip-reader window size; default
   1 MiB, two windows).
@@ -179,6 +220,7 @@ pass-2 classes are typically below 0.1% of the scan.
 | `cli/src/suggest.rs`   | upgrade-check only: attribute each violation to referencing/removing coordinates (via dump `file->coordinate` and old-jar `class->coordinate`) and build fix advice. |
 | `cli/src/diff.rs`      | Pure old/new API diff. Private members are indexed but excluded from reports.                                                                         |
 | `cli/src/report.rs`    | Text and JSON report formatting.                                                                                                                      |
+| `cli/src/verdicts.rs`  | `check --verdicts-json`: streaming JSON Lines of every reference verdict (evaluation surface for tools/jvm-probe).                                    |
 | `cli/src/memstats.rs`  | Feature-gated counting allocator.                                                                                                                     |
 | `cli/src/gradle.rs`    | Reads dump v1/v2 and computes dependency changes. One coordinate may map to several versions (modules can resolve differently).                       |
 | `cli/src/cli.rs`       | clap definitions: `diff`, `check`, `upgrade-check`, `dump` (`check`/`upgrade-check` take `--reachability`).                                           |
@@ -190,6 +232,7 @@ pass-2 classes are typically below 0.1% of the scan.
 | `binary-publishing/`   | Gradle project staging native CLI ZIPs (`net.exoego.uika:uika-cli`, per-platform classifiers, packaging `pom`) for Maven Central.                     |
 | `jreleaser.yml`        | Signs all locally staged artifacts in-memory and uploads them to Maven Central as one deployment; also attaches CLI ZIPs to the GitHub release.       |
 | `Makefile`             | Cross-component builds and checks; Gradle/sbt/Maven run via `mise exec`, pinned by `.mise.toml`.                                                      |
+| `tools/jvm-probe/`     | Dependency-free Probe.java + run-fixtures.sh (`make probe`): answer-checks verdict streams against a real JVM via MethodHandles.Lookup.               |
 
 ## Gradle Plugin Notes
 

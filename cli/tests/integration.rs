@@ -5,20 +5,14 @@
 //! EventLoopKt.processNextEventInCurrentThread ()J from kotlinx-coroutines 1.7.1,
 //! and that method disappeared in 1.11.0 (causing NoSuchMethodError).
 
-use std::path::PathBuf;
+mod common;
+
+use common::fixture;
 use uika::check::check;
 use uika::diff::diff;
 use uika::index::ApiIndex;
 use uika::input::load;
 use uika::model::{BreakingChange, RefKind};
-
-fn fixture(jar_name: &str) -> PathBuf {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(jar_name);
-    assert!(path.exists(), "fixture not found: {}", path.display());
-    path
-}
 
 #[test]
 fn detects_ktor_io_break_against_coroutines_1_11() {
@@ -280,6 +274,7 @@ fn upgrade_check_reproduces_otel_incident_from_dumps() {
         &after.scan_targets,
         &after.app_roots,
         &[],
+        None,
     )
     .unwrap();
     assert_eq!(
@@ -334,6 +329,7 @@ fn upgrade_check_suggestion_attributes_the_break() {
         &after.scan_targets,
         &after.app_roots,
         &[],
+        None,
     )
     .unwrap();
     uika::suggest::annotate(&mut report.violations, &before, &after, &changes.changes);
@@ -397,6 +393,7 @@ fn coordinate_rename_of_identical_jar_reports_nothing() {
         &after.scan_targets,
         &after.app_roots,
         &[],
+        None,
     )
     .unwrap();
     assert!(
@@ -425,6 +422,7 @@ fn reachability_tiers_violation_by_app_roots() {
         std::slice::from_ref(&ktor_io),
         std::slice::from_ref(&ktor_io),
         &[],
+        None,
     )
     .unwrap();
     assert_eq!(reachable.violations.len(), 1);
@@ -441,6 +439,7 @@ fn reachability_tiers_violation_by_app_roots() {
         &targets,
         std::slice::from_ref(&unrelated),
         &[],
+        None,
     )
     .unwrap();
     assert_eq!(unreachable.violations.len(), 1);
@@ -448,6 +447,78 @@ fn reachability_tiers_violation_by_app_roots() {
         unreachable.violations[0].reachable,
         Some(false),
         "a root that never references BlockingAdapter should leave it not proven reachable"
+    );
+}
+
+/// pact-foundation/pact-jvm#1338:
+/// junit5spring 4.2.3 subclasses PactVerificationExtension, which junit5 4.2.3
+/// opened up but 4.2.2 still declares final (Kotlin classes start final). When
+/// the runtime classpath lags at junit5 4.2.2 the subclass cannot load
+/// (IncompatibleClassChangeError). old = the compile-time binding (4.2.3),
+/// new = the lagging runtime resolution (4.2.2).
+#[test]
+fn detects_pact_class_became_final_under_version_lag() {
+    let old_jar = fixture("junit5-4.2.3.jar");
+    let new_jar = fixture("junit5-4.2.2.jar");
+    let spring = fixture("junit5spring-4.2.3.jar");
+
+    let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
+    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+
+    let changes = diff(&old_index, &new_index);
+    assert!(
+        changes.iter().any(|c| matches!(
+            c,
+            BreakingChange::ClassBecameFinal { class }
+                if class.as_str() == "au/com/dius/pact/provider/junit5/PactVerificationExtension"
+        )),
+        "PactVerificationExtension final change is missing from diff"
+    );
+
+    let report = check(&load(&spring).unwrap(), &old_index, &new_index);
+    assert!(
+        report.violations.iter().any(|v| {
+            v.source_class.as_str()
+                == "au/com/dius/pact/provider/spring/junit5/PactVerificationSpringExtension"
+                && v.reference.owner.as_str()
+                    == "au/com/dius/pact/provider/junit5/PactVerificationExtension"
+                && v.reason == "class became final"
+        }),
+        "violations: {:?}",
+        report.violations
+    );
+}
+
+/// Jetty module version skew: jetty-util 10 made ArrayTrie/ArrayTernaryTrie
+/// package-private (and removed the Trie interface) while jetty-http 9.4 still
+/// references them, producing IllegalAccessError/NoClassDefFoundError when the
+/// modules mix on one classpath.
+#[test]
+fn detects_jetty_util_class_access_narrowing() {
+    let old_jar = fixture("jetty-util-9.3.26.v20190403.jar");
+    let new_jar = fixture("jetty-util-10.0.26.jar");
+    let http = fixture("jetty-http-9.4.49.v20220914.jar");
+
+    let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
+    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+
+    let report = check(&load(&http).unwrap(), &old_index, &new_index);
+    assert!(
+        report.violations.iter().any(|v| {
+            v.source_class.as_str() == "org/eclipse/jetty/http/MimeTypes"
+                && v.reference.owner.as_str() == "org/eclipse/jetty/util/ArrayTrie"
+                && v.reason == "class access narrowed"
+        }),
+        "violations: {:?}",
+        report.violations
+    );
+    assert!(
+        report.violations.iter().any(|v| {
+            v.reference.owner.as_str() == "org/eclipse/jetty/util/Trie"
+                && v.reason == "class removed"
+        }),
+        "violations: {:?}",
+        report.violations
     );
 }
 
