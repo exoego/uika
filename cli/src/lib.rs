@@ -13,6 +13,7 @@ pub mod model;
 pub mod reach;
 pub mod report;
 pub mod suggest;
+pub mod verdicts;
 pub mod window;
 
 use anyhow::Result;
@@ -34,6 +35,7 @@ pub fn run(cli: Cli) -> Result<i32> {
             exclude_file,
             json,
             fail_on,
+            verdicts_json,
         } => {
             let mut targets: Vec<PathBuf> = classpath;
             let mut app_roots: Vec<PathBuf> = app.clone();
@@ -51,6 +53,7 @@ pub fn run(cli: Cli) -> Result<i32> {
                 &exclude_file,
                 json,
                 fail_on,
+                verdicts_json.as_deref(),
             )
         }
         Command::UpgradeCheck {
@@ -97,6 +100,7 @@ fn cmd_diff(old: &Path, new: &Path, json: bool) -> Result<i32> {
     Ok(0)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_check(
     old: &[PathBuf],
     new: &[PathBuf],
@@ -105,9 +109,25 @@ fn cmd_check(
     exclude_file: &[PathBuf],
     json: bool,
     fail_on: FailOn,
+    verdicts_json: Option<&Path>,
 ) -> Result<i32> {
     let exclude_rules = exclude::load(exclude_file)?;
-    let result = run_check(old, new, targets, app_roots, &exclude_rules)?;
+    let mut verdict_writer = verdicts_json
+        .map(verdicts::VerdictWriter::create)
+        .transpose()?;
+    let result = run_check(
+        old,
+        new,
+        targets,
+        app_roots,
+        &exclude_rules,
+        verdict_writer.as_mut(),
+    )?;
+    if let Some(w) = verdict_writer
+        && let Some(warning) = w.finish()
+    {
+        eprintln!("warning: {warning}");
+    }
     if json {
         println!("{}", report::check_json(&result)?);
     } else {
@@ -162,6 +182,7 @@ pub fn run_check(
     targets: &[PathBuf],
     app_roots: &[PathBuf],
     exclude_rules: &[exclude::ExcludeRule],
+    verdicts: Option<&mut verdicts::VerdictWriter>,
 ) -> Result<check::CheckReport> {
     let reachability = !app_roots.is_empty();
     memstats::report("start");
@@ -213,7 +234,7 @@ pub fn run_check(
     // Read and parse in parallel by chunk, then merge directly into the index.
     let scanned = check::scan_target_paths(&paths, &old_index, reachability)?;
     memstats::report("after scan target indexing");
-    let mut result = check::check_scanned(scanned, &old_index, &new_index, reach);
+    let mut result = check::check_scanned(scanned, &old_index, &new_index, reach, verdicts);
     let stats = exclude::filter(&mut result.violations, exclude_rules);
     result.suppressed = stats.suppressed;
     result.warnings.extend(
@@ -257,6 +278,7 @@ fn cmd_upgrade_check(
         &after_universe.scan_targets,
         &after_universe.app_roots,
         &exclude_rules,
+        None,
     )?;
     // Attribute each break to the artifacts involved and propose a fix (coordinates only exist
     // for upgrade-check, so this lives here rather than in the shared run_check).

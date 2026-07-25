@@ -65,5 +65,8 @@ jobs:
       - name: Check
         run: make check
 
+      - name: Probe fixture verdicts against a real JVM
+        run: make probe
+
       - name: Validate binary publishing build
         run: mise exec -- gradle -p binary-publishing help -PuikaVersion=0.0.0-ci

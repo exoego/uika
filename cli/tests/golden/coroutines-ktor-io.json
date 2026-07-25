@@ -1,0 +1,22 @@
+{
+  "violations": [
+    {
+      "source": "tests/fixtures/ktor-io-jvm-2.3.13.jar",
+      "source_class": "io/ktor/utils/io/jvm/javaio/BlockingAdapter",
+      "reference": {
+        "kind": "method",
+        "owner": "kotlinx/coroutines/EventLoopKt",
+        "member": {
+          "name": "processNextEventInCurrentThread",
+          "descriptor": "()J"
+        },
+        "expected_static": true
+      },
+      "reason": "method removed"
+    }
+  ],
+  "scanned_classes": 372,
+  "total": 1,
+  "unknown_refs": 5,
+  "suppressed": 0
+}

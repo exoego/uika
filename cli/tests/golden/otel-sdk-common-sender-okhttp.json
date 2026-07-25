@@ -1,0 +1,17 @@
+{
+  "violations": [
+    {
+      "source": "tests/fixtures/opentelemetry-exporter-sender-okhttp-1.42.1.jar",
+      "source_class": "io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil",
+      "reference": {
+        "kind": "class",
+        "owner": "io/opentelemetry/sdk/internal/DaemonThreadFactory"
+      },
+      "reason": "class removed"
+    }
+  ],
+  "scanned_classes": 15,
+  "total": 1,
+  "unknown_refs": 0,
+  "suppressed": 0
+}

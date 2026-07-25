@@ -280,6 +280,7 @@ fn upgrade_check_reproduces_otel_incident_from_dumps() {
         &after.scan_targets,
         &after.app_roots,
         &[],
+        None,
     )
     .unwrap();
     assert_eq!(
@@ -334,6 +335,7 @@ fn upgrade_check_suggestion_attributes_the_break() {
         &after.scan_targets,
         &after.app_roots,
         &[],
+        None,
     )
     .unwrap();
     uika::suggest::annotate(&mut report.violations, &before, &after, &changes.changes);
@@ -397,6 +399,7 @@ fn coordinate_rename_of_identical_jar_reports_nothing() {
         &after.scan_targets,
         &after.app_roots,
         &[],
+        None,
     )
     .unwrap();
     assert!(
@@ -425,6 +428,7 @@ fn reachability_tiers_violation_by_app_roots() {
         std::slice::from_ref(&ktor_io),
         std::slice::from_ref(&ktor_io),
         &[],
+        None,
     )
     .unwrap();
     assert_eq!(reachable.violations.len(), 1);
@@ -441,6 +445,7 @@ fn reachability_tiers_violation_by_app_roots() {
         &targets,
         std::slice::from_ref(&unrelated),
         &[],
+        None,
     )
     .unwrap();
     assert_eq!(unreachable.violations.len(), 1);

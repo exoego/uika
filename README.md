@@ -588,6 +588,19 @@ OpenTelemetry, Selenium/Guava, okhttp-digest/OkHttp, Koin) against unmodified
 JARs from Maven Central, vendored under `cli/tests/fixtures/` (see its README
 for coordinates, checksums, and licensing).
 
+Golden tests pin the full check JSON for those fixture scenarios
+(`cli/tests/golden/`), so any detection shift fails `cargo test` before it
+ships. After verifying a diff is an intended semantic change, re-bless with
+`UIKA_BLESS=1 cargo test --test golden`.
+
+`make probe` answer-checks the same scenarios against a real JVM.
+`check --verdicts-json <path>` streams every reference verdict
+(ok/unknown/broken) as JSON Lines, and `tools/jvm-probe/Probe.java` resolves
+each reference with `MethodHandles.Lookup` on the new-side and old-side
+classpaths. A verdict uika calls broken that the JVM links fine fails the run
+as a false positive; ok/unknown verdicts that fail on the new side but linked
+on the old side are listed as false-negative candidates for triage.
+
 ## Publishing
 
 Refer [PUBLISHING.md](PUBLISHING.md).

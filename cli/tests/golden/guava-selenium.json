@@ -1,0 +1,36 @@
+{
+  "violations": [
+    {
+      "source": "tests/fixtures/selenium-remote-driver-3.4.0.jar",
+      "source_class": "org/openqa/selenium/net/UrlChecker",
+      "reference": {
+        "kind": "method",
+        "owner": "com/google/common/util/concurrent/SimpleTimeLimiter",
+        "member": {
+          "name": "<init>",
+          "descriptor": "(Ljava/util/concurrent/ExecutorService;)V"
+        },
+        "expected_static": false
+      },
+      "reason": "method access narrowed"
+    },
+    {
+      "source": "tests/fixtures/selenium-remote-driver-3.4.0.jar",
+      "source_class": "org/openqa/selenium/net/UrlChecker",
+      "reference": {
+        "kind": "interface_method",
+        "owner": "com/google/common/util/concurrent/TimeLimiter",
+        "member": {
+          "name": "callWithTimeout",
+          "descriptor": "(Ljava/util/concurrent/Callable;JLjava/util/concurrent/TimeUnit;Z)Ljava/lang/Object;"
+        },
+        "expected_static": false
+      },
+      "reason": "method removed"
+    }
+  ],
+  "scanned_classes": 205,
+  "total": 2,
+  "unknown_refs": 16,
+  "suppressed": 0
+}

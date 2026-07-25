@@ -24,6 +24,9 @@ reports are reproduced from these exact binaries:
   references (anonymous enum bodies calling the private enum constructor, etc.)
   appear as cross-class private accesses in bytecode. Used as a false-positive
   guard: a coordinate rename of the identical JAR must report nothing
+- kotlin-stdlib 2.2.20 is probe support, not a scan input: the Kotlin-built
+  fixtures (coroutines, ktor, koin, okhttp 4) need it on the classpath when
+  `tools/jvm-probe` loads their classes in a real JVM
 
 ## Contents
 
@@ -45,12 +48,14 @@ reports are reproduced from these exact binaries:
 | `io.insert-koin:koin-core-jvm:3.3.0` | `9196b5fda5c463f06429bfd5b4b96e6bab11cca1dbd12d4f9a6b555391ec081d` |
 | `io.insert-koin:koin-logger-slf4j:3.2.2` | `9a3304f6144ad012c0e6a21e410337078b0e5c044a065354799b606dd71cf765` |
 | `com.github.ben-manes.caffeine:caffeine:3.2.3` | `ca70c90a5d1ce1511880ce9c93d4ad22108f61111d3daf91eb52762b571bd179` |
+| `org.jetbrains.kotlin:kotlin-stdlib:2.2.20` | `8836ccffd3585fadda9901244b20d42901d2f3cd581058d8434e2ffabcf3a3e7` |
 
 ## Licensing
 
 All of the above are redistributed unmodified under the Apache License,
 Version 2.0 (see `LICENSE-APACHE-2.0.txt` in this directory):
 
+- Kotlin standard library — Copyright JetBrains s.r.o.
 - kotlinx.coroutines — Copyright JetBrains s.r.o.
 - Ktor — Copyright JetBrains s.r.o.
 - OpenTelemetry Java — Copyright The OpenTelemetry Authors
