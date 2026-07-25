@@ -13,13 +13,13 @@ reports are reproduced from these exact binaries:
   (`NoClassDefFoundError` at runtime)
 - Selenium 3.4.0 calls Guava's `SimpleTimeLimiter(ExecutorService)`
   constructor. Guava 23.0-rc1 made that constructor private
-  (`IllegalAccessError`; SeleniumHQ/selenium#4381)
+  (`IllegalAccessError`; https://github.com/SeleniumHQ/selenium/issues/4381)
 - okhttp-digest 1.21 calls OkHttp's `RequestLine.requestPath(HttpUrl)` as a
   static method. OkHttp 4.0.1 made it an instance method
-  (`IncompatibleClassChangeError`; rburgst/okhttp-digest#57)
+  (`IncompatibleClassChangeError`; https://github.com/rburgst/okhttp-digest/issues/57)
 - koin-logger-slf4j 3.2.2 overrides `Logger.log(Level, String)`. koin-core
   3.3.0 made that method final
-  (`IncompatibleClassChangeError`; InsertKoinIO/koin#1489)
+  (`IncompatibleClassChangeError`; https://github.com/InsertKoinIO/koin/issues/1489)
 - caffeine 3.2.3 is compiled for Java 11+, so its nest-internal private
   references (anonymous enum bodies calling the private enum constructor, etc.)
   appear as cross-class private accesses in bytecode. Used as a false-positive
@@ -27,9 +27,12 @@ reports are reproduced from these exact binaries:
 - pact-jvm junit5spring 4.2.3 subclasses `PactVerificationExtension`, which
   junit5 4.2.3 opened up but junit5 4.2.2 still declares final. When junit5
   lags behind on the runtime classpath the subclass fails to load
-  (`IncompatibleClassChangeError`/`VerifyError`; pact-foundation/pact-jvm#1338).
+  (`IncompatibleClassChangeError`/`VerifyError`; https://github.com/pact-foundation/pact-jvm/issues/1338).
   The old side is junit5 4.2.3 (the compile-time binding) and the new side is
-  4.2.2 (the lagging runtime resolution)
+  4.2.2 (the lagging runtime resolution). junit5spring 4.2.2 covers the same
+  incident in the upgrade direction: the subclass does not exist there yet, so
+  upgrading junit5spring 4.2.2 -> 4.2.3 while junit5 stays at 4.2.2 introduces
+  the broken edge (the version-lag `extends final class` check)
 - jetty-http 9.4.49 references the `ArrayTrie`/`ArrayTernaryTrie` classes and
   the `Trie` interface from jetty-util. jetty-util 10 made the Trie classes
   package-private and removed the interface, so mixing jetty module versions
@@ -68,6 +71,7 @@ reports are reproduced from these exact binaries:
 | `org.jetbrains.kotlin:kotlin-stdlib:2.2.20` | `8836ccffd3585fadda9901244b20d42901d2f3cd581058d8434e2ffabcf3a3e7` |
 | `au.com.dius.pact.provider:junit5:4.2.2` | `d891060fc5ca9c9d954d9f16d61d0beb854d458515f383d5fc5f8e2f1cbb2f4b` |
 | `au.com.dius.pact.provider:junit5:4.2.3` | `5ddb1a3bf4ae29d38ea4b7c649f24bc83ea974fbfb14dd43df4d71f1a2a75add` |
+| `au.com.dius.pact.provider:junit5spring:4.2.2` | `e5f767d2d30bd47365ab6b1dd6651babb5db571b5c16502df57171ffa08895f1` |
 | `au.com.dius.pact.provider:junit5spring:4.2.3` | `0eb746768b82e57e28176c07ee71bebc6adc717df178ce46711545779a4712da` |
 | `org.eclipse.jetty:jetty-util:9.3.26.v20190403` | `2b4c01c9cf018221fb56817e15cbf4f7f5ac7c61bc53ec387b1c237386c27ed7` |
 | `org.eclipse.jetty:jetty-util:10.0.26` | `95e2dc9c0d32f8585814272a32128b5328ca3f2b9c31fd8aae06e3476f253cb5` |

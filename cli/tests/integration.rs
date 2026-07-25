@@ -101,7 +101,7 @@ fn detects_otel_daemon_thread_factory_package_move() {
     assert_eq!(v.reason, "class removed");
 }
 
-/// SeleniumHQ/selenium#4381:
+/// https://github.com/SeleniumHQ/selenium/issues/4381:
 /// Selenium 3.4.0's UrlChecker calls Guava SimpleTimeLimiter's public
 /// constructor. Guava 23.0-rc1 made that constructor private, producing
 /// IllegalAccessError at runtime.
@@ -143,7 +143,7 @@ fn detects_selenium_guava_constructor_access_narrowing() {
     );
 }
 
-/// InsertKoinIO/koin#1489:
+/// https://github.com/InsertKoinIO/koin/issues/1489:
 /// koin-core 3.3.0 made Logger.log(Level, String) final while
 /// koin-logger-slf4j 3.2.2 still overrides it, producing
 /// IncompatibleClassChangeError.
@@ -186,7 +186,7 @@ fn detects_koin_logger_final_method_override() {
     );
 }
 
-/// rburgst/okhttp-digest#57:
+/// https://github.com/rburgst/okhttp-digest/issues/57:
 /// okhttp-digest 1.x calls RequestLine.requestPath as a static OkHttp 3 method.
 /// OkHttp 4.0.x changed RequestLine into a Kotlin object, making requestPath an
 /// instance method and producing IncompatibleClassChangeError.
@@ -450,7 +450,7 @@ fn reachability_tiers_violation_by_app_roots() {
     );
 }
 
-/// pact-foundation/pact-jvm#1338:
+/// https://github.com/pact-foundation/pact-jvm/issues/1338:
 /// junit5spring 4.2.3 subclasses PactVerificationExtension, which junit5 4.2.3
 /// opened up but 4.2.2 still declares final (Kotlin classes start final). When
 /// the runtime classpath lags at junit5 4.2.2 the subclass cannot load
@@ -567,4 +567,99 @@ fn refs_from_shadowed_duplicate_jar_copies_are_not_reported() {
             report.violations
         );
     }
+}
+
+/// Version lag in the upgrade direction (https://github.com/pact-foundation/pact-jvm/issues/1338): upgrading
+/// junit5spring 4.2.2 -> 4.2.3 while junit5 stays at 4.2.2 introduces
+/// PactVerificationSpringExtension, a new subclass of PactVerificationExtension,
+/// which the lagging junit5 still declares final (opened only in 4.2.3). The final
+/// class lives in an artifact the upgrade did not change, so the old/new pair diff
+/// cannot see it; the upgraded artifact's own new classes must be checked against
+/// the resolved classpath.
+#[test]
+fn detects_upgraded_artifact_subclassing_final_class_of_lagging_sibling() {
+    let old_spring = fixture("junit5spring-4.2.2.jar");
+    let new_spring = fixture("junit5spring-4.2.3.jar");
+    let lagging_junit5 = fixture("junit5-4.2.2.jar");
+
+    let report = uika::run_check(
+        &[old_spring],
+        &[new_spring.clone()],
+        &[new_spring, lagging_junit5],
+        &[],
+        &[],
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        report.violations.len(),
+        1,
+        "violations: {:?}",
+        report.violations
+    );
+    let v = &report.violations[0];
+    assert_eq!(
+        v.source_class.as_str(),
+        "au/com/dius/pact/provider/spring/junit5/PactVerificationSpringExtension"
+    );
+    assert_eq!(
+        v.reference.owner.as_str(),
+        "au/com/dius/pact/provider/junit5/PactVerificationExtension"
+    );
+    assert_eq!(v.reason, "extends final class");
+}
+
+/// The old-relative gate for the version-lag check: when the changed artifact's old
+/// version already had the same super edge, the breakage predates the upgrade and
+/// must not be reported (same stance as every other pre-existing inconsistency).
+#[test]
+fn preexisting_final_super_edge_is_not_reported_on_upgrade() {
+    let spring = fixture("junit5spring-4.2.3.jar");
+    let lagging_junit5 = fixture("junit5-4.2.2.jar");
+
+    let dir = std::env::temp_dir().join(format!("uika-lag-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let old_copy = dir.join("junit5spring-old.jar");
+    std::fs::copy(&spring, &old_copy).unwrap();
+
+    let report = uika::run_check(
+        &[old_copy],
+        &[spring.clone()],
+        &[spring, lagging_junit5],
+        &[],
+        &[],
+        None,
+    )
+    .unwrap();
+    assert!(
+        report.violations.is_empty(),
+        "violations: {:?}",
+        report.violations
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// When the sibling is upgraded in lockstep (junit5 4.2.3 opened the class), the
+/// same junit5spring upgrade reports nothing.
+#[test]
+fn lockstep_sibling_upgrade_reports_nothing() {
+    let old_spring = fixture("junit5spring-4.2.2.jar");
+    let new_spring = fixture("junit5spring-4.2.3.jar");
+    let old_junit5 = fixture("junit5-4.2.2.jar");
+    let new_junit5 = fixture("junit5-4.2.3.jar");
+
+    let report = uika::run_check(
+        &[old_spring, old_junit5],
+        &[new_spring.clone(), new_junit5.clone()],
+        &[new_spring, new_junit5],
+        &[],
+        &[],
+        None,
+    )
+    .unwrap();
+    assert!(
+        report.violations.is_empty(),
+        "violations: {:?}",
+        report.violations
+    );
 }

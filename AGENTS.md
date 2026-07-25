@@ -30,9 +30,9 @@ not be relearned by experiment.
   reference verdict (ok/unknown/broken) as JSON Lines for evaluation. The
   stream carries the raw constant-pool reference (never the collapsed Class
   ref a "class removed" violation reports), is written before --exclude-file
-  filtering, and does not include graph-walk final violations (class/method
-  became final). One line per reference record — call-site duplicates are not
-  deduped, so line counts exceed violation counts. It streams one line at a
+  filtering, and does not include graph-walk violations (class/method became
+  final, extends final class). One line per reference record — call-site
+  duplicates are not deduped, so line counts exceed violation counts. It streams one line at a
   time, so it adds no RSS proportional to the scan. A write failure lets the
   scan finish but fails the command afterwards; a truncated stream must never
   pass silently, because the probe would answer-check only a prefix.
@@ -69,6 +69,8 @@ old/new JARs (--old / --new, both repeatable; merged first-wins per side)
   -> ApiIndex x2 (full member tables; library JARs are small enough to hold)
 
 pass 1: stream --classpath / --app / --classpath-file targets in parallel chunks
+  (old JARs found among targets are excluded as stale; new JARs stay in — they
+  are runtime code, and their classes feed the version-lag check)
   -> ClassGraph: class name -> superclass, interfaces, origin
   -> reference records, only where the owner exists in the old index
   (member tables discarded; member names not interned)
@@ -146,6 +148,17 @@ pass-2 classes are typically below 0.1% of the scan.
 - Newly-final classes/methods break scanned subclasses/overriders even without
   a constant-pool reference; `check.rs::add_final_violations` walks the class
   graph for these.
+- Version lag from the upgraded artifacts themselves: classes scanned from
+  new-version JARs get an extra check — newly extending a class that is final
+  on the runtime classpath is `extends final class`
+  (`check.rs::add_extends_final_violations`). The pair diff cannot see this
+  when the final class lives in an artifact the upgrade did not change
+  (https://github.com/pact-foundation/pact-jvm/issues/1338: junit5spring 4.2.3
+  introduced a subclass of a class the lagging junit5 4.2.2 still declares
+  final). Old-relative gate: the same super edge in the changed artifact's old
+  version is pre-existing. A super outside analyzed scope has no access flags
+  and is skipped, the same direction as Unknown. Only the direct superclass
+  matters, because a final class can have no subclasses at any depth.
 - Object-array `Class` references unwrap to the element type; primitive arrays
   are ignored; method refs on array owners are ignored (array methods come from
   Object).
@@ -327,7 +340,7 @@ Expected on a 10-core Apple Silicon Mac:
 
 | Workload                                              |                      Result |  Time |    RSS |
 |-------------------------------------------------------|-----------------------------:|------:|-------:|
-| Stress: ~2,334 JARs / 1.94M classes                   |   ~121 broken / 170 unverified | ~6.7s | ~430MB |
+| Stress: ~2,334 JARs / 1.94M classes                   |   ~302 broken / 294 unverified | ~6.7s | ~460MB |
 | Real project: ~50 modules / 48.5K classes + 38 JARs   |   ~1 broken / 347 unverified | ~0.9s | ~110MB |
 
 Traps already hit in this repository:
