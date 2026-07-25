@@ -8,6 +8,7 @@ pub mod gradle;
 pub mod index;
 pub mod input;
 pub mod intern;
+pub mod jdk;
 pub mod memstats;
 pub mod model;
 pub mod reach;
@@ -35,6 +36,7 @@ pub fn run(cli: Cli) -> Result<i32> {
             exclude_file,
             json,
             fail_on,
+            jdk_release,
             verdicts_json,
         } => {
             let mut targets: Vec<PathBuf> = classpath;
@@ -53,6 +55,7 @@ pub fn run(cli: Cli) -> Result<i32> {
                 &exclude_file,
                 json,
                 fail_on,
+                jdk_release,
                 verdicts_json.as_deref(),
             )
         }
@@ -62,6 +65,7 @@ pub fn run(cli: Cli) -> Result<i32> {
             exclude_file,
             json,
             fail_on,
+            jdk_release,
             verdicts_json,
         } => cmd_upgrade_check(
             &before,
@@ -69,6 +73,7 @@ pub fn run(cli: Cli) -> Result<i32> {
             &exclude_file,
             json,
             fail_on,
+            jdk_release,
             verdicts_json.as_deref(),
         ),
         Command::Dump { path } => cmd_dump(&path),
@@ -117,6 +122,7 @@ fn cmd_check(
     exclude_file: &[PathBuf],
     json: bool,
     fail_on: FailOn,
+    jdk_release: Option<u32>,
     verdicts_json: Option<&Path>,
 ) -> Result<i32> {
     let exclude_rules = exclude::load(exclude_file)?;
@@ -129,6 +135,7 @@ fn cmd_check(
         targets,
         app_roots,
         &exclude_rules,
+        jdk_release,
         verdict_writer.as_mut(),
     );
     let result = finish_verdicts(verdict_writer, result)?;
@@ -207,10 +214,23 @@ pub fn run_check(
     targets: &[PathBuf],
     app_roots: &[PathBuf],
     exclude_rules: &[exclude::ExcludeRule],
+    jdk_release: Option<u32>,
     verdicts: Option<&mut verdicts::VerdictWriter>,
 ) -> Result<check::CheckReport> {
     let reachability = !app_roots.is_empty();
     memstats::report("start");
+    let jdk_indexer = match jdk_release {
+        Some(release) => {
+            let ct_sym = jdk::find_ct_sym().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--jdk-release {release} needs a JDK: set JAVA_HOME to a JDK home, \
+                     or UIKA_JDK to a JDK home or a ct.sym file"
+                )
+            })?;
+            Some(jdk::JdkIndexer::open(&ct_sym, release)?)
+        }
+        None => None,
+    };
     let old_index = build_index_multi(old)?;
     let new_index = build_index_multi(new)?;
     memstats::report("after old/new index build");
@@ -284,6 +304,7 @@ pub fn run_check(
         &old_index,
         &new_index,
         &upgraded_sources,
+        jdk_indexer.as_ref(),
         reach,
         verdicts,
     );
@@ -306,6 +327,7 @@ fn cmd_upgrade_check(
     exclude_file: &[PathBuf],
     json: bool,
     fail_on: FailOn,
+    jdk_release: Option<u32>,
     verdicts_json: Option<&Path>,
 ) -> Result<i32> {
     let exclude_rules = exclude::load(exclude_file)?;
@@ -334,6 +356,7 @@ fn cmd_upgrade_check(
         &after_universe.scan_targets,
         &after_universe.app_roots,
         &exclude_rules,
+        jdk_release,
         verdict_writer.as_mut(),
     );
     let mut result = finish_verdicts(verdict_writer, result)?;

@@ -574,6 +574,15 @@ artifact, and copies bundled inside fat JARs are not false positives.
 References that escape into unanalyzed classes are counted as "unverified"
 rather than silently ignored.
 
+Most escapes lead into the JDK. Passing `--jdk-release N` (on `check` and
+`upgrade-check`) layers the JDK API of release N under the resolution scope,
+read from the `ct.sym` file of the JDK found via `JAVA_HOME` or `UIKA_JDK`,
+so those references conclude as OK or broken instead of unverified. N must be
+older than the installed JDK (its own release is not in `ct.sym`). The layer
+sits under both the old and the new side, so gaps in `ct.sym` cancel out
+instead of producing false positives. Without the flag nothing changes, and
+uika still needs no JVM to run.
+
 ## Development
 
 ```console

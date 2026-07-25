@@ -220,8 +220,17 @@ pub fn scan_target_paths(
 /// Enumerate classes that reference resolution may visit on the hierarchy graph.
 /// Before member tables are fetched, Found cannot terminate traversal early, so take the
 /// full reachable closure (a conservative upper bound).
-fn collect_wanted(scan: &ScanResult, old: &ApiIndex, new: &ApiIndex) -> FxHashSet<Sym> {
+/// The second returned set holds hierarchy escapes: classes traversal reached that are in
+/// no analyzed scope (mostly JDK types). Only collected when `collect_escapes` is set
+/// (they become the roots of the opt-in JDK index).
+fn collect_wanted(
+    scan: &ScanResult,
+    old: &ApiIndex,
+    new: &ApiIndex,
+    collect_escapes: bool,
+) -> (FxHashSet<Sym>, FxHashSet<Sym>) {
     let mut wanted = FxHashSet::default();
+    let mut escapes = FxHashSet::default();
     let mut memo: FxHashSet<(Sym, bool)> = FxHashSet::default();
     for (_, _, refs) in &scan.records {
         for r in refs {
@@ -249,12 +258,14 @@ fn collect_wanted(scan: &ScanResult, old: &ApiIndex, new: &ApiIndex) -> FxHashSe
                             queue.push_back(s);
                         }
                         queue.extend(scan.graph.interfaces_of(node).iter().copied());
+                    } else if collect_escapes {
+                        escapes.insert(class);
                     }
                 }
             }
         }
     }
-    wanted
+    (wanted, escapes)
 }
 
 fn collect_final_wanted(
@@ -371,6 +382,7 @@ pub fn check_scanned(
     old: &ApiIndex,
     new: &ApiIndex,
     upgraded_sources: &FxHashSet<Sym>,
+    jdk: Option<&crate::jdk::JdkIndexer>,
     reach: Option<crate::reach::ReachInputs>,
     mut verdicts: Option<&mut crate::verdicts::VerdictWriter>,
 ) -> CheckReport {
@@ -380,10 +392,26 @@ pub fn check_scanned(
     let reach_result = reach
         .as_ref()
         .map(|r| crate::reach::reachable_classes(&scan.graph, r));
-    let mut wanted = collect_wanted(&scan, old, new);
+    let (mut wanted, mut escapes) = collect_wanted(&scan, old, new, jdk.is_some());
     collect_final_wanted(old, new, &scan.graph, &mut wanted);
     let lag_edges = collect_upgraded_super_edges(&scan.graph, upgraded_sources, new, &mut wanted);
+    if jdk.is_some() {
+        // Version-lag supers outside every scope: without the JDK layer their access
+        // flags are unknowable and the check skips them; with it they participate.
+        for (_, super_name, _) in &lag_edges {
+            if !new.classes.contains_key(super_name) && !scan.graph.contains(*super_name) {
+                escapes.insert(*super_name);
+            }
+        }
+    }
     let (fetched, fetch_warnings) = fetch_members(&scan, &wanted);
+    // The JDK index is built from the escape roots' transitive closure inside ct.sym.
+    // It is layered into BOTH scopes below, so ct.sym incompleteness resolves NotFound
+    // on both sides and the old-relative gate keeps it unreported.
+    let (jdk_index, jdk_warnings) = match jdk {
+        Some(indexer) => indexer.fetch_closure(escapes),
+        None => (ApiIndex::new(), Vec::new()),
+    };
     #[cfg(feature = "memstats")]
     {
         let ref_count: usize = scan.records.iter().map(|(_, _, refs)| refs.len()).sum();
@@ -410,9 +438,10 @@ pub fn check_scanned(
         ..
     } = scan;
     all_warnings.extend(fetch_warnings);
+    all_warnings.extend(jdk_warnings);
 
-    let old_scope = Scope::new(vec![old, &fetched]);
-    let runtime_scope = Scope::new(vec![new, &fetched]);
+    let old_scope = Scope::new(vec![old, &fetched, &jdk_index]);
+    let runtime_scope = Scope::new(vec![new, &fetched, &jdk_index]);
 
     let mut violations = Vec::new();
     let mut unknown_refs = 0usize;
@@ -501,7 +530,7 @@ pub fn check(targets: &[LoadedClass], old: &ApiIndex, new: &ApiIndex) -> CheckRe
     let mut scan = ScanResult::new();
     let parsed = parse_targets(targets, old, &scan.graph, false);
     scan.merge(parsed);
-    check_scanned(scan, old, new, &FxHashSet::default(), None, None)
+    check_scanned(scan, old, new, &FxHashSet::default(), None, None, None)
 }
 
 enum RefVerdict {

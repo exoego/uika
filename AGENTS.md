@@ -54,6 +54,19 @@ not be relearned by experiment.
   referencing class downgrades to a caller-context-free public lookup. The
   Kotlin fixtures need kotlin-stdlib on the probe classpath (vendored in
   fixtures); the JDK is pinned in `.mise.toml` (probe needs 16+).
+- `--jdk-release N` (check/upgrade-check) layers a JDK API index under both
+  resolution scopes, built lazily from the escape closure inside the JDK's
+  ct.sym (located via JAVA_HOME/UIKA_JDK; stubs are plain class files, parsed
+  by the normal parser). Strictly opt-in: the default run stays byte-identical
+  (goldens) and the no-JVM claim holds. N must be older than the installed JDK
+  (ct.sym does not carry the current release). Because the SAME index sits in
+  the old and new scope, ct.sym gaps resolve NotFound on both sides and the
+  old-relative gate keeps them unreported — the layer can only conclude
+  Unknowns, never invent violations. Fixture evidence: guava-selenium 16→0,
+  koin 5→0, jetty 14→0 unverified with broken counts unchanged, and the probe
+  links every converted verdict. kotlin/* and spring/* escapes correctly stay
+  Unknown. On the stress workload unverified went 294→0 and 106 real removals
+  surfaced (owners whose hierarchy escapes into java.util.concurrent).
 - Tuning knobs: `UIKA_CHUNK` (paths processed concurrently in pass 1; default =
   rayon threads), `UIKA_WINDOW` (fallback zip-reader window size; default
   1 MiB, two windows).
@@ -82,7 +95,8 @@ pass 2: fetch_members: re-read wanted classes from their origin, build a small
   fetched ApiIndex with member tables
 
 verdict: class existence = new + ClassGraph
-         member resolution = Scope(new, fetched) / Scope(old, fetched)
+         member resolution = Scope(new, fetched[, jdk]) / Scope(old, fetched[, jdk])
+         (jdk = opt-in ct.sym layer from --jdk-release, same data on both sides)
 ```
 
 The memory win is not holding member tables for the whole consumer classpath;
@@ -103,7 +117,9 @@ pass-2 classes are typically below 0.1% of the scan.
   copies in fat JARs are not violations.
 - Unknown is conservative OK: if traversal escapes analyzed scope or pass-2
   fetching fails, count the reference as unverified; never report it broken or
-  drop it silently.
+  drop it silently. `--jdk-release` shrinks the escape set by resolving JDK
+  types from ct.sym; escapes into anything else (kotlin-stdlib off the scan,
+  spring, servlet APIs) still end as Unknown.
 - References that did not resolve against old are pre-existing inconsistency,
   not breakage introduced by the upgrade.
 - Duplicate class names are first-wins in input path order (JVM classpath
@@ -238,6 +254,7 @@ pass-2 classes are typically below 0.1% of the scan.
 | `cli/src/extract.rs`   | `RawClass` -> API surface / hierarchy data / reference records; owner filter applied inline to avoid throwaway allocations.                           |
 | `cli/src/index.rs`     | `ApiIndex`, `ClassGraph`, `Scope`; member/interface tables in shared arenas with range refs and binary search.                                        |
 | `cli/src/check.rs`     | Two-pass orchestration: `scan_target_paths`, `collect_wanted`, `fetch_members`, verdicts.                                                             |
+| `cli/src/jdk.rs`       | Opt-in JDK API layer (`--jdk-release`): ct.sym release selection + lazy closure fetch into an ApiIndex layered under both scopes.                      |
 | `cli/src/reach.rs`     | Class-load reachability (on when app roots exist): `META-INF/services` collection + BFS from app roots over the `ClassGraph` edge arena. Ranks, never drops. |
 | `cli/src/suggest.rs`   | upgrade-check only: attribute each violation to referencing/removing coordinates (via dump `file->coordinate` and old-jar `class->coordinate`) and build fix advice. |
 | `cli/src/diff.rs`      | Pure old/new API diff. Private members are indexed but excluded from reports.                                                                         |

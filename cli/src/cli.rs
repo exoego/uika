@@ -72,6 +72,11 @@ pub enum Command {
         /// or any (any violation, default)
         #[arg(long, value_enum, default_value_t = FailOn::default())]
         fail_on: FailOn,
+        /// Resolve hierarchy escapes into the JDK API of this release (8-35, older than
+        /// the installed JDK) instead of counting them unverified. Reads ct.sym from
+        /// $JAVA_HOME or $UIKA_JDK
+        #[arg(long)]
+        jdk_release: Option<u32>,
         /// Evaluation: stream every reference verdict (ok/unknown/broken) as JSON Lines
         /// to this file, for answer-checking against a real JVM (tools/jvm-probe)
         #[arg(long)]
@@ -97,6 +102,11 @@ pub enum Command {
         /// or any (any violation, default)
         #[arg(long, value_enum, default_value_t = FailOn::default())]
         fail_on: FailOn,
+        /// Resolve hierarchy escapes into the JDK API of this release (8-35, older than
+        /// the installed JDK) instead of counting them unverified. Reads ct.sym from
+        /// $JAVA_HOME or $UIKA_JDK
+        #[arg(long)]
+        jdk_release: Option<u32>,
         /// Evaluation: stream every reference verdict (ok/unknown/broken) as JSON Lines
         /// to this file, for answer-checking against a real JVM (tools/jvm-probe)
         #[arg(long)]
