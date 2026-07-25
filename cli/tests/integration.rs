@@ -538,3 +538,33 @@ fn unrelated_jar_reports_no_violations() {
         report.violations
     );
 }
+
+/// Two versions of the same library on one classpath: duplicate class names are
+/// first-wins, and the JVM never loads the shadowed copies. sisu 0.3.4's
+/// SpaceScanner$1 extends its shaded asm ClassVisitor, while sisu 1.0.0's extends
+/// the real org.objectweb.asm.ClassVisitor and calls its protected super(int)
+/// (public in asm 8, protected in asm 9). With 0.3.4 winning, judging the shadowed
+/// 1.0.0 copy's super() call against the winner's non-subclass hierarchy reported
+/// a false "method access narrowed"; neither classpath order breaks at runtime.
+#[test]
+fn refs_from_shadowed_duplicate_jar_copies_are_not_reported() {
+    let old_jar = fixture("asm-8.0.1.jar");
+    let new_jar = fixture("asm-9.10.1.jar");
+    let sisu_034 = fixture("org.eclipse.sisu.inject-0.3.4.jar");
+    let sisu_100 = fixture("org.eclipse.sisu.inject-1.0.0.jar");
+
+    let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
+    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+
+    for order in [[&sisu_034, &sisu_100], [&sisu_100, &sisu_034]] {
+        let mut targets = load(order[0]).unwrap();
+        targets.extend(load(order[1]).unwrap());
+        let report = check(&targets, &old_index, &new_index);
+        assert!(
+            report.violations.is_empty(),
+            "order {:?}: violations: {:?}",
+            order.map(|p| p.file_name().unwrap()),
+            report.violations
+        );
+    }
+}

@@ -35,6 +35,12 @@ reports are reproduced from these exact binaries:
   package-private and removed the interface, so mixing jetty module versions
   breaks (`IllegalAccessError`/`NoClassDefFoundError`). One consumer covers
   class access narrowed, class removed, and method access narrowed at once
+- sisu.inject 0.3.4 shades asm, while sisu.inject 1.0.0 subclasses the real
+  `org.objectweb.asm.ClassVisitor`, whose `int` constructor asm 9 narrowed
+  from public to protected. Used as a false-positive guard for duplicate class
+  names: with both sisu versions on one classpath the JVM loads only the
+  first-wins copy, so references from the shadowed copy must not be reported
+  in either classpath order
 - kotlin-stdlib 2.2.20 is probe support, not a scan input: the Kotlin-built
   fixtures (coroutines, ktor, koin, okhttp 4, pact) need it on the classpath
   when `tools/jvm-probe` loads their classes in a real JVM
@@ -66,11 +72,17 @@ reports are reproduced from these exact binaries:
 | `org.eclipse.jetty:jetty-util:9.3.26.v20190403` | `2b4c01c9cf018221fb56817e15cbf4f7f5ac7c61bc53ec387b1c237386c27ed7` |
 | `org.eclipse.jetty:jetty-util:10.0.26` | `95e2dc9c0d32f8585814272a32128b5328ca3f2b9c31fd8aae06e3476f253cb5` |
 | `org.eclipse.jetty:jetty-http:9.4.49.v20220914` | `c39bfec2941a45396bd67da1aea53ea587c97ca31fdcee0d8ea4351b9f043704` |
+| `org.ow2.asm:asm:8.0.1` | `ca5b8d11569e53921b0e3486469e7c674361c79845dad3d514f38ab6e0c8c10a` |
+| `org.ow2.asm:asm:9.10.1` | `ed825d10ab1399c8c0cb669e688cf0c8c82629b4c8399b58352b68e92ca10fcb` |
+| `org.eclipse.sisu:org.eclipse.sisu.inject:0.3.4` | `8c0e6aa7f35593016f2c5e78b604b57f023cdaca3561fe2fe36f2b5dbbae1d16` |
+| `org.eclipse.sisu:org.eclipse.sisu.inject:1.0.0` | `3ab8d7bfe68f3b6ec95c1a0a47e628edbc9d76e90634cb0a0ba121fbb11b8e42` |
 
 ## Licensing
 
-All of the above are redistributed unmodified under the Apache License,
-Version 2.0 (see `LICENSE-APACHE-2.0.txt` in this directory):
+All of the above are redistributed unmodified. These JARs are test data only;
+they are not linked into or shipped with uika.
+
+Under the Apache License, Version 2.0 (`LICENSE-APACHE-2.0.txt`):
 
 - Kotlin standard library — Copyright JetBrains s.r.o.
 - kotlinx.coroutines — Copyright JetBrains s.r.o.
@@ -86,4 +98,13 @@ Version 2.0 (see `LICENSE-APACHE-2.0.txt` in this directory):
 - Eclipse Jetty — Copyright Mort Bay Consulting Pty Ltd and others
   (dual-licensed EPL-2.0 / Apache-2.0; redistributed here under Apache-2.0)
 
-These JARs are test data only; they are not linked into or shipped with uika.
+Under the BSD 3-Clause License (`LICENSE-BSD-3-CLAUSE-ASM.txt`):
+
+- ASM — Copyright INRIA, France Telecom
+
+Under the Eclipse Public License:
+
+- Eclipse Sisu 0.3.4 — Copyright Sonatype, Inc. and others
+  (EPL-1.0, `LICENSE-EPL-1.0.txt`)
+- Eclipse Sisu 1.0.0 — Copyright the Eclipse Sisu contributors
+  (EPL-2.0, `LICENSE-EPL-2.0.txt`)

@@ -106,6 +106,15 @@ pass-2 classes are typically below 0.1% of the scan.
   not breakage introduced by the upgrade.
 - Duplicate class names are first-wins in input path order (JVM classpath
   semantics); chunks are merged in path order to keep this deterministic.
+  A losing duplicate definition is dropped whole — hierarchy, entry location,
+  and its reference records — because the JVM never loads that copy. Judging a
+  shadowed copy's bytecode against the winner's hierarchy produced false
+  positives (sisu 0.3.4 shades asm while sisu 1.0.0 subclasses the real
+  `ClassVisitor`; with 0.3.4 winning, 1.0.0's protected `super(int)` call
+  looked like a method-access-narrowed violation). Guarded by
+  `refs_from_shadowed_duplicate_jar_copies_are_not_reported` on real JARs.
+  This also means the verdicts stream only carries references from winning
+  definitions.
 - `InvokeDynamic` NameAndType entries are bootstrap synthetic names, not symbol
   references. `MethodHandle` entries point at Methodref-like constants, so
   constant-pool scanning covers them naturally.
@@ -318,7 +327,7 @@ Expected on a 10-core Apple Silicon Mac:
 
 | Workload                                              |                      Result |  Time |    RSS |
 |-------------------------------------------------------|-----------------------------:|------:|-------:|
-| Stress: ~2,489 JARs / 2.2M classes                    | ~1050 broken / 1626 unverified | ~9.5s | ~490MB |
+| Stress: ~2,334 JARs / 1.94M classes                   |   ~121 broken / 170 unverified | ~6.7s | ~430MB |
 | Real project: ~50 modules / 48.5K classes + 38 JARs   |   ~1 broken / 347 unverified | ~0.9s | ~110MB |
 
 Traps already hit in this repository:

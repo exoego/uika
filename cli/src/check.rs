@@ -142,21 +142,30 @@ impl ScanResult {
     /// Fold parsed results into the graph (duplicate class names are first-wins = JVM classpath resolution order).
     fn merge(&mut self, parsed: ParsedTargets) {
         for t in parsed.targets {
-            if let Some((super_name, interfaces, nest_host)) = t.hierarchy
-                && self.graph.insert_if_absent(
+            // A definition that loses first-wins never loads at runtime, so its
+            // references are dropped along with its hierarchy. Keeping them would
+            // judge another version's bytecode against the winner's hierarchy
+            // (e.g. a copy whose same-named class has a different superclass),
+            // which produced false positives.
+            let won = match t.hierarchy {
+                Some((super_name, interfaces, nest_host)) => self.graph.insert_if_absent(
                     t.class_name,
                     super_name,
                     &interfaces,
                     &t.edges,
                     nest_host,
                     t.source,
-                )
-                && let Some(entry) = t.entry_override
-            {
-                self.entry_overrides.insert(t.class_name, entry);
-            }
-            if !t.refs.is_empty() {
-                self.records.push((t.source, t.class_name, t.refs));
+                ),
+                // Parse-time skip: the class name was already in the graph before this chunk.
+                None => false,
+            };
+            if won {
+                if let Some(entry) = t.entry_override {
+                    self.entry_overrides.insert(t.class_name, entry);
+                }
+                if !t.refs.is_empty() {
+                    self.records.push((t.source, t.class_name, t.refs));
+                }
             }
         }
         self.warnings.extend(parsed.warnings);
@@ -1253,6 +1262,46 @@ mod tests {
             &ClassGraph::new(),
         );
         assert!(matches!(v, RefVerdict::Ok));
+    }
+
+    #[test]
+    fn refs_from_first_wins_losing_duplicates_are_dropped() {
+        let class_name = intern("dup/C");
+        let target = |source: &str, super_name: &str| ParsedTarget {
+            source: intern(source),
+            class_name,
+            hierarchy: Some((Some(intern(super_name)), vec![], None)),
+            entry_override: None,
+            refs: vec![method_ref("lib/A", "m", "()V")],
+            edges: vec![],
+        };
+
+        // Same chunk: both copies carry a hierarchy; merge order decides the winner.
+        let mut scan = ScanResult::new();
+        scan.merge(ParsedTargets {
+            targets: vec![
+                target("first.jar", "lib/Base"),
+                target("second.jar", "other/Base"),
+            ],
+            warnings: vec![],
+            scanned_classes: 2,
+        });
+        // Later chunk: the graph already had the class at parse time, so hierarchy is None.
+        let mut late = target("third.jar", "other/Base");
+        late.hierarchy = None;
+        scan.merge(ParsedTargets {
+            targets: vec![late],
+            warnings: vec![],
+            scanned_classes: 1,
+        });
+
+        // Only the winning copy defines the node and keeps its references; the
+        // JVM never loads the shadowed copies, so their references must not be
+        // judged (against the winner's hierarchy) at all.
+        let node = scan.graph.get(class_name).unwrap();
+        assert_eq!(node.source.as_str(), "first.jar");
+        let record_sources: Vec<&str> = scan.records.iter().map(|(s, _, _)| s.as_str()).collect();
+        assert_eq!(record_sources, ["first.jar"]);
     }
 
     #[test]
