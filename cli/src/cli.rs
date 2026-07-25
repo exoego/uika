@@ -97,6 +97,10 @@ pub enum Command {
         /// or any (any violation, default)
         #[arg(long, value_enum, default_value_t = FailOn::default())]
         fail_on: FailOn,
+        /// Evaluation: stream every reference verdict (ok/unknown/broken) as JSON Lines
+        /// to this file, for answer-checking against a real JVM (tools/jvm-probe)
+        #[arg(long)]
+        verdicts_json: Option<PathBuf>,
     },
     /// Debugging: dump the API surface extracted from a JAR or directory
     Dump { path: PathBuf },

@@ -68,8 +68,10 @@ cargo-fmt:
 cargo-fmt-check:
 	$(CARGO) fmt -- --check
 
-probe: cargo-release
-	UIKA=target/release/uika JAVA="$(JAVA)" sh tools/jvm-probe/run-fixtures.sh
+# Debug binary on purpose: probe verdicts are optimization-independent, the
+# fixtures are tiny, and cargo test has already built target/debug in CI.
+probe: cargo-build
+	UIKA=target/debug/uika JAVA="$(JAVA)" sh tools/jvm-probe/run-fixtures.sh
 
 gradle-build:
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) build

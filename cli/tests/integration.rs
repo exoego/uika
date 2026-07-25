@@ -5,20 +5,14 @@
 //! EventLoopKt.processNextEventInCurrentThread ()J from kotlinx-coroutines 1.7.1,
 //! and that method disappeared in 1.11.0 (causing NoSuchMethodError).
 
-use std::path::PathBuf;
+mod common;
+
+use common::fixture;
 use uika::check::check;
 use uika::diff::diff;
 use uika::index::ApiIndex;
 use uika::input::load;
 use uika::model::{BreakingChange, RefKind};
-
-fn fixture(jar_name: &str) -> PathBuf {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(jar_name);
-    assert!(path.exists(), "fixture not found: {}", path.display());
-    path
-}
 
 #[test]
 fn detects_ktor_io_break_against_coroutines_1_11() {

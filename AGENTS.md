@@ -17,25 +17,43 @@ not be relearned by experiment.
   fixture scenarios, so any detection shift fails `cargo test` first. Inspect
   the diff, verify the semantic change is intended, then re-bless with
   `UIKA_BLESS=1 cargo test --test golden`. Golden inputs use crate-relative
-  fixture paths so the JSON stays machine-independent; keep it that way.
-- `check --verdicts-json <path>` streams every reference verdict
-  (ok/unknown/broken) as JSON Lines for evaluation. The stream carries the raw
-  constant-pool reference (never the collapsed Class ref a "class removed"
-  violation reports), is written before --exclude-file filtering, and does not
-  include graph-walk final violations (class/method became final). It streams
-  one line at a time, so it adds no RSS proportional to the scan.
-- `make probe` (tools/jvm-probe/run-fixtures.sh) answer-checks the fixture
-  scenarios against a real JVM: Probe.java resolves each verdict record via
+  fixture paths (`cli/tests/common/mod.rs::fixture`) so the JSON stays
+  machine-independent; keep it that way. `check_scanned` sorts violations by
+  string value before returning, so the JSON report is canonical — without
+  that sort, graph-walk violations surface in FxHashMap order and the goldens
+  would go flaky at two or more became-final violations.
+- The scenario table (name, old, new, consumer, probe-only extra classpath) is
+  single-sourced in `cli/tests/scenarios.tsv`, read by both `golden.rs` and
+  `tools/jvm-probe/run-fixtures.sh`. Add scenarios there, plus a named golden
+  test and a blessed golden file.
+- `check --verdicts-json <path>` (also on upgrade-check) streams every
+  reference verdict (ok/unknown/broken) as JSON Lines for evaluation. The
+  stream carries the raw constant-pool reference (never the collapsed Class
+  ref a "class removed" violation reports), is written before --exclude-file
+  filtering, and does not include graph-walk final violations (class/method
+  became final). One line per reference record — call-site duplicates are not
+  deduped, so line counts exceed violation counts. It streams one line at a
+  time, so it adds no RSS proportional to the scan. A write failure lets the
+  scan finish but fails the command afterwards; a truncated stream must never
+  pass silently, because the probe would answer-check only a prefix.
+- `make probe` (tools/jvm-probe/run-fixtures.sh, debug binary — verdicts are
+  optimization-independent) answer-checks the fixture scenarios against a real
+  JVM: Probe.java resolves each distinct verdict record via
   `MethodHandles.privateLookupIn` + findVirtual/findStatic/findGetter... on the
   new-side classpath and fails on any broken verdict the JVM links (false
-  positive). ok/unknown records that fail on new are FN candidates only when
-  the old-side classpath links them; failing on both sides is pre-existing
-  breakage uika deliberately does not report. The probe is evidence, not
+  positive). Broken records that fail on BOTH sides are listed inconclusive,
+  not treated as confirmation (the probe could not reproduce the old-side
+  linkage uika resolved against). ok/unknown records that fail on new are FN
+  candidates only when the old side links them; failing on both sides is
+  pre-existing breakage uika deliberately does not report, and an old-side
+  probe ERROR is surfaced instead of being folded into pre-existing. The
+  koin and pact breaks are graph-walk violations and therefore not probeable;
+  their coverage lives in the integration tests. The probe is evidence, not
   truth: findVirtual does not model invokespecial, final-field writes are
   probed as reads when the writer is the declaring class, and an unloadable
   referencing class downgrades to a caller-context-free public lookup. The
-  scenario list must stay in sync with cli/tests/golden.rs, and the Kotlin
-  fixtures need kotlin-stdlib on the probe classpath (vendored in fixtures).
+  Kotlin fixtures need kotlin-stdlib on the probe classpath (vendored in
+  fixtures); the JDK is pinned in `.mise.toml` (probe needs 16+).
 - Tuning knobs: `UIKA_CHUNK` (paths processed concurrently in pass 1; default =
   rayon threads), `UIKA_WINDOW` (fallback zip-reader window size; default
   1 MiB, two windows).

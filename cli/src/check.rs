@@ -403,6 +403,22 @@ pub fn check_scanned(
     }
     add_final_violations(old, new, &fetched, &graph, &mut violations, &mut seen);
 
+    // Canonical order, sorted by string value (never Sym ids): the reference loop
+    // is already deterministic, but add_final_violations discovers violations in
+    // FxHashMap iteration order, which varies run to run. Sorting here makes the
+    // JSON report (and the golden files pinning it) reproducible.
+    violations.sort_by_cached_key(|v| {
+        (
+            v.source.as_str(),
+            v.source_class.as_str(),
+            v.reference.owner.as_str(),
+            v.reference
+                .member
+                .map(|m| (m.name.as_str(), m.descriptor.as_str())),
+            v.reason.clone(),
+        )
+    });
+
     if let Some(result) = &reach_result {
         for v in &mut violations {
             v.reachable = Some(crate::reach::is_reachable(&result.marks, v.source_class));

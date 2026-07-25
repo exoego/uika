@@ -6,20 +6,25 @@
 # verdicts that fail on the new side but link on the old side are listed as
 # false-negative candidates for triage.
 #
-# Scenario list mirrors cli/tests/golden.rs; keep them in sync. kotlin-stdlib is
-# probe support for the Kotlin-built fixtures (see cli/tests/fixtures/README.md).
+# Scenarios come from cli/tests/scenarios.tsv, shared with cli/tests/golden.rs.
+# Graph-walk violations (koin's "method became final", pact's "class became
+# final") never enter the verdict stream, so those scenarios' actual breaking
+# change is NOT answer-checked here; the probe covers their reference verdicts
+# only. Run from the repository root (make probe does).
 set -eu
 
-UIKA=${UIKA:-target/release/uika}
+UIKA=${UIKA:-target/debug/uika}
 JAVA=${JAVA:-java}
 FIX=cli/tests/fixtures
 OUT=${OUT:-target/probe}
-KOTLIN=$FIX/kotlin-stdlib-2.2.20.jar
+SCENARIOS=cli/tests/scenarios.tsv
+TAB=$(printf '\t')
 mkdir -p "$OUT"
 
-# run <name> <old-jar> <new-jar> <consumer-jar> [shared-classpath-suffix]
-run() {
-    name=$1; old=$2; new=$3; consumer=$4; shared=${5:-}
+while IFS="$TAB" read -r name old new consumer extra; do
+    case $name in ''|'#'*) continue ;; esac
+    shared=""
+    [ "$extra" != "-" ] && shared=":$FIX/$extra"
     echo "== $name"
     "$UIKA" check --old "$FIX/$old" --new "$FIX/$new" --classpath "$FIX/$consumer" \
         --verdicts-json "$OUT/$name.jsonl" --fail-on never >/dev/null
@@ -28,30 +33,6 @@ run() {
         --classpath "$FIX/$new:$FIX/$consumer$shared" \
         --old-classpath "$FIX/$old:$FIX/$consumer$shared" \
         --fail-on-fp
-}
-
-run coroutines-ktor-io \
-    kotlinx-coroutines-core-jvm-1.7.1.jar kotlinx-coroutines-core-jvm-1.11.0.jar \
-    ktor-io-jvm-2.3.13.jar ":$KOTLIN"
-run otel-sdk-common-sender-okhttp \
-    opentelemetry-sdk-common-1.42.1.jar opentelemetry-sdk-common-1.60.1.jar \
-    opentelemetry-exporter-sender-okhttp-1.42.1.jar
-run guava-selenium \
-    guava-22.0.jar guava-23.0-rc1.jar \
-    selenium-remote-driver-3.4.0.jar
-run koin-core-logger-slf4j \
-    koin-core-jvm-3.2.2.jar koin-core-jvm-3.3.0.jar \
-    koin-logger-slf4j-3.2.2.jar ":$KOTLIN"
-run okhttp-digest \
-    okhttp-3.14.1.jar okhttp-4.0.1.jar \
-    okhttp-digest-1.21.jar ":$KOTLIN"
-# pact's "class became final" violation is graph-walk, so it never appears in
-# the verdict stream; this scenario still answer-checks the reference verdicts.
-run pact-junit5-version-lag \
-    junit5-4.2.3.jar junit5-4.2.2.jar \
-    junit5spring-4.2.3.jar ":$KOTLIN"
-run jetty-util-http-skew \
-    jetty-util-9.3.26.v20190403.jar jetty-util-10.0.26.jar \
-    jetty-http-9.4.49.v20220914.jar
+done < "$SCENARIOS"
 
 echo "probe finished: no false-positive candidates on the fixture scenarios"

@@ -1,0 +1,12 @@
+# Golden/probe scenario table: name, old jar, new jar, consumer jar, probe-only
+# extra classpath jar ("-" for none). Tab-separated. Single source of truth,
+# consumed by cli/tests/golden.rs and tools/jvm-probe/run-fixtures.sh; the extra
+# column is probe support (kotlin-stdlib for Kotlin-built fixtures) and has no
+# golden-side meaning.
+coroutines-ktor-io	kotlinx-coroutines-core-jvm-1.7.1.jar	kotlinx-coroutines-core-jvm-1.11.0.jar	ktor-io-jvm-2.3.13.jar	kotlin-stdlib-2.2.20.jar
+otel-sdk-common-sender-okhttp	opentelemetry-sdk-common-1.42.1.jar	opentelemetry-sdk-common-1.60.1.jar	opentelemetry-exporter-sender-okhttp-1.42.1.jar	-
+guava-selenium	guava-22.0.jar	guava-23.0-rc1.jar	selenium-remote-driver-3.4.0.jar	-
+koin-core-logger-slf4j	koin-core-jvm-3.2.2.jar	koin-core-jvm-3.3.0.jar	koin-logger-slf4j-3.2.2.jar	kotlin-stdlib-2.2.20.jar
+okhttp-digest	okhttp-3.14.1.jar	okhttp-4.0.1.jar	okhttp-digest-1.21.jar	kotlin-stdlib-2.2.20.jar
+pact-junit5-version-lag	junit5-4.2.3.jar	junit5-4.2.2.jar	junit5spring-4.2.3.jar	kotlin-stdlib-2.2.20.jar
+jetty-util-http-skew	jetty-util-9.3.26.v20190403.jar	jetty-util-10.0.26.jar	jetty-http-9.4.49.v20220914.jar	-

@@ -2,9 +2,17 @@
 //!
 //! Evaluation surface for tools/jvm-probe: each line carries the raw reference as
 //! extracted from the constant pool (never collapsed the way report violations
-//! are) plus the verdict it received. Lines are streamed as verdicts are
-//! computed, so memory stays flat regardless of scan size. Exclude rules do not
-//! apply here; they filter the report, not the verdict stream.
+//! are) plus the verdict it received. One line is emitted per reference record —
+//! the constant-pool pass plus one per scanned instruction, without call-site
+//! dedup — so a member invoked from N sites yields N identical lines while the
+//! report dedups them into one violation; consumers must not equate line counts
+//! with violation counts. Lines are streamed as verdicts are computed, so memory
+//! stays flat regardless of scan size. Exclude rules do not apply here; they
+//! filter the report, not the verdict stream.
+//!
+//! A write failure latches: the scan continues (the report is still produced)
+//! but the command fails afterwards, because a silently truncated stream would
+//! let an answer-check pass on a prefix of the verdicts.
 
 use crate::intern::Sym;
 use crate::model::SymbolRef;
@@ -23,11 +31,15 @@ struct VerdictRecord<'a> {
     reason: Option<&'static str>,
 }
 
-/// Writes one JSON line per reference verdict. A write failure is remembered and
-/// surfaced once by `finish` instead of aborting the check mid-scan.
+/// Writes one JSON line per reference verdict. `out` is `Err` once the stream
+/// has failed, holding the first failure message; the two states are mutually
+/// exclusive by construction, and `record` is a no-op after a failure.
 pub struct VerdictWriter {
-    out: Option<Box<dyn Write>>,
-    error: Option<String>,
+    out: std::result::Result<Box<dyn Write>, String>,
+}
+
+fn truncated(e: impl std::fmt::Display) -> String {
+    format!("verdicts output failed, stream truncated: {e}")
 }
 
 impl VerdictWriter {
@@ -35,8 +47,7 @@ impl VerdictWriter {
         let file = std::fs::File::create(path)
             .with_context(|| format!("cannot create verdicts output {}", path.display()))?;
         Ok(Self {
-            out: Some(Box::new(BufWriter::new(file))),
-            error: None,
+            out: Ok(Box::new(BufWriter::new(file))),
         })
     }
 
@@ -48,7 +59,6 @@ impl VerdictWriter {
         verdict: &'static str,
         reason: Option<&'static str>,
     ) {
-        let Some(out) = self.out.as_mut() else { return };
         let rec = VerdictRecord {
             source,
             source_class,
@@ -56,24 +66,24 @@ impl VerdictWriter {
             verdict,
             reason,
         };
-        let result = (|| -> std::io::Result<()> {
-            serde_json::to_writer(&mut *out, &rec)?;
-            out.write_all(b"\n")
-        })();
+        let result = match &mut self.out {
+            Ok(out) => (|| -> std::io::Result<()> {
+                serde_json::to_writer(&mut **out, &rec)?;
+                out.write_all(b"\n")
+            })(),
+            Err(_) => return,
+        };
         if let Err(e) = result {
-            self.error = Some(format!("verdicts output failed, stream truncated: {e}"));
-            self.out = None;
+            self.out = Err(truncated(e));
         }
     }
 
-    /// Flush and return the deferred write error, if any.
-    pub fn finish(mut self) -> Option<String> {
-        if let Some(out) = self.out.as_mut()
-            && let Err(e) = out.flush()
-        {
-            return Some(format!("verdicts output failed, stream truncated: {e}"));
+    /// Flush and return the failure message if the stream failed at any point.
+    pub fn finish(self) -> Option<String> {
+        match self.out {
+            Ok(mut out) => out.flush().err().map(truncated),
+            Err(msg) => Some(msg),
         }
-        self.error.take()
     }
 }
 
@@ -135,5 +145,35 @@ mod tests {
         assert!(second.get("reason").is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_failure_latches_and_finish_reports_it() {
+        struct FailingWriter;
+        impl Write for FailingWriter {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("disk full"))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut w = VerdictWriter {
+            out: Ok(Box::new(FailingWriter)),
+        };
+        let r = SymbolRef {
+            kind: RefKind::Class,
+            owner: intern("com/example/Owner"),
+            member: None,
+            expected_static: None,
+            field_write: None,
+        };
+        w.record(intern("a.jar"), intern("com/example/C"), &r, "ok", None);
+        // Latched: further records are no-ops, and finish surfaces the first error.
+        w.record(intern("a.jar"), intern("com/example/C"), &r, "ok", None);
+        let msg = w.finish().expect("failure must be reported");
+        assert!(msg.contains("stream truncated"), "{msg}");
+        assert!(msg.contains("disk full"), "{msg}");
     }
 }

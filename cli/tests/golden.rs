@@ -4,38 +4,53 @@
 //! is an intended semantic change, re-bless with
 //! `UIKA_BLESS=1 cargo test --test golden`.
 //!
-//! Inputs are loaded via paths relative to the crate root (cargo runs tests
-//! there) so the `source` strings inside the JSON stay machine-independent.
+//! Scenario jar triples live in tests/scenarios.tsv, shared with
+//! tools/jvm-probe/run-fixtures.sh so the golden and probe scenario lists cannot
+//! drift. Inputs are loaded via crate-relative paths (see common::fixture) so
+//! the `source` strings inside the JSON stay machine-independent.
 
-use std::path::{Path, PathBuf};
+mod common;
+
+use common::fixture;
+use std::path::Path;
 use uika::check::check;
 use uika::index::ApiIndex;
 use uika::input::load;
 use uika::report::check_json;
 
-fn fixture(jar_name: &str) -> PathBuf {
-    let path = PathBuf::from("tests/fixtures").join(jar_name);
-    assert!(
-        path.exists(),
-        "fixture not found: {} (tests must run from the cli/ crate root)",
-        path.display()
-    );
-    path
+/// (old, new, consumer) jar names for a scenario in tests/scenarios.tsv.
+fn scenario(name: &str) -> (String, String, String) {
+    for line in include_str!("scenarios.tsv").lines() {
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        let fields: Vec<&str> = line.split('\t').collect();
+        assert!(fields.len() == 5, "malformed scenarios.tsv line: {line}");
+        if fields[0] == name {
+            return (
+                fields[1].to_string(),
+                fields[2].to_string(),
+                fields[3].to_string(),
+            );
+        }
+    }
+    panic!("scenario not found in tests/scenarios.tsv: {name}");
 }
 
 /// Parse warnings are intentionally not part of the golden surface; guava
 /// fixtures produce a few and the integration tests already pin the important
 /// warning-free cases.
-fn scenario_json(old: &str, new: &str, target: &str) -> String {
-    let (old_index, _) = ApiIndex::from_classes(&load(&fixture(old)).unwrap());
-    let (new_index, _) = ApiIndex::from_classes(&load(&fixture(new)).unwrap());
-    let report = check(&load(&fixture(target)).unwrap(), &old_index, &new_index);
+fn scenario_json(name: &str) -> String {
+    let (old, new, target) = scenario(name);
+    let (old_index, _) = ApiIndex::from_classes(&load(&fixture(&old)).unwrap());
+    let (new_index, _) = ApiIndex::from_classes(&load(&fixture(&new)).unwrap());
+    let report = check(&load(&fixture(&target)).unwrap(), &old_index, &new_index);
     check_json(&report).unwrap()
 }
 
-fn assert_golden(name: &str, actual: &str) {
+fn assert_golden(name: &str) {
+    let actual = format!("{}\n", scenario_json(name));
     let path = Path::new("tests/golden").join(format!("{name}.json"));
-    let actual = format!("{actual}\n");
     if std::env::var_os("UIKA_BLESS").is_some() {
         std::fs::write(&path, &actual).unwrap();
         return;
@@ -57,70 +72,35 @@ fn assert_golden(name: &str, actual: &str) {
 /// coroutines 1.11.0 (NoSuchMethodError).
 #[test]
 fn golden_coroutines_ktor_io() {
-    assert_golden(
-        "coroutines-ktor-io",
-        &scenario_json(
-            "kotlinx-coroutines-core-jvm-1.7.1.jar",
-            "kotlinx-coroutines-core-jvm-1.11.0.jar",
-            "ktor-io-jvm-2.3.13.jar",
-        ),
-    );
+    assert_golden("coroutines-ktor-io");
 }
 
 /// OTel moved DaemonThreadFactory out of sdk.internal between 1.42 and 1.60
 /// (NoClassDefFoundError from the okhttp sender).
 #[test]
 fn golden_otel_sdk_common_sender_okhttp() {
-    assert_golden(
-        "otel-sdk-common-sender-okhttp",
-        &scenario_json(
-            "opentelemetry-sdk-common-1.42.1.jar",
-            "opentelemetry-sdk-common-1.60.1.jar",
-            "opentelemetry-exporter-sender-okhttp-1.42.1.jar",
-        ),
-    );
+    assert_golden("otel-sdk-common-sender-okhttp");
 }
 
 /// Guava 23.0-rc1 made the SimpleTimeLimiter constructor private while Selenium
 /// 3.4.0 still calls it (IllegalAccessError).
 #[test]
 fn golden_guava_selenium() {
-    assert_golden(
-        "guava-selenium",
-        &scenario_json(
-            "guava-22.0.jar",
-            "guava-23.0-rc1.jar",
-            "selenium-remote-driver-3.4.0.jar",
-        ),
-    );
+    assert_golden("guava-selenium");
 }
 
 /// koin-core 3.3.0 made Logger.log final while koin-logger-slf4j 3.2.2 overrides
 /// it (IncompatibleClassChangeError).
 #[test]
 fn golden_koin_core_logger_slf4j() {
-    assert_golden(
-        "koin-core-logger-slf4j",
-        &scenario_json(
-            "koin-core-jvm-3.2.2.jar",
-            "koin-core-jvm-3.3.0.jar",
-            "koin-logger-slf4j-3.2.2.jar",
-        ),
-    );
+    assert_golden("koin-core-logger-slf4j");
 }
 
 /// OkHttp 4.0 turned RequestLine into a Kotlin object, making requestPath an
 /// instance method under okhttp-digest 1.21 (IncompatibleClassChangeError).
 #[test]
 fn golden_okhttp_digest() {
-    assert_golden(
-        "okhttp-digest",
-        &scenario_json(
-            "okhttp-3.14.1.jar",
-            "okhttp-4.0.1.jar",
-            "okhttp-digest-1.21.jar",
-        ),
-    );
+    assert_golden("okhttp-digest");
 }
 
 /// pact junit5spring 4.2.3 subclasses a class junit5 4.2.3 opened but 4.2.2
@@ -128,14 +108,7 @@ fn golden_okhttp_digest() {
 /// (pact-jvm#1338, IncompatibleClassChangeError). old = compile-time binding.
 #[test]
 fn golden_pact_junit5_version_lag() {
-    assert_golden(
-        "pact-junit5-version-lag",
-        &scenario_json(
-            "junit5-4.2.3.jar",
-            "junit5-4.2.2.jar",
-            "junit5spring-4.2.3.jar",
-        ),
-    );
+    assert_golden("pact-junit5-version-lag");
 }
 
 /// jetty-util 10 made the Trie classes package-private and removed the Trie
@@ -143,12 +116,5 @@ fn golden_pact_junit5_version_lag() {
 /// IllegalAccessError/NoClassDefFoundError).
 #[test]
 fn golden_jetty_util_http_skew() {
-    assert_golden(
-        "jetty-util-http-skew",
-        &scenario_json(
-            "jetty-util-9.3.26.v20190403.jar",
-            "jetty-util-10.0.26.jar",
-            "jetty-http-9.4.49.v20220914.jar",
-        ),
-    );
+    assert_golden("jetty-util-http-skew");
 }

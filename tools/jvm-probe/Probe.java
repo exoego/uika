@@ -1,3 +1,4 @@
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
@@ -6,9 +7,13 @@ import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Answer-checks uika verdicts against a real JVM. Reads the JSON Lines stream
@@ -21,16 +26,23 @@ import java.util.Map;
  *   <li>false-negative candidate: uika said ok/unknown, the JVM fails it on the
  *       new side but links it on the old side (without {@code --old-classpath}
  *       every new-side failure is listed, including pre-existing ones uika
- *       deliberately does not report).
+ *       deliberately does not report);
+ *   <li>inconclusive: uika said broken and the probe fails it on BOTH sides —
+ *       the probe could not reproduce the old-side linkage uika resolved
+ *       against (unloadable referencing class, incomplete probe classpath), so
+ *       the new-side failure is not treated as confirmation.
  * </ul>
  *
- * The probe is evidence, not ground truth. Known approximations: findVirtual
- * does not model invokespecial selection; a write to a final field is probed as
- * a read when the writer is the declaring class (the JVM allows it only inside
- * initializers, which the verdict stream cannot see); when the referencing
- * class itself cannot be loaded the probe falls back to a caller-context-free
- * lookup, losing private/protected access rights (two-sided runs cancel the
- * resulting noise out).
+ * The stream carries one line per bytecode call site; identical duplicate
+ * lines are probed and reported once. Graph-walk violations (class/method
+ * became final) never enter the stream, so those breaks are not probeable
+ * here. The probe is evidence, not ground truth. Known approximations:
+ * findVirtual does not model invokespecial selection; a write to a final field
+ * is probed as a read when the writer is the declaring class (the JVM allows
+ * it only inside initializers, which the verdict stream cannot see); when the
+ * referencing class itself cannot be loaded the probe falls back to a
+ * caller-context-free lookup, losing private/protected access rights (the
+ * inconclusive bucket and two-sided pre-existing check absorb the noise).
  *
  * Zero dependencies; run directly: {@code java Probe.java --verdicts v.jsonl
  * --classpath new.jar:consumer.jar [--old-classpath old.jar:consumer.jar]
@@ -75,61 +87,91 @@ public final class Probe {
             System.exit(2);
         }
 
+        int exit;
         try (URLClassLoader newLoader = loader(classpath);
              URLClassLoader oldLoader = oldClasspath == null ? null : loader(oldClasspath)) {
-            int exit = run(verdicts, newLoader, oldLoader, failOnFp);
-            System.exit(exit);
+            exit = run(verdicts, newLoader, oldLoader, failOnFp);
         }
+        System.exit(exit);
     }
 
     static int run(Path verdicts, ClassLoader newLoader, ClassLoader oldLoader, boolean failOnFp)
             throws IOException {
-        // verdict -> outcome -> count
+        // verdict -> outcome -> count, over distinct records
         Map<String, Map<Outcome, Integer>> matrix = new LinkedHashMap<>();
-        List<String> fpCandidates = new ArrayList<>();
-        List<String> fnCandidates = new ArrayList<>();
-        List<String> errors = new ArrayList<>();
+        Set<String> fpCandidates = new LinkedHashSet<>();
+        Set<String> fnCandidates = new LinkedHashSet<>();
+        Set<String> inconclusive = new LinkedHashSet<>();
+        Set<String> errors = new LinkedHashSet<>();
+        Set<String> seen = new HashSet<>();
         int preExisting = 0;
-        int records = 0;
+        long records = 0;
+        long lineNo = 0;
 
-        for (String line : Files.readAllLines(verdicts)) {
-            if (line.isBlank()) continue;
-            records++;
-            Rec rec = parseRec(line);
-            Result result = probe(rec, newLoader);
-            matrix.computeIfAbsent(rec.verdict(), k -> new LinkedHashMap<>())
-                    .merge(result.outcome(), 1, Integer::sum);
-            switch (result.outcome()) {
-                case ERROR -> errors.add(describe(rec) + " -> " + result.detail());
-                case LINKS -> {
-                    if (rec.verdict().equals("broken")) {
-                        fpCandidates.add(describe(rec) + " [" + rec.reason() + "] links fine");
-                    }
+        try (BufferedReader reader = Files.newBufferedReader(verdicts)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                lineNo++;
+                if (line.isBlank()) continue;
+                records++;
+                // One stream line per bytecode call site; identical duplicates get
+                // one probe and one report entry.
+                if (!seen.add(line)) continue;
+                Rec rec;
+                try {
+                    rec = parseRec(line);
+                } catch (RuntimeException e) {
+                    System.err.println(
+                            "malformed verdicts line " + lineNo + " (truncated stream?): " + e);
+                    return 2;
                 }
-                case FAILS -> {
-                    if (!rec.verdict().equals("broken")) {
-                        // Only breakage the change introduced counts: a reference that
-                        // also fails on the old side is pre-existing, which uika
-                        // deliberately does not report.
-                        if (oldLoader != null && probe(rec, oldLoader).outcome() != Outcome.LINKS) {
+                Result result = probe(rec, newLoader);
+                matrix.computeIfAbsent(rec.verdict(), k -> new LinkedHashMap<>())
+                        .merge(result.outcome(), 1, Integer::sum);
+                switch (result.outcome()) {
+                    case ERROR -> errors.add(describe(rec) + " -> " + result.detail());
+                    case LINKS -> {
+                        if (rec.verdict().equals("broken")) {
+                            fpCandidates.add(describe(rec) + " [" + rec.reason() + "] links fine");
+                        }
+                    }
+                    case FAILS -> {
+                        Outcome old = oldLoader == null ? null : probe(rec, oldLoader).outcome();
+                        if (rec.verdict().equals("broken")) {
+                            // A break uika confirmed should link on the old side. When the
+                            // probe cannot even reproduce that, its new-side failure is
+                            // not evidence of agreement (unloadable source class or an
+                            // incomplete probe classpath fails both sides identically).
+                            if (old != null && old != Outcome.LINKS) {
+                                inconclusive.add(describe(rec) + " [" + rec.reason()
+                                        + "] fails on both sides under the probe");
+                            }
+                        } else if (old == Outcome.FAILS) {
+                            // Pre-existing breakage, which uika deliberately does not
+                            // report: the reference fails on both sides.
                             preExisting++;
+                        } else if (old == Outcome.ERROR || old == Outcome.SKIP) {
+                            errors.add(describe(rec) + " -> old-side probe " + old);
                         } else {
                             fnCandidates.add(describe(rec) + " [" + rec.verdict() + "] "
                                     + result.detail());
                         }
                     }
+                    case SKIP -> {}
                 }
-                case SKIP -> {}
             }
         }
 
-        System.out.println("probed " + records + " verdict records from " + verdicts);
+        System.out.println("probed " + records + " verdict records (" + seen.size()
+                + " distinct) from " + verdicts);
         matrix.forEach((verdict, outcomes) -> System.out.println("  " + verdict + ": " + outcomes));
         if (preExisting > 0) {
             System.out.println("  pre-existing failures (fail on both sides, not uika's scope): "
                     + preExisting);
         }
         printList("PROBE ERRORS (probe bug or unsupported shape)", errors);
+        printList("INCONCLUSIVE (uika broken, but the probe cannot reproduce old-side linkage)",
+                inconclusive);
         printList("FP candidates (uika broken, JVM links)", fpCandidates);
         printList("FN candidates (uika ok/unknown, JVM fails"
                 + (oldLoader == null ? "; no --old-classpath, may include pre-existing" : "")
@@ -141,7 +183,7 @@ public final class Probe {
         return 0;
     }
 
-    static void printList(String header, List<String> items) {
+    static void printList(String header, Collection<String> items) {
         if (items.isEmpty()) return;
         System.out.println(header + ":");
         items.forEach(i -> System.out.println("  " + i));
@@ -392,7 +434,13 @@ public final class Probe {
                     case 'r' -> sb.append('\r');
                     case 't' -> sb.append('\t');
                     case 'u' -> {
-                        sb.append((char) Integer.parseInt(s.substring(i, i + 4), 16));
+                        if (i + 4 > s.length()) throw err("truncated \\u escape");
+                        String hex = s.substring(i, i + 4);
+                        try {
+                            sb.append((char) Integer.parseInt(hex, 16));
+                        } catch (NumberFormatException e) {
+                            throw err("bad \\u escape " + hex);
+                        }
                         i += 4;
                     }
                     default -> throw err("bad escape \\" + esc);

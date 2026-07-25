@@ -62,7 +62,15 @@ pub fn run(cli: Cli) -> Result<i32> {
             exclude_file,
             json,
             fail_on,
-        } => cmd_upgrade_check(&before, &after, &exclude_file, json, fail_on),
+            verdicts_json,
+        } => cmd_upgrade_check(
+            &before,
+            &after,
+            &exclude_file,
+            json,
+            fail_on,
+            verdicts_json.as_deref(),
+        ),
         Command::Dump { path } => cmd_dump(&path),
     }
 }
@@ -122,18 +130,35 @@ fn cmd_check(
         app_roots,
         &exclude_rules,
         verdict_writer.as_mut(),
-    )?;
-    if let Some(w) = verdict_writer
-        && let Some(warning) = w.finish()
-    {
-        eprintln!("warning: {warning}");
-    }
+    );
+    let result = finish_verdicts(verdict_writer, result)?;
     if json {
         println!("{}", report::check_json(&result)?);
     } else {
         print!("{}", report::check_text(&result));
     }
     Ok(exit_code(&result, fail_on))
+}
+
+/// Close the verdict stream and surface a stream failure. Always runs `finish` (so the
+/// buffered tail is flushed and the failure is never lost to an early return), then fails
+/// the command when the check itself succeeded: the stream is an explicitly requested
+/// output, and a silently truncated one would let an answer-check pass on a prefix of the
+/// verdicts. When the check already failed, its error stays primary and the stream failure
+/// degrades to a warning.
+fn finish_verdicts(
+    writer: Option<verdicts::VerdictWriter>,
+    result: Result<check::CheckReport>,
+) -> Result<check::CheckReport> {
+    let stream_error = writer.and_then(verdicts::VerdictWriter::finish);
+    match (result, stream_error) {
+        (Ok(_), Some(msg)) => Err(anyhow::anyhow!(msg)),
+        (Err(e), Some(msg)) => {
+            eprintln!("warning: {msg}");
+            Err(e)
+        }
+        (result, None) => result,
+    }
 }
 
 /// Map a finished check to a process exit code per the selected policy. The report itself is
@@ -254,6 +279,7 @@ fn cmd_upgrade_check(
     exclude_file: &[PathBuf],
     json: bool,
     fail_on: FailOn,
+    verdicts_json: Option<&Path>,
 ) -> Result<i32> {
     let exclude_rules = exclude::load(exclude_file)?;
     let before_universe = gradle::load_dump(before)?;
@@ -269,17 +295,21 @@ fn cmd_upgrade_check(
         return Ok(0);
     }
 
+    let mut verdict_writer = verdicts_json
+        .map(verdicts::VerdictWriter::create)
+        .transpose()?;
     // Scan target = the full after runtime classpath + build outputs.
     // Check removed/changed old versions as --old and new versions as --new in one batch.
     // Reachability ranks against the dump's own build outputs (run_check turns it on when present).
-    let mut result = run_check(
+    let result = run_check(
         &changes.old_jars,
         &changes.new_jars,
         &after_universe.scan_targets,
         &after_universe.app_roots,
         &exclude_rules,
-        None,
-    )?;
+        verdict_writer.as_mut(),
+    );
+    let mut result = finish_verdicts(verdict_writer, result)?;
     // Attribute each break to the artifacts involved and propose a fix (coordinates only exist
     // for upgrade-check, so this lives here rather than in the shared run_check).
     suggest::annotate(
