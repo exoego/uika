@@ -274,6 +274,42 @@ fn collect_final_wanted(
     }
 }
 
+/// Direct-super edges of classes scanned from upgraded (new-version) scan targets:
+/// the inputs to the version-lag check in `add_extends_final_violations`. Supers that
+/// only exist on the scanned classpath are added to `wanted` so pass 2 fetches their
+/// access flags. Only the direct superclass matters: a final class has no subclasses,
+/// so a deeper ancestor can never be the broken edge.
+fn collect_upgraded_super_edges(
+    graph: &ClassGraph,
+    upgraded_sources: &FxHashSet<Sym>,
+    new: &ApiIndex,
+    wanted: &mut FxHashSet<Sym>,
+) -> Vec<(Sym, Sym, Sym)> {
+    if upgraded_sources.is_empty() {
+        return Vec::new();
+    }
+    let mut edges = Vec::new();
+    for (class_name, node) in graph.iter() {
+        if !upgraded_sources.contains(&node.source) {
+            continue;
+        }
+        let Some(super_name) = node.super_name else {
+            continue;
+        };
+        if super_name == object_sym() {
+            continue;
+        }
+        // fetch_members requires wanted classes to be in the graph; supers in the
+        // new index are resolved without a fetch, and supers outside both stay
+        // unfetched (the check then skips them, same conservative direction as Unknown).
+        if !new.classes.contains_key(&super_name) && graph.contains(super_name) {
+            wanted.insert(super_name);
+        }
+        edges.push((class_name, super_name, node.source));
+    }
+    edges
+}
+
 /// Pass 2: reread only classes needed for resolution from their origin JAR/directory and
 /// build an index with member tables.
 fn fetch_members(scan: &ScanResult, wanted: &FxHashSet<Sym>) -> (ApiIndex, Vec<String>) {
@@ -334,6 +370,7 @@ pub fn check_scanned(
     scan: ScanResult,
     old: &ApiIndex,
     new: &ApiIndex,
+    upgraded_sources: &FxHashSet<Sym>,
     reach: Option<crate::reach::ReachInputs>,
     mut verdicts: Option<&mut crate::verdicts::VerdictWriter>,
 ) -> CheckReport {
@@ -345,6 +382,7 @@ pub fn check_scanned(
         .map(|r| crate::reach::reachable_classes(&scan.graph, r));
     let mut wanted = collect_wanted(&scan, old, new);
     collect_final_wanted(old, new, &scan.graph, &mut wanted);
+    let lag_edges = collect_upgraded_super_edges(&scan.graph, upgraded_sources, new, &mut wanted);
     let (fetched, fetch_warnings) = fetch_members(&scan, &wanted);
     #[cfg(feature = "memstats")]
     {
@@ -411,6 +449,7 @@ pub fn check_scanned(
         }
     }
     add_final_violations(old, new, &fetched, &graph, &mut violations, &mut seen);
+    add_extends_final_violations(&lag_edges, old, &runtime_scope, &mut violations, &mut seen);
 
     // Canonical order, sorted by string value (never Sym ids): the reference loop
     // is already deterministic, but add_final_violations discovers violations in
@@ -462,7 +501,7 @@ pub fn check(targets: &[LoadedClass], old: &ApiIndex, new: &ApiIndex) -> CheckRe
     let mut scan = ScanResult::new();
     let parsed = parse_targets(targets, old, &scan.graph, false);
     scan.merge(parsed);
-    check_scanned(scan, old, new, None, None)
+    check_scanned(scan, old, new, &FxHashSet::default(), None, None)
 }
 
 enum RefVerdict {
@@ -663,6 +702,57 @@ fn add_final_violations(
                     });
                 }
             }
+        }
+    }
+}
+
+/// Version-lag breakage from the upgraded artifacts' own new classes: a scanned class
+/// from a new-version JAR extends a class that is final on the runtime classpath
+/// (IncompatibleClassChangeError/VerifyError at class load). This is invisible to the
+/// pair-diff checks because the final class lives in an artifact the upgrade did NOT
+/// change (https://github.com/pact-foundation/pact-jvm/issues/1338: junit5spring 4.2.3 introduced a subclass of
+/// PactVerificationExtension, which a lagging junit5 4.2.2 still declares final).
+/// Old-relative gate: the same super edge already present in the changed artifact's
+/// old version is pre-existing inconsistency, not breakage introduced by the upgrade.
+/// A super outside the analyzed scope has no access flags and is skipped, the same
+/// conservative direction as Unknown.
+fn add_extends_final_violations(
+    lag_edges: &[(Sym, Sym, Sym)],
+    old: &ApiIndex,
+    runtime: &Scope,
+    violations: &mut Vec<Violation>,
+    seen: &mut FxHashSet<(Sym, Sym, SymbolRef)>,
+) {
+    for &(class_name, super_name, source) in lag_edges {
+        let Some(access) = runtime.class_access(super_name) else {
+            continue;
+        };
+        if access & ACC_FINAL == 0 {
+            continue;
+        }
+        if old
+            .classes
+            .get(&class_name)
+            .is_some_and(|entry| entry.super_name == Some(super_name))
+        {
+            continue;
+        }
+        let reference = SymbolRef {
+            kind: RefKind::Class,
+            owner: super_name,
+            member: None,
+            expected_static: None,
+            field_write: None,
+        };
+        if seen.insert((source, class_name, reference)) {
+            violations.push(Violation {
+                source,
+                source_class: class_name,
+                reference,
+                reason: "extends final class".to_string(),
+                reachable: None,
+                suggestion: None,
+            });
         }
     }
 }
@@ -1262,6 +1352,105 @@ mod tests {
             &ClassGraph::new(),
         );
         assert!(matches!(v, RefVerdict::Ok));
+    }
+
+    fn final_class(name: &str) -> ClassApi {
+        let mut c = class(name, &[]);
+        c.access = ACC_PUBLIC | ACC_FINAL;
+        c
+    }
+
+    #[test]
+    fn upgraded_class_extending_final_classpath_class_is_broken() {
+        // C is new in the upgraded artifact (absent from old) and extends X, which
+        // the scanned classpath (fetched side) declares final.
+        let old = ApiIndex::build([]);
+        let new = ApiIndex::build([]);
+        let fetched = ApiIndex::build([final_class("cp/X")]);
+        let runtime = Scope::new(vec![&new, &fetched]);
+        let edges = vec![(intern("lib/C"), intern("cp/X"), intern("lib-new.jar"))];
+        let mut violations = Vec::new();
+        let mut seen = FxHashSet::default();
+        add_extends_final_violations(&edges, &old, &runtime, &mut violations, &mut seen);
+        assert_eq!(violations.len(), 1, "violations: {violations:?}");
+        assert_eq!(violations[0].reason, "extends final class");
+        assert_eq!(violations[0].reference.owner.as_str(), "cp/X");
+        assert_eq!(violations[0].source_class.as_str(), "lib/C");
+    }
+
+    #[test]
+    fn preexisting_final_super_edge_is_not_reported() {
+        // The changed artifact's old version already extended X: equally broken
+        // before the upgrade, so it is pre-existing, not introduced breakage.
+        let mut c_old = class("lib/C", &[]);
+        c_old.super_name = Some(intern("cp/X"));
+        let old = ApiIndex::build([c_old]);
+        let new = ApiIndex::build([]);
+        let fetched = ApiIndex::build([final_class("cp/X")]);
+        let runtime = Scope::new(vec![&new, &fetched]);
+        let edges = vec![(intern("lib/C"), intern("cp/X"), intern("lib-new.jar"))];
+        let mut violations = Vec::new();
+        let mut seen = FxHashSet::default();
+        add_extends_final_violations(&edges, &old, &runtime, &mut violations, &mut seen);
+        assert!(violations.is_empty(), "violations: {violations:?}");
+    }
+
+    #[test]
+    fn non_final_or_out_of_scope_super_is_not_reported() {
+        let old = ApiIndex::build([]);
+        let new = ApiIndex::build([]);
+        // Non-final super: fine. Out-of-scope super: no access flags, skipped
+        // (same conservative direction as Unknown).
+        let fetched = ApiIndex::build([class("cp/X", &[])]);
+        let runtime = Scope::new(vec![&new, &fetched]);
+        let edges = vec![
+            (intern("lib/C"), intern("cp/X"), intern("lib-new.jar")),
+            (intern("lib/D"), intern("ext/Gone"), intern("lib-new.jar")),
+        ];
+        let mut violations = Vec::new();
+        let mut seen = FxHashSet::default();
+        add_extends_final_violations(&edges, &old, &runtime, &mut violations, &mut seen);
+        assert!(violations.is_empty(), "violations: {violations:?}");
+    }
+
+    #[test]
+    fn upgraded_super_edges_come_only_from_upgraded_sources() {
+        let mut graph = ClassGraph::new();
+        graph.insert_if_absent(
+            intern("lib/C"),
+            Some(intern("cp/X")),
+            &[],
+            &[],
+            None,
+            intern("lib-new.jar"),
+        );
+        graph.insert_if_absent(
+            intern("cp/X"),
+            Some(object_sym()),
+            &[],
+            &[],
+            None,
+            intern("cp.jar"),
+        );
+        graph.insert_if_absent(
+            intern("cp/D"),
+            Some(intern("cp/X")),
+            &[],
+            &[],
+            None,
+            intern("cp.jar"),
+        );
+        let new = ApiIndex::build([]);
+        let mut wanted = FxHashSet::default();
+        let upgraded = FxHashSet::from_iter([intern("lib-new.jar")]);
+        let edges = collect_upgraded_super_edges(&graph, &upgraded, &new, &mut wanted);
+        assert_eq!(
+            edges,
+            vec![(intern("lib/C"), intern("cp/X"), intern("lib-new.jar"))]
+        );
+        // The super only exists on the scanned classpath, so pass 2 must fetch
+        // its access flags.
+        assert!(wanted.contains(&intern("cp/X")));
     }
 
     #[test]

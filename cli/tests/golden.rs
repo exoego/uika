@@ -105,7 +105,7 @@ fn golden_okhttp_digest() {
 
 /// pact junit5spring 4.2.3 subclasses a class junit5 4.2.3 opened but 4.2.2
 /// still declares final; runtime lag at 4.2.2 breaks the subclass
-/// (pact-jvm#1338, IncompatibleClassChangeError). old = compile-time binding.
+/// (https://github.com/pact-foundation/pact-jvm/issues/1338, IncompatibleClassChangeError). old = compile-time binding.
 #[test]
 fn golden_pact_junit5_version_lag() {
     assert_golden("pact-junit5-version-lag");

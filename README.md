@@ -59,8 +59,10 @@ resolve each real reference on your classpath the way the JVM links. Only
 breakage introduced by the upgrade is reported, which keeps a PR gate on
 Renovate/Dependabot/Scala Steward bumps quiet with no exclusion list. Gradle,
 sbt, and Maven plugins produce the classpath dumps (neither validator supports sbt),
-and detection covers visibility narrowing, static <-> instance mismatches, and
-newly-final classes/members as well as removals. It is also a
+and detection covers visibility narrowing, static <-> instance mismatches,
+newly-final classes/members, and removals. Version lag is covered too: an
+upgraded artifact subclassing a class that a lagging dependency still declares
+final is reported. It is also a
 dependency-free static binary: no JVM.
 
 [BENCHMARKS.md](BENCHMARKS.md) has measured head-to-head runs against these
@@ -602,8 +604,8 @@ reference verdict (ok/unknown/broken) as JSON Lines, and
 calls broken that the JVM links fine fails the run as a false positive;
 ok/unknown verdicts that fail on the new side but linked on the old side are
 listed as false-negative candidates for triage. Graph-walk violations (newly
-final classes/methods, as in the koin and pact scenarios) never enter the
-verdict stream, so those breaks are covered by the integration tests rather
+final classes/methods and version-lag extends-final, as in the koin and pact
+scenarios) never enter the verdict stream, so those breaks are covered by the integration tests rather
 than the probe.
 
 ## Publishing

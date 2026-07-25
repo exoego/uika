@@ -215,11 +215,13 @@ pub fn run_check(
     let new_index = build_index_multi(new)?;
     memstats::report("after old/new index build");
 
-    // Skip target libraries themselves if they are mixed into scan targets.
+    // Skip the old-version libraries if they are mixed into scan targets: after the
+    // upgrade they are no longer on the runtime classpath. The new versions stay
+    // scanned (they ARE runtime code), which lets check_scanned catch version-lag
+    // breakage introduced by the upgraded artifacts' own new classes.
     // Missing paths (unbuilt output directories, etc.) are warned and skipped.
     let excluded: Vec<_> = old
         .iter()
-        .chain(new.iter())
         .filter_map(|p| std::fs::canonicalize(p).ok())
         .collect();
     let mut seen = std::collections::BTreeSet::new();
@@ -237,6 +239,24 @@ pub fn run_check(
             canon.as_ref().is_none_or(|c| !excluded.contains(c)) && seen.insert((*path).clone())
         })
         .cloned()
+        .collect();
+
+    // Scan targets that are new versions of the checked libraries. Their classes get
+    // the extra version-lag check (a class newly extending something final on the
+    // runtime classpath). Interned as the same display string input.rs uses for a
+    // class's source, so membership can be tested per graph node.
+    let new_canon: Vec<_> = new
+        .iter()
+        .filter_map(|p| std::fs::canonicalize(p).ok())
+        .collect();
+    let upgraded_sources: rustc_hash::FxHashSet<intern::Sym> = paths
+        .iter()
+        .filter(|p| {
+            std::fs::canonicalize(p)
+                .ok()
+                .is_some_and(|c| new_canon.contains(&c))
+        })
+        .map(|p| intern::intern(&p.display().to_string()))
         .collect();
 
     // Build reachability inputs before the scan so pass 1 collects class-load edges only
@@ -259,7 +279,14 @@ pub fn run_check(
     // Read and parse in parallel by chunk, then merge directly into the index.
     let scanned = check::scan_target_paths(&paths, &old_index, reachability)?;
     memstats::report("after scan target indexing");
-    let mut result = check::check_scanned(scanned, &old_index, &new_index, reach, verdicts);
+    let mut result = check::check_scanned(
+        scanned,
+        &old_index,
+        &new_index,
+        &upgraded_sources,
+        reach,
+        verdicts,
+    );
     let stats = exclude::filter(&mut result.violations, exclude_rules);
     result.suppressed = stats.suppressed;
     result.warnings.extend(
