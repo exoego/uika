@@ -606,20 +606,29 @@ fn verdict(
     }
     if r.member.is_none()
         && let Some(access) = runtime.class_access(r.owner)
-        && !is_accessible(access, r.owner, source_class, runtime, graph)
     {
-        // Narrowing is relative to old: a reference equally inaccessible before the
-        // change is pre-existing inconsistency (e.g. nest-internal private references
-        // in a renamed copy of the checked library), not breakage introduced by it.
-        // Levels are compared instead of re-running is_accessible against old because
-        // the subclass walk only sees scanned classes and would demote real narrowing.
-        return match old.class_access(r.owner) {
-            Some(old_access) if access_level(access) < access_level(old_access) => {
-                RefVerdict::Broken(r, "class access narrowed")
+        match is_accessible(access, r.owner, source_class, runtime, graph) {
+            // Cannot prove the protected subclass relationship (the referencing
+            // class's super chain escaped analyzed scope): the reference may well
+            // be legal, so do not report it.
+            Accessible::Unknown => return RefVerdict::Unknown,
+            Accessible::No => {
+                // Narrowing is relative to old: a reference equally inaccessible before
+                // the change is pre-existing inconsistency (e.g. nest-internal private
+                // references in a renamed copy of the checked library), not breakage
+                // introduced by it. Levels are compared instead of re-running
+                // is_accessible against old because the subclass walk only sees scanned
+                // classes and would demote real narrowing.
+                return match old.class_access(r.owner) {
+                    Some(old_access) if access_level(access) < access_level(old_access) => {
+                        RefVerdict::Broken(r, "class access narrowed")
+                    }
+                    Some(_) => RefVerdict::Ok,
+                    None => RefVerdict::Unknown,
+                };
             }
-            Some(_) => RefVerdict::Ok,
-            None => RefVerdict::Unknown,
-        };
+            Accessible::Yes => {}
+        }
     }
     let Some(member) = r.member else {
         return RefVerdict::Ok; // Class references are OK if the owner remains.
@@ -669,24 +678,30 @@ fn verdict(
                     _ => return RefVerdict::Ok,
                 }
             }
-            if !is_accessible(found.access, found.owner, source_class, runtime, graph) {
-                // Same old-relative gate as the class-access case above.
-                return match old.resolve_member(r.owner, member, kind) {
-                    MemberResolution::Found(old_found)
-                        if access_level(found.access) < access_level(old_found.access) =>
-                    {
-                        RefVerdict::Broken(
-                            r,
-                            if kind == MemberKind::Field {
-                                "field access narrowed"
-                            } else {
-                                "method access narrowed"
-                            },
-                        )
-                    }
-                    MemberResolution::Unknown => RefVerdict::Unknown,
-                    _ => RefVerdict::Ok,
-                };
+            match is_accessible(found.access, found.owner, source_class, runtime, graph) {
+                // Protected subclass relationship unprovable (the caller's super chain
+                // escaped analyzed scope): the reference may be legal, so do not report.
+                Accessible::Unknown => return RefVerdict::Unknown,
+                Accessible::No => {
+                    // Same old-relative gate as the class-access case above.
+                    return match old.resolve_member(r.owner, member, kind) {
+                        MemberResolution::Found(old_found)
+                            if access_level(found.access) < access_level(old_found.access) =>
+                        {
+                            RefVerdict::Broken(
+                                r,
+                                if kind == MemberKind::Field {
+                                    "field access narrowed"
+                                } else {
+                                    "method access narrowed"
+                                },
+                            )
+                        }
+                        MemberResolution::Unknown => RefVerdict::Unknown,
+                        _ => RefVerdict::Ok,
+                    };
+                }
+                Accessible::Yes => {}
             }
             if kind == MemberKind::Field
                 && r.field_write == Some(true)
@@ -989,26 +1004,49 @@ fn access_level(access: u16) -> AccessLevel {
     }
 }
 
+/// Three-valued accessibility. Unknown only arises from the protected-subclass
+/// check when the referencing class's super chain escapes analyzed scope: the
+/// reference may be legal, so callers treat Unknown as unverified (never broken).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Accessible {
+    Yes,
+    No,
+    Unknown,
+}
+
 fn is_accessible(
     access: u16,
     owner: Sym,
     source_class: Sym,
     runtime: &Scope,
     graph: &ClassGraph,
-) -> bool {
+) -> Accessible {
     if access & ACC_PUBLIC != 0 {
-        return true;
+        return Accessible::Yes;
     }
     if access & ACC_PRIVATE != 0 {
         // Nestmates share private access (JVMS 5.4.4, Java 11+): both classes must
         // have the same nest host, read from the NestHost attribute (self when absent).
-        return owner == source_class
-            || nest_host_of(owner, runtime, graph) == nest_host_of(source_class, runtime, graph);
+        return if owner == source_class
+            || nest_host_of(owner, runtime, graph) == nest_host_of(source_class, runtime, graph)
+        {
+            Accessible::Yes
+        } else {
+            Accessible::No
+        };
     }
     if same_package(owner, source_class) {
-        return true;
+        return Accessible::Yes;
     }
-    access & ACC_PROTECTED != 0 && is_subclass(source_class, owner, runtime, graph)
+    if access & ACC_PROTECTED == 0 {
+        // Package-private in a different package.
+        return Accessible::No;
+    }
+    match is_subclass(source_class, owner, runtime, graph) {
+        Subclass::Yes => Accessible::Yes,
+        Subclass::No => Accessible::No,
+        Subclass::Unknown => Accessible::Unknown,
+    }
 }
 
 fn same_package(a: Sym, b: Sym) -> bool {
@@ -1029,33 +1067,50 @@ fn package_name(name: &str) -> &str {
     name.rsplit_once('/').map_or("", |(pkg, _)| pkg)
 }
 
-/// Subclass walk for the protected-access check. Graph edges first (scanned
-/// classes), then the runtime scope's super chain: resolve_member can find a
-/// protected member on a new-index or JDK-layer owner, and judging the caller
-/// against a hierarchy resolution itself cannot walk invented false
-/// "access narrowed" reports (a genuine subclass through an unscanned library
-/// or JDK edge was treated as unrelated). A chain that escapes both still ends
-/// false, which errs toward reporting only when the old side resolved wider.
-fn is_subclass(class_name: Sym, target: Sym, runtime: &Scope, graph: &ClassGraph) -> bool {
-    let super_of = |class: Sym| {
+/// Three-valued subclass walk for the protected-access check. Graph edges first
+/// (scanned classes), then the runtime scope's super chain: resolve_member can
+/// find a protected member on a new-index or JDK-layer owner, and judging the
+/// caller against a hierarchy the walk cannot itself follow invented false
+/// "access narrowed" reports (a genuine subclass through an unscanned library or
+/// JDK edge looked unrelated). When the chain reaches a class visible in no scope,
+/// the relationship is Unknown rather than No, so the caller does not report a
+/// reference that may well be legal. No means the full chain was walked to Object
+/// without finding the target (a provable non-subclass).
+enum Subclass {
+    Yes,
+    No,
+    Unknown,
+}
+
+fn is_subclass(class_name: Sym, target: Sym, runtime: &Scope, graph: &ClassGraph) -> Subclass {
+    // Some(Some(s)) = class known, super s; Some(None) = class known, no super
+    // (java/lang/Object); None = class visible in no scope.
+    let super_of = |class: Sym| -> Option<Option<Sym>> {
         graph
             .get(class)
             .map(|node| node.super_name)
             .or_else(|| runtime.class_super(class))
-            .flatten()
     };
-    let mut next = super_of(class_name);
+    let mut current = class_name;
     let mut seen = FxHashSet::default();
-    while let Some(class) = next {
-        if class == target {
-            return true;
+    loop {
+        if current == target {
+            return Subclass::Yes;
         }
-        if !seen.insert(class) {
-            return false;
+        // Object has no superclass and is not indexed; reaching it means the full
+        // chain was walked without finding the target.
+        if current == object_sym() {
+            return Subclass::No;
         }
-        next = super_of(class);
+        if !seen.insert(current) {
+            return Subclass::No;
+        }
+        match super_of(current) {
+            Some(Some(s)) => current = s,
+            Some(None) => return Subclass::No,
+            None => return Subclass::Unknown,
+        }
     }
-    false
 }
 
 #[cfg(test)]
@@ -1602,6 +1657,98 @@ mod tests {
             &ClassGraph::new(),
         );
         assert_eq!(broken(v).unwrap().1, "method access narrowed");
+    }
+
+    #[test]
+    fn protected_narrowing_is_unknown_when_subclass_chain_escapes_scope() {
+        // new C.m is protected and the caller is in a different package, so access
+        // hinges on whether app/Sub is a subclass of lib/C. Its super chain leaves
+        // analyzed scope, so the relationship is unprovable and the reference must be
+        // Unknown, not a false "method access narrowed".
+        let old = ApiIndex::build([class_with_method_access(
+            "lib/C",
+            &[("m", "()V", ACC_PUBLIC)],
+        )]);
+        let new = ApiIndex::build([class_with_method_access(
+            "lib/C",
+            &[("m", "()V", ACC_PROTECTED)],
+        )]);
+        // app/Sub extends an unscanned class, so the walk escapes.
+        let mut graph = ClassGraph::new();
+        graph.insert_if_absent(
+            intern("app/Sub"),
+            Some(intern("ext/Hidden")),
+            &[],
+            &[],
+            None,
+            intern("app.jar"),
+        );
+        let v = verdict(
+            method_ref("lib/C", "m", "()V"),
+            intern("app/Sub"),
+            &Scope::new(vec![&old]),
+            &Scope::new(vec![&new]),
+            &graph,
+        );
+        assert!(matches!(v, RefVerdict::Unknown));
+    }
+
+    #[test]
+    fn protected_narrowing_is_reported_when_provably_not_a_subclass() {
+        // The caller's full chain is visible and reaches Object without passing
+        // through the owner, so it is provably not a subclass and the protected
+        // narrowing is a real break.
+        let old = ApiIndex::build([class_with_method_access(
+            "lib/C",
+            &[("m", "()V", ACC_PUBLIC)],
+        )]);
+        let new = ApiIndex::build([class_with_method_access(
+            "lib/C",
+            &[("m", "()V", ACC_PROTECTED)],
+        )]);
+        let mut graph = ClassGraph::new();
+        graph.insert_if_absent(
+            intern("app/Sub"),
+            Some(object_sym()),
+            &[],
+            &[],
+            None,
+            intern("app.jar"),
+        );
+        let v = verdict(
+            method_ref("lib/C", "m", "()V"),
+            intern("app/Sub"),
+            &Scope::new(vec![&old]),
+            &Scope::new(vec![&new]),
+            &graph,
+        );
+        assert_eq!(broken(v).unwrap().1, "method access narrowed");
+    }
+
+    #[test]
+    fn constructor_is_not_inherited_from_superclass() {
+        // Owner's (Z)V constructor is removed; a superclass still declares one. A
+        // constructor is never inherited, so resolution must be owner-only and the
+        // reference is a removal (NoSuchMethodError), not access-narrowed against the
+        // superclass copy. This is the jetty ArrayTernaryTrie/AbstractTrie shape.
+        let old = ApiIndex::build([class_with_method_access(
+            "lib/Sub",
+            &[("<init>", "(Z)V", ACC_PUBLIC)],
+        )]);
+        let mut sub_new = class_with_method_access("lib/Sub", &[]);
+        sub_new.super_name = Some(intern("lib/Base"));
+        let new = ApiIndex::build([
+            sub_new,
+            class_with_method_access("lib/Base", &[("<init>", "(Z)V", ACC_PROTECTED)]),
+        ]);
+        let v = verdict(
+            method_ref("lib/Sub", "<init>", "(Z)V"),
+            intern("app/Use"),
+            &Scope::new(vec![&old]),
+            &Scope::new(vec![&new]),
+            &ClassGraph::new(),
+        );
+        assert_eq!(broken(v).unwrap().1, "method removed");
     }
 
     #[test]
