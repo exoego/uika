@@ -187,6 +187,38 @@ unreadable. uika streams the same input, skips non-scannable entries silently,
 and finishes in seconds. This row measures behavior on pathological input, not
 Linkage Checker's intended use.
 
+## 4. Class-shape breaks: interface↔class flip and InstantiationError
+
+Two real fixtures exercise the class-shape breaks uika reports, cross-checked
+against the tools that can see them:
+
+- **interface→class flip**: `io.ktor.utils.io.ByteChannel` is an interface in
+  ktor-io 2.3.13 and a `final class` in 3.1.0; ktor-network 2.3.13 calls it
+  through `InterfaceMethodref` constants (`IncompatibleClassChangeError`).
+- **`new` on now-abstract**: `ValueClassBoxConverter` is a concrete `final class`
+  in jackson-module-kotlin 2.18.2 and `abstract` in 2.20.1; the module's own
+  `ReflectionCache` does `new ValueClassBoxConverter(...)` (`InstantiationError`).
+
+| Break | uika `check` | japicmp (library diff) | Linkage Checker (classpath) |
+|-------|--------------|------------------------|-----------------------------|
+| interface→class flip | `class kind changed`, 17 refs | `MODIFIED CLASS (<- INTERFACE)` | per-method `has changed incompatibly` — caught |
+| `new` on now-abstract | `class became abstract`, 3 refs | `ABSTRACT (<- NON_ABSTRACT)` + `REMOVED CONSTRUCTOR` | **not reported** |
+
+The library-diff tools flag both as binary-incompatible changes — expected, since
+they diff the library and never see a consumer (Revapi classifies them the same
+via `java.class.kindChanged`/`nowAbstract`; not re-run). Linkage Checker, the one
+other classpath scanner, catches the flip, including the pure flip
+`ReaderJob.getChannel()` where the method still resolves and only the owner kind
+changed. But it misses the `new`-on-abstract break: it models class/method/field
+references, never constructors (`<init>`) or instantiation, so it stays silent on
+the `new` site even though it scans the referencing class. Among the classpath
+scanners that break is uika-only.
+
+The `InstantiationError` exists only across an upgrade (a coherent classpath never
+holds the old referencer and the new abstract class at once), so feeding it to a
+snapshot tool needed a hand-built hybrid jar — and even then Linkage Checker did
+not report it. No uika false negative surfaced.
+
 ## Takeaways
 
 - uika is the only tool here that answers "which changes break the code on my
@@ -203,6 +235,11 @@ Linkage Checker's intended use.
   the true public API surface, japicmp adds semantic-versioning advice, Revapi
   has the widest set of checks, and Linkage Checker gives the most detailed
   root-cause for each linkage error on a coherent tree.
+- On the class-shape breaks (section 4), the library-diff tools flag the change
+  and Linkage Checker catches the interface↔class flip, but the `new`-on-abstract
+  `InstantiationError` is caught by uika alone among the classpath scanners:
+  Linkage Checker models class/method/field references, not constructors or
+  instantiation.
 
 ## Reproduction
 
@@ -230,4 +267,13 @@ java -cp <linkage-checker-cp> com.google.cloud.tools.opensource.classpath.Linkag
 
 # 3. Stress: a whole flattened package cache as the classpath
 uika check --old "$OLD" --new "$NEW" --classpath "$BIG_CP"
+
+# 4. Class-shape breaks (fixtures in cli/tests/fixtures). interface->class flip:
+uika check --old ktor-io-jvm-2.3.13.jar --new ktor-io-jvm-3.1.0.jar \
+     --classpath ktor-network-jvm-2.3.13.jar
+#    new-on-abstract (consumer = the old jar's own ReflectionCache; copy it since
+#    a jar equal to --old is skipped as stale):
+cp jackson-module-kotlin-2.18.2.jar jackson-consumer-2.18.2.jar
+uika check --old jackson-module-kotlin-2.18.2.jar --new jackson-module-kotlin-2.20.1.jar \
+     --classpath jackson-consumer-2.18.2.jar:kotlin-stdlib-2.2.20.jar
 ```
