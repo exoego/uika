@@ -22,6 +22,7 @@ struct ExcludeFile {
 struct RawEntry {
     owner: String,
     member: Option<String>,
+    descriptor: Option<String>,
     reason: String,
 }
 
@@ -53,17 +54,22 @@ impl std::fmt::Display for OwnerPattern {
 #[derive(Debug)]
 pub struct ExcludeRule {
     owner: OwnerPattern,
-    /// Member name only (descriptor-agnostic, so it covers every overload). None excludes the
-    /// owner outright, matching class-level violations too (e.g. "class removed").
+    /// Member name. None excludes the owner outright, matching class-level violations too
+    /// (e.g. "class removed").
     member: Option<String>,
+    /// Descriptor of the specific overload. None (with a member name) covers every overload,
+    /// which over-suppresses when only one overload is a known false positive: pinning the
+    /// descriptor keeps a real break on a sibling overload reported.
+    descriptor: Option<String>,
     reason: String,
 }
 
 impl ExcludeRule {
     fn describe(&self) -> String {
-        match &self.member {
-            Some(m) => format!("{}#{} ({})", self.owner, m, self.reason),
-            None => format!("{} ({})", self.owner, self.reason),
+        match (&self.member, &self.descriptor) {
+            (Some(m), Some(d)) => format!("{}#{} {} ({})", self.owner, m, d, self.reason),
+            (Some(m), None) => format!("{}#{} ({})", self.owner, m, self.reason),
+            (None, _) => format!("{} ({})", self.owner, self.reason),
         }
     }
 }
@@ -88,6 +94,12 @@ fn compile(entry: RawEntry) -> Result<ExcludeRule> {
             entry.owner
         );
     }
+    if entry.descriptor.is_some() && entry.member.is_none() {
+        bail!(
+            "exclude rule owner \"{}\": descriptor requires a member (a descriptor pins one overload of a named member)",
+            entry.owner
+        );
+    }
     let owner = match entry.owner.strip_suffix('*') {
         Some(prefix) => OwnerPattern::Prefix(prefix.to_string()),
         None => OwnerPattern::Exact(entry.owner),
@@ -95,6 +107,7 @@ fn compile(entry: RawEntry) -> Result<ExcludeRule> {
     Ok(ExcludeRule {
         owner,
         member: entry.member,
+        descriptor: entry.descriptor,
         reason: entry.reason,
     })
 }
@@ -133,6 +146,7 @@ pub fn filter(violations: &mut Vec<Violation>, rules: &[ExcludeRule]) -> Exclude
     violations.retain(|v| {
         let owner = v.reference.owner.as_str();
         let member_name = v.reference.member.map(|m| m.name.as_str());
+        let member_descriptor = v.reference.member.map(|m| m.descriptor.as_str());
         let mut matched = false;
         for (i, rule) in rules.iter().enumerate() {
             if !rule.owner.matches(owner) {
@@ -140,7 +154,14 @@ pub fn filter(violations: &mut Vec<Violation>, rules: &[ExcludeRule]) -> Exclude
             }
             let member_matches = match &rule.member {
                 None => true,
-                Some(name) => member_name == Some(name.as_str()),
+                Some(name) => {
+                    member_name == Some(name.as_str())
+                        // A descriptor, when present, pins one overload.
+                        && match &rule.descriptor {
+                            None => true,
+                            Some(d) => member_descriptor == Some(d.as_str()),
+                        }
+                }
             };
             if member_matches {
                 hit[i] = true;
@@ -256,6 +277,51 @@ mod tests {
         let stats = filter(&mut violations, &rules);
         assert_eq!(stats.suppressed, 2);
         assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn descriptor_pins_one_overload_and_keeps_siblings_reported() {
+        // Only the no-arg overload is a known false positive; the (I)V overload is a
+        // real break and must survive.
+        let rules = parse(
+            r#"
+            [[exclude]]
+            owner = "lib/C"
+            member = "m"
+            descriptor = "()V"
+            reason = "no-arg overload is invoked reflectively"
+            "#,
+        )
+        .unwrap();
+        let mut violations = vec![
+            member_violation("lib/C", "m", "()V", "method removed"),
+            member_violation("lib/C", "m", "(I)V", "method removed"),
+        ];
+        let stats = filter(&mut violations, &rules);
+        assert_eq!(stats.suppressed, 1);
+        assert!(stats.unused.is_empty());
+        assert_eq!(violations.len(), 1);
+        assert_eq!(
+            violations[0].reference.member.unwrap().descriptor.as_str(),
+            "(I)V"
+        );
+    }
+
+    #[test]
+    fn descriptor_without_member_is_rejected() {
+        let err = parse(
+            r#"
+            [[exclude]]
+            owner = "lib/C"
+            descriptor = "()V"
+            reason = "bogus"
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("descriptor requires a member"),
+            "{err}"
+        );
     }
 
     #[test]
