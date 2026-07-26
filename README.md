@@ -227,6 +227,14 @@ reason = "reflectively scanned by LogFactoryImpl at init; never referenced from 
 [[exclude]]
 owner = "org/apache/commons/logging/*"
 reason = "commons-logging uses reflection-based class discovery throughout"
+
+# add descriptor to pin one overload, so a real break on a sibling overload of
+# the same name is still reported.
+[[exclude]]
+owner = "lib/C"
+member = "m"
+descriptor = "()V"
+reason = "only the no-arg m() is invoked reflectively"
 ```
 
 `owner`/`member` use the exact JVM internal names shown in the report itself
