@@ -128,6 +128,12 @@ pass-2 classes are typically below 0.1% of the scan.
 - Member lookup (`index.rs::Scope::resolve`) is a simplified JVMS 5.4.3.2/3.3
   traversal: owner, then superclass and superinterface edges. A member moved to
   a superclass still links at runtime and must not be reported.
+- Constructors (`<init>`) and the class initializer (`<clinit>`) are NOT
+  inherited: `resolve_member` resolves them owner-only. Walking the chain would
+  bind a removed constructor to a superclass copy and misreport a real
+  NoSuchMethodError as access-narrowed (jetty ArrayTernaryTrie dropped its
+  `(Z)V` constructor while its super AbstractTrie kept a protected one, so the
+  `new` call at PathMap/PathMappings is a removal, not a narrowing).
 - The 11 `java/lang/Object` methods are built in. Kotlin facade classes extend
   Object; without this, real removals could degrade to Unknown when traversal
   reaches Object outside the indexed scope.
@@ -172,6 +178,18 @@ pass-2 classes are typically below 0.1% of the scan.
   are compared instead of re-running `is_accessible` against old because the
   subclass walk only sees scanned classes and would demote real
   protected->private narrowing to pre-existing.
+- `is_subclass` (the protected-access subclass check) is three-valued
+  (Yes/No/Unknown). Yes = the target was found on the walk; No = the full chain
+  was walked to Object without it (a provable non-subclass); Unknown = the chain
+  reached a class visible in no scope. `is_accessible` propagates Unknown, and
+  the verdict then treats the reference as unverified, never broken. Without
+  this a caller whose super chain escapes scope was assumed a non-subclass and a
+  protected narrowing was falsely reported. No only when the relationship is
+  provable, so a real break still fires. Controlled stress comparison (same
+  classpath, before vs after this plus the constructor fix): +6 deduped
+  violations, all previously-masked constructor removals, zero lost. The
+  absolute stress count is classpath-order sensitive (duplicate-class first-wins
+  shifts with `find` order), so only same-input diffs are meaningful.
 - Private access allows nestmates (JVMS 5.4.4, Java 11+): both classes must
   share a nest host, read from the NestHost attribute (a class without one
   hosts itself). Hosts live on ClassGraph nodes (+8B/node, ~4MB at the stress

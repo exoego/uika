@@ -348,6 +348,20 @@ impl<'a> Scope<'a> {
         key: MemberKey,
         kind: MemberKind,
     ) -> MemberResolution {
+        // Constructors and the class initializer are not inherited: an
+        // `invokespecial Owner.<init>` (or a `<clinit>`) binds to the exact named
+        // class, never a superclass. Walking the chain for them would resolve a
+        // removed constructor to a superclass copy and misreport a NoSuchMethodError
+        // as access-narrowed. Resolve owner-only.
+        if kind == MemberKind::Method && is_constructor(key) {
+            return match self.class(owner) {
+                Some((idx, entry)) => match find_member(idx.methods_of(entry), key) {
+                    Some(access) => MemberResolution::Found(ResolvedMember { owner, access }),
+                    None => MemberResolution::NotFound,
+                },
+                None => MemberResolution::Unknown,
+            };
+        }
         let mut queue = VecDeque::from([owner]);
         let mut seen = HashSet::new();
         let mut reached_unknown = false;
@@ -396,6 +410,12 @@ pub enum MemberResolution {
     Found(ResolvedMember),
     NotFound,
     Unknown,
+}
+
+/// `<init>` (constructor) and `<clinit>` (class initializer): never inherited.
+fn is_constructor(key: MemberKey) -> bool {
+    let name = key.name.as_str();
+    name == "<init>" || name == "<clinit>"
 }
 
 fn is_object_method(key: MemberKey) -> bool {

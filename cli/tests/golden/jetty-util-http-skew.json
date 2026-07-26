@@ -423,7 +423,7 @@
         },
         "expected_static": false
       },
-      "reason": "method access narrowed"
+      "reason": "method removed"
     },
     {
       "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
@@ -479,7 +479,7 @@
         },
         "expected_static": false
       },
-      "reason": "method access narrowed"
+      "reason": "method removed"
     },
     {
       "source": "tests/fixtures/jetty-http-9.4.49.v20220914.jar",
