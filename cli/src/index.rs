@@ -4,7 +4,7 @@ use crate::intern::{Sym, intern};
 use crate::model::{ClassApi, ClassName, MemberKey};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::sync::OnceLock;
 
 pub const JAVA_LANG_OBJECT: &str = "java/lang/Object";
@@ -362,42 +362,136 @@ impl<'a> Scope<'a> {
                 None => MemberResolution::Unknown,
             };
         }
-        let mut queue = VecDeque::from([owner]);
-        let mut seen = HashSet::new();
-        let mut reached_unknown = false;
-        while let Some(class) = queue.pop_front() {
-            if !seen.insert(class) {
-                continue;
+        match kind {
+            MemberKind::Field => self.resolve_field(owner, key, &mut HashSet::new()),
+            MemberKind::Method => self.resolve_method(owner, key),
+        }
+    }
+
+    /// JVMS 5.4.3.2 field resolution: the class itself, then its direct
+    /// superinterfaces (recursively, before the superclass), then its superclass.
+    /// The interface-first order matters when the same name+descriptor exists on
+    /// both a superinterface (implicitly static final) and a superclass, so the
+    /// static/access verdict attributes to the right owner. Unknown propagates: if
+    /// any branch escapes analyzed scope the field could be there, so the result is
+    /// Unknown unless another branch resolves it.
+    fn resolve_field(
+        &self,
+        class: ClassName,
+        key: MemberKey,
+        seen: &mut HashSet<ClassName>,
+    ) -> MemberResolution {
+        // java/lang/Object declares no fields.
+        if class == object_sym() {
+            return MemberResolution::NotFound;
+        }
+        if !seen.insert(class) {
+            return MemberResolution::NotFound;
+        }
+        let Some((idx, entry)) = self.class(class) else {
+            return MemberResolution::Unknown;
+        };
+        if let Some(access) = find_member(idx.fields_of(entry), key) {
+            return MemberResolution::Found(ResolvedMember {
+                owner: class,
+                access,
+            });
+        }
+        // Superinterfaces have priority over the superclass, so an Unknown branch
+        // here could shadow a superclass field: bail before falling to the superclass.
+        for &iface in idx.interfaces_of(entry) {
+            match self.resolve_field(iface, key, seen) {
+                found @ MemberResolution::Found(_) => return found,
+                unknown @ MemberResolution::Unknown => return unknown,
+                MemberResolution::NotFound => {}
             }
-            if class == object_sym() {
-                if kind == MemberKind::Method && is_object_method(key) {
+        }
+        match entry.super_name {
+            Some(s) => self.resolve_field(s, key, seen),
+            None => MemberResolution::NotFound,
+        }
+    }
+
+    /// JVMS 5.4.3.3 method resolution: the full superclass chain first, then the
+    /// maximally-specific superinterface methods. Walking the whole class chain
+    /// before any interface matters when the same method exists on a grandparent
+    /// class and on a directly-implemented interface. The interface phase is
+    /// first-match rather than strict maximally-specific selection, which is enough
+    /// for existence and access without the full most-specific tie-break.
+    fn resolve_method(&self, owner: ClassName, key: MemberKey) -> MemberResolution {
+        let mut ifaces = Vec::new();
+        let mut class = Some(owner);
+        let mut seen = HashSet::new();
+        while let Some(c) = class {
+            if !seen.insert(c) {
+                break;
+            }
+            if c == object_sym() {
+                if is_object_method(key) {
                     return MemberResolution::Found(ResolvedMember {
-                        owner: class,
+                        owner: c,
                         access: crate::model::ACC_PUBLIC,
                     });
                 }
-                continue;
+                break;
             }
-            let Some((idx, entry)) = self.class(class) else {
-                reached_unknown = true;
-                continue;
+            let Some((idx, entry)) = self.class(c) else {
+                // The superclass chain has priority over interfaces, so a break in it
+                // could hide a superclass method: cannot conclude, so Unknown.
+                return MemberResolution::Unknown;
             };
-            let members = match kind {
-                MemberKind::Method => idx.methods_of(entry),
-                MemberKind::Field => idx.fields_of(entry),
-            };
-            if let Some(access) = find_member(members, key) {
-                return MemberResolution::Found(ResolvedMember {
-                    owner: class,
-                    access,
-                });
+            if let Some(access) = find_member(idx.methods_of(entry), key) {
+                return MemberResolution::Found(ResolvedMember { owner: c, access });
             }
-            if let Some(s) = entry.super_name {
-                queue.push_back(s);
-            }
-            queue.extend(idx.interfaces_of(entry).iter().copied());
+            ifaces.extend(idx.interfaces_of(entry).iter().copied());
+            class = entry.super_name;
         }
-        if reached_unknown {
+        // Class chain fully walked without a match: search maximally-specific
+        // superinterface methods.
+        let mut iface_seen = HashSet::new();
+        let mut unknown = false;
+        for iface in ifaces {
+            match self.resolve_iface_method(iface, key, &mut iface_seen) {
+                found @ MemberResolution::Found(_) => return found,
+                MemberResolution::Unknown => unknown = true,
+                MemberResolution::NotFound => {}
+            }
+        }
+        if unknown {
+            MemberResolution::Unknown
+        } else {
+            MemberResolution::NotFound
+        }
+    }
+
+    /// Search an interface and its superinterfaces for a method (first match wins).
+    fn resolve_iface_method(
+        &self,
+        iface: ClassName,
+        key: MemberKey,
+        seen: &mut HashSet<ClassName>,
+    ) -> MemberResolution {
+        if !seen.insert(iface) {
+            return MemberResolution::NotFound;
+        }
+        let Some((idx, entry)) = self.class(iface) else {
+            return MemberResolution::Unknown;
+        };
+        if let Some(access) = find_member(idx.methods_of(entry), key) {
+            return MemberResolution::Found(ResolvedMember {
+                owner: iface,
+                access,
+            });
+        }
+        let mut unknown = false;
+        for &super_iface in idx.interfaces_of(entry) {
+            match self.resolve_iface_method(super_iface, key, seen) {
+                found @ MemberResolution::Found(_) => return found,
+                MemberResolution::Unknown => unknown = true,
+                MemberResolution::NotFound => {}
+            }
+        }
+        if unknown {
             MemberResolution::Unknown
         } else {
             MemberResolution::NotFound
@@ -598,6 +692,98 @@ mod tests {
                 MemberKind::Method
             ),
             Resolution::NotFound
+        );
+    }
+
+    fn field_class(
+        name: &str,
+        super_name: Option<&str>,
+        interfaces: &[&str],
+        fields: &[(&str, &str, u16)],
+    ) -> ClassApi {
+        ClassApi {
+            name: intern(name),
+            access: ACC_PUBLIC,
+            super_name: super_name.map(intern),
+            interfaces: interfaces.iter().map(|i| intern(i)).collect(),
+            methods: build_members([]),
+            fields: build_members(fields.iter().map(|(n, d, a)| (MemberKey::new(n, d), *a))),
+            nest_host: None,
+        }
+    }
+
+    fn resolved_owner(idx: &ApiIndex, owner: &str, key: MemberKey, kind: MemberKind) -> String {
+        match Scope::new(vec![idx]).resolve_member(intern(owner), key, kind) {
+            MemberResolution::Found(m) => m.owner.as_str().to_string(),
+            other => panic!("expected Found, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn field_resolution_prefers_superinterface_over_superclass() {
+        // JVMS 5.4.3.2: a field on both a superinterface and the superclass resolves
+        // to the interface. Getting this wrong attributes the static/access verdict to
+        // the wrong owner (interface fields are implicitly static final).
+        use crate::model::{ACC_FINAL, ACC_STATIC};
+        let mut c = field_class("a/C", Some("a/Base"), &["a/I"], &[]);
+        c.access = ACC_PUBLIC;
+        let base = field_class(
+            "a/Base",
+            Some(JAVA_LANG_OBJECT),
+            &[],
+            &[("x", "I", ACC_PUBLIC)],
+        );
+        let mut i = field_class(
+            "a/I",
+            None,
+            &[],
+            &[("x", "I", ACC_PUBLIC | ACC_STATIC | ACC_FINAL)],
+        );
+        i.access = ACC_PUBLIC;
+        let idx = ApiIndex::build([c, base, i]);
+        assert_eq!(
+            resolved_owner(&idx, "a/C", MemberKey::new("x", "I"), MemberKind::Field),
+            "a/I"
+        );
+    }
+
+    #[test]
+    fn method_resolution_prefers_superclass_chain_over_interface() {
+        // JVMS 5.4.3.3: the full superclass chain is searched before any interface,
+        // so a method on a grandparent class wins over one on a directly-implemented
+        // interface.
+        let mut c = class("a/C", Some("a/Mid"), &[]);
+        c.interfaces = vec![intern("a/I")];
+        let mid = class("a/Mid", Some("a/Grand"), &[]);
+        let grand = class("a/Grand", Some(JAVA_LANG_OBJECT), &[("m", "()V")]);
+        let i = class("a/I", None, &[("m", "()V")]);
+        let idx = ApiIndex::build([c, mid, grand, i]);
+        assert_eq!(
+            resolved_owner(&idx, "a/C", MemberKey::new("m", "()V"), MemberKind::Method),
+            "a/Grand"
+        );
+    }
+
+    #[test]
+    fn field_resolution_is_unknown_when_an_interface_branch_escapes() {
+        // The field is on the superclass, but an unscanned superinterface could also
+        // declare it, so the interface-first search cannot conclude and yields Unknown.
+        let mut c = field_class("a/C", Some("a/Base"), &["ext/I"], &[]);
+        c.access = ACC_PUBLIC;
+        let base = field_class(
+            "a/Base",
+            Some(JAVA_LANG_OBJECT),
+            &[],
+            &[("x", "I", ACC_PUBLIC)],
+        );
+        let idx = ApiIndex::build([c, base]);
+        assert_eq!(
+            Scope::new(vec![&idx]).resolve_member(
+                intern("a/C"),
+                MemberKey::new("x", "I"),
+                MemberKind::Field
+            ),
+            MemberResolution::Unknown
         );
     }
 }
