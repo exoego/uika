@@ -1,6 +1,9 @@
 use crate::index::{ApiIndex, MemberKind, Resolution};
 use crate::intern::Sym;
-use crate::model::{ACC_FINAL, ACC_PRIVATE, ACC_STATIC, BreakingChange, ClassName, MemberKey};
+use crate::model::{
+    ACC_ABSTRACT, ACC_FINAL, ACC_INTERFACE, ACC_PRIVATE, ACC_STATIC, BreakingChange, ClassName,
+    MemberKey,
+};
 
 /// List APIs that existed in old but can no longer be resolved in new, plus incompatibility
 /// changes on surviving members (access narrowing, static<->instance, newly final).
@@ -33,6 +36,18 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
         if entry.access & ACC_FINAL == 0 && new_entry.access & ACC_FINAL != 0 {
             changes.push(BreakingChange::ClassBecameFinal { class: name });
         }
+        let old_interface = entry.access & ACC_INTERFACE != 0;
+        let new_interface = new_entry.access & ACC_INTERFACE != 0;
+        if old_interface != new_interface {
+            // The kind flip subsumes becoming abstract (an interface is always
+            // abstract), so report only the flip.
+            changes.push(BreakingChange::ClassKindChanged {
+                class: name,
+                old_interface,
+            });
+        } else if entry.access & ACC_ABSTRACT == 0 && new_entry.access & ACC_ABSTRACT != 0 {
+            changes.push(BreakingChange::ClassBecameAbstract { class: name });
+        }
 
         for (key, old_access) in visible_sorted(old.methods_of(entry)) {
             if let Some(new_access) = new.direct_method_access(name, key) {
@@ -43,6 +58,13 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
                         descriptor: key.descriptor,
                         old_access,
                         new_access,
+                    });
+                }
+                if old_access & ACC_ABSTRACT == 0 && new_access & ACC_ABSTRACT != 0 {
+                    changes.push(BreakingChange::MethodBecameAbstract {
+                        class: name,
+                        name: key.name,
+                        descriptor: key.descriptor,
                     });
                 }
                 if old_access & ACC_STATIC != new_access & ACC_STATIC {

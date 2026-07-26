@@ -48,10 +48,16 @@ not be relearned by experiment.
   pre-existing breakage uika deliberately does not report, and an old-side
   probe ERROR is surfaced instead of being folded into pre-existing. The
   koin and pact breaks are graph-walk violations and therefore not probeable;
-  their coverage lives in the integration tests. The probe is evidence, not
-  truth: findVirtual does not model invokespecial, final-field writes are
-  probed as reads when the writer is the declaring class, and an unloadable
-  referencing class downgrades to a caller-context-free public lookup. The
+  their coverage lives in the integration tests. The class-shape breaks are also
+  not probeable and live in integration tests: `MethodHandles.Lookup` does not
+  model the Methodref/InterfaceMethodref owner-kind requirement or
+  InstantiationError, so it would link a `class kind changed` or `class became
+  abstract` verdict the JVM actually rejects. The fixture scenarios in
+  scenarios.tsv are chosen so none of them produce a class-shape verdict, so
+  `make probe` never answer-checks one. The probe is evidence, not truth:
+  findVirtual does not model invokespecial, final-field writes are probed as
+  reads when the writer is the declaring class, and an unloadable referencing
+  class downgrades to a caller-context-free public lookup. The
   Kotlin fixtures need kotlin-stdlib on the probe classpath (vendored in
   fixtures); the JDK is pinned in `.mise.toml` (probe needs 16+).
 - `--jdk-release N` (check/upgrade-check) layers a JDK API index under both
@@ -177,6 +183,29 @@ pass-2 classes are typically below 0.1% of the scan.
 - Newly-final classes/methods break scanned subclasses/overriders even without
   a constant-pool reference; `check.rs::add_final_violations` walks the class
   graph for these.
+- Three JVMS class-shape breaks, all old-relative:
+  - InstantiationError: `new X` where X became abstract or an interface. The
+    `new` opcode (0xbb) is scanned in `classfile.rs` and sets `SymbolRef.instantiated`
+    on the Class ref (array creation is not tracked — it never throws). Only a
+    `new` breaks; a plain type reference to a now-abstract class stays OK.
+    Reason `class became abstract`. Real fixture: jackson-module-kotlin
+    ValueClassBoxConverter 2.18.2 concrete -> 2.20.1 abstract.
+  - class<->interface flip at a call site: a Methodref (compiled against a class)
+    whose owner is now an interface, or an InterfaceMethodref whose owner is now
+    a class, makes resolution throw IncompatibleClassChangeError. Judged in
+    `verdict` by comparing `RefKind::InterfaceMethod` against the owner's
+    `ACC_INTERFACE`. Reason `class kind changed`.
+  - class<->interface flip at a hierarchy edge: a scanned class extends a class
+    that became an interface, or implements an interface that became a class,
+    fails to load. Found by a graph walk, `check.rs::add_kind_flip_violations`,
+    like the newly-final walk. Reason `class kind changed`. Real fixtures:
+    ktor-io ByteChannel interface -> class (a Methodref-side flip), coroutines
+    CancelHandler abstract-class -> interface (an extends-side flip on the
+    stress workload).
+  AbstractMethodError (a concrete class inheriting a newly-abstract method it
+  does not override) is diffed (`method became abstract`) but not yet a
+  check-side violation: correct method selection across the override chain plus
+  the concrete-vs-abstract test needs care, so it is a backlog item.
 - Version lag from the upgraded artifacts themselves: classes scanned from
   new-version JARs get an extra check — newly extending a class that is final
   on the runtime classpath is `extends final class`
@@ -259,7 +288,7 @@ pass-2 classes are typically below 0.1% of the scan.
 
 | Path                   | Role                                                                                                                                                  |
 |------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `cli/src/classfile.rs` | Minimal class-file parser: constant pool + headers, Code scanned only for reference opcodes, NestHost read from the class attribute table, Utf8 borrowed, ASCII unconverted.                        |
+| `cli/src/classfile.rs` | Minimal class-file parser: constant pool + headers, Code scanned only for reference opcodes (invoke\* plus `new` for InstantiationError), NestHost read from the class attribute table, Utf8 borrowed, ASCII unconverted. |
 | `cli/src/input.rs`     | JAR/class-dir loading. Fast path: parse central directory, group offset spans, one `pread` per span, parallel inflate. Falls back to the `zip` crate. |
 | `cli/src/window.rs`    | Fallback `Read + Seek` reader with two LRU windows (the `zip` crate seeks between central directory and local headers).                               |
 | `cli/src/intern.rs`    | `Sym = u32` interning in sharded bump arenas kept for process lifetime. Never sort/compare output by Sym id — interning order is nondeterministic.    |
@@ -379,7 +408,7 @@ Expected on a 10-core Apple Silicon Mac:
 
 | Workload                                              |                      Result |  Time |    RSS |
 |-------------------------------------------------------|-----------------------------:|------:|-------:|
-| Stress: ~2,334 JARs / 1.94M classes                   |   ~302 broken / 294 unverified | ~6.7s | ~460MB |
+| Stress: ~2,334 JARs / 1.94M classes                   |   ~311 broken / 294 unverified | ~6.7s | ~450MB |
 | Real project: ~50 modules / 48.5K classes + 38 JARs   |   ~1 broken / 347 unverified | ~0.9s | ~110MB |
 
 Traps already hit in this repository:

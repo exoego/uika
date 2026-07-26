@@ -9,6 +9,8 @@ pub const ACC_PRIVATE: u16 = 0x0002;
 pub const ACC_PROTECTED: u16 = 0x0004;
 pub const ACC_STATIC: u16 = 0x0008;
 pub const ACC_FINAL: u16 = 0x0010;
+pub const ACC_INTERFACE: u16 = 0x0200;
+pub const ACC_ABSTRACT: u16 = 0x0400;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct MemberKey {
@@ -92,6 +94,25 @@ pub enum BreakingChange {
     ClassBecameFinal {
         class: ClassName,
     },
+    /// A concrete class became abstract (or an interface): instantiating it now
+    /// throws InstantiationError.
+    ClassBecameAbstract {
+        class: ClassName,
+    },
+    /// class <-> interface flip: references and hierarchy edges compiled against
+    /// the old kind fail with IncompatibleClassChangeError.
+    ClassKindChanged {
+        class: ClassName,
+        /// True when the old side was the interface (interface -> class).
+        old_interface: bool,
+    },
+    /// A concrete method became abstract: a subclass compiled without an
+    /// override inherits nothing to call (AbstractMethodError).
+    MethodBecameAbstract {
+        class: ClassName,
+        name: Sym,
+        descriptor: Sym,
+    },
     MethodAccessNarrowed {
         class: ClassName,
         name: Sym,
@@ -152,6 +173,10 @@ pub struct SymbolRef {
     pub expected_static: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub field_write: Option<bool>,
+    /// Some(true) for a Class reference targeted by a `new` instruction
+    /// (instantiating an abstract class or interface throws InstantiationError).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instantiated: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]

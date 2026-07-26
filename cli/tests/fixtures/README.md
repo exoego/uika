@@ -44,6 +44,17 @@ reports are reproduced from these exact binaries:
   names: with both sisu versions on one classpath the JVM loads only the
   first-wins copy, so references from the shadowed copy must not be reported
   in either classpath order
+- ktor-network 2.3.13 calls `io.ktor.utils.io.ByteChannel` through an
+  InterfaceMethodref. ktor-io 2.3.13 declares ByteChannel as an interface; 3.1.0
+  made it a final class, so mixing ktor-io 3.1.0 under ktor-network 2.3.13
+  makes method resolution throw `IncompatibleClassChangeError` (the
+  class<->interface flip check). Same ktor module-skew family as the
+  coroutines/ktor fixture
+- jackson-module-kotlin 2.20.1 made `ValueClassBoxConverter` abstract; the
+  module's own `ReflectionCache` and two sibling classes instantiate it with
+  `new`. Bytecode compiled against 2.18.2, where it was a concrete final class,
+  throws `InstantiationError` under 2.20.1 (the `new`-on-abstract check). The
+  2.18.2 jar is both the old side and the consumer here
 - kotlin-stdlib 2.2.20 is probe support, not a scan input: the Kotlin-built
   fixtures (coroutines, ktor, koin, okhttp 4, pact) need it on the classpath
   when `tools/jvm-probe` loads their classes in a real JVM
@@ -55,6 +66,8 @@ reports are reproduced from these exact binaries:
 | `org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.7.1` | `7496cffdd3eb10109acdda1c3212f6ac7815789e09380dc9e2ccdec496dba3fc` |
 | `org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.11.0` | `d1d75aa01dffbb4d1c520e67e4c4e7f5f6174718e7cb4632412503f2f0e604fa` |
 | `io.ktor:ktor-io-jvm:2.3.13` | `cd5463381fd9e992e09b59eb0f01e6a241513a8e515c2b7ddecf616bbaa8c3f6` |
+| `io.ktor:ktor-io-jvm:3.1.0` | `8a5eff401d0c3a720c271c6281f3be7d05ef967f3fe45955b5698bfb00d2e8c8` |
+| `io.ktor:ktor-network-jvm:2.3.13` | `17fc53774c193c11443457bf5dbc9991e95daca09b2d8cd475050dfa0c71f280` |
 | `io.opentelemetry:opentelemetry-sdk-common:1.42.1` | `0cb2f9e93291ccfe7099ed424b7616e7e80ee51fdbbff99d2b2365f52428b179` |
 | `io.opentelemetry:opentelemetry-sdk-common:1.60.1` | `75cc96713e2e11c9a30dda4cb88ccfecc2209367c1e980bb946c5fc8bb71858f` |
 | `io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1` | `a548bc2e9eeba69cc0e90d5a0551ac51057fa9a5c27a20b569a19693c04e9cab` |
@@ -69,6 +82,8 @@ reports are reproduced from these exact binaries:
 | `io.insert-koin:koin-logger-slf4j:3.2.2` | `9a3304f6144ad012c0e6a21e410337078b0e5c044a065354799b606dd71cf765` |
 | `com.github.ben-manes.caffeine:caffeine:3.2.3` | `ca70c90a5d1ce1511880ce9c93d4ad22108f61111d3daf91eb52762b571bd179` |
 | `org.jetbrains.kotlin:kotlin-stdlib:2.2.20` | `8836ccffd3585fadda9901244b20d42901d2f3cd581058d8434e2ffabcf3a3e7` |
+| `com.fasterxml.jackson.module:jackson-module-kotlin:2.18.2` | `77f373478d7f124717863f9545d64974bb9b3062acd7c0f37ed94a3b70433a01` |
+| `com.fasterxml.jackson.module:jackson-module-kotlin:2.20.1` | `22d28ca992bfb686d8231fb4972edbcfc1976e8dc806a1b7a58f85abcad3d69c` |
 | `au.com.dius.pact.provider:junit5:4.2.2` | `d891060fc5ca9c9d954d9f16d61d0beb854d458515f383d5fc5f8e2f1cbb2f4b` |
 | `au.com.dius.pact.provider:junit5:4.2.3` | `5ddb1a3bf4ae29d38ea4b7c649f24bc83ea974fbfb14dd43df4d71f1a2a75add` |
 | `au.com.dius.pact.provider:junit5spring:4.2.2` | `e5f767d2d30bd47365ab6b1dd6651babb5db571b5c16502df57171ffa08895f1` |
@@ -95,6 +110,7 @@ Under the Apache License, Version 2.0 (`LICENSE-APACHE-2.0.txt`):
 - Guava — Copyright Google LLC
 - Selenium — Copyright Software Freedom Conservancy
 - OkHttp — Copyright Square, Inc.
+- Jackson (jackson-module-kotlin) — Copyright FasterXML, LLC
 - okhttp-digest — Copyright Rainer Burgstaller
 - Koin — Copyright Kotzilla and Koin project contributors
 - Caffeine — Copyright Ben Manes
