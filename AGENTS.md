@@ -281,6 +281,15 @@ pass-2 classes are typically below 0.1% of the scan.
   `UikaCli.runUpgradeCheck`). Never revert to `inheritIO`: a child process
   inheriting file descriptors writes past the tool's log capture, and under a
   Gradle daemon, sbt server, or mvnd the report silently disappears.
+- The upgrade-check tasks pass `--jdk-release` by default (the CLI keeps it
+  opt-in; the plugins run on a JVM, which is exactly the environment where a
+  default is safe). Derivation: Gradle root toolchain/targetCompatibility,
+  Maven `maven.compiler.release`/`.target` (1.x values skipped), sbt the build
+  JVM; all clamped by `UikaCli.effectiveJdkRelease` to the build JVM's ct.sym
+  ceiling (feature - 1) and skipped with a log line when no ct.sym exists.
+  Clamping down is the conservative direction (missing-on-both-sides stays
+  unreported). The build JVM's home is exported as UIKA_JDK so the child CLI
+  never depends on the caller's JAVA_HOME. Opt out with 0.
 - Their tests stub uika-cli with a shell-script ZIP in a file-based Maven repo
   (Gradle TestKit + sbt scripted + Maven invoker; invoker needs `-U` because
   target/it-repo caches resolution failures across runs, and its pre-build

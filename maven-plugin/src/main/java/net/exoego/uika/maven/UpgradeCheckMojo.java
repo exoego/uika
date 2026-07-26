@@ -53,6 +53,15 @@ public final class UpgradeCheckMojo extends AbstractMojo {
     @Parameter
     private List<File> excludeFiles = new ArrayList<>();
 
+    /**
+     * JDK API release for the CLI's {@code --jdk-release} (resolves JDK hierarchy escapes
+     * instead of counting them unverified). Defaults to {@code maven.compiler.release}, then
+     * {@code maven.compiler.target}, then the build JVM; clamped to what the build JVM's
+     * ct.sym can serve. Set 0 to disable the layer.
+     */
+    @Parameter(property = "uika.jdkRelease")
+    private Integer jdkRelease;
+
     @Parameter(defaultValue = "${repositorySystemSession}", readonly = true, required = true)
     private RepositorySystemSession repositorySession;
 
@@ -82,8 +91,11 @@ public final class UpgradeCheckMojo extends AbstractMojo {
         int exit;
         try {
             Path binary = UikaCli.extractBinary(zip.toPath(), installDir);
+            Integer effectiveJdkRelease = UikaCli.effectiveJdkRelease(
+                    jdkRelease != null ? jdkRelease : defaultJdkRelease(),
+                    line -> getLog().info(line));
             exit = UikaCli.runUpgradeCheck(binary, before.toPath(), after.toPath(), failOn,
-                    excludeFilePaths, line -> getLog().info(line));
+                    excludeFilePaths, effectiveJdkRelease, line -> getLog().info(line));
         } catch (IOException e) {
             throw new MojoExecutionException("failed to run uika upgrade-check", e);
         } catch (InterruptedException e) {
@@ -96,5 +108,26 @@ public final class UpgradeCheckMojo extends AbstractMojo {
         if (exit != 0) {
             throw new MojoExecutionException("uika upgrade-check failed with exit code " + exit);
         }
+    }
+
+    /**
+     * The JDK API release the checked application most plausibly runs on:
+     * {@code maven.compiler.release}, else {@code maven.compiler.target} (skipping "1.x"
+     * pre-9 values, which are below the layer's floor anyway), else the JVM running the
+     * build. {@link UikaCli#effectiveJdkRelease} clamps the result at execution time.
+     */
+    private int defaultJdkRelease() {
+        var properties = session.getTopLevelProject().getProperties();
+        for (String name : List.of("maven.compiler.release", "maven.compiler.target")) {
+            String value = properties.getProperty(name);
+            if (value != null && !value.isBlank() && !value.startsWith("1.")) {
+                try {
+                    return Integer.parseInt(value.trim());
+                } catch (NumberFormatException ignored) {
+                    // Fall through to the next source.
+                }
+            }
+        }
+        return Runtime.version().feature();
     }
 }

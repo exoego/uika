@@ -31,6 +31,8 @@
              and the exclude file list. -->
         <configuration>
           <failOn>reachable</failOn>
+          <!-- Pinned below the build JVM so no clamping applies; must reach the CLI. -->
+          <jdkRelease>11</jdkRelease>
           <excludeFiles>
             <excludeFile>${project.basedir}/uika-exclude.toml</excludeFile>
           </excludeFiles>

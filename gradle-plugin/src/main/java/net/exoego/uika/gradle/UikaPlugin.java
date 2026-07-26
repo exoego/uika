@@ -2,6 +2,7 @@ package net.exoego.uika.gradle;
 
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
+import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.tasks.TaskProvider;
 
 /**
@@ -20,6 +21,23 @@ import org.gradle.api.tasks.TaskProvider;
  * </pre>
  */
 public class UikaPlugin implements Plugin<Project> {
+    /**
+     * The JDK API release the checked application most plausibly runs on: the root project's
+     * toolchain language version when configured, else its target compatibility, else the JVM
+     * running the build (a multi-module root often has no java plugin at all).
+     */
+    static Integer defaultJdkRelease(Project root) {
+        JavaPluginExtension java = root.getExtensions().findByType(JavaPluginExtension.class);
+        if (java != null) {
+            var languageVersion = java.getToolchain().getLanguageVersion();
+            if (languageVersion.isPresent()) {
+                return languageVersion.get().asInt();
+            }
+            return Integer.parseInt(java.getTargetCompatibility().getMajorVersion());
+        }
+        return Runtime.version().feature();
+    }
+
     @Override
     public void apply(Project root) {
         String configurationName = root.findProperty("uikaConfiguration") instanceof String s
@@ -85,6 +103,16 @@ public class UikaPlugin implements Plugin<Project> {
             Object excludeFile = root.findProperty("uikaExcludeFile");
             if (excludeFile != null) {
                 task.getExcludeFiles().from(root.file(excludeFile.toString()));
+            }
+            Object jdkRelease = root.findProperty("uikaJdkRelease");
+            if (jdkRelease != null) {
+                task.getJdkRelease().set(Integer.parseInt(jdkRelease.toString()));
+            } else {
+                // The build knows its JDK, so the JDK API layer defaults ON here (the bare
+                // CLI keeps it opt-in): toolchain, else target compatibility, else the JVM
+                // running the build. UikaCli.effectiveJdkRelease clamps at execution time.
+                task.getJdkRelease().convention(
+                        root.getProviders().provider(() -> defaultJdkRelease(root)));
             }
             task.getInstallDir().convention(root.getLayout().getBuildDirectory().dir("uika/cli"));
             task.notCompatibleWithConfigurationCache("resolves detached configurations at execution time (PoC)");
