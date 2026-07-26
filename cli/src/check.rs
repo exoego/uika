@@ -235,7 +235,18 @@ fn collect_wanted(
     for (_, _, refs) in &scan.records {
         for r in refs {
             if r.member.is_none() {
-                continue; // Class references only need existence checks, not members.
+                // Class references only need existence checks, not members. The
+                // owner must still seed the JDK escape roots: without it, an
+                // owner the modeled JDK provides would verdict "class removed"
+                // while a member ref to the same owner elsewhere would flip it
+                // to Ok (the verdict must not depend on unrelated references).
+                if collect_escapes
+                    && !new.classes.contains_key(&r.owner)
+                    && !scan.graph.contains(r.owner)
+                {
+                    escapes.insert(r.owner);
+                }
+                continue;
             }
             for (lib, is_old_side) in [(new, false), (old, true)] {
                 if !memo.insert((r.owner, is_old_side)) {
@@ -295,6 +306,7 @@ fn collect_upgraded_super_edges(
     upgraded_sources: &FxHashSet<Sym>,
     new: &ApiIndex,
     wanted: &mut FxHashSet<Sym>,
+    mut escapes: Option<&mut FxHashSet<Sym>>,
 ) -> Vec<(Sym, Sym, Sym)> {
     if upgraded_sources.is_empty() {
         return Vec::new();
@@ -310,11 +322,18 @@ fn collect_upgraded_super_edges(
         if super_name == object_sym() {
             continue;
         }
-        // fetch_members requires wanted classes to be in the graph; supers in the
-        // new index are resolved without a fetch, and supers outside both stay
-        // unfetched (the check then skips them, same conservative direction as Unknown).
-        if !new.classes.contains_key(&super_name) && graph.contains(super_name) {
+        // Each super is classified exactly once: resolved from the new index
+        // (nothing to fetch), fetchable from its scanned origin (fetch_members
+        // requires wanted classes to be in the graph), or outside every scope.
+        // The last kind feeds the JDK escape roots when the layer is on;
+        // without it the check skips them, the same conservative direction as
+        // Unknown.
+        if new.classes.contains_key(&super_name) {
+            // Access flags come from the new index directly.
+        } else if graph.contains(super_name) {
             wanted.insert(super_name);
+        } else if let Some(escapes) = escapes.as_deref_mut() {
+            escapes.insert(super_name);
         }
         edges.push((class_name, super_name, node.source));
     }
@@ -382,7 +401,7 @@ pub fn check_scanned(
     old: &ApiIndex,
     new: &ApiIndex,
     upgraded_sources: &FxHashSet<Sym>,
-    jdk: Option<&crate::jdk::JdkIndexer>,
+    jdk: Option<&mut crate::jdk::JdkIndexer>,
     reach: Option<crate::reach::ReachInputs>,
     mut verdicts: Option<&mut crate::verdicts::VerdictWriter>,
 ) -> CheckReport {
@@ -392,18 +411,16 @@ pub fn check_scanned(
     let reach_result = reach
         .as_ref()
         .map(|r| crate::reach::reachable_classes(&scan.graph, r));
-    let (mut wanted, mut escapes) = collect_wanted(&scan, old, new, jdk.is_some());
+    let jdk_on = jdk.is_some();
+    let (mut wanted, mut escapes) = collect_wanted(&scan, old, new, jdk_on);
     collect_final_wanted(old, new, &scan.graph, &mut wanted);
-    let lag_edges = collect_upgraded_super_edges(&scan.graph, upgraded_sources, new, &mut wanted);
-    if jdk.is_some() {
-        // Version-lag supers outside every scope: without the JDK layer their access
-        // flags are unknowable and the check skips them; with it they participate.
-        for (_, super_name, _) in &lag_edges {
-            if !new.classes.contains_key(super_name) && !scan.graph.contains(*super_name) {
-                escapes.insert(*super_name);
-            }
-        }
-    }
+    let lag_edges = collect_upgraded_super_edges(
+        &scan.graph,
+        upgraded_sources,
+        new,
+        &mut wanted,
+        jdk_on.then_some(&mut escapes),
+    );
     let (fetched, fetch_warnings) = fetch_members(&scan, &wanted);
     // The JDK index is built from the escape roots' transitive closure inside ct.sym.
     // It is layered into BOTH scopes below, so ct.sym incompleteness resolves NotFound
@@ -412,6 +429,7 @@ pub fn check_scanned(
         Some(indexer) => indexer.fetch_closure(escapes),
         None => (ApiIndex::new(), Vec::new()),
     };
+    crate::memstats::report("after jdk closure fetch (ct.sym)");
     #[cfg(feature = "memstats")]
     {
         let ref_count: usize = scan.records.iter().map(|(_, _, refs)| refs.len()).sum();
@@ -440,8 +458,14 @@ pub fn check_scanned(
     all_warnings.extend(fetch_warnings);
     all_warnings.extend(jdk_warnings);
 
-    let old_scope = Scope::new(vec![old, &fetched, &jdk_index]);
-    let runtime_scope = Scope::new(vec![new, &fetched, &jdk_index]);
+    let mut old_layers = vec![old, &fetched];
+    let mut runtime_layers = vec![new, &fetched];
+    if jdk_on {
+        old_layers.push(&jdk_index);
+        runtime_layers.push(&jdk_index);
+    }
+    let old_scope = Scope::new(old_layers);
+    let runtime_scope = Scope::new(runtime_layers);
 
     let mut violations = Vec::new();
     let mut unknown_refs = 0usize;
@@ -884,7 +908,7 @@ fn is_accessible(
     if same_package(owner, source_class) {
         return true;
     }
-    access & ACC_PROTECTED != 0 && is_subclass(source_class, owner, graph)
+    access & ACC_PROTECTED != 0 && is_subclass(source_class, owner, runtime, graph)
 }
 
 fn same_package(a: Sym, b: Sym) -> bool {
@@ -905,8 +929,22 @@ fn package_name(name: &str) -> &str {
     name.rsplit_once('/').map_or("", |(pkg, _)| pkg)
 }
 
-fn is_subclass(class_name: Sym, target: Sym, graph: &ClassGraph) -> bool {
-    let mut next = graph.get(class_name).and_then(|node| node.super_name);
+/// Subclass walk for the protected-access check. Graph edges first (scanned
+/// classes), then the runtime scope's super chain: resolve_member can find a
+/// protected member on a new-index or JDK-layer owner, and judging the caller
+/// against a hierarchy resolution itself cannot walk invented false
+/// "access narrowed" reports (a genuine subclass through an unscanned library
+/// or JDK edge was treated as unrelated). A chain that escapes both still ends
+/// false, which errs toward reporting only when the old side resolved wider.
+fn is_subclass(class_name: Sym, target: Sym, runtime: &Scope, graph: &ClassGraph) -> bool {
+    let super_of = |class: Sym| {
+        graph
+            .get(class)
+            .map(|node| node.super_name)
+            .or_else(|| runtime.class_super(class))
+            .flatten()
+    };
+    let mut next = super_of(class_name);
     let mut seen = FxHashSet::default();
     while let Some(class) = next {
         if class == target {
@@ -915,7 +953,7 @@ fn is_subclass(class_name: Sym, target: Sym, graph: &ClassGraph) -> bool {
         if !seen.insert(class) {
             return false;
         }
-        next = graph.get(class).and_then(|node| node.super_name);
+        next = super_of(class);
     }
     false
 }
@@ -1472,7 +1510,7 @@ mod tests {
         let new = ApiIndex::build([]);
         let mut wanted = FxHashSet::default();
         let upgraded = FxHashSet::from_iter([intern("lib-new.jar")]);
-        let edges = collect_upgraded_super_edges(&graph, &upgraded, &new, &mut wanted);
+        let edges = collect_upgraded_super_edges(&graph, &upgraded, &new, &mut wanted, None);
         assert_eq!(
             edges,
             vec![(intern("lib/C"), intern("cp/X"), intern("lib-new.jar"))]
@@ -1480,6 +1518,69 @@ mod tests {
         // The super only exists on the scanned classpath, so pass 2 must fetch
         // its access flags.
         assert!(wanted.contains(&intern("cp/X")));
+    }
+
+    #[test]
+    fn protected_member_on_scope_side_super_is_accessible_to_real_subclass() {
+        // app/Sub extends lib/L, which is NOT a scan target (graph has no node
+        // for it); old L declared m public, new L dropped it and resolution
+        // falls to protected m on L's super in the new index. is_subclass must
+        // cross the scope-only edge or a genuine subclass caller would be
+        // reported as "method access narrowed" (a false positive the JVM
+        // links fine under JVMS 5.4.4).
+        let old = ApiIndex::build([class_with_method_access(
+            "lib/L",
+            &[("m", "()V", ACC_PUBLIC)],
+        )]);
+        let mut l_new = class("lib/L", &[]);
+        l_new.super_name = Some(intern("cp/Base"));
+        let new = ApiIndex::build([
+            l_new,
+            class_with_method_access("cp/Base", &[("m", "()V", ACC_PROTECTED)]),
+        ]);
+        let mut graph = ClassGraph::new();
+        graph.insert_if_absent(
+            intern("app/Sub"),
+            Some(intern("lib/L")),
+            &[],
+            &[],
+            None,
+            intern("app.jar"),
+        );
+        let v = verdict(
+            method_ref("lib/L", "m", "()V"),
+            intern("app/Sub"),
+            &Scope::new(vec![&old]),
+            &Scope::new(vec![&new]),
+            &graph,
+        );
+        assert!(matches!(v, RefVerdict::Ok), "expected Ok");
+    }
+
+    #[test]
+    fn class_only_refs_seed_the_jdk_escape_roots() {
+        // A Class-constant reference (member = None) to an owner outside the
+        // new index and the graph must still become a JDK escape root, or the
+        // existence verdict would depend on unrelated member refs.
+        let old = ApiIndex::build([class("javax/xml/Gone", &[])]);
+        let new = ApiIndex::build([]);
+        let mut scan = ScanResult::new();
+        scan.merge(ParsedTargets {
+            targets: vec![ParsedTarget {
+                source: intern("app.jar"),
+                class_name: intern("app/Use"),
+                hierarchy: Some((Some(object_sym()), vec![], None)),
+                entry_override: None,
+                refs: vec![class_ref("javax/xml/Gone")],
+                edges: vec![],
+            }],
+            warnings: vec![],
+            scanned_classes: 1,
+        });
+        let (_, escapes) = collect_wanted(&scan, &old, &new, true);
+        assert!(escapes.contains(&intern("javax/xml/Gone")));
+        let (_, off) = collect_wanted(&scan, &old, &new, false);
+        assert!(off.is_empty());
     }
 
     #[test]

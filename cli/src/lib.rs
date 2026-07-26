@@ -126,6 +126,7 @@ fn cmd_check(
     verdicts_json: Option<&Path>,
 ) -> Result<i32> {
     let exclude_rules = exclude::load(exclude_file)?;
+    let mut jdk_indexer = jdk::indexer_for(jdk_release)?;
     let mut verdict_writer = verdicts_json
         .map(verdicts::VerdictWriter::create)
         .transpose()?;
@@ -135,7 +136,7 @@ fn cmd_check(
         targets,
         app_roots,
         &exclude_rules,
-        jdk_release,
+        jdk_indexer.as_mut(),
         verdict_writer.as_mut(),
     );
     let result = finish_verdicts(verdict_writer, result)?;
@@ -214,23 +215,11 @@ pub fn run_check(
     targets: &[PathBuf],
     app_roots: &[PathBuf],
     exclude_rules: &[exclude::ExcludeRule],
-    jdk_release: Option<u32>,
+    jdk: Option<&mut jdk::JdkIndexer>,
     verdicts: Option<&mut verdicts::VerdictWriter>,
 ) -> Result<check::CheckReport> {
     let reachability = !app_roots.is_empty();
     memstats::report("start");
-    let jdk_indexer = match jdk_release {
-        Some(release) => {
-            let ct_sym = jdk::find_ct_sym().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "--jdk-release {release} needs a JDK: set JAVA_HOME to a JDK home, \
-                     or UIKA_JDK to a JDK home or a ct.sym file"
-                )
-            })?;
-            Some(jdk::JdkIndexer::open(&ct_sym, release)?)
-        }
-        None => None,
-    };
     let old_index = build_index_multi(old)?;
     let new_index = build_index_multi(new)?;
     memstats::report("after old/new index build");
@@ -304,7 +293,7 @@ pub fn run_check(
         &old_index,
         &new_index,
         &upgraded_sources,
-        jdk_indexer.as_ref(),
+        jdk,
         reach,
         verdicts,
     );
@@ -331,6 +320,10 @@ fn cmd_upgrade_check(
     verdicts_json: Option<&Path>,
 ) -> Result<i32> {
     let exclude_rules = exclude::load(exclude_file)?;
+    // Opened before the no-changes early return: a bad --jdk-release value or
+    // environment must fail on every run, not only on the first run that has
+    // changed jars (a misconfigured PR gate would otherwise pass for weeks).
+    let mut jdk_indexer = jdk::indexer_for(jdk_release)?;
     let before_universe = gradle::load_dump(before)?;
     let after_universe = gradle::load_dump(after)?;
     let changes = gradle::diff_dumps(&before_universe, &after_universe);
@@ -356,7 +349,7 @@ fn cmd_upgrade_check(
         &after_universe.scan_targets,
         &after_universe.app_roots,
         &exclude_rules,
-        jdk_release,
+        jdk_indexer.as_mut(),
         verdict_writer.as_mut(),
     );
     let mut result = finish_verdicts(verdict_writer, result)?;

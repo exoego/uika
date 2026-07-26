@@ -56,17 +56,30 @@ not be relearned by experiment.
   fixtures); the JDK is pinned in `.mise.toml` (probe needs 16+).
 - `--jdk-release N` (check/upgrade-check) layers a JDK API index under both
   resolution scopes, built lazily from the escape closure inside the JDK's
-  ct.sym (located via JAVA_HOME/UIKA_JDK; stubs are plain class files, parsed
-  by the normal parser). Strictly opt-in: the default run stays byte-identical
-  (goldens) and the no-JVM claim holds. N must be older than the installed JDK
-  (ct.sym does not carry the current release). Because the SAME index sits in
-  the old and new scope, ct.sym gaps resolve NotFound on both sides and the
-  old-relative gate keeps them unreported — the layer can only conclude
-  Unknowns, never invent violations. Fixture evidence: guava-selenium 16→0,
-  koin 5→0, jetty 14→0 unverified with broken counts unchanged, and the probe
-  links every converted verdict. kotlin/* and spring/* escapes correctly stay
-  Unknown. On the stress workload unverified went 294→0 and 106 real removals
-  surfaced (owners whose hierarchy escapes into java.util.concurrent).
+  ct.sym (located via UIKA_JDK first — authoritative when set — then
+  JAVA_HOME; stubs are plain class files, parsed by the normal parser).
+  Strictly opt-in: the default run stays byte-identical (goldens) and the
+  no-JVM claim holds. N must be older than the installed JDK (ct.sym does not
+  carry the current release). Because the SAME index sits in the old and new
+  scope, ct.sym gaps resolve NotFound on both sides and the old-relative gate
+  keeps them unreported — for reference verdicts the layer can only conclude
+  Unknowns, never invent violations. The one single-sided consumer is the
+  version-lag extends-final check: a lag super's ACC_FINAL comes from the
+  declared release's stub alone (there is no old-side JDK to compare), so
+  finality that changed between JDK releases (java/awt/PointerInfo became
+  final in 19) is judged as of N — correct for the declared release, possibly
+  not for the runtime actually deployed. Layer order is (new, fetched, jdk),
+  first-wins: ct.sym is modeled as the LAST classpath entry, deliberately
+  inverting real boot delegation, because jdk-first would resolve a checked
+  javax pair (a jaxb-api upgrade under `--jdk-release 8`) from the JDK's
+  bundled copy and mask the pair's own changes. Do not reorder. ct.sym layout
+  notes live in `cli/src/jdk.rs` (12+ has module dirs, 9-11 does not, 8 is
+  unsupported; codes are base-36 and real files keep 6/7 in joint dirs).
+  Fixture evidence: guava-selenium 16→0, koin 5→0, jetty 14→0 unverified with
+  broken counts unchanged, and the probe links every converted verdict.
+  kotlin/* and spring/* escapes correctly stay Unknown. On the stress workload
+  unverified went 294→0 and 106 real removals surfaced (owners whose hierarchy
+  escapes into java.util.concurrent).
 - Tuning knobs: `UIKA_CHUNK` (paths processed concurrently in pass 1; default =
   rayon threads), `UIKA_WINDOW` (fallback zip-reader window size; default
   1 MiB, two windows).

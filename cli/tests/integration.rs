@@ -666,8 +666,7 @@ fn find_ct_sym_for_test() -> Option<std::path::PathBuf> {
     let home = text
         .lines()
         .find_map(|l| l.trim().strip_prefix("java.home = "))?;
-    let p = std::path::Path::new(home.trim()).join("lib").join("ct.sym");
-    p.is_file().then_some(p)
+    uika::jdk::ct_sym_in(home.trim())
 }
 
 /// The opt-in JDK API layer (--jdk-release): guava's collections extend java.util
@@ -701,24 +700,36 @@ fn jdk_layer_resolves_hierarchy_escapes_without_changing_verdicts() {
     );
     assert!(baseline.unknown_refs > 0, "expected hierarchy escapes");
 
-    let indexer = uika::jdk::JdkIndexer::open(&ct_sym, 17).unwrap();
+    // The found JDK may be older than 18 (its own release is not in its
+    // ct.sym), so walk down a ladder instead of panicking; the guava escapes
+    // are java.util/java.lang types present since release 8, so the
+    // assertions hold on every rung (verified for 8, 11, and 17).
+    let Some(mut indexer) = [17, 11, 8]
+        .iter()
+        .find_map(|r| uika::jdk::JdkIndexer::open(&ct_sym, *r).ok())
+    else {
+        eprintln!("skipping: no usable release in {}", ct_sym.display());
+        return;
+    };
     let with_jdk = uika::check::check_scanned(
         scan(),
         &old_index,
         &new_index,
         &Default::default(),
-        Some(&indexer),
+        Some(&mut indexer),
         None,
         None,
     );
     assert_eq!(with_jdk.unknown_refs, 0, "all escapes should conclude");
-    let key = |v: &uika::model::Violation| {
+    fn key(v: &uika::model::Violation) -> (&str, &str, &str, &str, &str) {
         (
-            v.source_class.as_str().to_string(),
-            v.reference.owner.as_str().to_string(),
-            v.reason.clone(),
+            v.source_class.as_str(),
+            v.reference.owner.as_str(),
+            v.reference.member.map_or("", |m| m.name.as_str()),
+            v.reference.member.map_or("", |m| m.descriptor.as_str()),
+            v.reason.as_str(),
         )
-    };
+    }
     let mut a: Vec<_> = baseline.violations.iter().map(key).collect();
     let mut b: Vec<_> = with_jdk.violations.iter().map(key).collect();
     a.sort();
