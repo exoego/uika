@@ -275,6 +275,7 @@ fn upgrade_check_reproduces_otel_incident_from_dumps() {
         &after.app_roots,
         &[],
         None,
+        None,
     )
     .unwrap();
     assert_eq!(
@@ -329,6 +330,7 @@ fn upgrade_check_suggestion_attributes_the_break() {
         &after.scan_targets,
         &after.app_roots,
         &[],
+        None,
         None,
     )
     .unwrap();
@@ -394,6 +396,7 @@ fn coordinate_rename_of_identical_jar_reports_nothing() {
         &after.app_roots,
         &[],
         None,
+        None,
     )
     .unwrap();
     assert!(
@@ -423,6 +426,7 @@ fn reachability_tiers_violation_by_app_roots() {
         std::slice::from_ref(&ktor_io),
         &[],
         None,
+        None,
     )
     .unwrap();
     assert_eq!(reachable.violations.len(), 1);
@@ -439,6 +443,7 @@ fn reachability_tiers_violation_by_app_roots() {
         &targets,
         std::slice::from_ref(&unrelated),
         &[],
+        None,
         None,
     )
     .unwrap();
@@ -584,10 +589,11 @@ fn detects_upgraded_artifact_subclassing_final_class_of_lagging_sibling() {
 
     let report = uika::run_check(
         &[old_spring],
-        &[new_spring.clone()],
-        &[new_spring, lagging_junit5],
+        std::slice::from_ref(&new_spring),
+        &[new_spring.clone(), lagging_junit5],
         &[],
         &[],
+        None,
         None,
     )
     .unwrap();
@@ -624,10 +630,11 @@ fn preexisting_final_super_edge_is_not_reported_on_upgrade() {
 
     let report = uika::run_check(
         &[old_copy],
-        &[spring.clone()],
-        &[spring, lagging_junit5],
+        std::slice::from_ref(&spring),
+        &[spring.clone(), lagging_junit5],
         &[],
         &[],
+        None,
         None,
     )
     .unwrap();
@@ -637,6 +644,97 @@ fn preexisting_final_super_edge_is_not_reported_on_upgrade() {
         report.violations
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Locate ct.sym for the JDK-layer test: the same environment lookup the CLI uses,
+/// then the mise-pinned JDK as a fallback (CI and this repo's dev setup).
+fn find_ct_sym_for_test() -> Option<std::path::PathBuf> {
+    if let Some(p) = uika::jdk::find_ct_sym() {
+        return Some(p);
+    }
+    let out = std::process::Command::new("mise")
+        .args([
+            "exec",
+            "--",
+            "java",
+            "-XshowSettings:properties",
+            "-version",
+        ])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stderr);
+    let home = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("java.home = "))?;
+    uika::jdk::ct_sym_in(home.trim())
+}
+
+/// The opt-in JDK API layer (--jdk-release): guava's collections extend java.util
+/// types, so the selenium scenario leaves hierarchy-escape references unverified.
+/// With the layer, every escape concludes and the broken verdicts stay identical:
+/// no detection is lost and no new violation appears from ct.sym data.
+#[test]
+fn jdk_layer_resolves_hierarchy_escapes_without_changing_verdicts() {
+    let Some(ct_sym) = find_ct_sym_for_test() else {
+        eprintln!("skipping: no JDK with ct.sym found (JAVA_HOME/UIKA_JDK/mise)");
+        return;
+    };
+    let old_jar = fixture("guava-22.0.jar");
+    let new_jar = fixture("guava-23.0-rc1.jar");
+    let selenium = fixture("selenium-remote-driver-3.4.0.jar");
+
+    let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
+    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+    let scan = || {
+        uika::check::scan_target_paths(std::slice::from_ref(&selenium), &old_index, false).unwrap()
+    };
+
+    let baseline = uika::check::check_scanned(
+        scan(),
+        &old_index,
+        &new_index,
+        &Default::default(),
+        None,
+        None,
+        None,
+    );
+    assert!(baseline.unknown_refs > 0, "expected hierarchy escapes");
+
+    // The found JDK may be older than 18 (its own release is not in its
+    // ct.sym), so walk down a ladder instead of panicking; the guava escapes
+    // are java.util/java.lang types present since release 8, so the
+    // assertions hold on every rung (verified for 8, 11, and 17).
+    let Some(mut indexer) = [17, 11, 8]
+        .iter()
+        .find_map(|r| uika::jdk::JdkIndexer::open(&ct_sym, *r).ok())
+    else {
+        eprintln!("skipping: no usable release in {}", ct_sym.display());
+        return;
+    };
+    let with_jdk = uika::check::check_scanned(
+        scan(),
+        &old_index,
+        &new_index,
+        &Default::default(),
+        Some(&mut indexer),
+        None,
+        None,
+    );
+    assert_eq!(with_jdk.unknown_refs, 0, "all escapes should conclude");
+    fn key(v: &uika::model::Violation) -> (&str, &str, &str, &str, &str) {
+        (
+            v.source_class.as_str(),
+            v.reference.owner.as_str(),
+            v.reference.member.map_or("", |m| m.name.as_str()),
+            v.reference.member.map_or("", |m| m.descriptor.as_str()),
+            v.reason.as_str(),
+        )
+    }
+    let mut a: Vec<_> = baseline.violations.iter().map(key).collect();
+    let mut b: Vec<_> = with_jdk.violations.iter().map(key).collect();
+    a.sort();
+    b.sort();
+    assert_eq!(a, b, "verdicts must not change, only Unknowns conclude");
 }
 
 /// When the sibling is upgraded in lockstep (junit5 4.2.3 opened the class), the
@@ -654,6 +752,7 @@ fn lockstep_sibling_upgrade_reports_nothing() {
         &[new_spring, new_junit5],
         &[],
         &[],
+        None,
         None,
     )
     .unwrap();

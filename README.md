@@ -584,6 +584,28 @@ artifact, and copies bundled inside fat JARs are not false positives.
 References that escape into unanalyzed classes are counted as "unverified"
 rather than silently ignored.
 
+Most escapes lead into the JDK. Passing `--jdk-release N` (on `check` and
+`upgrade-check`) layers the JDK API of release N under the resolution scope,
+read from the `ct.sym` file of the JDK named by `UIKA_JDK` (checked first,
+authoritative when set), else `JAVA_HOME`, so those references conclude as OK
+or broken instead of unverified. N must be older than the installed JDK (its
+own release is not in `ct.sym`). The layer sits under both the old and the new
+side, so gaps in `ct.sym` cancel out instead of producing false positives from
+missing stubs. Without the flag nothing changes, and uika still needs no JVM
+to run.
+
+```console
+$ uika check --old guava-22.0.jar --new guava-23.0-rc1.jar \
+             --classpath selenium-remote-driver-3.4.0.jar
+...
+scanned 205 classes, 2 broken reference(s), 16 unverified (hierarchy escapes scope)
+
+$ uika check --old guava-22.0.jar --new guava-23.0-rc1.jar \
+             --classpath selenium-remote-driver-3.4.0.jar --jdk-release 17
+...
+scanned 205 classes, 2 broken reference(s)
+```
+
 ## Development
 
 ```console

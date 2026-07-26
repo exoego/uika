@@ -8,6 +8,7 @@ pub mod gradle;
 pub mod index;
 pub mod input;
 pub mod intern;
+pub mod jdk;
 pub mod memstats;
 pub mod model;
 pub mod reach;
@@ -35,6 +36,7 @@ pub fn run(cli: Cli) -> Result<i32> {
             exclude_file,
             json,
             fail_on,
+            jdk_release,
             verdicts_json,
         } => {
             let mut targets: Vec<PathBuf> = classpath;
@@ -53,6 +55,7 @@ pub fn run(cli: Cli) -> Result<i32> {
                 &exclude_file,
                 json,
                 fail_on,
+                jdk_release,
                 verdicts_json.as_deref(),
             )
         }
@@ -62,6 +65,7 @@ pub fn run(cli: Cli) -> Result<i32> {
             exclude_file,
             json,
             fail_on,
+            jdk_release,
             verdicts_json,
         } => cmd_upgrade_check(
             &before,
@@ -69,6 +73,7 @@ pub fn run(cli: Cli) -> Result<i32> {
             &exclude_file,
             json,
             fail_on,
+            jdk_release,
             verdicts_json.as_deref(),
         ),
         Command::Dump { path } => cmd_dump(&path),
@@ -117,9 +122,11 @@ fn cmd_check(
     exclude_file: &[PathBuf],
     json: bool,
     fail_on: FailOn,
+    jdk_release: Option<u32>,
     verdicts_json: Option<&Path>,
 ) -> Result<i32> {
     let exclude_rules = exclude::load(exclude_file)?;
+    let mut jdk_indexer = jdk::indexer_for(jdk_release)?;
     let mut verdict_writer = verdicts_json
         .map(verdicts::VerdictWriter::create)
         .transpose()?;
@@ -129,6 +136,7 @@ fn cmd_check(
         targets,
         app_roots,
         &exclude_rules,
+        jdk_indexer.as_mut(),
         verdict_writer.as_mut(),
     );
     let result = finish_verdicts(verdict_writer, result)?;
@@ -207,6 +215,7 @@ pub fn run_check(
     targets: &[PathBuf],
     app_roots: &[PathBuf],
     exclude_rules: &[exclude::ExcludeRule],
+    jdk: Option<&mut jdk::JdkIndexer>,
     verdicts: Option<&mut verdicts::VerdictWriter>,
 ) -> Result<check::CheckReport> {
     let reachability = !app_roots.is_empty();
@@ -284,6 +293,7 @@ pub fn run_check(
         &old_index,
         &new_index,
         &upgraded_sources,
+        jdk,
         reach,
         verdicts,
     );
@@ -306,9 +316,14 @@ fn cmd_upgrade_check(
     exclude_file: &[PathBuf],
     json: bool,
     fail_on: FailOn,
+    jdk_release: Option<u32>,
     verdicts_json: Option<&Path>,
 ) -> Result<i32> {
     let exclude_rules = exclude::load(exclude_file)?;
+    // Opened before the no-changes early return: a bad --jdk-release value or
+    // environment must fail on every run, not only on the first run that has
+    // changed jars (a misconfigured PR gate would otherwise pass for weeks).
+    let mut jdk_indexer = jdk::indexer_for(jdk_release)?;
     let before_universe = gradle::load_dump(before)?;
     let after_universe = gradle::load_dump(after)?;
     let changes = gradle::diff_dumps(&before_universe, &after_universe);
@@ -334,6 +349,7 @@ fn cmd_upgrade_check(
         &after_universe.scan_targets,
         &after_universe.app_roots,
         &exclude_rules,
+        jdk_indexer.as_mut(),
         verdict_writer.as_mut(),
     );
     let mut result = finish_verdicts(verdict_writer, result)?;

@@ -322,6 +322,13 @@ impl<'a> Scope<'a> {
         self.class(name).map(|(_, entry)| entry.nest_host)
     }
 
+    /// Outer None = class not in scope; inner None = the class has no superclass.
+    /// Lets hierarchy walks (e.g. the protected-access subclass check) cross edges
+    /// that exist only in a resolution layer, matching what resolve_member walks.
+    pub fn class_super(&self, name: ClassName) -> Option<Option<ClassName>> {
+        self.class(name).map(|(_, entry)| entry.super_name)
+    }
+
     /// Simplified JVMS 5.4.3.2 / 5.4.3.3. Check member existence by walking the owner,
     /// then the superclass chain, then superinterfaces by BFS.
     /// java/lang/Object members are resolved from built-in knowledge because Kt facade
