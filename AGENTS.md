@@ -125,9 +125,19 @@ pass-2 classes are typically below 0.1% of the scan.
 
 - Visibility is bytecode-level. Kotlin `internal` is public in bytecode;
   detecting such references is core to the tool.
-- Member lookup (`index.rs::Scope::resolve`) is a simplified JVMS 5.4.3.2/3.3
-  traversal: owner, then superclass and superinterface edges. A member moved to
-  a superclass still links at runtime and must not be reported.
+- Member lookup (`index.rs::Scope::resolve`) follows JVMS 5.4.3.2/3.3 order,
+  which differs by kind. Fields: the class, then its superinterfaces
+  (recursively, before the superclass), then the superclass. Methods: the full
+  superclass chain first, then maximally-specific superinterface methods
+  (first-match, not the strict most-specific tie-break — enough for existence
+  and access). The order matters only when the same name+descriptor lives on
+  both a superclass and an interface with different static/access, so it fixes
+  a latent owner-misattribution FP/FN; on the current fixtures and stress it is
+  unobservable (goldens unchanged). A member moved to a superclass or interface
+  still links at runtime and must not be reported. Escapes are conservative: a
+  superclass-chain break (methods) or a superinterface-branch escape (fields,
+  which have priority) yields Unknown rather than trusting a lower-priority
+  match, since the unseen higher-priority type could shadow it.
 - Constructors (`<init>`) and the class initializer (`<clinit>`) are NOT
   inherited: `resolve_member` resolves them owner-only. Walking the chain would
   bind a removed constructor to a superclass copy and misreport a real
