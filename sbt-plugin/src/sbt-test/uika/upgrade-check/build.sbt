@@ -10,6 +10,10 @@ ThisBuild / uikaFailOn := "reachable"
 // Declarative config in build.sbt: must reach the CLI as repeated --exclude-file flags.
 ThisBuild / uikaExcludeFiles := Seq(baseDirectory.value / "uika-exclude.toml")
 
+// Declarative config in build.sbt (pinned below the build JVM so no clamping applies):
+// must reach the CLI as --jdk-release.
+ThisBuild / uikaJdkRelease := 11
+
 resolvers += "uika-stub" at (baseDirectory.value / "repo").toURI.toString
 
 lazy val prepareStubRepo = taskKey[Unit]("Writes stub uika-cli ZIPs into the file-based test repository")
@@ -55,6 +59,15 @@ checkExcludeFilesPassed := {
   val expected = (baseDirectory.value / "uika-exclude.toml").getAbsolutePath
   if (!args.contains(s"--exclude-file $expected"))
     sys.error(s"uikaExcludeFiles setting was not forwarded to the CLI: $args")
+}
+
+lazy val checkJdkReleasePassed = taskKey[Unit]("Asserts the uikaJdkRelease setting reached the CLI as --jdk-release")
+
+// The build.sbt setting uikaJdkRelease := 11 must be forwarded to the CLI invocation.
+checkJdkReleasePassed := {
+  val args = IO.read(baseDirectory.value / "before.json.args")
+  if (!args.contains("--jdk-release 11"))
+    sys.error(s"uikaJdkRelease setting was not forwarded to the CLI: $args")
 }
 
 lazy val checkCliOutputLogged = taskKey[Unit]("Asserts the stub CLI's output went through the task logger")

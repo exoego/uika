@@ -56,6 +56,16 @@ public abstract class UpgradeCheckTask extends DefaultTask {
     @PathSensitive(PathSensitivity.NONE)
     public abstract ConfigurableFileCollection getExcludeFiles();
 
+    /**
+     * JDK API release for the CLI's {@code --jdk-release} (resolves JDK hierarchy escapes
+     * instead of counting them unverified). Defaults to the root project's Java toolchain or
+     * target compatibility, else the build JVM; clamped to what the build JVM's ct.sym can
+     * serve. Set 0 to disable the layer.
+     */
+    @Input
+    @Optional
+    public abstract Property<Integer> getJdkRelease();
+
     /** Where the binary is extracted, scoped by version and classifier below this directory. */
     @Internal
     public abstract DirectoryProperty getInstallDir();
@@ -87,11 +97,14 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         List<Path> excludeFiles = getExcludeFiles().getFiles().stream()
                 .map(File::toPath)
                 .toList();
+        Integer jdkRelease =
+                UikaCli.effectiveJdkRelease(getJdkRelease().getOrNull(), getLogger()::lifecycle);
         int exit = UikaCli.runUpgradeCheck(binary,
                 getBeforeFile().get().getAsFile().toPath(),
                 getAfterFile().get().getAsFile().toPath(),
                 getFailOn().getOrElse("any"),
                 excludeFiles,
+                jdkRelease,
                 getLogger()::lifecycle);
         if (exit == 1) {
             throw new GradleException("uika upgrade-check found broken references (see output above)");

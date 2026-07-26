@@ -18,6 +18,7 @@ object UikaPlugin extends AutoPlugin {
     val uikaCliVersion = settingKey[String]("uika-cli version for uikaUpgradeCheck (defaults to the plugin's own version)")
     val uikaFailOn = settingKey[String]("When uikaUpgradeCheck fails the build: never, reachable, or any (default)")
     val uikaExcludeFiles = settingKey[Seq[File]]("TOML files of known false positives to suppress, passed as repeated --exclude-file")
+    val uikaJdkRelease = settingKey[Int]("JDK API release for --jdk-release (0 disables; defaults to the build JVM's feature release, clamped to what its ct.sym serves)")
     val uikaUpgradeCheck = inputKey[Unit]("Runs uika upgrade-check: uikaUpgradeCheck <before.json> <after.json>")
   }
 
@@ -31,6 +32,9 @@ object UikaPlugin extends AutoPlugin {
     uikaCliVersion := Option(getClass.getPackage.getImplementationVersion).getOrElse(""),
     uikaFailOn := "any",
     uikaExcludeFiles := Seq.empty,
+    // The build runs on a JVM, so the JDK API layer defaults ON (the bare CLI keeps it
+    // opt-in); UikaCli.effectiveJdkRelease clamps to what the build JVM's ct.sym serves.
+    uikaJdkRelease := java.lang.Runtime.version().feature(),
     uikaUpgradeCheck := {
       val args = Def.spaceDelimited("<before.json> <after.json>").parsed
       if (args.length != 2) sys.error("usage: uikaUpgradeCheck <before.json> <after.json>")
@@ -53,7 +57,8 @@ object UikaPlugin extends AutoPlugin {
         .getOrElse(sys.error(s"uika-cli zip not found among ${files.mkString(", ")}"))
       val binary = UikaCli.extractBinary(zip.toPath, (uikaDir / s"cli-$version-$classifier").toPath)
       val excludeFiles = uikaExcludeFiles.value.map(_.toPath).asJava
-      UikaCli.runUpgradeCheck(binary, file(args.head).toPath, file(args(1)).toPath, uikaFailOn.value, excludeFiles, (line: String) => log.info(line)) match {
+      val jdkRelease = UikaCli.effectiveJdkRelease(uikaJdkRelease.value, (line: String) => log.info(line))
+      UikaCli.runUpgradeCheck(binary, file(args.head).toPath, file(args(1)).toPath, uikaFailOn.value, excludeFiles, jdkRelease, (line: String) => log.info(line)) match {
         case 0 => ()
         case 1 => sys.error("uika upgrade-check found broken references (see output above)")
         case n => sys.error(s"uika upgrade-check failed with exit code $n")

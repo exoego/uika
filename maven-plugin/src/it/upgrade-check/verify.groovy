@@ -8,6 +8,8 @@ assert args.text.contains("--fail-on reachable") :
     "POM <configuration><failOn> was not forwarded to the CLI: ${args.text}"
 
 def excludeFile = new File(basedir, "uika-exclude.toml")
+assert args.text.contains("--jdk-release 11") :
+    "POM <configuration><jdkRelease> was not forwarded to the CLI: ${args.text}"
 assert args.text.contains("--exclude-file ${excludeFile.absolutePath}") :
     "POM <configuration><excludeFiles> was not forwarded to the CLI: ${args.text}"
 

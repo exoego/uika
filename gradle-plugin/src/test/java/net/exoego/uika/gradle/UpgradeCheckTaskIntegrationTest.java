@@ -51,6 +51,7 @@ final class UpgradeCheckTaskIntegrationTest {
                 #!/bin/sh
                 echo ran > "$3.marker"
                 echo "$@" > "$3.args"
+                echo "${UIKA_JDK:-}" > "$3.env"
                 echo "uika-stub: dependency changes: 0"
                 exit 0
                 """);
@@ -201,6 +202,79 @@ final class UpgradeCheckTaskIntegrationTest {
         String args = Files.readString(Path.of(before + ".args"));
         assertTrue(args.contains("--exclude-file " + excludeFile),
                 () -> "build-script excludeFiles was not forwarded to the CLI: " + args);
+    }
+
+    @Test
+    void jdkReleaseDefaultsToTheBuildJvmClamped() throws Exception {
+        // No java plugin in the test project, so the default derivation falls to the JVM
+        // running the build (the TestKit daemon uses this JVM), clamped by one because a
+        // JDK's ct.sym never contains its own release.
+        runner(CLEAN_VERSION).build();
+
+        int expected = Runtime.version().feature() - 1;
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(args.contains("--jdk-release " + expected),
+                () -> "expected derived --jdk-release " + expected + " in CLI invocation: " + args);
+        // The CLI must read ct.sym from the build JVM, not whatever JAVA_HOME the
+        // environment happens to export.
+        String env = Files.readString(Path.of(before + ".env")).trim();
+        assertTrue(!env.isEmpty(), "UIKA_JDK was not exported to the CLI process");
+    }
+
+    @Test
+    void jdkReleaseDerivedFromTargetCompatibility() throws Exception {
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    java
+                    id("net.exoego.uika")
+                }
+
+                java {
+                    targetCompatibility = JavaVersion.VERSION_11
+                }
+
+                repositories {
+                    maven {
+                        url = uri("%s")
+                        metadataSources { artifact() }
+                    }
+                }
+                """.formatted(repoDir.toUri()));
+
+        runner(CLEAN_VERSION).build();
+
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(args.contains("--jdk-release 11"),
+                () -> "expected --jdk-release 11 from targetCompatibility: " + args);
+    }
+
+    @Test
+    void jdkReleasePropertyOverridesAndZeroDisables() throws Exception {
+        runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION,
+                        "-PuikaJdkRelease=11")
+                .build();
+        String overridden = Files.readString(Path.of(before + ".args"));
+        assertTrue(overridden.contains("--jdk-release 11"),
+                () -> "-PuikaJdkRelease was not forwarded to the CLI: " + overridden);
+
+        runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION,
+                        "-PuikaJdkRelease=0")
+                .build();
+        String disabled = Files.readString(Path.of(before + ".args"));
+        assertTrue(!disabled.contains("--jdk-release"),
+                () -> "-PuikaJdkRelease=0 must disable the JDK API layer: " + disabled);
     }
 
     @Test

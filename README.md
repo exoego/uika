@@ -282,6 +282,16 @@ Known false positives can be suppressed the same way via
 `excludeFiles` (Gradle task DSL, or `-PuikaExcludeFile=` for a single file),
 `uikaExcludeFiles` (sbt), or `<excludeFiles>` (Maven).
 
+The plugins also enable the CLI's `--jdk-release` JDK API layer by default:
+the build runs on a JVM, so a usable `ct.sym` is at hand and the target
+release is derivable. Gradle derives it from the root project's Java toolchain
+or target compatibility, Maven from `maven.compiler.release` or
+`maven.compiler.target`, sbt from the build JVM, and every tool clamps the
+value to what the build JVM's `ct.sym` can serve (its own release is not in
+it; clamping down errs toward not reporting). Override with `jdkRelease`
+(Gradle task DSL, or `-PuikaJdkRelease=`), `uikaJdkRelease` (sbt), or
+`<jdkRelease>` / `-Duika.jdkRelease=` (Maven); 0 disables the layer.
+
 ### Gradle (`gradle-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-gradle-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-gradle-plugin)
 
 Works with Groovy and Kotlin DSL builds (Gradle 9 / JVM 17+).

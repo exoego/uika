@@ -80,6 +80,36 @@ public final class UikaCli {
     }
 
     /**
+     * Clamps a wanted {@code --jdk-release} value to what the build JVM's ct.sym can serve,
+     * logging the decision through {@code log}. The plugins run on a JVM by definition, so the
+     * JDK API layer defaults ON there (unlike the opt-in CLI flag): the build knows its JDK
+     * authoritatively. A JDK's ct.sym does not contain its own release, so the highest servable
+     * release is the build JVM's feature release minus one; clamping DOWN is the conservative
+     * direction (members added after the clamped release resolve NotFound on both sides of the
+     * check and stay unreported, the same direction as Unknown).
+     *
+     * @param target the wanted release, or null/&lt;=0 to disable the layer
+     * @return the release to pass as {@code --jdk-release}, or null to omit the flag
+     */
+    public static Integer effectiveJdkRelease(Integer target, Consumer<String> log) {
+        if (target == null || target <= 0) {
+            return null;
+        }
+        int ctSymMax = Runtime.version().feature() - 1;
+        int effective = Math.min(target, ctSymMax);
+        if (effective < 8
+                || !Files.isRegularFile(Path.of(System.getProperty("java.home"), "lib", "ct.sym"))) {
+            log.accept("uika: skipping the JDK API layer (no usable ct.sym in the build JVM)");
+            return null;
+        }
+        if (effective < target) {
+            log.accept("uika: JDK API layer clamped to release " + effective
+                    + " (the build JVM's ct.sym has no release " + target + ")");
+        }
+        return effective;
+    }
+
+    /**
      * Runs {@code uika upgrade-check}, passing each line of the CLI's merged stdout/stderr to
      * {@code output}. The report must go through the build tool's own logger: a child process
      * that inherits file descriptors writes past the tool's log capture, so under a Gradle
@@ -90,9 +120,13 @@ public final class UikaCli {
      *     {@code any}); passed through as {@code --fail-on}. Null or blank leaves the CLI default.
      * @param excludeFiles TOML files of known false positives to suppress, passed through as
      *     repeated {@code --exclude-file} flags. Null or empty adds nothing.
+     * @param jdkRelease resolve JDK hierarchy escapes against this API release (pass a value
+     *     from {@link #effectiveJdkRelease}); null omits the flag. The build JVM's home is
+     *     exported as UIKA_JDK so the CLI reads that JDK's ct.sym regardless of the caller's
+     *     JAVA_HOME.
      */
     public static int runUpgradeCheck(Path binary, Path before, Path after, String failOn,
-            List<Path> excludeFiles, Consumer<String> output)
+            List<Path> excludeFiles, Integer jdkRelease, Consumer<String> output)
             throws IOException, InterruptedException {
         List<String> command = new ArrayList<>(List.of(
                 binary.toString(), "upgrade-check",
@@ -108,7 +142,14 @@ public final class UikaCli {
                 command.add(excludeFile.toString());
             }
         }
+        if (jdkRelease != null) {
+            command.add("--jdk-release");
+            command.add(jdkRelease.toString());
+        }
         ProcessBuilder builder = new ProcessBuilder(command);
+        if (jdkRelease != null) {
+            builder.environment().put("UIKA_JDK", System.getProperty("java.home"));
+        }
         builder.redirectErrorStream(true);
         Process process = builder.start();
         try (BufferedReader reader = new BufferedReader(
