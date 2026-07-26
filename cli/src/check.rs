@@ -5,8 +5,8 @@ use crate::index::{
 use crate::input::LoadedClass;
 use crate::intern::Sym;
 use crate::model::{
-    ACC_FINAL, ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC, ACC_STATIC, MemberKey, RefKind, SymbolRef,
-    Violation,
+    ACC_ABSTRACT, ACC_FINAL, ACC_INTERFACE, ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC, ACC_STATIC,
+    MemberKey, RefKind, SymbolRef, Violation,
 };
 use anyhow::Result;
 use rayon::prelude::*;
@@ -503,6 +503,7 @@ pub fn check_scanned(
     }
     add_final_violations(old, new, &fetched, &graph, &mut violations, &mut seen);
     add_extends_final_violations(&lag_edges, old, &runtime_scope, &mut violations, &mut seen);
+    add_kind_flip_violations(old, new, &graph, &mut violations, &mut seen);
 
     // Canonical order, sorted by string value (never Sym ids): the reference loop
     // is already deterministic, but add_final_violations discovers violations in
@@ -583,9 +584,25 @@ fn verdict(
                 member: None,
                 expected_static: None,
                 field_write: None,
+                instantiated: None,
             },
             "class removed",
         );
+    }
+    // `new X` where X is now abstract or an interface throws InstantiationError.
+    // Old-relative: only report when X was concrete before (a class that was already
+    // abstract and stayed instantiable via a subclass is not this reference's concern).
+    if r.instantiated == Some(true)
+        && let Some(access) = runtime.class_access(r.owner)
+        && access & (ACC_ABSTRACT | ACC_INTERFACE) != 0
+    {
+        return match old.class_access(r.owner) {
+            Some(old_access) if old_access & (ACC_ABSTRACT | ACC_INTERFACE) == 0 => {
+                RefVerdict::Broken(r, "class became abstract")
+            }
+            Some(_) => RefVerdict::Ok,
+            None => RefVerdict::Unknown,
+        };
     }
     if r.member.is_none()
         && let Some(access) = runtime.class_access(r.owner)
@@ -612,6 +629,24 @@ fn verdict(
         RefKind::Method | RefKind::InterfaceMethod => MemberKind::Method,
         RefKind::Class => return RefVerdict::Ok,
     };
+    // Methodref vs InterfaceMethodref encodes the owner kind the compiler saw; a
+    // class <-> interface flip makes resolution throw IncompatibleClassChangeError.
+    // Old-relative: only when the ref kind matched the old owner kind (it did, for
+    // code that compiled). Owner outside old scope is Unknown, not a report.
+    if kind == MemberKind::Method
+        && let Some(new_access) = runtime.class_access(r.owner)
+    {
+        let ref_expects_interface = r.kind == RefKind::InterfaceMethod;
+        if (new_access & ACC_INTERFACE != 0) != ref_expects_interface {
+            match old.class_access(r.owner) {
+                Some(old_access) if (old_access & ACC_INTERFACE != 0) == ref_expects_interface => {
+                    return RefVerdict::Broken(r, "class kind changed");
+                }
+                None => return RefVerdict::Unknown,
+                _ => {}
+            }
+        }
+    }
     match runtime.resolve_member(r.owner, member, kind) {
         MemberResolution::Found(found) => {
             if let Some(expected_static) = r.expected_static
@@ -706,6 +741,7 @@ fn add_final_violations(
                 member: None,
                 expected_static: None,
                 field_write: None,
+                instantiated: None,
             };
             if seen.insert((node.source, class_name, reference)) {
                 violations.push(Violation {
@@ -743,6 +779,7 @@ fn add_final_violations(
                     member: Some(*key),
                     expected_static: Some(false),
                     field_write: None,
+                    instantiated: None,
                 };
                 if seen.insert((node.source, class_name, reference)) {
                     violations.push(Violation {
@@ -796,6 +833,7 @@ fn add_extends_final_violations(
             member: None,
             expected_static: None,
             field_write: None,
+            instantiated: None,
         };
         if seen.insert((source, class_name, reference)) {
             violations.push(Violation {
@@ -806,6 +844,68 @@ fn add_extends_final_violations(
                 reachable: None,
                 suggestion: None,
             });
+        }
+    }
+}
+
+/// A scanned class extends a class that became an interface, or implements an
+/// interface that became a class. Either flip makes the subclass fail to load
+/// (VerifyError / IncompatibleClassChangeError), so it is found by a graph walk
+/// like the newly-final walk, without needing a constant-pool reference. The flip
+/// is judged old-vs-new library kind, so an edge that was already cross-kind (never
+/// valid) is pre-existing, not this upgrade's breakage.
+fn add_kind_flip_violations(
+    old: &ApiIndex,
+    new: &ApiIndex,
+    graph: &ClassGraph,
+    violations: &mut Vec<Violation>,
+    seen: &mut FxHashSet<(Sym, Sym, SymbolRef)>,
+) {
+    // owner -> new kind is interface (true = class became interface, so an extends
+    // edge breaks; false = interface became class, so an implements edge breaks).
+    let flipped: FxHashMap<Sym, bool> = old
+        .classes
+        .iter()
+        .filter_map(|(&name, old_entry)| {
+            let new_entry = new.classes.get(&name)?;
+            let old_iface = old_entry.access & ACC_INTERFACE != 0;
+            let new_iface = new_entry.access & ACC_INTERFACE != 0;
+            (old_iface != new_iface).then_some((name, new_iface))
+        })
+        .collect();
+    if flipped.is_empty() {
+        return;
+    }
+    let mut report = |owner: Sym, class_name: Sym, node: &crate::index::GraphNode| {
+        let reference = SymbolRef {
+            kind: RefKind::Class,
+            owner,
+            member: None,
+            expected_static: None,
+            field_write: None,
+            instantiated: None,
+        };
+        if seen.insert((node.source, class_name, reference)) {
+            violations.push(Violation {
+                source: node.source,
+                source_class: class_name,
+                reference,
+                reason: "class kind changed".to_string(),
+                reachable: None,
+                suggestion: None,
+            });
+        }
+    };
+    for (class_name, node) in graph.iter() {
+        if let Some(super_name) = node.super_name
+            && flipped.get(&super_name) == Some(&true)
+        {
+            report(super_name, class_name, node);
+        }
+        for &iface in graph.interfaces_of(node) {
+            if flipped.get(&iface) == Some(&false) {
+                report(iface, class_name, node);
+            }
         }
     }
 }
@@ -1020,6 +1120,7 @@ mod tests {
             member: Some(MemberKey::new(name, desc)),
             expected_static: None,
             field_write: None,
+            instantiated: None,
         }
     }
 
@@ -1030,6 +1131,7 @@ mod tests {
             member: Some(MemberKey::new(name, desc)),
             expected_static: Some(true),
             field_write: None,
+            instantiated: None,
         }
     }
 
@@ -1040,6 +1142,7 @@ mod tests {
             member: Some(MemberKey::new(name, desc)),
             expected_static: Some(false),
             field_write: Some(true),
+            instantiated: None,
         }
     }
 
@@ -1186,7 +1289,213 @@ mod tests {
             member: None,
             expected_static: None,
             field_write: None,
+            instantiated: None,
         }
+    }
+
+    fn new_ref(owner: &str) -> SymbolRef {
+        SymbolRef {
+            kind: RefKind::Class,
+            owner: intern(owner),
+            member: None,
+            expected_static: None,
+            field_write: None,
+            instantiated: Some(true),
+        }
+    }
+
+    fn interface_method_ref(owner: &str, name: &str, desc: &str) -> SymbolRef {
+        SymbolRef {
+            kind: RefKind::InterfaceMethod,
+            owner: intern(owner),
+            member: Some(MemberKey::new(name, desc)),
+            expected_static: Some(false),
+            field_write: None,
+            instantiated: None,
+        }
+    }
+
+    fn abstract_class(name: &str) -> ClassApi {
+        let mut c = class(name, &[]);
+        c.access = ACC_PUBLIC | ACC_ABSTRACT;
+        c
+    }
+
+    fn interface(name: &str) -> ClassApi {
+        let mut c = class(name, &[]);
+        c.access = ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT;
+        c
+    }
+
+    #[test]
+    fn new_on_class_that_became_abstract_is_broken() {
+        let old = ApiIndex::build([class("lib/C", &[])]);
+        let new = ApiIndex::build([abstract_class("lib/C")]);
+        let v = verdict(
+            new_ref("lib/C"),
+            intern("app/Use"),
+            &Scope::new(vec![&old]),
+            &Scope::new(vec![&new]),
+            &ClassGraph::new(),
+        );
+        assert_eq!(broken(v).unwrap().1, "class became abstract");
+    }
+
+    #[test]
+    fn new_on_class_that_became_interface_is_broken() {
+        let old = ApiIndex::build([class("lib/C", &[])]);
+        let new = ApiIndex::build([interface("lib/C")]);
+        let v = verdict(
+            new_ref("lib/C"),
+            intern("app/Use"),
+            &Scope::new(vec![&old]),
+            &Scope::new(vec![&new]),
+            &ClassGraph::new(),
+        );
+        assert_eq!(broken(v).unwrap().1, "class became abstract");
+    }
+
+    #[test]
+    fn new_on_already_abstract_class_is_not_reported() {
+        // A class abstract on both sides: instantiating it was never valid, so the
+        // reference is pre-existing inconsistency, not this upgrade's breakage.
+        let old = ApiIndex::build([abstract_class("lib/C")]);
+        let new = ApiIndex::build([abstract_class("lib/C")]);
+        let v = verdict(
+            new_ref("lib/C"),
+            intern("app/Use"),
+            &Scope::new(vec![&old]),
+            &Scope::new(vec![&new]),
+            &ClassGraph::new(),
+        );
+        assert!(matches!(v, RefVerdict::Ok));
+    }
+
+    #[test]
+    fn plain_class_ref_to_newly_abstract_class_is_ok() {
+        // Only `new` breaks; a type reference (field type, cast) to an abstract
+        // class stays valid.
+        let old = ApiIndex::build([class("lib/C", &[])]);
+        let new = ApiIndex::build([abstract_class("lib/C")]);
+        let v = verdict(
+            class_ref("lib/C"),
+            intern("app/Use"),
+            &Scope::new(vec![&old]),
+            &Scope::new(vec![&new]),
+            &ClassGraph::new(),
+        );
+        assert!(matches!(v, RefVerdict::Ok));
+    }
+
+    #[test]
+    fn methodref_owner_that_became_interface_is_broken() {
+        // A Methodref (compiled against a class) whose owner is now an interface:
+        // resolution throws IncompatibleClassChangeError.
+        let old = ApiIndex::build([class("lib/C", &[("m", "()V")])]);
+        let new = ApiIndex::build([{
+            let mut c = interface("lib/C");
+            c.methods = build_members([(MemberKey::new("m", "()V"), ACC_PUBLIC | ACC_ABSTRACT)]);
+            c
+        }]);
+        let v = verdict(
+            method_ref("lib/C", "m", "()V"),
+            intern("app/Use"),
+            &Scope::new(vec![&old]),
+            &Scope::new(vec![&new]),
+            &ClassGraph::new(),
+        );
+        assert_eq!(broken(v).unwrap().1, "class kind changed");
+    }
+
+    #[test]
+    fn interface_methodref_owner_that_became_class_is_broken() {
+        let old = ApiIndex::build([interface("lib/I")]);
+        let new = ApiIndex::build([class("lib/I", &[("m", "()V")])]);
+        let v = verdict(
+            interface_method_ref("lib/I", "m", "()V"),
+            intern("app/Use"),
+            &Scope::new(vec![&old]),
+            &Scope::new(vec![&new]),
+            &ClassGraph::new(),
+        );
+        assert_eq!(broken(v).unwrap().1, "class kind changed");
+    }
+
+    #[test]
+    fn matching_owner_kind_is_not_reported() {
+        // Owner stayed a class: a Methodref resolves normally.
+        let old = ApiIndex::build([class("lib/C", &[("m", "()V")])]);
+        let new = ApiIndex::build([class("lib/C", &[("m", "()V")])]);
+        let v = verdict(
+            method_ref("lib/C", "m", "()V"),
+            intern("app/Use"),
+            &Scope::new(vec![&old]),
+            &Scope::new(vec![&new]),
+            &ClassGraph::new(),
+        );
+        assert!(matches!(v, RefVerdict::Ok));
+    }
+
+    #[test]
+    fn extends_class_that_became_interface_is_broken() {
+        let old = ApiIndex::build([class("lib/Base", &[])]);
+        let new = ApiIndex::build([interface("lib/Base")]);
+        let mut graph = ClassGraph::new();
+        graph.insert_if_absent(
+            intern("app/Sub"),
+            Some(intern("lib/Base")),
+            &[],
+            &[],
+            None,
+            intern("app.jar"),
+        );
+        let mut violations = Vec::new();
+        let mut seen = FxHashSet::default();
+        add_kind_flip_violations(&old, &new, &graph, &mut violations, &mut seen);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, "class kind changed");
+        assert_eq!(violations[0].reference.owner.as_str(), "lib/Base");
+        assert_eq!(violations[0].source_class.as_str(), "app/Sub");
+    }
+
+    #[test]
+    fn implements_interface_that_became_class_is_broken() {
+        let old = ApiIndex::build([interface("lib/I")]);
+        let new = ApiIndex::build([class("lib/I", &[])]);
+        let mut graph = ClassGraph::new();
+        graph.insert_if_absent(
+            intern("app/Impl"),
+            Some(object_sym()),
+            &[intern("lib/I")],
+            &[],
+            None,
+            intern("app.jar"),
+        );
+        let mut violations = Vec::new();
+        let mut seen = FxHashSet::default();
+        add_kind_flip_violations(&old, &new, &graph, &mut violations, &mut seen);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, "class kind changed");
+        assert_eq!(violations[0].reference.owner.as_str(), "lib/I");
+    }
+
+    #[test]
+    fn stable_kind_hierarchy_is_not_reported() {
+        let old = ApiIndex::build([class("lib/Base", &[]), interface("lib/I")]);
+        let new = ApiIndex::build([class("lib/Base", &[]), interface("lib/I")]);
+        let mut graph = ClassGraph::new();
+        graph.insert_if_absent(
+            intern("app/Sub"),
+            Some(intern("lib/Base")),
+            &[intern("lib/I")],
+            &[],
+            None,
+            intern("app.jar"),
+        );
+        let mut violations = Vec::new();
+        let mut seen = FxHashSet::default();
+        add_kind_flip_violations(&old, &new, &graph, &mut violations, &mut seen);
+        assert!(violations.is_empty());
     }
 
     #[test]

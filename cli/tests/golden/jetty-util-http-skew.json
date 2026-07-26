@@ -14,7 +14,8 @@
       "source_class": "org/eclipse/jetty/http/HttpFields",
       "reference": {
         "kind": "class",
-        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie"
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie",
+        "instantiated": true
       },
       "reason": "class access narrowed"
     },
@@ -46,7 +47,8 @@
       "source_class": "org/eclipse/jetty/http/HttpGenerator",
       "reference": {
         "kind": "class",
-        "owner": "org/eclipse/jetty/util/ArrayTrie"
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "instantiated": true
       },
       "reason": "class access narrowed"
     },
@@ -78,7 +80,8 @@
       "source_class": "org/eclipse/jetty/http/HttpHeader",
       "reference": {
         "kind": "class",
-        "owner": "org/eclipse/jetty/util/ArrayTrie"
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "instantiated": true
       },
       "reason": "class access narrowed"
     },
@@ -110,7 +113,8 @@
       "source_class": "org/eclipse/jetty/http/HttpHeaderValue",
       "reference": {
         "kind": "class",
-        "owner": "org/eclipse/jetty/util/ArrayTrie"
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "instantiated": true
       },
       "reason": "class access narrowed"
     },
@@ -142,7 +146,8 @@
       "source_class": "org/eclipse/jetty/http/HttpMethod",
       "reference": {
         "kind": "class",
-        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie"
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie",
+        "instantiated": true
       },
       "reason": "class access narrowed"
     },
@@ -165,7 +170,8 @@
       "source_class": "org/eclipse/jetty/http/HttpMethod",
       "reference": {
         "kind": "class",
-        "owner": "org/eclipse/jetty/util/ArrayTrie"
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "instantiated": true
       },
       "reason": "class access narrowed"
     },
@@ -197,7 +203,8 @@
       "source_class": "org/eclipse/jetty/http/HttpParser",
       "reference": {
         "kind": "class",
-        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie"
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie",
+        "instantiated": true
       },
       "reason": "class access narrowed"
     },
@@ -220,7 +227,8 @@
       "source_class": "org/eclipse/jetty/http/HttpParser",
       "reference": {
         "kind": "class",
-        "owner": "org/eclipse/jetty/util/ArrayTrie"
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "instantiated": true
       },
       "reason": "class access narrowed"
     },
@@ -252,7 +260,8 @@
       "source_class": "org/eclipse/jetty/http/HttpScheme",
       "reference": {
         "kind": "class",
-        "owner": "org/eclipse/jetty/util/ArrayTrie"
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "instantiated": true
       },
       "reason": "class access narrowed"
     },
@@ -284,7 +293,8 @@
       "source_class": "org/eclipse/jetty/http/HttpURI",
       "reference": {
         "kind": "class",
-        "owner": "org/eclipse/jetty/util/ArrayTrie"
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "instantiated": true
       },
       "reason": "class access narrowed"
     },
@@ -316,7 +326,8 @@
       "source_class": "org/eclipse/jetty/http/HttpVersion",
       "reference": {
         "kind": "class",
-        "owner": "org/eclipse/jetty/util/ArrayTrie"
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "instantiated": true
       },
       "reason": "class access narrowed"
     },
@@ -348,7 +359,8 @@
       "source_class": "org/eclipse/jetty/http/MimeTypes",
       "reference": {
         "kind": "class",
-        "owner": "org/eclipse/jetty/util/ArrayTrie"
+        "owner": "org/eclipse/jetty/util/ArrayTrie",
+        "instantiated": true
       },
       "reason": "class access narrowed"
     },
@@ -380,7 +392,8 @@
       "source_class": "org/eclipse/jetty/http/PathMap",
       "reference": {
         "kind": "class",
-        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie"
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie",
+        "instantiated": true
       },
       "reason": "class access narrowed"
     },
@@ -435,7 +448,8 @@
       "source_class": "org/eclipse/jetty/http/pathmap/PathMappings",
       "reference": {
         "kind": "class",
-        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie"
+        "owner": "org/eclipse/jetty/util/ArrayTernaryTrie",
+        "instantiated": true
       },
       "reason": "class access narrowed"
     },

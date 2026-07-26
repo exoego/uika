@@ -93,9 +93,17 @@ pub fn extract_hierarchy(rc: &RawClass) -> Result<(Sym, Option<Sym>, Vec<Sym>, O
 pub fn extract_refs(rc: &RawClass, accept: impl Fn(Sym) -> bool) -> Result<Vec<SymbolRef>> {
     let mut refs = Vec::new();
     let mut code_ref_indices = vec![false; rc.cp().len()];
+    let mut instantiated_indices = vec![false; rc.cp().len()];
     for method in &rc.methods {
         for code_ref in &method.code_refs {
-            if let Some(slot) = code_ref_indices.get_mut(code_ref.cp_index as usize) {
+            // `new` targets a Class constant: it marks that constant as
+            // instantiated instead of joining the member-ref handling below.
+            let slots = if code_ref.opcode == 0xbb {
+                &mut instantiated_indices
+            } else {
+                &mut code_ref_indices
+            };
+            if let Some(slot) = slots.get_mut(code_ref.cp_index as usize) {
                 *slot = true;
             }
         }
@@ -112,6 +120,7 @@ pub fn extract_refs(rc: &RawClass, accept: impl Fn(Sym) -> bool) -> Result<Vec<S
                         member: None,
                         expected_static: None,
                         field_write: None,
+                        instantiated: instantiated_indices[idx].then_some(true),
                     });
                 }
             }
@@ -126,6 +135,9 @@ pub fn extract_refs(rc: &RawClass, accept: impl Fn(Sym) -> bool) -> Result<Vec<S
     }
     for method in &rc.methods {
         for code_ref in &method.code_refs {
+            if code_ref.opcode == 0xbb {
+                continue;
+            }
             let expected_static = match code_ref.opcode {
                 0xb2 | 0xb3 | 0xb8 => Some(true),
                 0xb4..=0xb7 | 0xb9 => Some(false),
@@ -185,6 +197,7 @@ fn ref_from_cp_entry(
         member: Some(MemberKey::new(&name, &descriptor)),
         expected_static,
         field_write,
+        instantiated: None,
     }))
 }
 

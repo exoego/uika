@@ -332,6 +332,17 @@ fn scan_instructions(code: &[u8]) -> Vec<RawCodeRef> {
                 }
                 i += 5;
             }
+            // `new`: records which Class constants are instantiated (array creation
+            // is deliberately not tracked; it never throws InstantiationError).
+            0xbb => {
+                if i + 2 < code.len() {
+                    refs.push(RawCodeRef {
+                        opcode: op,
+                        cp_index: u16::from_be_bytes([code[i + 1], code[i + 2]]),
+                    });
+                }
+                i += 3;
+            }
             0xaa => {
                 i += 1;
                 while !i.is_multiple_of(4) {

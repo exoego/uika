@@ -106,6 +106,7 @@ mod tests {
             member: Some(MemberKey::new("gone", "()V")),
             expected_static: Some(true),
             field_write: None,
+            instantiated: None,
         };
         w.record(
             intern("app.jar"),
@@ -120,6 +121,7 @@ mod tests {
             member: None,
             expected_static: None,
             field_write: None,
+            instantiated: None,
         };
         w.record(
             intern("app.jar"),
@@ -168,6 +170,7 @@ mod tests {
             member: None,
             expected_static: None,
             field_write: None,
+            instantiated: None,
         };
         w.record(intern("a.jar"), intern("com/example/C"), &r, "ok", None);
         // Latched: further records are no-ops, and finish surfaces the first error.

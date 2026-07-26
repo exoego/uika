@@ -60,7 +60,8 @@ breakage introduced by the upgrade is reported, which keeps a PR gate on
 Renovate/Dependabot/Scala Steward bumps quiet with no exclusion list. Gradle,
 sbt, and Maven plugins produce the classpath dumps (neither validator supports sbt),
 and detection covers visibility narrowing, static <-> instance mismatches,
-newly-final classes/members, and removals. Version lag is covered too: an
+newly-final classes/members, removals, `new` on a class that became abstract or
+an interface, and class<->interface flips. Version lag is covered too: an
 upgraded artifact subclassing a class that a lagging dependency still declares
 final is reported. It is also a
 dependency-free static binary: no JVM.
@@ -120,7 +121,7 @@ $ uika check --old old.jar --new new.jar --classpath ~/.gradle/caches/.../suspec
 
 ```console
 # List breaking changes between old/new versions of a library
-# (removals, access narrowing, static/instance changes, newly-final classes/members)
+# (removals, access narrowing, static/instance changes, newly-final/abstract classes/members, class<->interface flips)
 $ uika diff old.jar new.jar [--json]
 
 # Find usages of breaking changes across classpath JARs / your build output
@@ -506,7 +507,7 @@ $ uika check --old old.jar --new new.jar --classpath ~/.gradle/caches/.../suspec
 
 ```console
 # List breaking changes between old/new versions of a library
-# (removals, access narrowing, static/instance changes, newly-final classes/members)
+# (removals, access narrowing, static/instance changes, newly-final/abstract classes/members, class<->interface flips)
 $ uika diff old.jar new.jar [--json]
 
 # Find usages of breaking changes across classpath JARs / your build output

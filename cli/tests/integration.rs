@@ -762,3 +762,69 @@ fn lockstep_sibling_upgrade_reports_nothing() {
         report.violations
     );
 }
+
+/// ktor module version skew (the same class family as the coroutines/ktor fixture):
+/// io.ktor.utils.io.ByteChannel was an interface in ktor-io 2.3.13 and became a
+/// final class in 3.1.0. ktor-network 2.3.13 calls it through an InterfaceMethodref
+/// (invokeinterface), so mixing ktor-io 3.1.0 under ktor-network 2.3.13 makes method
+/// resolution throw IncompatibleClassChangeError. This is the class<->interface flip
+/// branch of the B1 checks, not visible to the constant-pool removal checks.
+#[test]
+fn detects_ktor_interface_became_class_under_module_skew() {
+    let old_jar = fixture("ktor-io-jvm-2.3.13.jar");
+    let new_jar = fixture("ktor-io-jvm-3.1.0.jar");
+    let network = fixture("ktor-network-jvm-2.3.13.jar");
+
+    let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
+    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+
+    let report = check(&load(&network).unwrap(), &old_index, &new_index);
+    assert!(
+        report.violations.iter().any(|v| {
+            v.source_class.as_str()
+                == "io/ktor/network/sockets/CIOReaderKt$attachForReadingDirectImpl$1"
+                && v.reference.owner.as_str() == "io/ktor/utils/io/ByteChannel"
+                && v.reason == "class kind changed"
+        }),
+        "expected a class-kind-changed break on ByteChannel: {:?}",
+        report
+            .violations
+            .iter()
+            .filter(|v| v.reason == "class kind changed")
+            .map(|v| (v.source_class.as_str(), v.reference.owner.as_str()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// InstantiationError from a `new` on a class that became abstract. jackson-module-kotlin
+/// 2.20.1 made ValueClassBoxConverter abstract; the module's own ReflectionCache (and two
+/// other classes) instantiate it directly with `new`. Bytecode compiled against 2.18.2,
+/// where the class was a concrete final class, throws InstantiationError once 2.20.1 is on
+/// the classpath. Only the `new` breaks; a plain type reference to the class stays valid.
+#[test]
+fn detects_new_on_class_that_became_abstract() {
+    let old_jar = fixture("jackson-module-kotlin-2.18.2.jar");
+    let new_jar = fixture("jackson-module-kotlin-2.20.1.jar");
+
+    let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
+    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+
+    // The old jar's own classes are the consumer: they carry the `new` sites.
+    let report = check(&load(&old_jar).unwrap(), &old_index, &new_index);
+    assert!(
+        report.violations.iter().any(|v| {
+            v.source_class.as_str() == "com/fasterxml/jackson/module/kotlin/ReflectionCache"
+                && v.reference.owner.as_str()
+                    == "com/fasterxml/jackson/module/kotlin/ValueClassBoxConverter"
+                && v.reference.instantiated == Some(true)
+                && v.reason == "class became abstract"
+        }),
+        "expected an InstantiationError break on ValueClassBoxConverter: {:?}",
+        report
+            .violations
+            .iter()
+            .filter(|v| v.reason == "class became abstract")
+            .map(|v| (v.source_class.as_str(), v.reference.owner.as_str()))
+            .collect::<Vec<_>>()
+    );
+}

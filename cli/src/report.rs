@@ -64,6 +64,30 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 classes += 1;
                 writeln!(out, "CLASS BECAME FINAL    {class}").unwrap();
             }
+            BreakingChange::ClassBecameAbstract { class } => {
+                classes += 1;
+                writeln!(out, "CLASS BECAME ABSTRACT {class}").unwrap();
+            }
+            BreakingChange::ClassKindChanged {
+                class,
+                old_interface,
+            } => {
+                classes += 1;
+                let flip = if *old_interface {
+                    "INTERFACE BECAME CLASS"
+                } else {
+                    "CLASS BECAME INTERFACE"
+                };
+                writeln!(out, "{flip} {class}").unwrap();
+            }
+            BreakingChange::MethodBecameAbstract {
+                class,
+                name,
+                descriptor,
+            } => {
+                methods += 1;
+                writeln!(out, "METHOD BECAME ABSTRACT {class}.{name} {descriptor}").unwrap();
+            }
             BreakingChange::MethodAccessNarrowed {
                 class,
                 name,
@@ -407,6 +431,7 @@ mod tests {
                 member: None,
                 expected_static: None,
                 field_write: None,
+                instantiated: None,
             },
             reason: reason.to_string(),
             reachable,

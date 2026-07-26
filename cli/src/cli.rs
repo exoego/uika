@@ -33,7 +33,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Command {
     /// List breaking changes between old and new library JARs
-    /// (removals, access narrowing, static/instance changes, newly-final classes/members)
+    /// (removals, access narrowing, static/instance changes, newly-final/abstract classes/members, class<->interface flips)
     Diff {
         /// Old-version JAR
         old: PathBuf,
