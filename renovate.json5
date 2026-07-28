@@ -1,0 +1,42 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  // Modern default set. Includes config:recommended, the dependency dashboard,
+  // and helpers:pinGitHubActionDigests so new Actions keep the SHA-pin +
+  // "# vX.Y.Z" comment style this repo already uses.
+  extends: [
+    "config:best-practices",
+    ":semanticCommitScope(deps)",
+  ],
+  timezone: "Asia/Tokyo",
+  labels: ["dependencies"],
+  // Keep the PR stream calm for a small OSS project.
+  prConcurrentLimit: 5,
+  prHourlyLimit: 2,
+  // Integration-test fixtures pin versions on purpose. Bumping them is noise
+  // and can break scripted or invoker tests, so leave them out of the scan.
+  ignorePaths: [
+    "**/node_modules/**",
+    "**/src/it/**",
+    "**/src/sbt-test/**",
+  ],
+  // Refresh Cargo.lock on a schedule even when no manifest range changes.
+  lockFileMaintenance: {
+    enabled: true,
+  },
+  packageRules: [
+    {
+      matchManagers: ["github-actions"],
+      groupName: "github-actions",
+    },
+    {
+      matchManagers: ["cargo"],
+      matchUpdateTypes: ["minor", "patch"],
+      groupName: "rust crates (non-major)",
+    },
+    // gradle, sbt, maven, java and other toolchain pins in .mise.toml.
+    {
+      matchManagers: ["mise"],
+      groupName: "build toolchain (mise)",
+    },
+  ],
+}
