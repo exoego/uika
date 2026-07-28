@@ -230,32 +230,42 @@ pass-2 classes are typically below 0.1% of the scan.
     ktor-io ByteChannel interface -> class (a Methodref-side flip), coroutines
     CancelHandler abstract-class -> interface (an extends-side flip on the
     stress workload).
-- AbstractMethodError: a concrete scanned class inheriting a method the upgrade
-  turned abstract, with no concrete override anywhere in its chain, throws at the
-  call site. A graph walk (`check.rs::add_abstract_method_violations`), like the
-  newly-final walk, needs no constant-pool reference. Method selection reuses
-  `Scope::resolve_member`: resolving the method from the concrete class yields the
-  most-derived declaration it inherits, so an intermediate concrete override
-  (including a covariant/erasure bridge, which is a real body) resolves to the
-  override and suppresses the report. Old-relative: report only when that same
-  selection was concrete before the upgrade; abstract-on-both-sides is
-  pre-existing and an old-side escape stays Unknown. `collect_abstract_wanted`
-  fetches the candidate class plus its scanned supertype chain in pass 2 so the
-  selection walk has member tables, otherwise it escapes to a graph-only class
-  and answers Unknown (a silent FN). Only concrete classes are flagged; an
-  abstract subclass is caught through its own concrete subclasses. Reason
-  `method became abstract`. Not probeable (`MethodHandles.Lookup` does not model
-  AbstractMethodError selection), so coverage is check.rs unit tests plus a
-  JVM-confirmed synthetic scenario, not `make probe`.
+- AbstractMethodError: a concrete scanned class ends up inheriting an abstract
+  method with no concrete implementation, so invoking it throws. Two upgrade
+  shapes cause it, both handled by `check.rs::add_abstract_method_violations`
+  (`methods_newly_abstract` = abstract in new, not abstract in old, owner present
+  in old): shape 1, a concrete method turned abstract; shape 2, a new abstract
+  method added to an interface (or class) the consumer already extends/implements
+  but does not provide. Like the newly-final and kind-flip walks it needs no
+  constant-pool reference; the break is structural. The decision does NOT use the
+  resolver's first-match selection. `implementation_status` scans the class's full
+  supertype closure and asks only "does any concrete declaration exist" vs "every
+  declaration is abstract" (`Concrete`/`AbstractOnly`/`Absent`/`Unknown`), so a
+  sibling interface's default method is never mistaken for an unimplemented
+  abstract one (the resolver's first-match approximation would misfire here).
+  java/lang/Object supplies concrete versions of its own 11 methods, so an
+  interface redeclaring `equals`/`hashCode`/`toString` as abstract is not a break.
+  Old-relative: report only when new is `AbstractOnly` and old was `Concrete`
+  (shape 1) or `Absent` (shape 2); abstract-on-both-sides is pre-existing and any
+  scope escape stays Unknown. `collect_abstract_wanted` fetches the candidate
+  class plus its scanned supertype closure in pass 2 so the scan has member
+  tables, otherwise it escapes and answers Unknown (a silent FN). Only concrete
+  classes are flagged; an abstract subclass is caught through its own concrete
+  subclasses. Reason `method became abstract`. Not probeable
+  (`MethodHandles.Lookup` does not model AbstractMethodError selection), so
+  coverage is check.rs unit tests, JVM-confirmed synthetic scenarios (both
+  shapes), and the koin fixture (koin 3.3.0 renamed the abstract `Logger.log` to
+  `display`, so `SLF4JLogger` inherits an unimplemented abstract method — a real
+  shape-2 break the golden pins alongside the log-became-final one).
 - Bridge/synthetic guard: `ACC_BRIDGE`/`ACC_SYNTHETIC` methods are excluded as
   the SUBJECT of the library-side `became abstract`/`became final` inferences
-  (`newly_abstract_methods`/`newly_final_methods`), since a generic-signature
+  (`methods_newly_abstract`/`newly_final_methods`), since a generic-signature
   edit can add or reshape a bridge without a source-visible API change. The
   guard is one-sided: a consumer's explicit Methodref to such a member is still
-  resolved and reported, and such a method still counts as a concrete override
-  during method selection (so it correctly suppresses an AbstractMethodError).
-  Applied to the inference only, never to reference verdicts, so it removes false
-  positives without adding false negatives.
+  resolved and reported, and such a method still counts as a concrete
+  implementation in `implementation_status` (so it correctly suppresses an
+  AbstractMethodError). Applied to the inference only, never to reference
+  verdicts, so it removes false positives without adding false negatives.
 - Version lag from the upgraded artifacts themselves: classes scanned from
   new-version JARs get an extra check — newly extending a class that is final
   on the runtime classpath is `extends final class`

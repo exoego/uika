@@ -1,6 +1,7 @@
 use crate::extract::{class_name_of, extract_hierarchy, extract_refs};
 use crate::index::{
-    ApiIndex, ClassGraph, MemberKind, MemberResolution, Resolution, Scope, object_sym,
+    ApiIndex, ClassGraph, MemberKind, MemberResolution, Resolution, Scope, is_object_method,
+    object_sym,
 };
 use crate::input::LoadedClass;
 use crate::intern::Sym;
@@ -340,7 +341,7 @@ fn collect_abstract_wanted(
     graph: &ClassGraph,
     wanted: &mut FxHashSet<Sym>,
 ) {
-    let abstract_methods = newly_abstract_methods(old, new);
+    let abstract_methods = methods_newly_abstract(old, new);
     if abstract_methods.is_empty() {
         return;
     }
@@ -1001,15 +1002,75 @@ fn add_kind_flip_violations(
     }
 }
 
-/// A concrete scanned class that inherits a method the upgrade turned abstract, without
-/// providing (or inheriting) a concrete override, throws AbstractMethodError when that
-/// method is invoked. Like the newly-final and kind-flip walks this needs no constant-pool
-/// reference: the break is structural. Method selection reuses `resolve_member` — resolving
-/// the method from the concrete class yields the most-derived declaration it inherits, so
-/// an intermediate concrete override (including a covariant/erasure bridge, which is a real
-/// method body) resolves to the override and is not reported. Old-relative: only report
-/// when the same selection was concrete before the upgrade; abstract-on-both-sides is
-/// pre-existing, and an old-side escape stays Unknown (unreported).
+/// Whether a class has a concrete implementation of a method available through its full
+/// supertype closure. Deliberately conservative: any concrete declaration anywhere wins,
+/// and an escape out of analyzed scope becomes Unknown rather than a claim of "no impl".
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImplStatus {
+    /// A concrete (non-abstract) declaration exists somewhere in the closure.
+    Concrete,
+    /// The method is declared, only abstractly, and the whole closure was in scope.
+    AbstractOnly,
+    /// No declaration at all, and the whole closure was in scope.
+    Absent,
+    /// The closure escaped scope before a concrete declaration could be ruled out.
+    Unknown,
+}
+
+/// Scan `start` and its whole supertype closure (superclasses and interfaces) through
+/// `scope` for declarations of `key`. Priority between class and interface does not matter:
+/// the check only distinguishes "some concrete implementation exists" from "every
+/// declaration is abstract", which is exactly what decides AbstractMethodError, and which
+/// is immune to the resolver's first-match interface approximation. java/lang/Object
+/// supplies concrete versions of its own methods to every class.
+fn implementation_status(start: Sym, key: MemberKey, scope: &Scope) -> ImplStatus {
+    if is_object_method(key) {
+        return ImplStatus::Concrete;
+    }
+    let mut queue = VecDeque::from([start]);
+    let mut seen = FxHashSet::default();
+    let mut found_abstract = false;
+    let mut escaped = false;
+    while let Some(class) = queue.pop_front() {
+        if !seen.insert(class) || class == object_sym() {
+            continue;
+        }
+        let Some((super_name, interfaces)) = scope.super_and_interfaces(class) else {
+            escaped = true;
+            continue;
+        };
+        if let Some(access) = scope.direct_method_access(class, key) {
+            if access & ACC_ABSTRACT == 0 {
+                return ImplStatus::Concrete;
+            }
+            found_abstract = true;
+        }
+        if let Some(s) = super_name {
+            queue.push_back(s);
+        }
+        queue.extend(interfaces);
+    }
+    if escaped {
+        ImplStatus::Unknown
+    } else if found_abstract {
+        ImplStatus::AbstractOnly
+    } else {
+        ImplStatus::Absent
+    }
+}
+
+/// A concrete scanned class that ends up inheriting an abstract method with no concrete
+/// implementation throws AbstractMethodError when it is invoked. Two upgrade shapes cause
+/// it: a concrete method turned abstract, and a new abstract method added to an interface
+/// (or class) the class already extends/implements. Like the newly-final and kind-flip
+/// walks this needs no constant-pool reference; the break is structural.
+///
+/// The decision compares the method's implementation status before and after the upgrade
+/// over the class's full supertype closure (not the resolver's first-match selection, so a
+/// sibling interface's default method is never mistaken for an unimplemented abstract one).
+/// Report only when new is `AbstractOnly` and old had an implementation (`Concrete`) or no
+/// such method at all (`Absent`); abstract-on-both-sides is pre-existing and any escape
+/// stays Unknown.
 #[allow(clippy::too_many_arguments)]
 fn add_abstract_method_violations(
     old_scope: &Scope,
@@ -1021,7 +1082,7 @@ fn add_abstract_method_violations(
     violations: &mut Vec<Violation>,
     seen: &mut FxHashSet<(Sym, Sym, SymbolRef)>,
 ) {
-    let abstract_methods = newly_abstract_methods(old, new);
+    let abstract_methods = methods_newly_abstract(old, new);
     if abstract_methods.is_empty() {
         return;
     }
@@ -1035,39 +1096,37 @@ fn add_abstract_method_violations(
         if entry.access & (ACC_ABSTRACT | ACC_INTERFACE) != 0 {
             continue;
         }
-        // Newly-abstract methods declared by any supertype of this class.
-        let mut keys: Vec<MemberKey> = Vec::new();
+        // Newly-abstract methods declared by any supertype of this class, mapped to the
+        // owner that declared them (smallest by name for a deterministic report).
+        let mut candidates: FxHashMap<MemberKey, Sym> = FxHashMap::default();
         for_each_supertype(class_name, new, graph, |anc| {
-            if let Some(ks) = abstract_methods.get(&anc) {
-                keys.extend(ks.iter().copied());
+            if let Some(keys) = abstract_methods.get(&anc) {
+                for &key in keys {
+                    candidates
+                        .entry(key)
+                        .and_modify(|owner| {
+                            if anc.as_str() < owner.as_str() {
+                                *owner = anc;
+                            }
+                        })
+                        .or_insert(anc);
+                }
             }
         });
-        keys.sort_unstable();
-        keys.dedup();
-        for key in keys {
-            let MemberResolution::Found(m) =
-                runtime.resolve_member(class_name, key, MemberKind::Method)
-            else {
-                continue;
-            };
-            if m.access & ACC_ABSTRACT == 0 {
-                // A concrete override (possibly on an intermediate class) implements it.
+        let mut candidates: Vec<(MemberKey, Sym)> = candidates.into_iter().collect();
+        candidates.sort_unstable_by_key(|(key, _)| *key);
+        for (key, owner) in candidates {
+            if implementation_status(class_name, key, runtime) != ImplStatus::AbstractOnly {
                 continue;
             }
-            // Old-relative gate: report only if the class selected a concrete method
-            // before the upgrade. Abstract-on-both-sides is pre-existing; an old-side
-            // escape (Unknown) or a not-found stays unreported.
-            let MemberResolution::Found(old_m) =
-                old_scope.resolve_member(class_name, key, MemberKind::Method)
-            else {
-                continue;
-            };
-            if old_m.access & ACC_ABSTRACT != 0 {
-                continue;
+            match implementation_status(class_name, key, old_scope) {
+                ImplStatus::Concrete | ImplStatus::Absent => {}
+                // Abstract on both sides is pre-existing; Unknown is conservative.
+                ImplStatus::AbstractOnly | ImplStatus::Unknown => continue,
             }
             let reference = SymbolRef {
                 kind: RefKind::Method,
-                owner: m.owner,
+                owner,
                 member: Some(key),
                 expected_static: Some(false),
                 field_write: None,
@@ -1131,27 +1190,40 @@ fn is_synthetic_or_bridge(access: u16) -> bool {
     access & (ACC_SYNTHETIC | ACC_BRIDGE) != 0
 }
 
-/// Methods concrete in old and abstract in new (owner class -> keys), the input to the
-/// AbstractMethodError walk. Mirrors `newly_final_methods`, including the synthetic/bridge
-/// guard. The old-relative direction is baked in: a method already abstract in old is not
-/// newly abstract.
-fn newly_abstract_methods(old: &ApiIndex, new: &ApiIndex) -> FxHashMap<Sym, FxHashSet<MemberKey>> {
+/// Methods abstract in new but not abstract in old (owner class -> keys), the input to the
+/// AbstractMethodError walk. This covers both shapes that throw AbstractMethodError:
+/// a concrete method turned abstract, and a brand-new abstract method added to an interface
+/// (or class) that existing concrete implementors do not provide. The owner class must exist
+/// in old, so a wholly-new type is not a break for pre-existing code. The synthetic/bridge
+/// guard excludes compiler-generated subjects.
+fn methods_newly_abstract(old: &ApiIndex, new: &ApiIndex) -> FxHashMap<Sym, FxHashSet<MemberKey>> {
     let mut out = FxHashMap::default();
-    for (&class, old_entry) in &old.classes {
-        if !new.classes.contains_key(&class) {
+    for (&class, new_entry) in &new.classes {
+        if !old.classes.contains_key(&class) {
             continue;
         }
-        for (key, old_access) in old.methods_of(old_entry) {
-            if old_access & ACC_ABSTRACT != 0 || is_synthetic_or_bridge(*old_access) {
+        for (key, new_access) in new.methods_of(new_entry) {
+            if new_access & ACC_ABSTRACT == 0 || is_synthetic_or_bridge(*new_access) {
                 continue;
             }
-            if let Some(new_access) = new.direct_method_access(class, *key)
-                && new_access & ACC_ABSTRACT != 0
-                && !is_synthetic_or_bridge(new_access)
-            {
-                out.entry(class)
-                    .or_insert_with(FxHashSet::default)
-                    .insert(*key);
+            match old.direct_method_access(class, *key) {
+                // Concrete in old (shape 1: concrete -> abstract). A synthetic concrete
+                // subject (e.g. a bridge) is still guarded.
+                Some(old_access)
+                    if old_access & ACC_ABSTRACT == 0 && !is_synthetic_or_bridge(old_access) =>
+                {
+                    out.entry(class)
+                        .or_insert_with(FxHashSet::default)
+                        .insert(*key);
+                }
+                // Absent in old (shape 2: newly added abstract method).
+                None => {
+                    out.entry(class)
+                        .or_insert_with(FxHashSet::default)
+                        .insert(*key);
+                }
+                // Already abstract in old, or a guarded synthetic concrete: pre-existing.
+                _ => {}
             }
         }
     }
@@ -2556,5 +2628,169 @@ mod tests {
             &[("m", "()V", ACC_PUBLIC | ACC_FINAL)],
         )]);
         assert!(!newly_final_methods(&old_real, &new_real).is_empty());
+    }
+
+    // ---- shape 2: an interface gains an abstract method ----
+
+    /// ClassApi with explicit superclass, access flags, implemented interfaces, and methods.
+    fn amv_full(
+        name: &str,
+        super_name: &str,
+        access: u16,
+        interfaces: &[&str],
+        methods: &[(&str, &str, u16)],
+    ) -> ClassApi {
+        ClassApi {
+            name: intern(name),
+            access,
+            super_name: Some(intern(super_name)),
+            interfaces: interfaces.iter().map(|i| intern(i)).collect(),
+            methods: build_members(methods.iter().map(|(n, d, a)| (MemberKey::new(n, d), *a))),
+            fields: build_members([]),
+            nest_host: None,
+        }
+    }
+
+    /// A ClassGraph of (name, superclass, interfaces) edges, all from one origin.
+    fn scanned_graph_full(nodes: &[(&str, &str, &[&str])]) -> ClassGraph {
+        let mut g = ClassGraph::new();
+        for (name, sup, ifaces) in nodes {
+            let iface_syms: Vec<Sym> = ifaces.iter().map(|i| intern(i)).collect();
+            g.insert_if_absent(
+                intern(name),
+                Some(intern(sup)),
+                &iface_syms,
+                &[],
+                None,
+                intern("consumer.jar"),
+            );
+        }
+        g
+    }
+
+    const IFACE: u16 = ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT;
+
+    #[test]
+    fn added_abstract_interface_method_without_impl_is_reported() {
+        // lib/I gains abstract b(); app/C implements I with only a() and never provides b(),
+        // so calling b() on a C throws AbstractMethodError.
+        let old = ApiIndex::build([amv_full(
+            "lib/I",
+            JAVA_LANG_OBJECT,
+            IFACE,
+            &[],
+            &[("a", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+        )]);
+        let new = ApiIndex::build([amv_full(
+            "lib/I",
+            JAVA_LANG_OBJECT,
+            IFACE,
+            &[],
+            &[
+                ("a", "()V", ACC_PUBLIC | ACC_ABSTRACT),
+                ("b", "()V", ACC_PUBLIC | ACC_ABSTRACT),
+            ],
+        )]);
+        let fetched = ApiIndex::build([amv_full(
+            "app/C",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &["lib/I"],
+            &[("a", "()V", ACC_PUBLIC)],
+        )]);
+        let graph = scanned_graph_full(&[("app/C", JAVA_LANG_OBJECT, &["lib/I"])]);
+        let v = abstract_violations(&old, &new, &fetched, &graph);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert_eq!(v[0].reason, "method became abstract");
+        assert_eq!(v[0].source_class.as_str(), "app/C");
+        assert_eq!(v[0].reference.owner.as_str(), "lib/I");
+        let m = v[0].reference.member.unwrap();
+        assert_eq!((m.name.as_str(), m.descriptor.as_str()), ("b", "()V"));
+    }
+
+    #[test]
+    fn sibling_interface_default_suppresses_report() {
+        // C implements both I (gains abstract b) and J (provides a default b). J's default is
+        // a real implementation, so there is no AbstractMethodError. The closure scan sees the
+        // concrete default even though a first-match resolver might hit I's abstract b first.
+        let old = ApiIndex::build([
+            amv_full("lib/I", JAVA_LANG_OBJECT, IFACE, &[], &[]),
+            amv_full(
+                "lib/J",
+                JAVA_LANG_OBJECT,
+                IFACE,
+                &[],
+                &[("b", "()V", ACC_PUBLIC)],
+            ),
+        ]);
+        let new = ApiIndex::build([
+            amv_full(
+                "lib/I",
+                JAVA_LANG_OBJECT,
+                IFACE,
+                &[],
+                &[("b", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+            ),
+            amv_full(
+                "lib/J",
+                JAVA_LANG_OBJECT,
+                IFACE,
+                &[],
+                &[("b", "()V", ACC_PUBLIC)],
+            ),
+        ]);
+        let fetched = ApiIndex::build([amv_full(
+            "app/C",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &["lib/I", "lib/J"],
+            &[],
+        )]);
+        let graph = scanned_graph_full(&[("app/C", JAVA_LANG_OBJECT, &["lib/I", "lib/J"])]);
+        assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
+    }
+
+    #[test]
+    fn added_abstract_object_method_is_suppressed() {
+        // An interface that redeclares an Object method as abstract does not break a concrete
+        // implementor: java.lang.Object supplies the implementation.
+        let old = ApiIndex::build([amv_full("lib/I", JAVA_LANG_OBJECT, IFACE, &[], &[])]);
+        let new = ApiIndex::build([amv_full(
+            "lib/I",
+            JAVA_LANG_OBJECT,
+            IFACE,
+            &[],
+            &[(
+                "toString",
+                "()Ljava/lang/String;",
+                ACC_PUBLIC | ACC_ABSTRACT,
+            )],
+        )]);
+        let fetched = ApiIndex::build([amv_full(
+            "app/C",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &["lib/I"],
+            &[],
+        )]);
+        let graph = scanned_graph_full(&[("app/C", JAVA_LANG_OBJECT, &["lib/I"])]);
+        assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
+    }
+
+    #[test]
+    fn added_abstract_method_with_escaping_super_is_unknown() {
+        // C implements I (gains abstract b) but also extends an unscanned class that could
+        // supply b, so the closure escapes scope and nothing is reported.
+        let old = ApiIndex::build([amv_full("lib/I", JAVA_LANG_OBJECT, IFACE, &[], &[])]);
+        let new = ApiIndex::build([amv_full(
+            "lib/I",
+            JAVA_LANG_OBJECT,
+            IFACE,
+            &[],
+            &[("b", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+        )]);
+        let fetched = ApiIndex::build([amv_full("app/C", "ext/Base", ACC_PUBLIC, &["lib/I"], &[])]);
+        let graph = scanned_graph_full(&[("app/C", "ext/Base", &["lib/I"])]);
+        assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
     }
 }
