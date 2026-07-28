@@ -230,10 +230,32 @@ pass-2 classes are typically below 0.1% of the scan.
     ktor-io ByteChannel interface -> class (a Methodref-side flip), coroutines
     CancelHandler abstract-class -> interface (an extends-side flip on the
     stress workload).
-  AbstractMethodError (a concrete class inheriting a newly-abstract method it
-  does not override) is diffed (`method became abstract`) but not yet a
-  check-side violation: correct method selection across the override chain plus
-  the concrete-vs-abstract test needs care, so it is a backlog item.
+- AbstractMethodError: a concrete scanned class inheriting a method the upgrade
+  turned abstract, with no concrete override anywhere in its chain, throws at the
+  call site. A graph walk (`check.rs::add_abstract_method_violations`), like the
+  newly-final walk, needs no constant-pool reference. Method selection reuses
+  `Scope::resolve_member`: resolving the method from the concrete class yields the
+  most-derived declaration it inherits, so an intermediate concrete override
+  (including a covariant/erasure bridge, which is a real body) resolves to the
+  override and suppresses the report. Old-relative: report only when that same
+  selection was concrete before the upgrade; abstract-on-both-sides is
+  pre-existing and an old-side escape stays Unknown. `collect_abstract_wanted`
+  fetches the candidate class plus its scanned supertype chain in pass 2 so the
+  selection walk has member tables, otherwise it escapes to a graph-only class
+  and answers Unknown (a silent FN). Only concrete classes are flagged; an
+  abstract subclass is caught through its own concrete subclasses. Reason
+  `method became abstract`. Not probeable (`MethodHandles.Lookup` does not model
+  AbstractMethodError selection), so coverage is check.rs unit tests plus a
+  JVM-confirmed synthetic scenario, not `make probe`.
+- Bridge/synthetic guard: `ACC_BRIDGE`/`ACC_SYNTHETIC` methods are excluded as
+  the SUBJECT of the library-side `became abstract`/`became final` inferences
+  (`newly_abstract_methods`/`newly_final_methods`), since a generic-signature
+  edit can add or reshape a bridge without a source-visible API change. The
+  guard is one-sided: a consumer's explicit Methodref to such a member is still
+  resolved and reported, and such a method still counts as a concrete override
+  during method selection (so it correctly suppresses an AbstractMethodError).
+  Applied to the inference only, never to reference verdicts, so it removes false
+  positives without adding false negatives.
 - Version lag from the upgraded artifacts themselves: classes scanned from
   new-version JARs get an extra check — newly extending a class that is final
   on the runtime classpath is `extends final class`
@@ -323,7 +345,7 @@ pass-2 classes are typically below 0.1% of the scan.
 | `cli/src/model.rs`     | Core data model: `MemberKey`, `ClassApi`, `BreakingChange`, `SymbolRef`, `Violation`.                                                                 |
 | `cli/src/extract.rs`   | `RawClass` -> API surface / hierarchy data / reference records; owner filter applied inline to avoid throwaway allocations.                           |
 | `cli/src/index.rs`     | `ApiIndex`, `ClassGraph`, `Scope`; member/interface tables in shared arenas with range refs and binary search.                                        |
-| `cli/src/check.rs`     | Two-pass orchestration: `scan_target_paths`, `collect_wanted`, `fetch_members`, verdicts.                                                             |
+| `cli/src/check.rs`     | Two-pass orchestration: `scan_target_paths`, `collect_wanted`, `fetch_members`, per-reference verdicts, plus graph-walk violations (newly-final, kind-flip, extends-final, abstract-method) and the bridge/synthetic guard. |
 | `cli/src/jdk.rs`       | Opt-in JDK API layer (`--jdk-release`): ct.sym release selection + lazy closure fetch into an ApiIndex layered under both scopes.                      |
 | `cli/src/reach.rs`     | Class-load reachability (on when app roots exist): `META-INF/services` collection + BFS from app roots over the `ClassGraph` edge arena. Ranks, never drops. |
 | `cli/src/suggest.rs`   | upgrade-check only: attribute each violation to referencing/removing coordinates (via dump `file->coordinate` and old-jar `class->coordinate`) and build fix advice. |

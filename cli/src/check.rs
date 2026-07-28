@@ -5,8 +5,8 @@ use crate::index::{
 use crate::input::LoadedClass;
 use crate::intern::Sym;
 use crate::model::{
-    ACC_ABSTRACT, ACC_FINAL, ACC_INTERFACE, ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC, ACC_STATIC,
-    MemberKey, RefKind, SymbolRef, Violation,
+    ACC_ABSTRACT, ACC_BRIDGE, ACC_FINAL, ACC_INTERFACE, ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC,
+    ACC_STATIC, ACC_SYNTHETIC, MemberKey, RefKind, SymbolRef, Violation,
 };
 use anyhow::Result;
 use rayon::prelude::*;
@@ -296,6 +296,71 @@ fn collect_final_wanted(
     }
 }
 
+/// Visit `start` and its transitive supertypes (superclasses and interfaces). Scanned
+/// classes take their hierarchy from the graph; library classes from `lib` (the new
+/// index). A type visible in neither is still visited (so callers can test membership)
+/// but contributes no further edges. java/lang/Object terminates the walk.
+fn for_each_supertype(
+    start: Sym,
+    lib: &ApiIndex,
+    graph: &ClassGraph,
+    mut on_type: impl FnMut(Sym),
+) {
+    let mut queue = VecDeque::from([start]);
+    let mut seen = FxHashSet::default();
+    while let Some(class) = queue.pop_front() {
+        if !seen.insert(class) || class == object_sym() {
+            continue;
+        }
+        on_type(class);
+        if let Some(entry) = lib.classes.get(&class) {
+            if let Some(s) = entry.super_name {
+                queue.push_back(s);
+            }
+            queue.extend(lib.interfaces_of(entry).iter().copied());
+        } else if let Some(node) = graph.get(class) {
+            if let Some(s) = node.super_name {
+                queue.push_back(s);
+            }
+            queue.extend(graph.interfaces_of(node).iter().copied());
+        }
+    }
+}
+
+/// Classes that `add_abstract_method_violations` may need to resolve through: a scanned
+/// class inheriting a newly-abstract method, plus every scanned class on its supertype
+/// closure. They are added to `wanted` so pass 2 fetches their member tables; without the
+/// intermediate chain, `resolve_member` would escape to a graph-only class and answer
+/// Unknown, hiding a real break. Library-side ancestors already carry members in `new`,
+/// so only scanned (graph) classes are collected. Empty and free when nothing became
+/// abstract.
+fn collect_abstract_wanted(
+    old: &ApiIndex,
+    new: &ApiIndex,
+    graph: &ClassGraph,
+    wanted: &mut FxHashSet<Sym>,
+) {
+    let abstract_methods = newly_abstract_methods(old, new);
+    if abstract_methods.is_empty() {
+        return;
+    }
+    for (class_name, _) in graph.iter() {
+        let mut inherits = false;
+        let mut scanned_chain: Vec<Sym> = Vec::new();
+        for_each_supertype(class_name, new, graph, |anc| {
+            if abstract_methods.contains_key(&anc) {
+                inherits = true;
+            }
+            if graph.contains(anc) {
+                scanned_chain.push(anc);
+            }
+        });
+        if inherits {
+            wanted.extend(scanned_chain);
+        }
+    }
+}
+
 /// Direct-super edges of classes scanned from upgraded (new-version) scan targets:
 /// the inputs to the version-lag check in `add_extends_final_violations`. Supers that
 /// only exist on the scanned classpath are added to `wanted` so pass 2 fetches their
@@ -414,6 +479,7 @@ pub fn check_scanned(
     let jdk_on = jdk.is_some();
     let (mut wanted, mut escapes) = collect_wanted(&scan, old, new, jdk_on);
     collect_final_wanted(old, new, &scan.graph, &mut wanted);
+    collect_abstract_wanted(old, new, &scan.graph, &mut wanted);
     let lag_edges = collect_upgraded_super_edges(
         &scan.graph,
         upgraded_sources,
@@ -504,6 +570,16 @@ pub fn check_scanned(
     add_final_violations(old, new, &fetched, &graph, &mut violations, &mut seen);
     add_extends_final_violations(&lag_edges, old, &runtime_scope, &mut violations, &mut seen);
     add_kind_flip_violations(old, new, &graph, &mut violations, &mut seen);
+    add_abstract_method_violations(
+        &old_scope,
+        &runtime_scope,
+        old,
+        new,
+        &fetched,
+        &graph,
+        &mut violations,
+        &mut seen,
+    );
 
     // Canonical order, sorted by string value (never Sym ids): the reference loop
     // is already deterministic, but add_final_violations discovers violations in
@@ -925,6 +1001,92 @@ fn add_kind_flip_violations(
     }
 }
 
+/// A concrete scanned class that inherits a method the upgrade turned abstract, without
+/// providing (or inheriting) a concrete override, throws AbstractMethodError when that
+/// method is invoked. Like the newly-final and kind-flip walks this needs no constant-pool
+/// reference: the break is structural. Method selection reuses `resolve_member` — resolving
+/// the method from the concrete class yields the most-derived declaration it inherits, so
+/// an intermediate concrete override (including a covariant/erasure bridge, which is a real
+/// method body) resolves to the override and is not reported. Old-relative: only report
+/// when the same selection was concrete before the upgrade; abstract-on-both-sides is
+/// pre-existing, and an old-side escape stays Unknown (unreported).
+#[allow(clippy::too_many_arguments)]
+fn add_abstract_method_violations(
+    old_scope: &Scope,
+    runtime: &Scope,
+    old: &ApiIndex,
+    new: &ApiIndex,
+    fetched: &ApiIndex,
+    graph: &ClassGraph,
+    violations: &mut Vec<Violation>,
+    seen: &mut FxHashSet<(Sym, Sym, SymbolRef)>,
+) {
+    let abstract_methods = newly_abstract_methods(old, new);
+    if abstract_methods.is_empty() {
+        return;
+    }
+    for (class_name, node) in graph.iter() {
+        // Only a concrete, instantiable class triggers AbstractMethodError. Access flags
+        // come from the pass-2 fetched table (the graph carries none); an unfetched
+        // candidate is skipped, the same conservative direction as Unknown.
+        let Some(entry) = fetched.classes.get(&class_name) else {
+            continue;
+        };
+        if entry.access & (ACC_ABSTRACT | ACC_INTERFACE) != 0 {
+            continue;
+        }
+        // Newly-abstract methods declared by any supertype of this class.
+        let mut keys: Vec<MemberKey> = Vec::new();
+        for_each_supertype(class_name, new, graph, |anc| {
+            if let Some(ks) = abstract_methods.get(&anc) {
+                keys.extend(ks.iter().copied());
+            }
+        });
+        keys.sort_unstable();
+        keys.dedup();
+        for key in keys {
+            let MemberResolution::Found(m) =
+                runtime.resolve_member(class_name, key, MemberKind::Method)
+            else {
+                continue;
+            };
+            if m.access & ACC_ABSTRACT == 0 {
+                // A concrete override (possibly on an intermediate class) implements it.
+                continue;
+            }
+            // Old-relative gate: report only if the class selected a concrete method
+            // before the upgrade. Abstract-on-both-sides is pre-existing; an old-side
+            // escape (Unknown) or a not-found stays unreported.
+            let MemberResolution::Found(old_m) =
+                old_scope.resolve_member(class_name, key, MemberKind::Method)
+            else {
+                continue;
+            };
+            if old_m.access & ACC_ABSTRACT != 0 {
+                continue;
+            }
+            let reference = SymbolRef {
+                kind: RefKind::Method,
+                owner: m.owner,
+                member: Some(key),
+                expected_static: Some(false),
+                field_write: None,
+                instantiated: None,
+            };
+            if seen.insert((node.source, class_name, reference)) {
+                violations.push(Violation {
+                    source: node.source,
+                    source_class: class_name,
+                    reference,
+                    reason: "method became abstract".to_string(),
+                    reachable: None,
+                    suggestion: None,
+                });
+            }
+        }
+    }
+}
+
 fn newly_final_classes(old: &ApiIndex, new: &ApiIndex) -> FxHashSet<Sym> {
     old.classes
         .iter()
@@ -942,11 +1104,50 @@ fn newly_final_methods(old: &ApiIndex, new: &ApiIndex) -> FxHashMap<Sym, FxHashS
             continue;
         }
         for (key, old_access) in old.methods_of(old_entry) {
-            if old_access & ACC_FINAL != 0 {
+            if old_access & ACC_FINAL != 0 || is_synthetic_or_bridge(*old_access) {
                 continue;
             }
             if let Some(new_access) = new.direct_method_access(class, *key)
                 && new_access & ACC_FINAL != 0
+                && !is_synthetic_or_bridge(new_access)
+            {
+                out.entry(class)
+                    .or_insert_with(FxHashSet::default)
+                    .insert(*key);
+            }
+        }
+    }
+    out
+}
+
+/// Methods a compiler generated rather than the source author (bridges for covariant
+/// returns and generic erasure, and other synthetic members). They must not be the
+/// subject of a library-side "became abstract"/"became final" inference, since a
+/// generic-signature edit can add or reshape them without a source-visible API change.
+/// This guards the inference only; a consumer's explicit reference to such a member is
+/// still resolved and checked normally, and such a method still counts as a concrete
+/// override when selecting a method.
+fn is_synthetic_or_bridge(access: u16) -> bool {
+    access & (ACC_SYNTHETIC | ACC_BRIDGE) != 0
+}
+
+/// Methods concrete in old and abstract in new (owner class -> keys), the input to the
+/// AbstractMethodError walk. Mirrors `newly_final_methods`, including the synthetic/bridge
+/// guard. The old-relative direction is baked in: a method already abstract in old is not
+/// newly abstract.
+fn newly_abstract_methods(old: &ApiIndex, new: &ApiIndex) -> FxHashMap<Sym, FxHashSet<MemberKey>> {
+    let mut out = FxHashMap::default();
+    for (&class, old_entry) in &old.classes {
+        if !new.classes.contains_key(&class) {
+            continue;
+        }
+        for (key, old_access) in old.methods_of(old_entry) {
+            if old_access & ACC_ABSTRACT != 0 || is_synthetic_or_bridge(*old_access) {
+                continue;
+            }
+            if let Some(new_access) = new.direct_method_access(class, *key)
+                && new_access & ACC_ABSTRACT != 0
+                && !is_synthetic_or_bridge(new_access)
             {
                 out.entry(class)
                     .or_insert_with(FxHashSet::default)
@@ -2094,5 +2295,266 @@ mod tests {
             &ClassGraph::new(),
         );
         assert!(matches!(v, RefVerdict::Ok));
+    }
+
+    // ---- AbstractMethodError walk (add_abstract_method_violations) ----
+
+    /// ClassApi with an explicit superclass plus class- and method-level access flags.
+    fn amv_class(
+        name: &str,
+        super_name: &str,
+        access: u16,
+        methods: &[(&str, &str, u16)],
+    ) -> ClassApi {
+        ClassApi {
+            name: intern(name),
+            access,
+            super_name: Some(intern(super_name)),
+            interfaces: vec![],
+            methods: build_members(methods.iter().map(|(n, d, a)| (MemberKey::new(n, d), *a))),
+            fields: build_members([]),
+            nest_host: None,
+        }
+    }
+
+    /// A ClassGraph of scanned (name -> superclass) edges, all from one origin.
+    fn scanned_graph(edges: &[(&str, &str)]) -> ClassGraph {
+        let mut g = ClassGraph::new();
+        for (name, sup) in edges {
+            g.insert_if_absent(
+                intern(name),
+                Some(intern(sup)),
+                &[],
+                &[],
+                None,
+                intern("consumer.jar"),
+            );
+        }
+        g
+    }
+
+    /// Run the walk over a two-layer scope (library + fetched scanned classes).
+    fn abstract_violations(
+        old: &ApiIndex,
+        new: &ApiIndex,
+        fetched: &ApiIndex,
+        graph: &ClassGraph,
+    ) -> Vec<Violation> {
+        let old_scope = Scope::new(vec![old, fetched]);
+        let runtime = Scope::new(vec![new, fetched]);
+        let mut violations = Vec::new();
+        let mut seen = FxHashSet::default();
+        add_abstract_method_violations(
+            &old_scope,
+            &runtime,
+            old,
+            new,
+            fetched,
+            graph,
+            &mut violations,
+            &mut seen,
+        );
+        violations
+    }
+
+    #[test]
+    fn abstract_method_without_override_is_reported() {
+        // lib A.m concrete -> abstract; consumer C extends A without overriding, so invoking
+        // m on a C throws AbstractMethodError.
+        let old = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &[("m", "()V", ACC_PUBLIC)],
+        )]);
+        let new = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC | ACC_ABSTRACT,
+            &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+        )]);
+        let fetched = ApiIndex::build([amv_class("app/C", "lib/A", ACC_PUBLIC, &[])]);
+        let graph = scanned_graph(&[("app/C", "lib/A")]);
+        let v = abstract_violations(&old, &new, &fetched, &graph);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert_eq!(v[0].reason, "method became abstract");
+        assert_eq!(v[0].source_class.as_str(), "app/C");
+        assert_eq!(v[0].reference.owner.as_str(), "lib/A");
+        let m = v[0].reference.member.unwrap();
+        assert_eq!((m.name.as_str(), m.descriptor.as_str()), ("m", "()V"));
+    }
+
+    #[test]
+    fn intermediate_concrete_override_suppresses_report() {
+        // C -> B -> A: B provides a concrete override, so method selection stops at B and C
+        // is fine.
+        let old = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &[("m", "()V", ACC_PUBLIC)],
+        )]);
+        let new = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC | ACC_ABSTRACT,
+            &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+        )]);
+        let fetched = ApiIndex::build([
+            amv_class("app/C", "app/B", ACC_PUBLIC, &[]),
+            amv_class("app/B", "lib/A", ACC_PUBLIC, &[("m", "()V", ACC_PUBLIC)]),
+        ]);
+        let graph = scanned_graph(&[("app/C", "app/B"), ("app/B", "lib/A")]);
+        assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
+    }
+
+    #[test]
+    fn abstract_subclass_is_not_reported() {
+        // C is itself abstract, so it is never instantiated directly and cannot throw.
+        let old = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &[("m", "()V", ACC_PUBLIC)],
+        )]);
+        let new = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC | ACC_ABSTRACT,
+            &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+        )]);
+        let fetched =
+            ApiIndex::build([amv_class("app/C", "lib/A", ACC_PUBLIC | ACC_ABSTRACT, &[])]);
+        let graph = scanned_graph(&[("app/C", "lib/A")]);
+        assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
+    }
+
+    #[test]
+    fn already_abstract_in_old_is_pre_existing() {
+        // m abstract on both sides: C was already responsible for implementing it, so this is
+        // pre-existing, not introduced by the upgrade.
+        let old = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC | ACC_ABSTRACT,
+            &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+        )]);
+        let new = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC | ACC_ABSTRACT,
+            &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+        )]);
+        let fetched = ApiIndex::build([amv_class("app/C", "lib/A", ACC_PUBLIC, &[])]);
+        let graph = scanned_graph(&[("app/C", "lib/A")]);
+        assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
+    }
+
+    #[test]
+    fn covariant_bridge_counts_as_concrete_override() {
+        // A.m()Object concrete -> abstract. C overrides with a covariant return, so javac
+        // emits a synthetic bridge m()Object (a real body). It must satisfy the abstract
+        // method, so nothing is reported. This proves synthetic members are NOT filtered on
+        // the resolution/override side.
+        let old = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &[("m", "()Ljava/lang/Object;", ACC_PUBLIC)],
+        )]);
+        let new = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC | ACC_ABSTRACT,
+            &[("m", "()Ljava/lang/Object;", ACC_PUBLIC | ACC_ABSTRACT)],
+        )]);
+        let fetched = ApiIndex::build([amv_class(
+            "app/C",
+            "lib/A",
+            ACC_PUBLIC,
+            &[(
+                "m",
+                "()Ljava/lang/Object;",
+                ACC_PUBLIC | ACC_BRIDGE | ACC_SYNTHETIC,
+            )],
+        )]);
+        let graph = scanned_graph(&[("app/C", "lib/A")]);
+        assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
+    }
+
+    #[test]
+    fn synthetic_method_subject_is_guarded() {
+        // A synthetic method that became abstract is a compiler artifact, not a source-visible
+        // API change, so it is not the subject of a report.
+        let old = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &[("m", "()V", ACC_PUBLIC | ACC_SYNTHETIC)],
+        )]);
+        let new = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC | ACC_ABSTRACT,
+            &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT | ACC_SYNTHETIC)],
+        )]);
+        let fetched = ApiIndex::build([amv_class("app/C", "lib/A", ACC_PUBLIC, &[])]);
+        let graph = scanned_graph(&[("app/C", "lib/A")]);
+        assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
+    }
+
+    #[test]
+    fn unfetched_intermediate_class_stays_unknown() {
+        // C -> D -> A, but D has no fetched member table, so method selection escapes to a
+        // graph-only class and answers Unknown: never a false break. (collect_abstract_wanted
+        // fetches D in a real run; here it is omitted to exercise the conservative path.)
+        let old = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &[("m", "()V", ACC_PUBLIC)],
+        )]);
+        let new = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC | ACC_ABSTRACT,
+            &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+        )]);
+        let fetched = ApiIndex::build([amv_class("app/C", "app/D", ACC_PUBLIC, &[])]);
+        let graph = scanned_graph(&[("app/C", "app/D"), ("app/D", "lib/A")]);
+        assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
+    }
+
+    #[test]
+    fn synthetic_became_final_is_guarded() {
+        // The bridge/synthetic guard also covers the existing newly-final inference: a
+        // synthetic bridge turning final is not reported, while a real method still is.
+        let old = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &[("m", "()V", ACC_PUBLIC | ACC_BRIDGE)],
+        )]);
+        let new = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &[("m", "()V", ACC_PUBLIC | ACC_FINAL | ACC_BRIDGE)],
+        )]);
+        assert!(newly_final_methods(&old, &new).is_empty());
+
+        let old_real = ApiIndex::build([amv_class(
+            "lib/B",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &[("m", "()V", ACC_PUBLIC)],
+        )]);
+        let new_real = ApiIndex::build([amv_class(
+            "lib/B",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &[("m", "()V", ACC_PUBLIC | ACC_FINAL)],
+        )]);
+        assert!(!newly_final_methods(&old_real, &new_real).is_empty());
     }
 }

@@ -9,8 +9,12 @@ pub const ACC_PRIVATE: u16 = 0x0002;
 pub const ACC_PROTECTED: u16 = 0x0004;
 pub const ACC_STATIC: u16 = 0x0008;
 pub const ACC_FINAL: u16 = 0x0010;
+/// Compiler-generated bridge method (covariant returns, generic erasure).
+pub const ACC_BRIDGE: u16 = 0x0040;
 pub const ACC_INTERFACE: u16 = 0x0200;
 pub const ACC_ABSTRACT: u16 = 0x0400;
+/// Compiler-generated member not present in the source (synthetic).
+pub const ACC_SYNTHETIC: u16 = 0x1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct MemberKey {
