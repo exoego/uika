@@ -345,19 +345,19 @@ fn collect_abstract_wanted(
     if abstract_methods.is_empty() {
         return;
     }
+    // One reused buffer, not a fresh Vec per class (the graph spans the whole scan).
+    let mut scanned_chain: Vec<Sym> = Vec::new();
     for (class_name, _) in graph.iter() {
         let mut inherits = false;
-        let mut scanned_chain: Vec<Sym> = Vec::new();
+        scanned_chain.clear();
         for_each_supertype(class_name, new, graph, |anc| {
-            if abstract_methods.contains_key(&anc) {
-                inherits = true;
-            }
+            inherits |= abstract_methods.contains_key(&anc);
             if graph.contains(anc) {
                 scanned_chain.push(anc);
             }
         });
         if inherits {
-            wanted.extend(scanned_chain);
+            wanted.extend(scanned_chain.iter().copied());
         }
     }
 }
@@ -554,16 +554,14 @@ pub fn check_scanned(
                 RefVerdict::Ok => {}
                 RefVerdict::Unknown => unknown_refs += 1,
                 RefVerdict::Broken(reference, reason) => {
-                    if seen.insert((source, class_name, reference)) {
-                        violations.push(Violation {
-                            source,
-                            source_class: class_name,
-                            reference,
-                            reason: reason.to_string(),
-                            reachable: None,
-                            suggestion: None,
-                        });
-                    }
+                    push_violation(
+                        &mut violations,
+                        &mut seen,
+                        source,
+                        class_name,
+                        reference,
+                        reason,
+                    );
                 }
             }
         }
@@ -814,6 +812,29 @@ fn verdict(
     }
 }
 
+/// Record a violation, deduplicated on `(source, class, reference)`. Every graph walk and
+/// the per-reference loop funnel through here so the `Violation` shape and the dedup key
+/// live in one place.
+fn push_violation(
+    violations: &mut Vec<Violation>,
+    seen: &mut FxHashSet<(Sym, Sym, SymbolRef)>,
+    source: Sym,
+    source_class: Sym,
+    reference: SymbolRef,
+    reason: &str,
+) {
+    if seen.insert((source, source_class, reference)) {
+        violations.push(Violation {
+            source,
+            source_class,
+            reference,
+            reason: reason.to_string(),
+            reachable: None,
+            suggestion: None,
+        });
+    }
+}
+
 fn add_final_violations(
     old: &ApiIndex,
     new: &ApiIndex,
@@ -835,16 +856,14 @@ fn add_final_violations(
                 field_write: None,
                 instantiated: None,
             };
-            if seen.insert((node.source, class_name, reference)) {
-                violations.push(Violation {
-                    source: node.source,
-                    source_class: class_name,
-                    reference,
-                    reason: "class became final".to_string(),
-                    reachable: None,
-                    suggestion: None,
-                });
-            }
+            push_violation(
+                violations,
+                seen,
+                node.source,
+                class_name,
+                reference,
+                "class became final",
+            );
         }
     }
 
@@ -873,16 +892,14 @@ fn add_final_violations(
                     field_write: None,
                     instantiated: None,
                 };
-                if seen.insert((node.source, class_name, reference)) {
-                    violations.push(Violation {
-                        source: node.source,
-                        source_class: class_name,
-                        reference,
-                        reason: "method became final".to_string(),
-                        reachable: None,
-                        suggestion: None,
-                    });
-                }
+                push_violation(
+                    violations,
+                    seen,
+                    node.source,
+                    class_name,
+                    reference,
+                    "method became final",
+                );
             }
         }
     }
@@ -927,16 +944,14 @@ fn add_extends_final_violations(
             field_write: None,
             instantiated: None,
         };
-        if seen.insert((source, class_name, reference)) {
-            violations.push(Violation {
-                source,
-                source_class: class_name,
-                reference,
-                reason: "extends final class".to_string(),
-                reachable: None,
-                suggestion: None,
-            });
-        }
+        push_violation(
+            violations,
+            seen,
+            source,
+            class_name,
+            reference,
+            "extends final class",
+        );
     }
 }
 
@@ -977,16 +992,14 @@ fn add_kind_flip_violations(
             field_write: None,
             instantiated: None,
         };
-        if seen.insert((node.source, class_name, reference)) {
-            violations.push(Violation {
-                source: node.source,
-                source_class: class_name,
-                reference,
-                reason: "class kind changed".to_string(),
-                reachable: None,
-                suggestion: None,
-            });
-        }
+        push_violation(
+            violations,
+            seen,
+            node.source,
+            class_name,
+            reference,
+            "class kind changed",
+        );
     };
     for (class_name, node) in graph.iter() {
         if let Some(super_name) = node.super_name
@@ -1062,7 +1075,7 @@ fn implementation_status(start: Sym, key: MemberKey, scope: &Scope) -> ImplStatu
                 ImplStatus::AbstractOnly
             };
         }
-        interface_seed.extend(interfaces);
+        interface_seed.extend(interfaces.iter().copied());
         class = super_name;
     }
     // Phase 2: the superinterface closure.
@@ -1086,7 +1099,7 @@ fn implementation_status(start: Sym, key: MemberKey, scope: &Scope) -> ImplStatu
                 saw_abstract = true;
             }
         }
-        queue.extend(super_ifaces);
+        queue.extend(super_ifaces.iter().copied());
     }
     if escaped || (saw_abstract && saw_concrete) {
         ImplStatus::Unknown
@@ -1172,16 +1185,14 @@ fn add_abstract_method_violations(
                 field_write: None,
                 instantiated: None,
             };
-            if seen.insert((node.source, class_name, reference)) {
-                violations.push(Violation {
-                    source: node.source,
-                    source_class: class_name,
-                    reference,
-                    reason: "method became abstract".to_string(),
-                    reachable: None,
-                    suggestion: None,
-                });
-            }
+            push_violation(
+                violations,
+                seen,
+                node.source,
+                class_name,
+                reference,
+                "method became abstract",
+            );
         }
     }
 }
@@ -1246,24 +1257,16 @@ fn methods_newly_abstract(old: &ApiIndex, new: &ApiIndex) -> FxHashMap<Sym, FxHa
             if new_access & ACC_ABSTRACT == 0 || is_synthetic_or_bridge(*new_access) {
                 continue;
             }
-            match old.direct_method_access(class, *key) {
-                // Concrete in old (shape 1: concrete -> abstract). A synthetic concrete
-                // subject (e.g. a bridge) is still guarded.
-                Some(old_access)
-                    if old_access & ACC_ABSTRACT == 0 && !is_synthetic_or_bridge(old_access) =>
-                {
-                    out.entry(class)
-                        .or_insert_with(FxHashSet::default)
-                        .insert(*key);
-                }
-                // Absent in old (shape 2: newly added abstract method).
-                None => {
-                    out.entry(class)
-                        .or_insert_with(FxHashSet::default)
-                        .insert(*key);
-                }
-                // Already abstract in old, or a guarded synthetic concrete: pre-existing.
-                _ => {}
+            // Newly abstract when old had a concrete non-synthetic declaration (shape 1) or
+            // none at all (shape 2). Already abstract in old, or a guarded synthetic
+            // concrete, is pre-existing.
+            let newly_abstract = old
+                .direct_method_access(class, *key)
+                .is_none_or(|a| a & ACC_ABSTRACT == 0 && !is_synthetic_or_bridge(a));
+            if newly_abstract {
+                out.entry(class)
+                    .or_insert_with(FxHashSet::default)
+                    .insert(*key);
             }
         }
     }
@@ -2412,37 +2415,21 @@ mod tests {
     // ---- AbstractMethodError walk (add_abstract_method_violations) ----
 
     /// ClassApi with an explicit superclass plus class- and method-level access flags.
+    /// An interface-free class (a superclass edge only), the shape-1 special case of `amv_full`.
     fn amv_class(
         name: &str,
         super_name: &str,
         access: u16,
         methods: &[(&str, &str, u16)],
     ) -> ClassApi {
-        ClassApi {
-            name: intern(name),
-            access,
-            super_name: Some(intern(super_name)),
-            interfaces: vec![],
-            methods: build_members(methods.iter().map(|(n, d, a)| (MemberKey::new(n, d), *a))),
-            fields: build_members([]),
-            nest_host: None,
-        }
+        amv_full(name, super_name, access, &[], methods)
     }
 
-    /// A ClassGraph of scanned (name -> superclass) edges, all from one origin.
+    /// A ClassGraph of scanned (name -> superclass) edges with no interfaces.
     fn scanned_graph(edges: &[(&str, &str)]) -> ClassGraph {
-        let mut g = ClassGraph::new();
-        for (name, sup) in edges {
-            g.insert_if_absent(
-                intern(name),
-                Some(intern(sup)),
-                &[],
-                &[],
-                None,
-                intern("consumer.jar"),
-            );
-        }
-        g
+        let nodes: Vec<(&str, &str, &[&str])> =
+            edges.iter().map(|&(n, s)| (n, s, &[] as &[&str])).collect();
+        scanned_graph_full(&nodes)
     }
 
     /// Run the walk over a two-layer scope (library + fetched scanned classes).

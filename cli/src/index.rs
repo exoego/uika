@@ -330,14 +330,15 @@ impl<'a> Scope<'a> {
     }
 
     /// Direct superclass plus interfaces of `name`, from whichever layer defines it.
-    /// None when the class is in no scope layer (a hierarchy escape). Lets a caller walk
-    /// the full supertype closure (superclasses and interfaces) through the scope.
+    /// None when the class is in no scope layer (a hierarchy escape). The interface slice
+    /// borrows the index arena (like `interfaces_of`), so walking the supertype closure
+    /// through the scope allocates nothing per class.
     pub fn super_and_interfaces(
         &self,
         name: ClassName,
-    ) -> Option<(Option<ClassName>, Vec<ClassName>)> {
+    ) -> Option<(Option<ClassName>, &'a [ClassName])> {
         self.class(name)
-            .map(|(idx, entry)| (entry.super_name, idx.interfaces_of(entry).to_vec()))
+            .map(|(idx, entry)| (entry.super_name, idx.interfaces_of(entry)))
     }
 
     /// Access flags of a method DECLARED directly on `name` (not inherited). None when the
