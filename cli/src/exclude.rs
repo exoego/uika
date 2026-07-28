@@ -325,6 +325,34 @@ mod tests {
     }
 
     #[test]
+    fn unused_descriptor_rule_reports_the_pinned_overload() {
+        // A descriptor-pinned rule that matches nothing must be reported unused, with the
+        // descriptor shown so the operator sees which overload was pinned.
+        let rules = parse(
+            r#"
+            [[exclude]]
+            owner = "lib/C"
+            member = "m"
+            descriptor = "()V"
+            reason = "no-arg overload is invoked reflectively"
+            "#,
+        )
+        .unwrap();
+        // Only the (I)V overload breaks; the pinned ()V overload never appears.
+        let mut violations = vec![member_violation("lib/C", "m", "(I)V", "method removed")];
+        let stats = filter(&mut violations, &rules);
+        assert_eq!(stats.suppressed, 0);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(stats.unused.len(), 1);
+        let msg = &stats.unused[0];
+        assert!(msg.contains("lib/C#m ()V"), "{msg}");
+        assert!(
+            msg.contains("no-arg overload is invoked reflectively"),
+            "{msg}"
+        );
+    }
+
+    #[test]
     fn owner_only_rule_suppresses_class_level_and_member_violations() {
         let rules = parse(
             r#"
