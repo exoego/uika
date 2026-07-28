@@ -118,3 +118,15 @@ fn golden_pact_junit5_version_lag() {
 fn golden_jetty_util_http_skew() {
     assert_golden("jetty-util-http-skew");
 }
+
+/// Synthetic shape-2 AbstractMethodError: EventListener 2.0 adds an abstract
+/// end(), which BrokenTranslator (compiled against 1.0) never implements, so
+/// calling end() on it throws AbstractMethodError. GoodTranslator declares end()
+/// and is not reported. Synthetic because well-maintained libraries avoid this
+/// break with default methods, and the real incidents (jOOQ ExecuteListener.end)
+/// ship multi-megabyte jars; the source and build command live in
+/// tests/fixtures/README.md.
+#[test]
+fn golden_synthetic_abstract_added() {
+    assert_golden("synthetic-abstract-added");
+}
