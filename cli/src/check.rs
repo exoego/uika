@@ -1017,43 +1017,83 @@ enum ImplStatus {
     Unknown,
 }
 
-/// Scan `start` and its whole supertype closure (superclasses and interfaces) through
-/// `scope` for declarations of `key`. Priority between class and interface does not matter:
-/// the check only distinguishes "some concrete implementation exists" from "every
-/// declaration is abstract", which is exactly what decides AbstractMethodError, and which
-/// is immune to the resolver's first-match interface approximation. java/lang/Object
-/// supplies concrete versions of its own methods to every class.
+/// Whether `key` has a concrete implementation available to `start`, following JVMS 5.4.6
+/// selection order rather than a flat closure scan. A `static` or `private` declaration is
+/// never an instance-method override and is ignored.
+///
+/// Phase 1 walks the superclass chain, which wins over interfaces: the first class that
+/// declares the method decides it (concrete -> `Concrete`, abstract -> `AbstractOnly`),
+/// even when a sibling interface has a default. `java/lang/Object` supplies concrete
+/// versions of its own methods, so reaching it resolves an Object-signature method.
+///
+/// Phase 2 (no class declared it) consults the superinterfaces. Interface method
+/// specificity is not modeled, so a mix of abstract and concrete declarations is
+/// inconclusive (`Unknown`) rather than guessed. That single rule avoids both a
+/// first-match false positive (a sibling default read as unimplemented) and a
+/// re-abstraction false positive (a shadowed default read as an implementation), at the
+/// cost of a rare false negative. Escapes out of analyzed scope are also `Unknown`.
 fn implementation_status(start: Sym, key: MemberKey, scope: &Scope) -> ImplStatus {
-    if is_object_method(key) {
-        return ImplStatus::Concrete;
-    }
-    let mut queue = VecDeque::from([start]);
+    // Phase 1: the superclass chain (class wins over interface).
+    let mut interface_seed: Vec<Sym> = Vec::new();
+    let mut class = Some(start);
     let mut seen = FxHashSet::default();
-    let mut found_abstract = false;
-    let mut escaped = false;
-    while let Some(class) = queue.pop_front() {
-        if !seen.insert(class) || class == object_sym() {
+    while let Some(c) = class {
+        if !seen.insert(c) {
+            break;
+        }
+        if c == object_sym() {
+            return if is_object_method(key) {
+                ImplStatus::Concrete
+            } else {
+                // Object does not declare it; fall through to the interfaces below.
+                break;
+            };
+        }
+        let Some((super_name, interfaces)) = scope.super_and_interfaces(c) else {
+            // A nearer class could declare the method, so the chain is inconclusive.
+            return ImplStatus::Unknown;
+        };
+        if let Some(access) = scope.direct_method_access(c, key)
+            && access & (ACC_STATIC | ACC_PRIVATE) == 0
+        {
+            return if access & ACC_ABSTRACT == 0 {
+                ImplStatus::Concrete
+            } else {
+                ImplStatus::AbstractOnly
+            };
+        }
+        interface_seed.extend(interfaces);
+        class = super_name;
+    }
+    // Phase 2: the superinterface closure.
+    let mut queue: VecDeque<Sym> = interface_seed.into();
+    let mut iface_seen = FxHashSet::default();
+    let (mut saw_abstract, mut saw_concrete, mut escaped) = (false, false, false);
+    while let Some(iface) = queue.pop_front() {
+        if iface == object_sym() || !iface_seen.insert(iface) {
             continue;
         }
-        let Some((super_name, interfaces)) = scope.super_and_interfaces(class) else {
+        let Some((_, super_ifaces)) = scope.super_and_interfaces(iface) else {
             escaped = true;
             continue;
         };
-        if let Some(access) = scope.direct_method_access(class, key) {
+        if let Some(access) = scope.direct_method_access(iface, key)
+            && access & (ACC_STATIC | ACC_PRIVATE) == 0
+        {
             if access & ACC_ABSTRACT == 0 {
-                return ImplStatus::Concrete;
+                saw_concrete = true;
+            } else {
+                saw_abstract = true;
             }
-            found_abstract = true;
         }
-        if let Some(s) = super_name {
-            queue.push_back(s);
-        }
-        queue.extend(interfaces);
+        queue.extend(super_ifaces);
     }
-    if escaped {
+    if escaped || (saw_abstract && saw_concrete) {
         ImplStatus::Unknown
-    } else if found_abstract {
+    } else if saw_abstract {
         ImplStatus::AbstractOnly
+    } else if saw_concrete {
+        ImplStatus::Concrete
     } else {
         ImplStatus::Absent
     }
@@ -1113,8 +1153,8 @@ fn add_abstract_method_violations(
                 }
             }
         });
-        let mut candidates: Vec<(MemberKey, Sym)> = candidates.into_iter().collect();
-        candidates.sort_unstable_by_key(|(key, _)| *key);
+        // Iterated in FxHashMap order; the final string-value sort in check_scanned makes
+        // the report deterministic (never sort output by Sym id).
         for (key, owner) in candidates {
             if implementation_status(class_name, key, runtime) != ImplStatus::AbstractOnly {
                 continue;
@@ -2710,9 +2750,10 @@ mod tests {
 
     #[test]
     fn sibling_interface_default_suppresses_report() {
-        // C implements both I (gains abstract b) and J (provides a default b). J's default is
-        // a real implementation, so there is no AbstractMethodError. The closure scan sees the
-        // concrete default even though a first-match resolver might hit I's abstract b first.
+        // C implements both I (gains abstract b) and J (provides a default b). J's default
+        // means there is no AbstractMethodError at runtime. The interface phase sees a mix of
+        // an abstract (I) and a concrete (J) declaration and, without modeling specificity,
+        // returns Unknown, so nothing is reported either way.
         let old = ApiIndex::build([
             amv_full("lib/I", JAVA_LANG_OBJECT, IFACE, &[], &[]),
             amv_full(
@@ -2774,6 +2815,100 @@ mod tests {
             &[],
         )]);
         let graph = scanned_graph_full(&[("app/C", JAVA_LANG_OBJECT, &["lib/I"])]);
+        assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
+    }
+
+    #[test]
+    fn class_abstract_method_beats_interface_default() {
+        // JVMS class-wins: a superclass's abstract method is selected over an interface
+        // default, so a concrete subclass still throws AbstractMethodError. lib/A.m turns
+        // abstract; C extends A and implements I whose default m must NOT rescue it.
+        let old = ApiIndex::build([
+            amv_full(
+                "lib/A",
+                JAVA_LANG_OBJECT,
+                ACC_PUBLIC,
+                &[],
+                &[("m", "()V", ACC_PUBLIC)],
+            ),
+            amv_full(
+                "lib/I",
+                JAVA_LANG_OBJECT,
+                IFACE,
+                &[],
+                &[("m", "()V", ACC_PUBLIC)],
+            ),
+        ]);
+        let new = ApiIndex::build([
+            amv_full(
+                "lib/A",
+                JAVA_LANG_OBJECT,
+                ACC_PUBLIC | ACC_ABSTRACT,
+                &[],
+                &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+            ),
+            amv_full(
+                "lib/I",
+                JAVA_LANG_OBJECT,
+                IFACE,
+                &[],
+                &[("m", "()V", ACC_PUBLIC)],
+            ),
+        ]);
+        let fetched = ApiIndex::build([amv_full("app/C", "lib/A", ACC_PUBLIC, &["lib/I"], &[])]);
+        let graph = scanned_graph_full(&[("app/C", "lib/A", &["lib/I"])]);
+        let v = abstract_violations(&old, &new, &fetched, &graph);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert_eq!(v[0].reference.owner.as_str(), "lib/A");
+    }
+
+    #[test]
+    fn reabstracting_a_shadowed_default_is_pre_existing() {
+        // I's default m becomes abstract, but sub-interface J already re-declares m abstract
+        // in both versions. C implements J, so J.m (abstract, maximally specific) is selected
+        // and C already threw AbstractMethodError against old. The interface phase returns
+        // Unknown for the old side (mixed abstract J + concrete default I), so the pre-existing
+        // break is not misreported as introduced by the upgrade.
+        let old = ApiIndex::build([
+            amv_full(
+                "lib/I",
+                JAVA_LANG_OBJECT,
+                IFACE,
+                &[],
+                &[("m", "()V", ACC_PUBLIC)],
+            ),
+            amv_full(
+                "lib/J",
+                JAVA_LANG_OBJECT,
+                IFACE,
+                &["lib/I"],
+                &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+            ),
+        ]);
+        let new = ApiIndex::build([
+            amv_full(
+                "lib/I",
+                JAVA_LANG_OBJECT,
+                IFACE,
+                &[],
+                &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+            ),
+            amv_full(
+                "lib/J",
+                JAVA_LANG_OBJECT,
+                IFACE,
+                &["lib/I"],
+                &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+            ),
+        ]);
+        let fetched = ApiIndex::build([amv_full(
+            "app/C",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &["lib/J"],
+            &[],
+        )]);
+        let graph = scanned_graph_full(&[("app/C", JAVA_LANG_OBJECT, &["lib/J"])]);
         assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
     }
 

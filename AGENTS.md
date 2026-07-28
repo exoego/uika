@@ -31,7 +31,7 @@ not be relearned by experiment.
   stream carries the raw constant-pool reference (never the collapsed Class
   ref a "class removed" violation reports), is written before --exclude-file
   filtering, and does not include graph-walk violations (class/method became
-  final, extends final class). One line per reference record — call-site
+  final, extends final class, class kind changed, method became abstract). One line per reference record — call-site
   duplicates are not deduped, so line counts exceed violation counts. It streams one line at a
   time, so it adds no RSS proportional to the scan. A write failure lets the
   scan finish but fails the command afterwards; a truncated stream must never
@@ -237,14 +237,20 @@ pass-2 classes are typically below 0.1% of the scan.
   in old): shape 1, a concrete method turned abstract; shape 2, a new abstract
   method added to an interface (or class) the consumer already extends/implements
   but does not provide. Like the newly-final and kind-flip walks it needs no
-  constant-pool reference; the break is structural. The decision does NOT use the
-  resolver's first-match selection. `implementation_status` scans the class's full
-  supertype closure and asks only "does any concrete declaration exist" vs "every
-  declaration is abstract" (`Concrete`/`AbstractOnly`/`Absent`/`Unknown`), so a
-  sibling interface's default method is never mistaken for an unimplemented
-  abstract one (the resolver's first-match approximation would misfire here).
-  java/lang/Object supplies concrete versions of its own 11 methods, so an
-  interface redeclaring `equals`/`hashCode`/`toString` as abstract is not a break.
+  constant-pool reference; the break is structural. The decision (`implementation_status`,
+  `Concrete`/`AbstractOnly`/`Absent`/`Unknown`) follows JVMS 5.4.6 selection order,
+  not a flat closure scan: phase 1 walks the superclass chain, which WINS over
+  interfaces (the first class declaring the method decides it, even an abstract one,
+  so a superclass abstract beats an interface default — JVM-confirmed), and phase 2
+  consults superinterfaces only if no class declared it. Interface method specificity
+  is NOT modeled, so a phase-2 mix of abstract and concrete declarations is
+  inconclusive (`Unknown`) rather than guessed. That one rule avoids both a
+  first-match false positive (a sibling default read as unimplemented) and a
+  re-abstraction false positive (a shadowed default read as an implementation), at the
+  cost of a rare false negative. `static`/`private` declarations never override, so
+  they do not count. java/lang/Object supplies concrete versions of its own 11
+  methods, so an interface redeclaring `equals`/`hashCode`/`toString` as abstract is
+  not a break, while a non-Object superclass re-abstracting one still is.
   Old-relative: report only when new is `AbstractOnly` and old was `Concrete`
   (shape 1) or `Absent` (shape 2); abstract-on-both-sides is pre-existing and any
   scope escape stays Unknown. `collect_abstract_wanted` fetches the candidate
