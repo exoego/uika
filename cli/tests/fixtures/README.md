@@ -1,8 +1,11 @@
 # Test fixtures
 
-Unmodified third-party JARs vendored from Maven Central, used by the integration
-tests (`tests/integration.rs`) as real-world ground truth. Several real GitHub
-reports are reproduced from these exact binaries:
+Mostly unmodified third-party JARs vendored from Maven Central, used by the
+integration tests (`tests/integration.rs`) and golden tests (`tests/golden.rs`)
+as real-world ground truth. One small synthetic triple
+(`synthetic-abstract-added-*`) is authored here rather than downloaded; see
+[Synthetic fixtures](#synthetic-fixtures) below. Several real GitHub reports are
+reproduced from the third-party binaries:
 
 - ktor-io 2.3.13 binds to `EventLoopKt.processNextEventInCurrentThread ()J`,
   which exists in kotlinx-coroutines 1.7.1 and is gone in 1.11.0
@@ -58,6 +61,60 @@ reports are reproduced from these exact binaries:
 - kotlin-stdlib 2.2.20 is probe support, not a scan input: the Kotlin-built
   fixtures (coroutines, ktor, koin, okhttp 4, pact) need it on the classpath
   when `tools/jvm-probe` loads their classes in a real JVM
+
+## Synthetic fixtures
+
+`synthetic-abstract-added-*` is authored here, not vendored. It reproduces the
+shape-2 `AbstractMethodError` cleanly and in a few kilobytes: an interface gains
+an abstract method that an existing concrete implementor does not provide. The
+real incidents of this shape (for example jOOQ 3.17 adding `ExecuteListener.end`,
+which breaks Spring's `JooqExceptionTranslator`) ship multi-megabyte jars, and
+well-maintained libraries usually avoid the break with default methods, so a
+synthetic triple is the cheapest faithful cover. `golden_synthetic_abstract_added`
+pins it and a real JVM confirms `BrokenTranslator.end()` throws AbstractMethodError
+while `GoodTranslator.end()` does not.
+
+Regenerate the three jars from source (JDK 11+):
+
+```
+mkdir -p v1/fixture/lib v2/fixture/lib app/fixture/app
+
+cat > v1/fixture/lib/EventListener.java <<'EOF'
+package fixture.lib;
+public interface EventListener { void start(); }
+EOF
+
+cat > v2/fixture/lib/EventListener.java <<'EOF'
+package fixture.lib;
+public interface EventListener { void start(); void end(); }
+EOF
+
+cat > app/fixture/app/BrokenTranslator.java <<'EOF'
+package fixture.app;
+public class BrokenTranslator implements fixture.lib.EventListener {
+    public void start() { }
+}
+EOF
+
+cat > app/fixture/app/GoodTranslator.java <<'EOF'
+package fixture.app;
+public class GoodTranslator implements fixture.lib.EventListener {
+    public void start() { }
+    public void end() { }
+}
+EOF
+
+javac --release 11 -d o1 v1/fixture/lib/EventListener.java
+javac --release 11 -d o2 v2/fixture/lib/EventListener.java
+javac --release 11 -cp o1 -d oa app/fixture/app/*.java
+(cd o1 && jar cf ../synthetic-abstract-added-1.0.jar fixture)
+(cd o2 && jar cf ../synthetic-abstract-added-2.0.jar fixture)
+(cd oa && jar cf ../synthetic-abstract-added-consumer.jar fixture)
+```
+
+The consumer is compiled against 1.0, so it never mentions `end`. `BrokenTranslator`
+inherits the new abstract method with no implementation; `GoodTranslator` supplies
+one and is the not-reported control.
 
 ## Contents
 

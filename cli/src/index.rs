@@ -329,6 +329,25 @@ impl<'a> Scope<'a> {
         self.class(name).map(|(_, entry)| entry.super_name)
     }
 
+    /// Direct superclass plus interfaces of `name`, from whichever layer defines it.
+    /// None when the class is in no scope layer (a hierarchy escape). The interface slice
+    /// borrows the index arena (like `interfaces_of`), so walking the supertype closure
+    /// through the scope allocates nothing per class.
+    pub fn super_and_interfaces(
+        &self,
+        name: ClassName,
+    ) -> Option<(Option<ClassName>, &'a [ClassName])> {
+        self.class(name)
+            .map(|(idx, entry)| (entry.super_name, idx.interfaces_of(entry)))
+    }
+
+    /// Access flags of a method DECLARED directly on `name` (not inherited). None when the
+    /// class is absent from the scope or does not declare the method itself.
+    pub fn direct_method_access(&self, name: ClassName, key: MemberKey) -> Option<u16> {
+        let (idx, entry) = self.class(name)?;
+        find_member(idx.methods_of(entry), key)
+    }
+
     /// Simplified JVMS 5.4.3.2 / 5.4.3.3. Check member existence by walking the owner,
     /// then the superclass chain, then superinterfaces by BFS.
     /// java/lang/Object members are resolved from built-in knowledge because Kt facade
@@ -512,7 +531,7 @@ fn is_constructor(key: MemberKey) -> bool {
     name == "<init>" || name == "<clinit>"
 }
 
-fn is_object_method(key: MemberKey) -> bool {
+pub(crate) fn is_object_method(key: MemberKey) -> bool {
     static METHODS: OnceLock<[MemberKey; 11]> = OnceLock::new();
     METHODS
         .get_or_init(|| {

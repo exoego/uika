@@ -1,0 +1,22 @@
+{
+  "violations": [
+    {
+      "source": "tests/fixtures/synthetic-abstract-added-consumer.jar",
+      "source_class": "fixture/app/BrokenTranslator",
+      "reference": {
+        "kind": "method",
+        "owner": "fixture/lib/EventListener",
+        "member": {
+          "name": "end",
+          "descriptor": "()V"
+        },
+        "expected_static": false
+      },
+      "reason": "method became abstract"
+    }
+  ],
+  "scanned_classes": 2,
+  "total": 1,
+  "unknown_refs": 0,
+  "suppressed": 0
+}
