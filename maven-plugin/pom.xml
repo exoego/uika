@@ -75,7 +75,7 @@
       <!-- Artifact resolution for the uika-cli binary; the runtime uses Maven's own resolver. -->
       <groupId>org.apache.maven.resolver</groupId>
       <artifactId>maven-resolver-api</artifactId>
-      <version>1.9.22</version>
+      <version>1.9.27</version>
       <scope>provided</scope>
     </dependency>
   </dependencies>
