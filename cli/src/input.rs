@@ -2,9 +2,10 @@ use crate::intern::{Sym, intern};
 use crate::window::WindowedReader;
 use anyhow::{Context, Result};
 use rayon::prelude::*;
+use rustc_hash::FxHashSet;
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
@@ -29,7 +30,7 @@ fn is_scannable(name: &str) -> bool {
 /// Use for_each_batch for huge inputs so inflated bytes are not held all at once.
 pub fn load(path: &Path) -> Result<Vec<LoadedClass>> {
     let mut classes = Vec::new();
-    for_each_batch(path, usize::MAX, |batch| {
+    for_each_batch(path, usize::MAX, None, |batch| {
         classes.extend(batch);
         Ok(())
     })?;
@@ -79,16 +80,81 @@ pub fn class_entry_names(path: &Path) -> Vec<String> {
 /// Streaming API that caps concurrently held inflated bytes to one batch.
 /// Large buffers miss malloc's small-object cache and bounce through mmap/munmap (sys time),
 /// so never accumulate the whole JAR in a Vec.
+/// `keep`, when set, restricts a JAR to the central-directory offsets chosen by
+/// [`representative_offsets`], skipping byte-identical duplicate classes without inflating them.
 pub fn for_each_batch(
     path: &Path,
     batch_size: usize,
+    keep: Option<&FxHashSet<u64>>,
     f: impl FnMut(Vec<LoadedClass>) -> Result<()>,
 ) -> Result<()> {
     if path.is_dir() {
         batch_dir(path, batch_size, f)
     } else {
-        batch_jar(path, batch_size, f)
+        batch_jar(path, batch_size, keep, f)
     }
+}
+
+/// For each input path, the central-directory local-header offsets whose entries should be
+/// inflated. A byte-identical duplicate class (same entry name and CRC-32 as one already
+/// seen at an earlier path) is omitted, because first-wins resolution would discard the
+/// class it decodes to anyway, so inflating and parsing it is wasted work. Returns None for a
+/// path when deduplication does not apply: a directory (there reading is the cost, not
+/// inflating), or a JAR whose central directory cannot be parsed directly (it takes the
+/// streaming fallback, which does not address entries by offset).
+///
+/// This is exact, not a heuristic. The CRC comes from the central directory with no inflate,
+/// a mis-named entry ("Foo.class" holding class Bar) has a different CRC so it is never
+/// skipped, and even an astronomically unlikely CRC collision only ever drops a first-wins
+/// loser. Paths are visited in order, so the surviving copy is always the earliest, which
+/// matches first-wins by path order and keeps each class's recorded origin unchanged.
+///
+/// The second return value is the number of entries dropped, so the caller can still report
+/// the full scanned-class count even though those entries are never inflated.
+pub fn representative_offsets(paths: &[PathBuf]) -> (Vec<Option<FxHashSet<u64>>>, usize) {
+    // Read each JAR's central directory in parallel (no inflate) and intern the class name
+    // (entry name minus ".class") so the sequential pass below only does set lookups.
+    let per_path: Vec<Option<Vec<(Sym, u32, u64)>>> = paths
+        .par_iter()
+        .map(|path| {
+            if path.is_dir() {
+                return None;
+            }
+            let file = File::open(path).ok()?;
+            let (entries, _) = parse_central_directory(&file)?;
+            Some(
+                entries
+                    .into_iter()
+                    .filter(|e| is_scannable(&e.name))
+                    .map(|e| {
+                        let name = e.name.strip_suffix(".class").unwrap_or(&e.name);
+                        (intern(name), e.crc, e.local_header_offset)
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+
+    // Keep the first occurrence of each (class name, CRC) in path order; drop later copies.
+    // The seen set spans all paths so a duplicate bundled in a later JAR is dropped.
+    let mut seen: FxHashSet<(Sym, u32)> = FxHashSet::default();
+    let mut skipped = 0usize;
+    let keeps = per_path
+        .into_iter()
+        .map(|entries| {
+            let entries = entries?;
+            let mut keep = FxHashSet::default();
+            for (name, crc, offset) in entries {
+                if seen.insert((name, crc)) {
+                    keep.insert(offset);
+                } else {
+                    skipped += 1;
+                }
+            }
+            Some(keep)
+        })
+        .collect();
+    (keeps, skipped)
 }
 
 /// Sliding window size for JAR reads. Two windows times this size is the cap on
@@ -103,6 +169,7 @@ fn jar_window() -> usize {
 fn batch_jar(
     path: &Path,
     batch_size: usize,
+    keep: Option<&FxHashSet<u64>>,
     f: impl FnMut(Vec<LoadedClass>) -> Result<()>,
 ) -> Result<()> {
     let file = File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
@@ -111,7 +178,15 @@ fn batch_jar(
     // and inflate entries in parallel. zip64 and compression methods other than
     // deflate fall back to the zip crate path.
     match fast_entries(&file) {
-        Some(entries) => batch_jar_fast(&file, source, &entries, batch_size, f),
+        Some(mut entries) => {
+            // Drop byte-identical duplicates chosen by representative_offsets. Their `end`
+            // bounds were computed over the full entry list, so they stay valid upper bounds
+            // after the retain, and span coalescing simply reads across the resulting gaps.
+            if let Some(keep) = keep {
+                entries.retain(|e| keep.contains(&e.local_header_offset));
+            }
+            batch_jar_fast(&file, source, &entries, batch_size, f)
+        }
         None => batch_jar_zip(file, path, source, batch_size, f),
     }
 }
@@ -124,6 +199,9 @@ struct CdEntry {
     end: u64,
     compressed: u64,
     uncompressed: u64,
+    /// CRC-32 of the uncompressed data (from the central directory, no inflate needed).
+    /// Used to detect byte-identical duplicate classes across JARs.
+    crc: u32,
     method: u16,
 }
 
@@ -308,6 +386,7 @@ fn parse_central_directory(file: &File) -> Option<(Vec<CdEntry>, u64)> {
         let rec = &cd[p..];
         let flags = u16le(rec, 8)?;
         let method = u16le(rec, 10)?;
+        let crc = u32le(rec, 16)?;
         let compressed = u32le(rec, 20)?;
         let uncompressed = u32le(rec, 24)?;
         let name_len = u16le(rec, 28)? as usize;
@@ -331,6 +410,7 @@ fn parse_central_directory(file: &File) -> Option<(Vec<CdEntry>, u64)> {
             end: 0, // Filled after sorting in fast_entries.
             compressed: u64::from(compressed),
             uncompressed: u64::from(uncompressed),
+            crc,
             method,
         });
         p += 46 + name_len + extra_len + comment_len;
@@ -444,4 +524,78 @@ fn batch_dir(
         f(batch)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn write_jar(path: &Path, entries: &[(&str, &[u8])]) {
+        let file = File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        for (name, data) in entries {
+            zip.start_file(*name, opts).unwrap();
+            zip.write_all(data).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    /// Byte-identical duplicate classes are dropped, but a same-named class with different
+    /// bytes (different CRC) is kept, and origin order is respected.
+    #[test]
+    fn representative_offsets_drops_byte_identical_duplicates() {
+        let dir = std::env::temp_dir().join(format!("uika_dedup_dup_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let foo_v1: &[u8] = b"\xCA\xFE\xBA\xBEfoo contents v1";
+        let foo_v2: &[u8] = b"\xCA\xFE\xBA\xBEfoo contents v2 differs";
+        let a = dir.join("a.jar");
+        let b = dir.join("b.jar");
+        let c = dir.join("c.jar");
+        write_jar(
+            &a,
+            &[("Foo.class", foo_v1), ("Bar.class", b"\xCA\xFE\xBA\xBEbar")],
+        );
+        // b repeats Foo byte-for-byte (skipped) and adds a new Baz (kept).
+        write_jar(
+            &b,
+            &[("Foo.class", foo_v1), ("Baz.class", b"\xCA\xFE\xBA\xBEbaz")],
+        );
+        // c has Foo with different bytes, so a different CRC: kept, not a duplicate.
+        write_jar(&c, &[("Foo.class", foo_v2)]);
+
+        let (keeps, skipped) = representative_offsets(&[a, b, c]);
+
+        assert_eq!(
+            keeps[0].as_ref().unwrap().len(),
+            2,
+            "a.jar keeps Foo and Bar"
+        );
+        assert_eq!(
+            keeps[1].as_ref().unwrap().len(),
+            1,
+            "b.jar keeps only Baz; its byte-identical Foo is skipped"
+        );
+        assert_eq!(
+            keeps[2].as_ref().unwrap().len(),
+            1,
+            "c.jar keeps its differently-compiled Foo"
+        );
+        assert_eq!(skipped, 1, "exactly one entry (b.jar's Foo) is skipped");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A directory target is never deduplicated (reading, not inflating, is the cost there).
+    #[test]
+    fn representative_offsets_skips_directories() {
+        let dir = std::env::temp_dir().join(format!("uika_dedup_dir_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (keeps, skipped) = representative_offsets(&[dir.clone()]);
+        assert!(keeps[0].is_none());
+        assert_eq!(skipped, 0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
