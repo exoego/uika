@@ -25,4 +25,4 @@ cesu8 = "1.1.0"
 # miniz_oxide backend on the pass-1 scan (per-entry Huffman tree init dominates),
 # with no C toolchain so the static cross-platform binaries still build.
 flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
-toml = "0.8"
+toml = "0.9"
