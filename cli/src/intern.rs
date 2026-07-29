@@ -7,9 +7,9 @@
 //! to per-shard bump arenas because malloc per string would add millions of allocation
 //! overheads and fragmentation. The pool is static and is not freed before process exit.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHasher};
 use serde::{Serialize, Serializer};
-use std::hash::{BuildHasher, Hasher, RandomState};
+use std::hash::Hasher;
 use std::sync::{Mutex, OnceLock, RwLock};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -89,8 +89,6 @@ impl Shard {
 }
 
 struct Pool {
-    /// Used for shard selection (maps inside shards use FxHash).
-    hasher: RandomState,
     shards: Vec<Mutex<Shard>>,
     /// ID -> string. Append-only.
     table: RwLock<Vec<&'static str>>,
@@ -100,7 +98,6 @@ static POOL: OnceLock<Pool> = OnceLock::new();
 
 fn pool() -> &'static Pool {
     POOL.get_or_init(|| Pool {
-        hasher: RandomState::new(),
         shards: (0..SHARDS).map(|_| Mutex::new(Shard::default())).collect(),
         table: RwLock::new(Vec::new()),
     })
@@ -109,9 +106,15 @@ fn pool() -> &'static Pool {
 /// Called from rayon's parallel parser, so sharding reduces lock contention.
 pub fn intern(s: &str) -> Sym {
     let pool = pool();
-    let mut h = pool.hasher.build_hasher();
+    // FxHash for shard selection: this runs on every intern call (tens of millions in a
+    // large scan), and SipHash (the previous RandomState) was a measurable slice of pass 1.
+    // Shard choice never affects the assigned Sym id, so the hash need not be
+    // seeded or DoS-resistant. Fold the high bits down because SHARDS is a power of two
+    // and FxHash mixes its upper bits better than its lowest.
+    let mut h = FxHasher::default();
     h.write(s.as_bytes());
-    let shard = (h.finish() as usize) % SHARDS;
+    let hash = h.finish();
+    let shard = ((hash ^ (hash >> 32)) as usize) % SHARDS;
     let mut shard = pool.shards[shard].lock().unwrap();
     if let Some(&sym) = shard.map.get(s) {
         return sym;
