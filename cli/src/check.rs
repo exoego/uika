@@ -72,13 +72,22 @@ pub fn parse_targets(
             let with_ctx = |e: anyhow::Error| format!("{}!{}: {e}", lc.source, lc.entry_name);
             let rc = crate::classfile::RawClass::parse(&lc.bytes).map_err(with_ctx)?;
             let class_name = class_name_of(&rc).map_err(with_ctx)?;
-            let hierarchy = if known.contains(class_name) {
-                None
-            } else {
-                let (_, super_name, interfaces, nest_host) =
-                    extract_hierarchy(&rc).map_err(with_ctx)?;
-                Some((super_name, interfaces, nest_host))
-            };
+            // A class already in the graph before this chunk is a guaranteed first-wins
+            // loser: the graph only grows, so merge will drop this copy's hierarchy,
+            // references, and edges. Skip extracting them (references dominate the
+            // remaining per-class work and duplicates are a large share of the scan).
+            if known.contains(class_name) {
+                return Ok(ParsedTarget {
+                    source: lc.source,
+                    class_name,
+                    hierarchy: None,
+                    entry_override: None,
+                    refs: Vec::new(),
+                    edges: Vec::new(),
+                });
+            }
+            let (_, super_name, interfaces, nest_host) =
+                extract_hierarchy(&rc).map_err(with_ctx)?;
             let entry_override =
                 if lc.entry_name.strip_suffix(".class") == Some(class_name.as_str()) {
                     None
@@ -94,7 +103,7 @@ pub fn parse_targets(
             Ok(ParsedTarget {
                 source: lc.source,
                 class_name,
-                hierarchy,
+                hierarchy: Some((super_name, interfaces, nest_host)),
                 entry_override,
                 refs,
                 edges,
