@@ -474,8 +474,13 @@ Expected on a 10-core Apple Silicon Mac:
 
 | Workload                                              |                      Result |  Time |    RSS |
 |-------------------------------------------------------|-----------------------------:|------:|-------:|
-| Stress: ~2,334 JARs / 1.94M classes                   |   ~311 broken / 294 unverified | ~6.7s | ~450MB |
+| Stress: ~2,334 JARs / 1.94M classes                   |   ~311 broken / 294 unverified | ~3.6s | ~450MB |
 | Real project: ~50 modules / 48.5K classes + 38 JARs   |   ~1 broken / 347 unverified | ~0.9s | ~110MB |
+
+Pass 1 dominates the stress workload and is now bounded by deflate decompression
+(the parallel per-entry inflate). Absolute broken/unverified counts are
+classpath-order sensitive (duplicate-class first-wins), so compare same-input
+diffs, not the table's approximate counts.
 
 Traps already hit in this repository:
 
@@ -486,7 +491,7 @@ Traps already hit in this repository:
 
 ## Optimization History
 
-~60s / 11GB -> ~4.9s / 400MB on the stress workload. Causal changes:
+~60s / 11GB -> ~3.6s / 450MB on the stress workload. Causal changes:
 
 | Measured problem                                                              | Solution                                                          |
 |-------------------------------------------------------------------------------|--------------------------------------------------------------------|
@@ -497,6 +502,13 @@ Traps already hit in this repository:
 | General parsers structured every attribute                                   | `RawClass` skips attribute structure; scans only needed Code bytes. |
 | Read syscalls and buffer churn inflated system time                          | Group physical spans; one `pread` per span.                       |
 | Per-JAR sequential inflate underused the CPU                                 | Inflate entries in parallel.                                      |
+| miniz_oxide inflate (per-entry Huffman-tree init) dominated pass 1           | flate2 `zlib-rs` backend (pure Rust, keeps the no-C static build). |
+| Interning every constant-pool owner just to reject it serialized pass 1 on the intern shard mutex (most wall-clock `sys` time) | `extract_refs` tests owners by raw name against `ApiIndex::class_name_set` (old); intern only the few matches. |
+| SipHash shard selection + redundant `from_utf8` validation of ASCII names    | FxHash for intern shard choice; `from_utf8_unchecked` for ASCII (is_ascii proves soundness). |
+
+Not helpful, measured and rejected: `lto`/`codegen-units=1` (inflate is the wall
+and lives in a self-contained crate, so cross-crate inlining gained nothing while
+tripling release build time).
 
 A Java port with the same two-pass/int-intern/span-read architecture matched
 Rust on CPU time (the `experiments/` comparison, since removed). Rust's real

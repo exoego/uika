@@ -198,8 +198,12 @@ impl<'a> RawClass<'a> {
 /// only non-ASCII data is converted with cesu8.
 fn decode_modified_utf8(bytes: &[u8]) -> Result<Cow<'_, str>> {
     if bytes.is_ascii() {
-        // ASCII has the same representation in Modified UTF-8 and UTF-8.
-        Ok(Cow::Borrowed(std::str::from_utf8(bytes)?))
+        // ASCII has the same representation in Modified UTF-8 and UTF-8, and every ASCII
+        // byte is valid UTF-8, so skip the from_utf8 validation scan (a hotspot when
+        // decoding names for nearly every class). is_ascii already proved soundness.
+        Ok(Cow::Borrowed(unsafe {
+            std::str::from_utf8_unchecked(bytes)
+        }))
     } else {
         Ok(match cesu8::from_java_cesu8(bytes)? {
             Cow::Borrowed(s) => Cow::Borrowed(s),

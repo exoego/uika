@@ -3,7 +3,7 @@ use crate::input::LoadedClass;
 use crate::intern::{Sym, intern};
 use crate::model::{ClassApi, ClassName, MemberKey};
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
@@ -134,6 +134,14 @@ impl ApiIndex {
 
     pub fn contains_class(&self, name: ClassName) -> bool {
         self.classes.contains_key(&name)
+    }
+
+    /// Class names as raw process-lifetime strings, for pass-1 reference filtering.
+    /// Letting `extract_refs` test candidate owners by string against this set avoids
+    /// interning the tens of millions of constant-pool owners that are not in the
+    /// checked library, which is where pass 1 spent most of its intern-lock time.
+    pub fn class_name_set(&self) -> FxHashSet<&'static str> {
+        self.classes.keys().map(|k| k.as_str()).collect()
     }
 
     pub fn class_access(&self, name: ClassName) -> Option<u16> {

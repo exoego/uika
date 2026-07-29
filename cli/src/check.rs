@@ -62,7 +62,7 @@ pub struct ParsedTargets {
 /// since they cost extra memory proportional to the whole scanned classpath.
 pub fn parse_targets(
     classes: &[LoadedClass],
-    old: &ApiIndex,
+    old_names: &FxHashSet<&str>,
     known: &ClassGraph,
     collect_edges: bool,
 ) -> ParsedTargets {
@@ -85,7 +85,7 @@ pub fn parse_targets(
                 } else {
                     Some(lc.entry_name.clone())
                 };
-            let refs = extract_refs(&rc, |owner| old.contains_class(owner)).map_err(with_ctx)?;
+            let refs = extract_refs(&rc, |owner| old_names.contains(owner)).map_err(with_ctx)?;
             let edges = if collect_edges {
                 crate::extract::extract_edges(&rc, class_name)
             } else {
@@ -187,6 +187,9 @@ pub fn scan_target_paths(
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(rayon::current_num_threads().max(1));
+    // Build the owner filter once: extract_refs tests candidate owners against these raw
+    // names instead of interning every constant-pool owner just to reject it.
+    let old_names = old.class_name_set();
     let mut scanned = ScanResult::new();
     for chunk in paths.chunks(chunk_size) {
         // The graph is immutable while parsing a chunk, so it can skip duplicates without locking.
@@ -201,7 +204,7 @@ pub fn scan_target_paths(
                     scanned_classes: 0,
                 };
                 crate::input::for_each_batch(p, 512, |batch| {
-                    let parsed = parse_targets(&batch, old, known, collect_edges);
+                    let parsed = parse_targets(&batch, &old_names, known, collect_edges);
                     acc.targets.extend(parsed.targets);
                     acc.warnings.extend(parsed.warnings);
                     acc.scanned_classes += parsed.scanned_classes;
@@ -628,7 +631,7 @@ pub fn check_scanned(
 /// Check consumer-side classes (pass 1 + pass 2 + verdict). Reachability is not computed here.
 pub fn check(targets: &[LoadedClass], old: &ApiIndex, new: &ApiIndex) -> CheckReport {
     let mut scan = ScanResult::new();
-    let parsed = parse_targets(targets, old, &scan.graph, false);
+    let parsed = parse_targets(targets, &old.class_name_set(), &scan.graph, false);
     scan.merge(parsed);
     check_scanned(scan, old, new, &FxHashSet::default(), None, None, None)
 }

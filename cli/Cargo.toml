@@ -21,5 +21,8 @@ serde_json = "1"
 walkdir = "2"
 rustc-hash = "2.1.3"
 cesu8 = "1.1.0"
-flate2 = "1.1.9"
+# zlib-rs backend: a pure-Rust deflate that inflates ~2x faster than the default
+# miniz_oxide backend on the pass-1 scan (per-entry Huffman tree init dominates),
+# with no C toolchain so the static cross-platform binaries still build.
+flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
 toml = "0.8"

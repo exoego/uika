@@ -81,52 +81,62 @@ pub fn extract_hierarchy(rc: &RawClass) -> Result<(Sym, Option<Sym>, Vec<Sym>, O
     Ok((name, super_name, interfaces, nest_host_of(rc)?))
 }
 
+/// Constant-pool index is referenced by an invoke/get/put opcode (so it is handled with
+/// static/write context in the code-ref loop, not the plain constant-pool loop).
+const CP_CODE_REF: u8 = 1;
+/// Constant-pool Class index is the target of a `new` opcode (InstantiationError check).
+const CP_INSTANTIATED: u8 = 2;
+
 /// Enumerate symbol references from the constant pool and return only those whose owner
 /// satisfies accept.
 /// - Filtering is inline because most classes contribute zero accepted references, so
 ///   building a Vec of all references and then discarding it is wasteful.
+/// - `accept` takes the raw (un-interned) owner name so the common reject path never
+///   touches the intern pool; only accepted owners are interned.
 /// - MethodHandle points to Methodref-like entries, so no special handling is needed
 ///   (the scan covers it naturally).
 /// - InvokeDynamic NameAndType entries are bootstrap synthetic names and are out of scope.
 /// - Array owners (clone on "[Ljava/lang/Object;", etc.) are unwrapped to element types;
 ///   primitive arrays are excluded.
-pub fn extract_refs(rc: &RawClass, accept: impl Fn(Sym) -> bool) -> Result<Vec<SymbolRef>> {
+pub fn extract_refs(rc: &RawClass, accept: impl Fn(&str) -> bool) -> Result<Vec<SymbolRef>> {
     let mut refs = Vec::new();
-    let mut code_ref_indices = vec![false; rc.cp().len()];
-    let mut instantiated_indices = vec![false; rc.cp().len()];
+    // One byte-flag per constant-pool slot instead of two bool vectors: halves the
+    // per-class allocation and zeroing, which showed up once interning stopped dominating.
+    let mut cp_flags = vec![0u8; rc.cp().len()];
     for method in &rc.methods {
         for code_ref in &method.code_refs {
             // `new` targets a Class constant: it marks that constant as
             // instantiated instead of joining the member-ref handling below.
-            let slots = if code_ref.opcode == 0xbb {
-                &mut instantiated_indices
+            let bit = if code_ref.opcode == 0xbb {
+                CP_INSTANTIATED
             } else {
-                &mut code_ref_indices
+                CP_CODE_REF
             };
-            if let Some(slot) = slots.get_mut(code_ref.cp_index as usize) {
-                *slot = true;
+            if let Some(slot) = cp_flags.get_mut(code_ref.cp_index as usize) {
+                *slot |= bit;
             }
         }
     }
     for (idx, entry) in rc.cp().iter().enumerate() {
         if let CpEntry::Class { name } = *entry {
             let raw = rc.utf8(name)?;
-            if let Some(owner) = object_class_of(&raw) {
-                let owner = intern(owner);
-                if accept(owner) {
-                    refs.push(SymbolRef {
-                        kind: RefKind::Class,
-                        owner,
-                        member: None,
-                        expected_static: None,
-                        field_write: None,
-                        instantiated: instantiated_indices[idx].then_some(true),
-                    });
-                }
+            // Test the raw name before interning: an owner outside the checked library
+            // (the vast majority) is dropped without touching the intern pool.
+            if let Some(owner) = object_class_of(&raw)
+                && accept(owner)
+            {
+                refs.push(SymbolRef {
+                    kind: RefKind::Class,
+                    owner: intern(owner),
+                    member: None,
+                    expected_static: None,
+                    field_write: None,
+                    instantiated: (cp_flags[idx] & CP_INSTANTIATED != 0).then_some(true),
+                });
             }
             continue;
         }
-        if code_ref_indices.get(idx).copied().unwrap_or(false) {
+        if cp_flags[idx] & CP_CODE_REF != 0 {
             continue;
         }
         if let Some(r) = ref_from_cp_entry(rc, entry, None, None, &accept)? {
@@ -164,7 +174,7 @@ fn ref_from_cp_entry(
     entry: &CpEntry<'_>,
     expected_static: Option<bool>,
     field_write: Option<bool>,
-    accept: &impl Fn(Sym) -> bool,
+    accept: &impl Fn(&str) -> bool,
 ) -> Result<Option<SymbolRef>> {
     let (kind, class_index, nat_index) = match *entry {
         CpEntry::Methodref {
@@ -186,14 +196,15 @@ fn ref_from_cp_entry(
     if raw_owner.starts_with('[') {
         return Ok(None);
     }
-    let owner = intern(&raw_owner);
-    if !accept(owner) {
+    // Filter by raw name first; intern the owner (and the member name/descriptor) only
+    // for the few references that target the checked library.
+    if !accept(&raw_owner) {
         return Ok(None);
     }
     let (name, descriptor) = rc.name_and_type(nat_index)?;
     Ok(Some(SymbolRef {
         kind,
-        owner,
+        owner: intern(&raw_owner),
         member: Some(MemberKey::new(&name, &descriptor)),
         expected_static,
         field_write,
