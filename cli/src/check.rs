@@ -199,20 +199,27 @@ pub fn scan_target_paths(
     // Build the owner filter once: extract_refs tests candidate owners against these raw
     // names instead of interning every constant-pool owner just to reject it.
     let old_names = old.class_name_set();
+    // Decide, from central directories alone (no inflate), which entries to inflate: a
+    // byte-identical duplicate class bundled in a later JAR is skipped because first-wins
+    // would discard it anyway. On large classpaths most scanned classes are such duplicates.
+    let (keep_sets, skipped_dups) = crate::input::representative_offsets(paths);
     let mut scanned = ScanResult::new();
-    for chunk in paths.chunks(chunk_size) {
+    for (chunk_index, chunk) in paths.chunks(chunk_size).enumerate() {
+        let base = chunk_index * chunk_size;
         // The graph is immutable while parsing a chunk, so it can skip duplicates without locking.
         let known = &scanned.graph;
         let parsed_chunk: Vec<ParsedTargets> = chunk
             .par_iter()
-            .map(|p| {
+            .enumerate()
+            .map(|(i, p)| {
+                let keep = keep_sets[base + i].as_ref();
                 // Read and parse by batch to cap concurrently held inflated bytes.
                 let mut acc = ParsedTargets {
                     targets: Vec::new(),
                     warnings: Vec::new(),
                     scanned_classes: 0,
                 };
-                crate::input::for_each_batch(p, 512, |batch| {
+                crate::input::for_each_batch(p, 512, keep, |batch| {
                     let parsed = parse_targets(&batch, &old_names, known, collect_edges);
                     acc.targets.extend(parsed.targets);
                     acc.warnings.extend(parsed.warnings);
@@ -226,6 +233,9 @@ pub fn scan_target_paths(
             scanned.merge(parsed);
         }
     }
+    // Count the skipped byte-identical duplicates too, so the reported scanned-class total
+    // stays the size of the whole classpath rather than only the entries actually inflated.
+    scanned.scanned_classes += skipped_dups;
     scanned.graph.shrink_to_fit();
     Ok(scanned)
 }

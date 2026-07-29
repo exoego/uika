@@ -355,7 +355,7 @@ pass-2 classes are typically below 0.1% of the scan.
 | Path                   | Role                                                                                                                                                  |
 |------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `cli/src/classfile.rs` | Minimal class-file parser: constant pool + headers, Code scanned only for reference opcodes (invoke\* plus `new` for InstantiationError), NestHost read from the class attribute table, Utf8 borrowed, ASCII unconverted. |
-| `cli/src/input.rs`     | JAR/class-dir loading. Fast path: parse central directory, group offset spans, one `pread` per span, parallel inflate. Falls back to the `zip` crate. |
+| `cli/src/input.rs`     | JAR/class-dir loading. Fast path: parse central directory, group offset spans, one `pread` per span, parallel inflate. Falls back to the `zip` crate. `representative_offsets` deduplicates byte-identical classes across JARs by (name, CRC-32) before inflating. |
 | `cli/src/window.rs`    | Fallback `Read + Seek` reader with two LRU windows (the `zip` crate seeks between central directory and local headers).                               |
 | `cli/src/intern.rs`    | `Sym = u32` interning in sharded bump arenas kept for process lifetime. Never sort/compare output by Sym id — interning order is nondeterministic.    |
 | `cli/src/model.rs`     | Core data model: `MemberKey`, `ClassApi`, `BreakingChange`, `SymbolRef`, `Violation`.                                                                 |
@@ -474,11 +474,16 @@ Expected on a 10-core Apple Silicon Mac:
 
 | Workload                                              |                      Result |  Time |    RSS |
 |-------------------------------------------------------|-----------------------------:|------:|-------:|
-| Stress: ~2,334 JARs / 1.94M classes                   |   ~311 broken / 294 unverified | ~3.6s | ~450MB |
+| Stress: ~2,334 JARs / 1.94M classes                   |   ~311 broken / 294 unverified | ~1.7s | ~450MB |
 | Real project: ~50 modules / 48.5K classes + 38 JARs   |   ~1 broken / 347 unverified | ~0.9s | ~110MB |
 
-Pass 1 dominates the stress workload and is now bounded by deflate decompression
-(the parallel per-entry inflate). Absolute broken/unverified counts are
+Pass 1 dominates the stress workload. On a real classpath most scanned classes
+are byte-identical duplicates bundled across JARs (about 60% on the stress
+workload), so `input::representative_offsets` reads central directories only (no
+inflate) and skips inflating any (entry name, CRC-32) already seen at an earlier
+path. What remains is bounded by deflate decompression of the survivors. The
+reported scanned-class count still counts the skipped duplicates, so it stays the
+size of the whole classpath. Absolute broken/unverified counts are
 classpath-order sensitive (duplicate-class first-wins), so compare same-input
 diffs, not the table's approximate counts.
 
@@ -491,7 +496,7 @@ Traps already hit in this repository:
 
 ## Optimization History
 
-~60s / 11GB -> ~3.6s / 450MB on the stress workload. Causal changes:
+~60s / 11GB -> ~1.7s / 450MB on the stress workload. Causal changes:
 
 | Measured problem                                                              | Solution                                                          |
 |-------------------------------------------------------------------------------|--------------------------------------------------------------------|
@@ -505,6 +510,8 @@ Traps already hit in this repository:
 | miniz_oxide inflate (per-entry Huffman-tree init) dominated pass 1           | flate2 `zlib-rs` backend (pure Rust, keeps the no-C static build). |
 | Interning every constant-pool owner just to reject it serialized pass 1 on the intern shard mutex (most wall-clock `sys` time) | `extract_refs` tests owners by raw name against `ApiIndex::class_name_set` (old); intern only the few matches. |
 | SipHash shard selection + redundant `from_utf8` validation of ASCII names    | FxHash for intern shard choice; `from_utf8_unchecked` for ASCII (is_ascii proves soundness). |
+| A duplicate class already in the graph still had its references extracted before merge dropped them | Return early in `parse_targets` for a class the chunk-immutable graph already holds. |
+| ~60% of scanned classes are byte-identical duplicates bundled across JARs, all inflated and parsed only to lose first-wins | `representative_offsets` picks one entry per (name, CRC) from central directories in path order; the scan inflates only those. |
 
 Not helpful, measured and rejected: `lto`/`codegen-units=1` (inflate is the wall
 and lives in a self-contained crate, so cross-crate inlining gained nothing while
