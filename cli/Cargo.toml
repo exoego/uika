@@ -13,7 +13,10 @@ memstats = []
 [dependencies]
 mimalloc = "0.1"
 rayon = "1"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+# Fallback reader only, so just deflate decompression via the same flate2
+# zlib-rs backend as pass 1. The umbrella "deflate" feature also pulls zopfli
+# (a compression-only optimizer uika never uses).
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive", "rc"] }
