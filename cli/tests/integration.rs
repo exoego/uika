@@ -903,9 +903,10 @@ fn per_module_upgrade_check_gates_on_each_modules_own_resolution() {
         "expected the :app-attributed DaemonThreadFactory break:\n{stdout}"
     );
     assert!(
-        violations
-            .iter()
-            .all(|v| !v["modules"].as_array().unwrap().contains(&serde_json::json!(":pinned"))),
+        violations.iter().all(|v| !v["modules"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!(":pinned"))),
         "the pinned module must never be judged against the sibling's upgrade:\n{stdout}"
     );
     let runs = json["module_runs"]["outcomes"].as_array().unwrap();
@@ -922,7 +923,10 @@ fn per_module_upgrade_check_gates_on_each_modules_own_resolution() {
         &after_arg,
     ]);
     assert_eq!(code, 1);
-    assert!(stdout.contains("per-module check: 1 of 2 modules"), "{stdout}");
+    assert!(
+        stdout.contains("per-module check: 1 of 2 modules"),
+        "{stdout}"
+    );
     assert!(stdout.contains("modules: :app"), "{stdout}");
 
     // --merged keeps the flat behavior: 1.42.1 is still resolved by :pinned, so the flat

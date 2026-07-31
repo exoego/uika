@@ -1,0 +1,5 @@
+16:30:16.423 [main] INFO  org.revapi.standalone.Main - Downloading checked archives
+16:30:16.426 [main] INFO  org.revapi.standalone.Main - Downloading extensions
+16:30:28.596 [main] INFO  org.revapi.standalone.Main - Starting analysis
+16:30:28.605 [main] WARN  o.r.r.file.AbstractFileReporter - At least one of `minSeverity` and `minCriticality` should to be defined. Defaulting to the obsolete behavior of reporting all potentially breaking elements.
+16:30:31.166 [main] INFO  org.revapi.standalone.Main - Analysis took 2570ms.

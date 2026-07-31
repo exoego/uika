@@ -144,10 +144,15 @@ $ uika upgrade-check --before /tmp/before.json --after /tmp/after.json
 dependency changes: 1
   CHANGED io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
 
+per-module check: 2 of 41 modules changed resolution (39 unchanged)
+  :app  scanned 84013 classes, 42 broken, 118 unverified
+  :worker  scanned 61200 classes, 0 broken, 87 unverified
+
 💥 reachable from the application (likely to break)
 💡 align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
    removed by: io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
    referenced by: io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1
+   modules: :app
    -> io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil  class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
    -> io/opentelemetry/exporter/sender/okhttp/internal/OkHttpGrpcSender  class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
 
@@ -178,6 +183,31 @@ purely by external configuration stays invisible), a signal to deprioritize
 rather than a guarantee. With no application roots (a bare
 `check --classpath ...`) there is nothing to rank from, so the report stays a
 single flat list.
+
+### Per-module checking (`upgrade-check`)
+
+In a multi-module build, each module's resolved classpath is its own JVM
+classpath: two modules can legitimately resolve different versions of the same
+coordinate (one service on netty 4.1, a newer one on 4.2), and no process ever
+mixes them. `upgrade-check` therefore checks each module against its own
+resolution, using the per-module classpaths the build-tool dumps already carry.
+Only modules whose own resolution lost a version are checked (an unchanged
+module cannot break from the upgrade), modules with identical inputs share one
+run, and each violation is attributed to the modules whose classpaths exhibit
+it (`modules:` in the text report, a `modules` array in JSON).
+
+This has two correctness effects over checking the flattened union. It removes
+a false-positive class: a jar used by one module was judged against the newer
+version another module resolves, so its self-consistent internal references
+looked broken. And it removes a false-negative class: an upgrade in one module
+was invisible to the flat diff whenever a sibling module still resolves the
+old version, because the old version never left the union.
+
+A project-dependency artifact that was never built (its jar path is in the
+dump but missing on disk) falls back to the producing module's `classesDirs`
+from the same dump instead of being skipped. `--merged` restores the flat
+union check, which is also the automatic fallback (with a warning) for dumps
+written by plugins too old to carry per-module artifact lists.
 
 ### Exit code policy (`--fail-on`)
 
@@ -270,6 +300,16 @@ The Gradle, sbt, and Maven plugins all write the same dump format: every
 module's resolved runtime classpath as coordinate-annotated JSON. Feed two
 dumps to `uika upgrade-check`, or one to `uika check --classpath-file` (more
 accurate than a hand-assembled classpath, and reduces unverified references).
+
+The dumps carry each module's classpath separately, which is what lets
+`upgrade-check` [check every module against its own resolution](#per-module-checking-upgrade-check).
+Project dependencies are attributed to their producing module (`"project"` in
+the dump), so the CLI can fall back to that module's `classesDirs` when a
+project jar was never built. The Gradle dump task also builds what the dump
+refers to by default (project-dependency jars and each module's own classes);
+opt out with `-PuikaBuildOutputs=false` for a resolution-only dump. sbt
+compiles as a side effect of evaluating the dump task; Maven needs a `compile`
+phase in the same invocation for module classes to exist.
 
 Each plugin also provides an upgrade-check task that fetches the uika CLI
 binary itself, as `net.exoego.uika:uika-cli:<version>:<platform>@zip` through the
@@ -426,9 +466,10 @@ jobs:
           exit $status
 
       - name: Dump PR classpath
-        # Compile so the PR module build outputs exist: they anchor reachability
-        # ranking (violations reachable from your code are surfaced first).
-        run: ./gradlew classes uikaDumpClasspath -PuikaOutput=/tmp/after.json
+        # The dump builds project jars and module classes by default
+        # (-PuikaBuildOutputs=false for a resolution-only dump); the built
+        # outputs anchor reachability ranking and per-module checking.
+        run: ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
 
       - name: Check broken references
         if: steps.baseline.outcome == 'success'
@@ -538,10 +579,15 @@ $ uika upgrade-check --before /tmp/before.json --after /tmp/after.json
 dependency changes: 1
   CHANGED io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
 
+per-module check: 2 of 41 modules changed resolution (39 unchanged)
+  :app  scanned 84013 classes, 42 broken, 118 unverified
+  :worker  scanned 61200 classes, 0 broken, 87 unverified
+
 💥 reachable from the application (likely to break)
 💡 align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
    removed by: io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
    referenced by: io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1
+   modules: :app
    -> io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil  class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
    -> io/opentelemetry/exporter/sender/okhttp/internal/OkHttpGrpcSender  class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
 

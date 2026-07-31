@@ -475,12 +475,21 @@ mod tests {
 
         // :app moved g:lib 1.0 -> 2.0.
         let app_diff = diff_modules(before.module(":app").unwrap(), app);
-        assert_eq!(app_diff.old_jars, vec![PathBuf::from("/repo/cache/lib-1.0.jar")]);
-        assert_eq!(app_diff.new_jars, vec![PathBuf::from("/repo/cache/lib-2.0.jar")]);
+        assert_eq!(
+            app_diff.old_jars,
+            vec![PathBuf::from("/repo/cache/lib-1.0.jar")]
+        );
+        assert_eq!(
+            app_diff.new_jars,
+            vec![PathBuf::from("/repo/cache/lib-2.0.jar")]
+        );
 
         // :pinned still resolves 1.0: nothing to check even though the universe-wide
         // version set for g:lib changed.
-        let pinned_diff = diff_modules(before.module(":pinned").unwrap(), after.module(":pinned").unwrap());
+        let pinned_diff = diff_modules(
+            before.module(":pinned").unwrap(),
+            after.module(":pinned").unwrap(),
+        );
         assert!(pinned_diff.old_jars.is_empty());
 
         // The universe-wide diff misses :app's upgrade entirely (1.0 is still resolved by
@@ -518,7 +527,10 @@ mod tests {
         let after = load_dump(&after_path).unwrap();
 
         assert!(before.versions.is_empty());
-        let app_diff = diff_modules(before.module(":app").unwrap(), after.module(":app").unwrap());
+        let app_diff = diff_modules(
+            before.module(":app").unwrap(),
+            after.module(":app").unwrap(),
+        );
         assert!(app_diff.old_jars.is_empty());
         assert!(app_diff.changes.is_empty());
         // The artifact itself still reaches the scan through the module's classpath.

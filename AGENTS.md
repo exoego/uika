@@ -121,6 +121,47 @@ verdict: class existence = new + ClassGraph
 The memory win is not holding member tables for the whole consumer classpath;
 pass-2 classes are typically below 0.1% of the scan.
 
+## Per-Module upgrade-check
+
+- `upgrade-check` is per-module by default: each module in the dump whose OWN
+  resolution lost a version is checked against its own classpath (own
+  classesDirs first, then artifacts in resolution order). The merged-universe
+  check remains behind `--merged` and as the automatic fallback (with a
+  warning) when a dump has no module with artifacts. Rationale: the union
+  mixes several resolved versions of one coordinate, which produced false
+  brokens (a jar's self-consistent internal references judged against a
+  sibling module's newer version -- the henry-backend netty case) AND false
+  negatives (an upgrade invisible to the flat diff because a sibling still
+  resolves the old version). Both are pinned by
+  `per_module_upgrade_check_gates_on_each_modules_own_resolution`.
+- Gating is `diff_modules(...).old_jars.is_empty()` per module -- the same
+  old-version-disappeared gate as merged mode. Unchanged and after-only (new)
+  modules are skipped; runs with identical (old, new, targets, roots) are
+  deduplicated and their module names share one run.
+- Violations are merged across runs by (source, class, serialized reference,
+  reason, reachable) with module attribution in `Violation.modules`
+  (`skip_serializing_if empty`, so plain-check JSON and the goldens are
+  byte-identical). Exclude rules filter the merged set ONCE in
+  `upgrade_check_per_module`, not per run -- per-run application would repeat
+  suppressed counts and spam unused-rule warnings.
+- `scanned_classes`/`unknown_refs` in the aggregate are per-run sums (a jar on
+  several checked modules' classpaths is counted once per run). The per-run
+  broken counts in `ModuleRunSummary` are computed from the merged
+  post-exclusion set so they agree with the listing.
+- Dump artifact entries may carry a `"project"` key (additive in v2; written
+  by Gradle for ProjectComponentIdentifier, by Maven for reactor deps; sbt
+  emits internal deps as coordinate-less entries instead). Two CLI invariants
+  hang off it: a missing project jar falls back to the producing module's
+  classesDirs, and project-attributed coordinates NEVER enter the version
+  maps (a reactor's own version bump is not a dependency upgrade; pinned by
+  `project_attributed_artifacts_are_not_version_diffed`).
+- The verdicts stream gains a `module` field only on per-module runs (comma-
+  joined names of the run's module group); plain `check` records are
+  unchanged, so the probe's evaluation surface is stable.
+- `app_roots_matched` merges with Some(false) dominating: one degraded run
+  degrades `--fail-on reachable` to `any` for the whole aggregate, erring
+  toward failing CI on a partially built repo.
+
 ## Linkage Semantics
 
 - Visibility is bytecode-level. Kotlin `internal` is public in bytecode;
@@ -369,7 +410,7 @@ pass-2 classes are typically below 0.1% of the scan.
 | `cli/src/report.rs`    | Text and JSON report formatting.                                                                                                                      |
 | `cli/src/verdicts.rs`  | `check --verdicts-json`: streaming JSON Lines of every reference verdict (evaluation surface for tools/jvm-probe).                                    |
 | `cli/src/memstats.rs`  | Feature-gated counting allocator.                                                                                                                     |
-| `cli/src/gradle.rs`    | Reads dump v1/v2 and computes dependency changes. One coordinate may map to several versions (modules can resolve differently).                       |
+| `cli/src/gradle.rs`    | Reads dump v1/v2 into the merged universe plus per-module classpaths (`ModuleUniverse`); computes universe-wide and per-module dependency diffs. One coordinate may map to several versions (modules can resolve differently).                       |
 | `cli/src/cli.rs`       | clap definitions: `diff`, `check`, `upgrade-check`, `dump` (`check`/`upgrade-check` take `--reachability`).                                           |
 | `cli/src/lib.rs`       | Command dispatch; `run_check` is shared by `check`/`upgrade-check`. `cli/src/main.rs` picks mimalloc or the memstats allocator.                       |
 | `jvm-plugin-core/`     | Shared dump model + v1/v2 reader/writer (`ClasspathDump`, `DumpFormat`) and CLI fetch/run helper (`UikaCli`). Compiled into each plugin by source inclusion; not a published artifact. |
@@ -428,6 +469,21 @@ pass-2 classes are typically below 0.1% of the scan.
 - Do not add an explicit toolchain: the plugin intentionally compiles with the
   JVM running Gradle plus `options.release = 17`, because toolchain
   auto-resolution is not available in every target environment.
+- The module dump task depends on its configuration and the main source-set
+  output by default (`-PuikaBuildOutputs=false` opts out), so project jars and
+  module classes exist when the CLI scans. The dependsOn wiring uses lazy
+  providers because the java plugin may not be applied at registration time.
+  Project-dependency artifacts are written with a `"project"` key
+  (ProjectComponentIdentifier path); external ones keep coordinates only.
+- sbt: `internalDependencyClasspath` entries are emitted as coordinate-less
+  artifacts in each module's list. They are NOT in `update.value`, and without
+  them per-module checking cannot resolve inter-module references (the merged
+  check never noticed because every module contributes its own classesDirs to
+  the union). Evaluating the dump task compiles those siblings.
+- Maven: reactor dependencies are attributed with `"project"` and are never
+  dropped from the dump; an unpackaged sibling falls back to its output
+  directory. Keeping their coordinates is safe because project-attributed
+  artifacts are excluded from the CLI's version maps.
 
 ## Memory and Speed Rules
 

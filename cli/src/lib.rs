@@ -339,7 +339,8 @@ fn cmd_upgrade_check(
     let after_universe = gradle::load_dump(after)?;
     let changes = gradle::diff_dumps(&before_universe, &after_universe);
 
-    let per_module = !merged && has_module_data(&before_universe) && has_module_data(&after_universe);
+    let per_module =
+        !merged && has_module_data(&before_universe) && has_module_data(&after_universe);
     if per_module {
         return upgrade_check_per_module(
             &before_universe,
@@ -645,7 +646,9 @@ fn upgrade_check_per_module(
                 v.reachable,
             );
             match merged_index.get(&key) {
-                Some(&i) => merged.violations[i].modules.extend(run.names.iter().cloned()),
+                Some(&i) => merged.violations[i]
+                    .modules
+                    .extend(run.names.iter().cloned()),
                 None => {
                     merged_index.insert(key, merged.violations.len());
                     v.modules = run.names.clone();
