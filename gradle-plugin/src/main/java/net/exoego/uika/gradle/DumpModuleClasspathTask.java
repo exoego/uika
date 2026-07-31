@@ -84,8 +84,10 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
                     json.append(quote(dir.getAbsolutePath()));
                 }
                 // A module with sources but no built output would silently drop out of the
-                // scan (and out of the reachability roots); say so instead.
-                if (!any && !main.getAllSource().isEmpty()) {
+                // scan (and out of the reachability roots); say so instead. Resources are
+                // not compilable, so a resources-only module must not warn (allSource
+                // includes them); allJava alone would miss Kotlin-only modules.
+                if (!any && !main.getAllSource().minus(main.getResources()).isEmpty()) {
                     getLogger().warn(
                             "uika: {} has no built classes; its own classes will not be checked"
                                     + " (build first, or keep uikaBuildOutputs enabled)",
@@ -116,9 +118,13 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
                             .append(",\"name\":").append(quote(m.getModule()))
                             .append(",\"version\":").append(quote(m.getVersion()))
                             .append(',');
-                } else if (id instanceof ProjectComponentIdentifier project) {
+                } else if (id instanceof ProjectComponentIdentifier project
+                        && project.getBuild().getBuildPath().equals(":")) {
                     // Attribute project-dependency jars to their producing module so uika can
                     // fall back to that module's classesDirs when the jar was never built.
+                    // Only for this build's own projects: an included build's project path
+                    // (":lib") can collide with a module of this build, and the fallback
+                    // would then scan the wrong module's classes.
                     json.append("\"project\":").append(quote(project.getProjectPath())).append(',');
                 }
                 json.append("\"file\":").append(quote(artifact.getFile().getAbsolutePath()));

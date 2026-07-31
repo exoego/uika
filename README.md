@@ -194,7 +194,11 @@ resolution, using the per-module classpaths the build-tool dumps already carry.
 Only modules whose own resolution lost a version are checked (an unchanged
 module cannot break from the upgrade), modules with identical inputs share one
 run, and each violation is attributed to the modules whose classpaths exhibit
-it (`modules:` in the text report, a `modules` array in JSON).
+it (`modules:` in the text report, a `modules` array in JSON). A module that
+was renamed or added between the two dumps is checked against the union's
+before versions instead of being skipped, and a module whose after-side
+artifact list vanished (a partial build) is skipped with a warning rather
+than read as "every dependency removed".
 
 This has two correctness effects over checking the flattened union. It removes
 a false-positive class: a jar used by one module was judged against the newer

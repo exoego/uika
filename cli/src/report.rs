@@ -354,11 +354,16 @@ pub struct ModuleRunSummary {
     pub total_modules: usize,
     /// Modules whose own resolution lost no version: skipped, they cannot break.
     pub unchanged_modules: usize,
-    /// Modules present only in the after dump: nothing to diff against, skipped.
+    /// Modules present only in the after dump with nothing checkable: skipped.
     pub new_modules: usize,
+    /// After-side modules whose artifact list vanished (partial dump): skipped, warned.
+    pub incomplete_modules: usize,
 }
 
 /// upgrade-check: dependency-diff header + per-module run summary + check result if a check ran.
+/// The header never swallows the rest: per-module runs gate on each module's OWN diff, which
+/// can find violations while the universe-wide change list is empty (a version swap between
+/// modules), so the summary and result print regardless of `changes`.
 pub fn upgrade_text(
     changes: &[crate::gradle::DependencyChange],
     result: Option<&CheckReport>,
@@ -368,9 +373,9 @@ pub fn upgrade_text(
     let mut out = String::new();
     if changes.is_empty() {
         writeln!(out, "dependency changes: none").unwrap();
-        return out;
+    } else {
+        writeln!(out, "dependency changes: {}", changes.len()).unwrap();
     }
-    writeln!(out, "dependency changes: {}", changes.len()).unwrap();
     for c in changes {
         let label = match c.kind {
             ChangeKind::Changed => "CHANGED",
@@ -400,6 +405,9 @@ pub fn upgrade_text(
         let mut notes = vec![format!("{} unchanged", m.unchanged_modules)];
         if m.new_modules > 0 {
             notes.push(format!("{} new", m.new_modules));
+        }
+        if m.incomplete_modules > 0 {
+            notes.push(format!("{} incomplete", m.incomplete_modules));
         }
         writeln!(
             out,

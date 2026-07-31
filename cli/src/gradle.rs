@@ -48,10 +48,18 @@ pub struct Universe {
     pub scan_targets: Vec<PathBuf>,
     /// Application build outputs (module classesDirs). Reachability roots.
     pub app_roots: Vec<PathBuf>,
-    /// See [`VersionMap`].
+    /// See [`VersionMap`]. Includes project-attributed artifacts (they identify referencing
+    /// jars for suggestions); the version DIFF excludes them via `project_coords`.
     pub versions: VersionMap,
+    /// Coordinates carried by project/reactor artifacts anywhere in this dump. The version
+    /// diff drops these on BOTH sides (a project's own version bump is not a dependency
+    /// upgrade), and taking the union with the other dump's set keeps the exclusion symmetric
+    /// when only one dump was written by an attribution-aware plugin.
+    pub project_coords: BTreeSet<(String, String)>,
     /// Per-module resolved classpaths, in dump order. Empty when the dump carries no
     /// per-module artifact data (upgrade-check then falls back to the merged universe).
+    /// Also emptied when any v2 module lacks a name: pairing unnamed modules positionally
+    /// would diff unrelated classpaths against each other.
     pub modules: Vec<ModuleUniverse>,
 }
 
@@ -66,6 +74,7 @@ pub struct ModuleUniverse {
 }
 
 /// One classpath entry of a module.
+#[derive(Clone)]
 pub struct ModuleArtifact {
     /// (group, name, version); None for project/file dependencies.
     pub coordinate: Option<(String, String, String)>,
@@ -85,14 +94,10 @@ impl Universe {
 impl ModuleUniverse {
     /// This module's coordinate -> version -> file map (single-version per coordinate in a
     /// consistent resolution, but kept map-shaped to share diffing with the merged universe).
-    /// Project-attributed artifacts are excluded, as in the universe-wide map: the project's
-    /// own version bump is not a dependency upgrade.
+    /// Complete, project-attributed artifacts included; the diff excludes those.
     pub fn versions(&self) -> VersionMap {
         let mut versions: VersionMap = BTreeMap::new();
         for artifact in &self.artifacts {
-            if artifact.project.is_some() {
-                continue;
-            }
             if let Some((group, name, version)) = &artifact.coordinate {
                 versions
                     .entry((group.clone(), name.clone()))
@@ -101,6 +106,37 @@ impl ModuleUniverse {
             }
         }
         versions
+    }
+}
+
+/// Shared per-artifact bookkeeping for both loaders: version map, project-coordinate set,
+/// and the module-view entry. One place so v1 and v2 semantics cannot drift.
+fn artifact_entry(
+    group: Option<String>,
+    name: Option<String>,
+    version: Option<String>,
+    file: PathBuf,
+    project: Option<String>,
+    versions: &mut VersionMap,
+    project_coords: &mut BTreeSet<(String, String)>,
+) -> ModuleArtifact {
+    let coordinate = match (group, name, version) {
+        (Some(group), Some(name), Some(version)) => {
+            versions
+                .entry((group.clone(), name.clone()))
+                .or_default()
+                .insert(version.clone(), file.clone());
+            if project.is_some() {
+                project_coords.insert((group.clone(), name.clone()));
+            }
+            Some((group, name, version))
+        }
+        _ => None,
+    };
+    ModuleArtifact {
+        coordinate,
+        file,
+        project,
     }
 }
 
@@ -163,6 +199,7 @@ fn from_v1(dump: ClasspathDump) -> Universe {
     let mut app_roots = Vec::new();
     let mut seen = BTreeSet::new();
     let mut versions: VersionMap = BTreeMap::new();
+    let mut project_coords = BTreeSet::new();
     let mut modules = Vec::new();
     for module in dump.modules {
         let mut module_artifacts = Vec::new();
@@ -170,26 +207,15 @@ fn from_v1(dump: ClasspathDump) -> Universe {
             if seen.insert(artifact.file.clone()) {
                 scan_targets.push(artifact.file.clone());
             }
-            let coordinate = match (artifact.group, artifact.name, artifact.version) {
-                (Some(group), Some(name), Some(version)) => {
-                    // Project-attributed artifacts (Maven reactor deps carry coordinates) are
-                    // the application itself, not a dependency: keep them out of the version
-                    // diff so a project version bump is never treated as an upgrade to check.
-                    if artifact.project.is_none() {
-                        versions
-                            .entry((group.clone(), name.clone()))
-                            .or_default()
-                            .insert(version.clone(), artifact.file.clone());
-                    }
-                    Some((group, name, version))
-                }
-                _ => None,
-            };
-            module_artifacts.push(ModuleArtifact {
-                coordinate,
-                file: artifact.file,
-                project: artifact.project,
-            });
+            module_artifacts.push(artifact_entry(
+                artifact.group,
+                artifact.name,
+                artifact.version,
+                artifact.file,
+                artifact.project,
+                &mut versions,
+                &mut project_coords,
+            ));
         }
         for dir in &module.classes_dirs {
             app_roots.push(dir.clone());
@@ -207,6 +233,7 @@ fn from_v1(dump: ClasspathDump) -> Universe {
         scan_targets,
         app_roots,
         versions,
+        project_coords,
         modules,
     }
 }
@@ -224,6 +251,7 @@ fn from_v2(dump: DumpV2) -> Result<Universe> {
     let mut app_roots = Vec::new();
     let mut seen = BTreeSet::new();
     let mut versions: VersionMap = BTreeMap::new();
+    let mut project_coords = BTreeSet::new();
     // The entity table is deduplicated, so first-seen order is table order.
     let mut table = Vec::with_capacity(dump.artifacts.len());
     for artifact in &dump.artifacts {
@@ -231,27 +259,19 @@ fn from_v2(dump: DumpV2) -> Result<Universe> {
         if seen.insert(file.clone()) {
             scan_targets.push(file.clone());
         }
-        let coordinate = match (&artifact.group, &artifact.name, &artifact.version) {
-            (Some(group), Some(name), Some(version)) => {
-                // Same project-attribution exclusion as from_v1 (see the comment there).
-                if artifact.project.is_none() {
-                    versions
-                        .entry((group.clone(), name.clone()))
-                        .or_default()
-                        .insert(version.clone(), file.clone());
-                }
-                Some((group.clone(), name.clone(), version.clone()))
-            }
-            _ => None,
-        };
-        table.push(ModuleArtifact {
-            coordinate,
+        table.push(artifact_entry(
+            artifact.group.clone(),
+            artifact.name.clone(),
+            artifact.version.clone(),
             file,
-            project: artifact.project.clone(),
-        });
+            artifact.project.clone(),
+            &mut versions,
+            &mut project_coords,
+        ));
     }
     let mut modules = Vec::new();
-    for (i, module) in dump.modules.iter().enumerate() {
+    let mut unnamed_module = false;
+    for module in &dump.modules {
         let mut classes_dirs = Vec::new();
         for dir in &module.classes_dirs {
             let dir = rooted(dir.root, &dir.path)?;
@@ -266,22 +286,29 @@ fn from_v2(dump: DumpV2) -> Result<Universe> {
             let a = table
                 .get(idx)
                 .with_context(|| format!("artifact ref {idx} out of range"))?;
-            artifacts.push(ModuleArtifact {
-                coordinate: a.coordinate.clone(),
-                file: a.file.clone(),
-                project: a.project.clone(),
-            });
+            artifacts.push(a.clone());
         }
+        // Every shipped plugin writes the module name; a dump without one cannot be paired
+        // by name and positional pairing would diff unrelated modules. Note it and let the
+        // caller fall back to the merged universe.
+        let Some(name) = module.module.clone() else {
+            unnamed_module = true;
+            continue;
+        };
         modules.push(ModuleUniverse {
-            name: module.module.clone().unwrap_or_else(|| format!(":{i}")),
+            name,
             classes_dirs,
             artifacts,
         });
+    }
+    if unnamed_module {
+        modules.clear();
     }
     Ok(Universe {
         scan_targets,
         app_roots,
         versions,
+        project_coords,
         modules,
     })
 }
@@ -311,21 +338,51 @@ pub struct DependencyChanges {
     pub new_jars: Vec<PathBuf>,
 }
 
+/// Coordinates the version diff must ignore: project-attributed on EITHER side. Taking the
+/// union keeps the diff symmetric when one dump comes from an older plugin that did not
+/// attribute yet — otherwise the attributed side's exclusion makes an unchanged reactor
+/// dependency read as Removed, and its jar would be excluded from the scan as a stale old
+/// version, fabricating "class removed" violations for the whole sibling module.
+pub fn project_coords_union(before: &Universe, after: &Universe) -> BTreeSet<(String, String)> {
+    before
+        .project_coords
+        .union(&after.project_coords)
+        .cloned()
+        .collect()
+}
+
 pub fn diff_dumps(before: &Universe, after: &Universe) -> DependencyChanges {
-    diff_version_maps(&before.versions, &after.versions)
+    diff_version_maps(
+        &before.versions,
+        &after.versions,
+        &project_coords_union(before, after),
+    )
 }
 
-/// Same diff for one module's resolution (per-module upgrade-check).
-pub fn diff_modules(before: &ModuleUniverse, after: &ModuleUniverse) -> DependencyChanges {
-    diff_version_maps(&before.versions(), &after.versions())
+/// Same diff for one module's resolution (per-module upgrade-check). `exclude` is the
+/// project-coordinate union of both dumps (see [`project_coords_union`]).
+pub fn diff_modules(
+    before: &ModuleUniverse,
+    after: &ModuleUniverse,
+    exclude: &BTreeSet<(String, String)>,
+) -> DependencyChanges {
+    diff_version_maps(&before.versions(), &after.versions(), exclude)
 }
 
-fn diff_version_maps(before: &VersionMap, after: &VersionMap) -> DependencyChanges {
+/// Diff of a before/after version map pair, ignoring the coordinates in `exclude`.
+pub fn diff_version_maps(
+    before: &VersionMap,
+    after: &VersionMap,
+    exclude: &BTreeSet<(String, String)>,
+) -> DependencyChanges {
     let mut changes = Vec::new();
     let mut old_jars = Vec::new();
     let mut new_jars = Vec::new();
 
     for (coord, before_versions) in before {
+        if exclude.contains(coord) {
+            continue;
+        }
         let after_versions = after.get(coord);
         let before_set: BTreeSet<&String> = before_versions.keys().collect();
         let after_set: BTreeSet<&String> = after_versions
@@ -362,7 +419,7 @@ fn diff_version_maps(before: &VersionMap, after: &VersionMap) -> DependencyChang
     // Newly added artifacts naturally enter the scan targets, so they are not checked as pairs,
     // but they are still reported.
     for (coord, after_versions) in after {
-        if !before.contains_key(coord) {
+        if !exclude.contains(coord) && !before.contains_key(coord) {
             changes.push(DependencyChange {
                 coordinate: format!("{}:{}", coord.0, coord.1),
                 kind: ChangeKind::Added,
@@ -474,7 +531,8 @@ mod tests {
         assert_eq!(app.artifacts[1].project.as_deref(), Some(":shared"));
 
         // :app moved g:lib 1.0 -> 2.0.
-        let app_diff = diff_modules(before.module(":app").unwrap(), app);
+        let exclude = project_coords_union(&before, &after);
+        let app_diff = diff_modules(before.module(":app").unwrap(), app, &exclude);
         assert_eq!(
             app_diff.old_jars,
             vec![PathBuf::from("/repo/cache/lib-1.0.jar")]
@@ -489,6 +547,7 @@ mod tests {
         let pinned_diff = diff_modules(
             before.module(":pinned").unwrap(),
             after.module(":pinned").unwrap(),
+            &exclude,
         );
         assert!(pinned_diff.old_jars.is_empty());
 
@@ -500,18 +559,26 @@ mod tests {
     }
 
     /// A reactor/project dependency carries coordinates in Maven dumps. With project
-    /// attribution it must stay out of the version maps: bumping the project's own version
-    /// is not a dependency upgrade to check.
+    /// attribution it must stay out of the version DIFF (bumping the project's own version
+    /// is not a dependency upgrade to check) while remaining in the version maps so
+    /// suggestions can still attribute a referencing reactor jar. The exclusion is the
+    /// UNION of both dumps' attributed coordinates, so a before dump from an older,
+    /// non-attributing plugin does not diff as a removal.
     #[test]
     fn project_attributed_artifacts_are_not_version_diffed() {
         let dir = std::env::temp_dir().join(format!("uika-reactor-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let dump = |v: &str| {
+        let dump = |v: &str, attributed: bool| {
+            let project = if attributed {
+                r#""project":":lib","#
+            } else {
+                ""
+            };
             format!(
                 r#"{{"version":2,
                 "roots":["/repo/"],
                 "artifacts":[
-                    {{"group":"com.example","name":"lib","version":"{v}","project":":lib","root":0,"path":"lib/target/lib-{v}.jar"}}
+                    {{"group":"com.example","name":"lib","version":"{v}",{project}"root":0,"path":"lib/target/lib-{v}.jar"}}
                 ],
                 "modules":[
                     {{"module":":app","classesDirs":[],"artifactRefs":[0]}},
@@ -521,20 +588,67 @@ mod tests {
         };
         let before_path = dir.join("before.json");
         let after_path = dir.join("after.json");
-        std::fs::write(&before_path, dump("1.0.0")).unwrap();
-        std::fs::write(&after_path, dump("1.1.0")).unwrap();
+        std::fs::write(&before_path, dump("1.0.0", true)).unwrap();
+        std::fs::write(&after_path, dump("1.1.0", true)).unwrap();
         let before = load_dump(&before_path).unwrap();
         let after = load_dump(&after_path).unwrap();
 
-        assert!(before.versions.is_empty());
+        // In the maps (for suggestion attribution), out of the diff (not an upgrade).
+        assert!(!before.versions.is_empty());
+        let exclude = project_coords_union(&before, &after);
         let app_diff = diff_modules(
             before.module(":app").unwrap(),
             after.module(":app").unwrap(),
+            &exclude,
         );
         assert!(app_diff.old_jars.is_empty());
         assert!(app_diff.changes.is_empty());
+        assert!(diff_dumps(&before, &after).old_jars.is_empty());
         // The artifact itself still reaches the scan through the module's classpath.
         assert_eq!(after.module(":app").unwrap().artifacts.len(), 1);
+
+        // Asymmetric plugins (before dump written pre-attribution): the union exclusion
+        // keeps the identical coordinate from diffing as Removed.
+        std::fs::write(&before_path, dump("1.0.0", false)).unwrap();
+        let before_old_plugin = load_dump(&before_path).unwrap();
+        std::fs::write(&after_path, dump("1.0.0", true)).unwrap();
+        let after_same = load_dump(&after_path).unwrap();
+        let global = diff_dumps(&before_old_plugin, &after_same);
+        assert!(global.changes.is_empty(), "{:?}", global.changes);
+        assert!(global.old_jars.is_empty());
+        let exclude = project_coords_union(&before_old_plugin, &after_same);
+        let app_diff = diff_modules(
+            before_old_plugin.module(":app").unwrap(),
+            after_same.module(":app").unwrap(),
+            &exclude,
+        );
+        assert!(app_diff.old_jars.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A v2 module without a name cannot be paired with its before-side counterpart, so the
+    /// whole dump degrades to the merged universe instead of pairing modules positionally.
+    #[test]
+    fn unnamed_v2_module_disables_the_per_module_view() {
+        let dir = std::env::temp_dir().join(format!("uika-unnamed-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("dump.json");
+        std::fs::write(
+            &path,
+            r#"{"version":2,
+            "roots":["/repo/"],
+            "artifacts":[{"group":"g","name":"lib","version":"1.0","root":0,"path":"lib-1.0.jar"}],
+            "modules":[
+                {"module":":app","classesDirs":[],"artifactRefs":[0]},
+                {"classesDirs":[{"root":0,"path":"x/classes"}],"artifactRefs":[0]}
+            ]}"#,
+        )
+        .unwrap();
+        let universe = load_dump(&path).unwrap();
+        assert!(universe.modules.is_empty());
+        // The merged view still carries everything.
+        assert_eq!(universe.scan_targets.len(), 2);
+        assert!(!universe.versions.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -552,6 +666,7 @@ mod tests {
             scan_targets,
             app_roots: Vec::new(),
             versions,
+            project_coords: BTreeSet::new(),
             modules: Vec::new(),
         }
     }

@@ -9,3 +9,6 @@ sbt-plugin/.idea/
 *.iml
 .mise.local.toml
 .DS_Store
+
+# Local tool logs
+logs/

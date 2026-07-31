@@ -134,33 +134,62 @@ pass-2 classes are typically below 0.1% of the scan.
   negatives (an upgrade invisible to the flat diff because a sibling still
   resolves the old version). Both are pinned by
   `per_module_upgrade_check_gates_on_each_modules_own_resolution`.
-- Gating is `diff_modules(...).old_jars.is_empty()` per module -- the same
-  old-version-disappeared gate as merged mode. Unchanged and after-only (new)
-  modules are skipped; runs with identical (old, new, targets, roots) are
-  deduplicated and their module names share one run.
-- Violations are merged across runs by (source, class, serialized reference,
-  reason, reachable) with module attribution in `Violation.modules`
-  (`skip_serializing_if empty`, so plain-check JSON and the goldens are
-  byte-identical). Exclude rules filter the merged set ONCE in
-  `upgrade_check_per_module`, not per run -- per-run application would repeat
-  suppressed counts and spam unused-rule warnings.
+- Gating is per-module `old_jars.is_empty()` -- the same old-version-
+  disappeared gate as merged mode, over the module's own version maps.
+  Unchanged modules are skipped. An after-only module (renamed or added) is
+  NOT skipped outright: it is diffed against the union's before versions
+  scoped to its own coordinates (a rename+upgrade must not ship unchecked;
+  `per_module_check_covers_renamed_module_via_union_fallback`); only when
+  that finds nothing is it counted new. An after module whose artifact list
+  vanished while its before had one is skipped as `incomplete` (partial
+  dump, e.g. `mvn -pl`), never diffed as total removal. Runs with identical
+  (old, new, targets, roots) share one run.
+- The version diff excludes `project_coords_union(before, after)` -- the
+  UNION of both dumps' project-attributed coordinates -- not a per-side
+  filter. One-sided exclusion made a before dump from an older plugin diff an
+  unchanged reactor dep as Removed, and run_check then dropped that jar from
+  the scan as stale (mass false "class removed"). The coordinates STAY in
+  `Universe.versions` so suggest's file->coordinate map still attributes
+  referencing reactor jars.
+- Violations merge across runs keyed by (source, class, SymbolRef, reason,
+  advice) -- NOT reachable: runs that disagree on reachability must count one
+  break once, kept at the most-reachable value (`reachable_rank`: Some(true) >
+  None > Some(false)). Advice IS in the key because suggestions are annotated
+  per run from the module's own change list (exact versions even when the
+  global diff is empty -- the swap case -- or unions other modules' moves).
+  Module attribution lands in `Violation.modules` (`skip_serializing_if
+  empty`, so plain-check JSON and the goldens are byte-identical). Exclude
+  rules filter the merged set ONCE, not per run.
+- The empty global change list must never swallow the report: upgrade_text
+  prints the module summary and violations regardless (a swap between modules
+  has changes=none but real per-module breaks;
+  `per_module_check_reports_break_when_global_version_set_is_unchanged`).
 - `scanned_classes`/`unknown_refs` in the aggregate are per-run sums (a jar on
-  several checked modules' classpaths is counted once per run). The per-run
-  broken counts in `ModuleRunSummary` are computed from the merged
-  post-exclusion set so they agree with the listing.
+  several checked modules' classpaths is counted once per run; that rescan is
+  the accepted per-module cost -- old/new library indexes at least are built
+  once per distinct pair via the run loop's index cache). The per-run broken
+  counts in `ModuleRunSummary` come from the merged post-exclusion set so
+  they agree with the listing.
 - Dump artifact entries may carry a `"project"` key (additive in v2; written
-  by Gradle for ProjectComponentIdentifier, by Maven for reactor deps; sbt
-  emits internal deps as coordinate-less entries instead). Two CLI invariants
-  hang off it: a missing project jar falls back to the producing module's
-  classesDirs, and project-attributed coordinates NEVER enter the version
-  maps (a reactor's own version bump is not a dependency upgrade; pinned by
-  `project_attributed_artifacts_are_not_version_diffed`).
+  by Gradle for current-build ProjectComponentIdentifiers only -- an included
+  build's ":lib" would collide with the consuming build's module and the
+  fallback would scan the wrong classes -- and by Maven for reactor deps; sbt
+  emits internal deps as coordinate-less entries instead, minus the module's
+  own products which internalDependencyClasspath also returns). A missing
+  project jar falls back to the producing module's classesDirs. Maven module
+  names disambiguate colliding artifactIds with the groupId; the CLI still
+  warns and keeps first on duplicate names. A v2 dump with an unnamed module
+  drops to the merged universe (positional pairing would mispair).
 - The verdicts stream gains a `module` field only on per-module runs (comma-
   joined names of the run's module group); plain `check` records are
-  unchanged, so the probe's evaluation surface is stable.
-- `app_roots_matched` merges with Some(false) dominating: one degraded run
-  degrades `--fail-on reachable` to `any` for the whole aggregate, erring
-  toward failing CI on a partially built repo.
+  unchanged, so the probe's evaluation surface is stable. A requested
+  --verdicts-json file is created even when no module needs a run.
+- The exit decision is per run: each run's post-exclusion violations (rebuilt
+  via module attribution) are judged with that run's own `app_roots_matched`,
+  so one module whose roots matched nothing degrades `--fail-on reachable`
+  to `any` for ITS violations only, not for healthy modules. The merged
+  report's `app_roots_matched` keeps the Some(false)-dominating fold for the
+  display warning.
 
 ## Linkage Semantics
 

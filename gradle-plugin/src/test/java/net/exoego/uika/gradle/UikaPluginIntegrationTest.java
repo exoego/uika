@@ -181,7 +181,10 @@ final class UikaPluginIntegrationTest {
         assertFalse(classesDirs.isEmpty(), ":app classesDirs is empty: " + appModule);
     }
 
-    /// -PuikaBuildOutputs=false keeps the old resolution-only dump: nothing is compiled.
+    /// -PuikaBuildOutputs=false keeps the old resolution-only dump: nothing is compiled,
+    /// and the unbuilt project-dependency jar still appears in the dump with its project
+    /// attribution, so the CLI can warn about (or substitute) the missing file instead of
+    /// silently losing the module from the classpath.
     @Test
     void buildOutputsOptOutSkipsCompilation() throws Exception {
         Path output = projectDir.resolve("classpath.json");
@@ -193,6 +196,17 @@ final class UikaPluginIntegrationTest {
         assertTrue(result.task(":app:compileJava") == null,
                 ":app:compileJava must not run with uikaBuildOutputs=false");
         assertTaskSuccess(result, ":app:uikaDumpModuleClasspath");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> artifacts = (List<Map<String, Object>>) doc.get("artifacts");
+        Map<String, Object> libArtifact = artifacts.stream()
+                .filter(a -> Objects.equals(":lib", a.get("project")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "unbuilt :lib jar missing from the resolution-only dump: " + artifacts));
+        assertTrue(rootedPath(doc, libArtifact).endsWith("lib.jar"));
     }
 
     private void writeMultiModuleProject() throws IOException {
