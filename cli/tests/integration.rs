@@ -828,3 +828,174 @@ fn detects_new_on_class_that_became_abstract() {
             .collect::<Vec<_>>()
     );
 }
+
+/// Runs the uika binary for end-to-end upgrade-check coverage (flags, JSON shape, exit code).
+fn run_uika(args: &[&str]) -> (i32, String, String) {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_uika"))
+        .args(args)
+        .output()
+        .expect("run uika binary");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// Per-module upgrade-check judges each module against its own resolution. Two properties on
+/// one fixture layout (the henry-backend netty shape):
+///
+/// - A module pinned to the old version is skipped, so its jar's classes are never judged
+///   against the sibling module's newer version (the cross-version false-positive class).
+/// - The merged universe still resolves the old version somewhere (the pinned module), so the
+///   flat diff has no old jars and reports NOTHING for the real break in the upgrading module
+///   (a false negative per-module mode fixes).
+#[test]
+fn per_module_upgrade_check_gates_on_each_modules_own_resolution() {
+    let old_sc = fixture("opentelemetry-sdk-common-1.42.1.jar");
+    let new_sc = fixture("opentelemetry-sdk-common-1.60.1.jar");
+    let sender = fixture("opentelemetry-exporter-sender-okhttp-1.42.1.jar");
+
+    let dir = std::env::temp_dir().join(format!("uika-permod-e2e-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dump = |app_sc: &std::path::Path, app_sc_version: &str| {
+        format!(
+            r#"{{"modules":[
+                {{"module":":app","classesDirs":[],"artifacts":[
+                    {{"group":"io.opentelemetry","name":"opentelemetry-sdk-common","version":"{app_sc_version}","file":"{}"}},
+                    {{"group":"io.opentelemetry","name":"opentelemetry-exporter-sender-okhttp","version":"1.42.1","file":"{}"}}
+                ]}},
+                {{"module":":pinned","classesDirs":[],"artifacts":[
+                    {{"group":"io.opentelemetry","name":"opentelemetry-sdk-common","version":"1.42.1","file":"{}"}},
+                    {{"group":"io.opentelemetry","name":"opentelemetry-exporter-sender-okhttp","version":"1.42.1","file":"{}"}}
+                ]}}
+            ]}}"#,
+            app_sc.display(),
+            sender.display(),
+            old_sc.display(),
+            sender.display(),
+        )
+    };
+    let before_path = dir.join("before.json");
+    let after_path = dir.join("after.json");
+    std::fs::write(&before_path, dump(&old_sc, "1.42.1")).unwrap();
+    std::fs::write(&after_path, dump(&new_sc, "1.60.1")).unwrap();
+    let before_arg = before_path.display().to_string();
+    let after_arg = after_path.display().to_string();
+
+    // Per-module (default): :app's upgrade is caught and attributed; :pinned is skipped.
+    let (code, stdout, stderr) = run_uika(&[
+        "upgrade-check",
+        "--before",
+        &before_arg,
+        "--after",
+        &after_arg,
+        "--json",
+    ]);
+    assert_eq!(code, 1, "stdout:\n{stdout}\nstderr:\n{stderr}");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let violations = json["violations"].as_array().unwrap();
+    assert!(
+        violations.iter().any(|v| {
+            v["source_class"] == "io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil"
+                && v["modules"] == serde_json::json!([":app"])
+        }),
+        "expected the :app-attributed DaemonThreadFactory break:\n{stdout}"
+    );
+    assert!(
+        violations
+            .iter()
+            .all(|v| !v["modules"].as_array().unwrap().contains(&serde_json::json!(":pinned"))),
+        "the pinned module must never be judged against the sibling's upgrade:\n{stdout}"
+    );
+    let runs = json["module_runs"]["outcomes"].as_array().unwrap();
+    assert_eq!(runs.len(), 1, "{stdout}");
+    assert_eq!(runs[0]["modules"], serde_json::json!([":app"]));
+    assert_eq!(json["module_runs"]["unchanged_modules"], 1, "{stdout}");
+
+    // Text mode carries the same attribution for humans.
+    let (code, stdout, _) = run_uika(&[
+        "upgrade-check",
+        "--before",
+        &before_arg,
+        "--after",
+        &after_arg,
+    ]);
+    assert_eq!(code, 1);
+    assert!(stdout.contains("per-module check: 1 of 2 modules"), "{stdout}");
+    assert!(stdout.contains("modules: :app"), "{stdout}");
+
+    // --merged keeps the flat behavior: 1.42.1 is still resolved by :pinned, so the flat
+    // diff has no removed version and the real break in :app goes unreported.
+    let (code, stdout, _) = run_uika(&[
+        "upgrade-check",
+        "--before",
+        &before_arg,
+        "--after",
+        &after_arg,
+        "--merged",
+        "--json",
+    ]);
+    assert_eq!(code, 0, "{stdout}");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(json["violations"].is_null(), "{stdout}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A project-dependency artifact that was never built (jar path missing) falls back to the
+/// producing module's classesDirs from the same dump, so the reference is still checked
+/// instead of being silently skipped.
+#[test]
+fn per_module_project_dependency_falls_back_to_classes_dirs() {
+    let old_sc = fixture("opentelemetry-sdk-common-1.42.1.jar");
+    let new_sc = fixture("opentelemetry-sdk-common-1.60.1.jar");
+    let sender = fixture("opentelemetry-exporter-sender-okhttp-1.42.1.jar");
+
+    let dir = std::env::temp_dir().join(format!("uika-permod-fallback-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // :app depends on project :sender-lib whose jar is unbuilt; :sender-lib's classesDirs
+    // stand in for its output (a jar path works: scan targets may be jars or dirs).
+    let dump = |sc: &std::path::Path, version: &str| {
+        format!(
+            r#"{{"modules":[
+                {{"module":":app","classesDirs":[],"artifacts":[
+                    {{"group":"io.opentelemetry","name":"opentelemetry-sdk-common","version":"{version}","file":"{}"}},
+                    {{"file":"{}","project":":sender-lib"}}
+                ]}},
+                {{"module":":sender-lib","classesDirs":["{}"],"artifacts":[]}}
+            ]}}"#,
+            sc.display(),
+            dir.join("never-built/sender-lib.jar").display(),
+            sender.display(),
+        )
+    };
+    let before_path = dir.join("before.json");
+    let after_path = dir.join("after.json");
+    std::fs::write(&before_path, dump(&old_sc, "1.42.1")).unwrap();
+    std::fs::write(&after_path, dump(&new_sc, "1.60.1")).unwrap();
+
+    let (code, stdout, stderr) = run_uika(&[
+        "upgrade-check",
+        "--before",
+        &before_path.display().to_string(),
+        "--after",
+        &after_path.display().to_string(),
+        "--json",
+    ]);
+    assert_eq!(code, 1, "stdout:\n{stdout}\nstderr:\n{stderr}");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(
+        json["violations"].as_array().unwrap().iter().any(|v| {
+            v["source_class"] == "io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil"
+                && v["modules"] == serde_json::json!([":app"])
+        }),
+        "the fallback classesDirs must be scanned in :app's run:\n{stdout}"
+    );
+    assert!(
+        stderr.contains("is not built; scanning module :sender-lib's classesDirs"),
+        "stderr:\n{stderr}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

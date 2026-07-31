@@ -198,6 +198,11 @@ pub struct Violation {
     /// upgrade-check (where dumps carry coordinates); None otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggestion: Option<Suggestion>,
+    /// Build modules (dump module paths) whose runtime classpath exhibits this violation.
+    /// Populated only by per-module upgrade-check; empty otherwise, and omitted from JSON
+    /// so plain check output (and the goldens pinning it) stays byte-identical.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub modules: Vec<String>,
 }
 
 /// Whether a violation's `reachable` flag puts it in the 💥 group: proven-reachable

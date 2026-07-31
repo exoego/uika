@@ -853,6 +853,7 @@ fn push_violation(
             reason: reason.to_string(),
             reachable: None,
             suggestion: None,
+            modules: Vec::new(),
         });
     }
 }
