@@ -118,6 +118,11 @@ public class UikaPlugin implements Plugin<Project> {
             task.notCompatibleWithConfigurationCache("resolves detached configurations at execution time (PoC)");
         });
 
+        // Build the outputs the dump refers to (project-dependency jars and each module's own
+        // classes) before dumping, so the CLI never scans a classpath with unbuilt holes.
+        // Opt out with -PuikaBuildOutputs=false to keep the dump resolution-only.
+        boolean buildOutputs = !"false".equals(String.valueOf(root.findProperty("uikaBuildOutputs")));
+
         root.allprojects(p -> {
             TaskProvider<DumpModuleClasspathTask> moduleTask = p.getTasks().register(
                     "uikaDumpModuleClasspath", DumpModuleClasspathTask.class, task -> {
@@ -127,6 +132,29 @@ public class UikaPlugin implements Plugin<Project> {
                         task.getConfigurationName().convention(configurationName);
                         task.notCompatibleWithConfigurationCache(
                                 "resolves configurations at execution time (PoC)");
+                        if (buildOutputs) {
+                            // Providers: the java plugin may not be applied yet at registration.
+                            // A Configuration is Buildable, so depending on it builds project
+                            // dependencies' jars; the main SourceSetOutput builds this module's
+                            // classes (matching the dumped classesDirs).
+                            task.dependsOn(p.provider(() -> {
+                                var conf = p.getConfigurations().findByName(
+                                        task.getConfigurationName().get());
+                                return conf != null && conf.isCanBeResolved()
+                                        ? java.util.List.of(conf)
+                                        : java.util.List.of();
+                            }));
+                            task.dependsOn(p.provider(() -> {
+                                JavaPluginExtension javaExt =
+                                        p.getExtensions().findByType(JavaPluginExtension.class);
+                                var main = javaExt == null
+                                        ? null
+                                        : javaExt.getSourceSets().findByName("main");
+                                return main != null
+                                        ? java.util.List.of(main.getOutput())
+                                        : java.util.List.of();
+                            }));
+                        }
                     });
             merge.configure(m -> m.getFragments().from(moduleTask));
         });

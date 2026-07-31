@@ -85,9 +85,14 @@ impl Universe {
 impl ModuleUniverse {
     /// This module's coordinate -> version -> file map (single-version per coordinate in a
     /// consistent resolution, but kept map-shaped to share diffing with the merged universe).
+    /// Project-attributed artifacts are excluded, as in the universe-wide map: the project's
+    /// own version bump is not a dependency upgrade.
     pub fn versions(&self) -> VersionMap {
         let mut versions: VersionMap = BTreeMap::new();
         for artifact in &self.artifacts {
+            if artifact.project.is_some() {
+                continue;
+            }
             if let Some((group, name, version)) = &artifact.coordinate {
                 versions
                     .entry((group.clone(), name.clone()))
@@ -167,10 +172,15 @@ fn from_v1(dump: ClasspathDump) -> Universe {
             }
             let coordinate = match (artifact.group, artifact.name, artifact.version) {
                 (Some(group), Some(name), Some(version)) => {
-                    versions
-                        .entry((group.clone(), name.clone()))
-                        .or_default()
-                        .insert(version.clone(), artifact.file.clone());
+                    // Project-attributed artifacts (Maven reactor deps carry coordinates) are
+                    // the application itself, not a dependency: keep them out of the version
+                    // diff so a project version bump is never treated as an upgrade to check.
+                    if artifact.project.is_none() {
+                        versions
+                            .entry((group.clone(), name.clone()))
+                            .or_default()
+                            .insert(version.clone(), artifact.file.clone());
+                    }
                     Some((group, name, version))
                 }
                 _ => None,
@@ -223,10 +233,13 @@ fn from_v2(dump: DumpV2) -> Result<Universe> {
         }
         let coordinate = match (&artifact.group, &artifact.name, &artifact.version) {
             (Some(group), Some(name), Some(version)) => {
-                versions
-                    .entry((group.clone(), name.clone()))
-                    .or_default()
-                    .insert(version.clone(), file.clone());
+                // Same project-attribution exclusion as from_v1 (see the comment there).
+                if artifact.project.is_none() {
+                    versions
+                        .entry((group.clone(), name.clone()))
+                        .or_default()
+                        .insert(version.clone(), file.clone());
+                }
                 Some((group.clone(), name.clone(), version.clone()))
             }
             _ => None,
@@ -474,6 +487,42 @@ mod tests {
         // :pinned on the after side), which is exactly why upgrade-check works per module.
         let global = diff_dumps(&before, &after);
         assert!(global.old_jars.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A reactor/project dependency carries coordinates in Maven dumps. With project
+    /// attribution it must stay out of the version maps: bumping the project's own version
+    /// is not a dependency upgrade to check.
+    #[test]
+    fn project_attributed_artifacts_are_not_version_diffed() {
+        let dir = std::env::temp_dir().join(format!("uika-reactor-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dump = |v: &str| {
+            format!(
+                r#"{{"version":2,
+                "roots":["/repo/"],
+                "artifacts":[
+                    {{"group":"com.example","name":"lib","version":"{v}","project":":lib","root":0,"path":"lib/target/lib-{v}.jar"}}
+                ],
+                "modules":[
+                    {{"module":":app","classesDirs":[],"artifactRefs":[0]}},
+                    {{"module":":lib","classesDirs":[{{"root":0,"path":"lib/target/classes"}}],"artifactRefs":[]}}
+                ]}}"#
+            )
+        };
+        let before_path = dir.join("before.json");
+        let after_path = dir.join("after.json");
+        std::fs::write(&before_path, dump("1.0.0")).unwrap();
+        std::fs::write(&after_path, dump("1.1.0")).unwrap();
+        let before = load_dump(&before_path).unwrap();
+        let after = load_dump(&after_path).unwrap();
+
+        assert!(before.versions.is_empty());
+        let app_diff = diff_modules(before.module(":app").unwrap(), after.module(":app").unwrap());
+        assert!(app_diff.old_jars.is_empty());
+        assert!(app_diff.changes.is_empty());
+        // The artifact itself still reaches the scan through the module's classpath.
+        assert_eq!(after.module(":app").unwrap().artifacts.len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

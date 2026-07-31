@@ -55,7 +55,8 @@ public final class DumpFormat {
                     (String) a.get("group"),
                     (String) a.get("name"),
                     (String) a.get("version"),
-                    (String) a.get("file")));
+                    (String) a.get("file"),
+                    (String) a.get("project")));
         }
         return new Module((String) module.get("module"), classesDirs, artifacts);
     }
@@ -69,7 +70,8 @@ public final class DumpFormat {
                     (String) a.get("group"),
                     (String) a.get("name"),
                     (String) a.get("version"),
-                    roots.get(((Number) a.get("root")).intValue()) + a.get("path")));
+                    roots.get(((Number) a.get("root")).intValue()) + a.get("path"),
+                    (String) a.get("project")));
         }
         List<Module> result = new ArrayList<>();
         for (Map<String, Object> m : (List<Map<String, Object>>) doc.get("modules")) {
@@ -113,6 +115,9 @@ public final class DumpFormat {
                         .append(",\"name\":").append(quote(a.name()))
                         .append(",\"version\":").append(quote(a.version()))
                         .append(',');
+            }
+            if (a.project() != null) {
+                artifactsJson.append("\"project\":").append(quote(a.project())).append(',');
             }
             int root = roots.indexOf(a.file());
             artifactsJson.append("\"root\":").append(root)
@@ -190,7 +195,7 @@ public final class DumpFormat {
     }
 
     private static String keyOf(Artifact a) {
-        return a.group() + " " + a.name() + " " + a.version() + " " + a.file();
+        return a.group() + " " + a.name() + " " + a.version() + " " + a.file() + " " + a.project();
     }
 
     private static final class RootTable {

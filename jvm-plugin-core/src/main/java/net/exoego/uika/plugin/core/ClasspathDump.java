@@ -10,12 +10,23 @@ public final class ClasspathDump {
         private final String name;
         private final String version;
         private final String file;
+        private final String project;
 
         public Artifact(String group, String name, String version, String file) {
+            this(group, name, version, file, null);
+        }
+
+        /**
+         * @param project producing module path for a project/reactor dependency (":shared"),
+         *     null for external artifacts. Lets uika substitute that module's classesDirs when
+         *     the artifact file has not been built.
+         */
+        public Artifact(String group, String name, String version, String file, String project) {
             this.group = group;
             this.name = name;
             this.version = version;
             this.file = file;
+            this.project = project;
         }
 
         public String group() {
@@ -32,6 +43,10 @@ public final class ClasspathDump {
 
         public String file() {
             return file;
+        }
+
+        public String project() {
+            return project;
         }
     }
 
