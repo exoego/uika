@@ -18,7 +18,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Mojo(
@@ -36,9 +38,13 @@ public final class DumpClasspathMojo extends AbstractMojo {
 
     @Override
     public void execute() throws MojoExecutionException {
+        Map<String, MavenProject> reactorByGav = new HashMap<>();
+        for (MavenProject reactorProject : session.getAllProjects()) {
+            reactorByGav.put(gav(reactorProject), reactorProject);
+        }
         List<ClasspathDump.Module> modules = new ArrayList<>();
         for (MavenProject reactorProject : session.getAllProjects()) {
-            modules.add(moduleOf(reactorProject));
+            modules.add(moduleOf(reactorProject, reactorByGav));
         }
 
         String root = session.getExecutionRootDirectory();
@@ -55,7 +61,7 @@ public final class DumpClasspathMojo extends AbstractMojo {
         getLog().info("uika classpath dump: " + outputFile);
     }
 
-    private ClasspathDump.Module moduleOf(MavenProject reactorProject) {
+    private ClasspathDump.Module moduleOf(MavenProject reactorProject, Map<String, MavenProject> reactorByGav) {
         List<String> classesDirs = new ArrayList<>();
         File outputDirectory = new File(reactorProject.getBuild().getOutputDirectory());
         if (outputDirectory.exists()) {
@@ -64,20 +70,44 @@ public final class DumpClasspathMojo extends AbstractMojo {
 
         List<ClasspathDump.Artifact> artifacts = new ArrayList<>();
         Set<Artifact> projectArtifacts = reactorProject.getArtifacts();
-        projectArtifacts.stream()
-                .filter(this::isRuntimeVisible)
-                .filter(artifact -> artifact.getFile() != null && artifact.getFile().exists())
-                .sorted(Comparator.comparing(Artifact::getGroupId)
-                        .thenComparing(Artifact::getArtifactId)
-                        .thenComparing(Artifact::getVersion)
-                        .thenComparing(artifact -> artifact.getFile().getAbsolutePath()))
-                .forEach(artifact -> artifacts.add(new ClasspathDump.Artifact(
+        for (Artifact artifact : projectArtifacts) {
+            if (!isRuntimeVisible(artifact)) {
+                continue;
+            }
+            MavenProject sibling = reactorByGav.get(
+                    artifact.getGroupId() + ":" + artifact.getArtifactId() + ":" + artifact.getVersion());
+            if (sibling != null) {
+                // Reactor dependency: attribute it to its producing module and never drop it.
+                // An unpackaged sibling (no jar yet) is dumped as its output directory, so the
+                // classpath stays complete without requiring a package phase first.
+                File file = artifact.getFile();
+                String path = file != null && file.exists()
+                        ? file.getAbsolutePath()
+                        : new File(sibling.getBuild().getOutputDirectory()).getAbsolutePath();
+                artifacts.add(new ClasspathDump.Artifact(
                         artifact.getGroupId(),
                         artifact.getArtifactId(),
                         artifact.getVersion(),
-                        artifact.getFile().getAbsolutePath())));
+                        path,
+                        ":" + sibling.getArtifactId()));
+            } else if (artifact.getFile() != null && artifact.getFile().exists()) {
+                artifacts.add(new ClasspathDump.Artifact(
+                        artifact.getGroupId(),
+                        artifact.getArtifactId(),
+                        artifact.getVersion(),
+                        artifact.getFile().getAbsolutePath()));
+            }
+        }
+        artifacts.sort(Comparator.comparing(ClasspathDump.Artifact::group)
+                .thenComparing(ClasspathDump.Artifact::name)
+                .thenComparing(ClasspathDump.Artifact::version)
+                .thenComparing(ClasspathDump.Artifact::file));
 
         return new ClasspathDump.Module(":" + reactorProject.getArtifactId(), classesDirs, artifacts);
+    }
+
+    private static String gav(MavenProject project) {
+        return project.getGroupId() + ":" + project.getArtifactId() + ":" + project.getVersion();
     }
 
     private boolean isRuntimeVisible(Artifact artifact) {
