@@ -1,6 +1,6 @@
 ThisBuild / organization := "net.exoego.uika"
 ThisBuild / version := "0.1.0"
-ThisBuild / scalaVersion := "2.12.21"
+ThisBuild / scalaVersion := "2.13.18"
 ThisBuild / versionScheme := Some("early-semver")
 // Maven Central rejects the legacy sbt-uika-<version>.jar file name; publish
 // POM-consistent sbt-uika_2.12_1.0-<version>.jar instead (resolvable by sbt 1.9+).
