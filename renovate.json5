@@ -9,6 +9,9 @@
   ],
   timezone: "Asia/Tokyo",
   labels: ["dependencies"],
+  // Let a release settle for a week before proposing it. Catches the
+  // yanked-or-hotfixed-within-days case without any manual triage.
+  minimumReleaseAge: "7 days",
   // Keep the PR stream calm for a small OSS project.
   prConcurrentLimit: 5,
   prHourlyLimit: 2,
