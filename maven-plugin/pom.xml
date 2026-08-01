@@ -187,18 +187,52 @@
               </execution>
             </executions>
           </plugin>
+          <!-- Central requires the javadoc jar to exist, not to have content.
+               The real docs were 143 KB published, most of it the jQuery and
+               stylesheet boilerplate the standard doclet emits, and the Maven
+               Central quota is shared across the whole net.exoego namespace.
+               maven-javadoc-plugin has no "emit an empty jar" mode, so skip it
+               and attach an empty jar from an empty directory instead. Readers
+               use the sources jar. See PUBLISHING.md. -->
           <plugin>
             <artifactId>maven-javadoc-plugin</artifactId>
             <version>3.12.0</version>
             <configuration>
-              <doclint>none</doclint>
+              <skip>true</skip>
             </configuration>
+          </plugin>
+          <plugin>
+            <artifactId>maven-jar-plugin</artifactId>
+            <version>3.4.2</version>
             <executions>
               <execution>
-                <id>attach-javadoc</id>
+                <id>attach-empty-javadoc</id>
+                <phase>package</phase>
                 <goals>
                   <goal>jar</goal>
                 </goals>
+                <configuration>
+                  <classifier>javadoc</classifier>
+                  <classesDirectory>${project.build.directory}/empty-javadoc</classesDirectory>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <artifactId>maven-antrun-plugin</artifactId>
+            <version>3.1.0</version>
+            <executions>
+              <execution>
+                <id>make-empty-javadoc-dir</id>
+                <phase>prepare-package</phase>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+                <configuration>
+                  <target>
+                    <mkdir dir="${project.build.directory}/empty-javadoc"/>
+                  </target>
+                </configuration>
               </execution>
             </executions>
           </plugin>

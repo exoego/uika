@@ -8,6 +8,14 @@ description: Performance work on the uika CLI - benchmark workloads and expected
 Benchmarks are not hermetic and depend on the local Gradle cache. Treat
 detection-count shifts as semantic regressions first, performance second.
 
+`[profile.release]` in the workspace `Cargo.toml` is tuned for published size,
+not for speed: `opt-level = "s"` costs about 7% throughput on the stress
+workload in exchange for 38% smaller published bytes, because the Maven Central
+quota is shared across the whole `net.exoego` namespace. See PUBLISHING.md. The
+numbers below are quoted against that profile, so they are not comparable to
+anything measured before it landed. When bisecting a suspected regression,
+confirm the profile is the same on both sides before blaming a code change.
+
 ## Benchmark Expectations
 
 Not hermetic (depends on the local Gradle cache). Treat detection-count shifts
@@ -36,7 +44,7 @@ Expected on a 10-core Apple Silicon Mac:
 
 | Workload                                              |                      Result |  Time |    RSS |
 |-------------------------------------------------------|-----------------------------:|------:|-------:|
-| Stress: ~2,334 JARs / 1.94M classes                   |   ~311 broken / 294 unverified | ~1.7s | ~450MB |
+| Stress: ~2,334 JARs / 1.94M classes                   |   ~311 broken / 294 unverified | ~1.8s | ~450MB |
 | Real project: ~50 modules / 48.5K classes + 38 JARs   |   ~1 broken / 347 unverified | ~0.9s | ~110MB |
 
 Pass 1 dominates the stress workload. On a real classpath most scanned classes
@@ -58,7 +66,7 @@ Traps already hit in this repository:
 
 ## Optimization History
 
-~60s / 11GB -> ~1.7s / 450MB on the stress workload. Causal changes:
+~60s / 11GB -> ~1.8s / 450MB on the stress workload. Causal changes:
 
 | Measured problem                                                              | Solution                                                          |
 |-------------------------------------------------------------------------------|--------------------------------------------------------------------|
