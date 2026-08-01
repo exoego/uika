@@ -25,7 +25,8 @@ staging repositories.
 ## Central Portal publishing limits
 
 Maven Central meters three monthly metrics per organization, evaluated on a
-three-month rolling average. Enforcement starts 2026-08-11. Current thresholds
+three-month rolling average. Enforcement starts 2026-10-01, moved back from an
+originally announced 2026-08-11. Current thresholds
 and where `net.exoego` stands are in the
 [Usage Center](https://central.sonatype.com/), which is the only authoritative
 source. The free tier is roughly the 90th percentile of all publishers, about
