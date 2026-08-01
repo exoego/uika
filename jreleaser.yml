@@ -50,6 +50,14 @@ deploy:
         active: RELEASE
         url: https://central.sonatype.com/api/v1/publisher
         applyMavenCentralRules: true
+        # applyMavenCentralRules defaults this to true, which emits md5, sha1,
+        # sha256 AND sha512 for every artifact. Central requires only md5 and
+        # sha1, and each build tool already stages exactly those two, so the
+        # extra pair is 38 files per release against the Portal's monthly
+        # file-count limit. JReleaser has no per-algorithm switch, so turn the
+        # step off entirely and let the staged checksums through. Signing is
+        # unaffected; .asc files come from the `signing` block above.
+        checksums: false
         stagingRepositories:
           - binary-publishing/build/staging-deploy
           - gradle-plugin/build/staging-deploy

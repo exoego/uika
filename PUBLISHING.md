@@ -22,6 +22,41 @@ JVM plugin versions are injected too. Every module publishes to a local
 `staging-deploy` directory, and `jreleaser.yml` lists those directories as
 staging repositories.
 
+## Central Portal publishing limits
+
+Maven Central meters three monthly metrics per organization, evaluated on a
+three-month rolling average. Enforcement starts 2026-08-11. Current thresholds
+and where `net.exoego` stands are in the
+[Usage Center](https://central.sonatype.com/), which is the only authoritative
+source. The free tier is roughly the 90th percentile of all publishers, about
+1,167 files, 78 MB, and 7 releases per month.
+
+One `vX.Y.Z` tag is one deployment carrying five components (`uika-cli`,
+`uika-gradle-plugin`, the `net.exoego.uika.gradle.plugin` marker,
+`sbt-uika_2.12_1.0`, `uika-maven-plugin`). That is 76 files and about 6 MB per
+tag, so Release Count is the binding metric, not file count or size. July 2026
+shipped eight tags and tripped the release-count limit.
+
+Two rules follow.
+
+Batch changes into fewer tags. Do not publish for documentation or metadata
+updates, and do not cut a tag per merged PR. A burst for a security fix is
+explicitly tolerated by Sonatype and is not a reason to delay one.
+
+Do not add files to the deployment without checking the cost. Every artifact
+carries a `.md5`, a `.sha1`, and an `.asc`, so one new artifact is four files
+per release. `jreleaser.yml` sets `checksums: false` on the deployer because
+`applyMavenCentralRules` otherwise adds `.sha256` and `.sha512` to every
+artifact, which Central accepts but does not require. Each build tool already
+stages md5 and sha1 itself, and the two Gradle builds carry a
+`gradle.properties` with `systemProp.org.gradle.internal.publish.checksums.insecure=true`
+so they stop at those two. Dropping the optional pair cut the bundle from 114
+files to 76. Verify after any publishing change:
+
+```console
+$ unzip -Z1 out/jreleaser/deploy/mavenCentral/uika/*-bundle.zip | wc -l
+```
+
 ## Required repository secrets 
 
 - `MAVEN_CENTRAL_USERNAME`
