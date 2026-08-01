@@ -6,10 +6,22 @@ ThisBuild / versionScheme := Some("early-semver")
 // POM-consistent sbt-uika_2.12_1.0-<version>.jar instead (resolvable by sbt 1.9+).
 ThisBuild / sbtPluginPublishLegacyMavenStyle := false
 
+// CodeQL has no Scala extractor, so the compiler is this module's static analysis.
+// Warnings are fatal in Compile only. The console and the scripted test builds
+// keep their own defaults.
+ThisBuild / scalacOptions ++= Seq(
+  "-deprecation",
+  "-feature",
+  "-unchecked",
+  "-Xlint",
+  "-Ywarn-unused:imports,privates,locals"
+)
+
 lazy val root = (project in file("."))
   .enablePlugins(SbtPlugin)
   .settings(
     name := "sbt-uika",
+    Compile / compile / scalacOptions += "-Xfatal-warnings",
     description := "sbt plugin for writing uika resolved classpath dumps and running upgrade checks",
     homepage := Some(url("https://github.com/exoego/uika")),
     licenses := Seq("Apache License 2.0" -> url("https://www.apache.org/licenses/LICENSE-2.0")),
