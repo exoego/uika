@@ -87,7 +87,3 @@ $ make native-publish-local UIKA_VERSION=0.1.0   # publish CLI ZIPs to ~/.m2 (ex
 $ make stage-all UIKA_VERSION=0.1.0              # stage all Maven artifacts locally
 $ mise exec -- jreleaser deploy --dry-run        # needs JRELEASER_* env vars. Validates POMs and signs without uploading
 ```
-
-Stage from a clean tree. sbt repackages `sbt-plugin/target/scala-2.12/sbt-1.0/api`
-without regenerating it, so a tree that built docs before they were emptied
-republishes the old 1.18 MB jar.
