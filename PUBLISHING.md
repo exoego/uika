@@ -34,15 +34,26 @@ source. The free tier is roughly the 90th percentile of all publishers, about
 
 One `vX.Y.Z` tag is one deployment carrying five components (`uika-cli`,
 `uika-gradle-plugin`, the `net.exoego.uika.gradle.plugin` marker,
-`sbt-uika_2.12_1.0`, `uika-maven-plugin`). That is 76 files and about 6 MB per
-tag, so Release Count is the binding metric, not file count or size. July 2026
-shipped eight tags and tripped the release-count limit.
+`sbt-uika_2.12_1.0`, `uika-maven-plugin`). That is 76 files and about 3 MB per
+tag, so for uika alone Release Count is the binding metric, not file count or
+size. July 2026 shipped eight tags and tripped the release-count limit.
 
-Two rules follow.
+All three metrics are metered per organization, so the quota is shared with
+every other project under `net.exoego`. uika is the heavy one because it ships
+four native binaries.
+
+Three rules follow.
 
 Batch changes into fewer tags. Do not publish for documentation or metadata
 updates, and do not cut a tag per merged PR. A burst for a security fix is
 explicitly tolerated by Sonatype and is not a reason to delay one.
+
+Keep the deployment small. Two things hold it at 3 MB instead of 6.2 MB, and
+reverting either without a replacement gives the bytes back. `[profile.release]`
+in the workspace `Cargo.toml` is tuned for size over speed, deliberately, and
+its comment carries the measurements. The three plugins publish an empty
+javadoc jar, because Central requires that jar to exist but not to have
+content, and readers have the sources jar; each build file comments how.
 
 Do not add files to the deployment without checking the cost. Every artifact
 carries a `.md5`, a `.sha1`, and an `.asc`, so one new artifact is four files
@@ -52,10 +63,11 @@ artifact, which Central accepts but does not require. Each build tool already
 stages md5 and sha1 itself, and the two Gradle builds carry a
 `gradle.properties` with `systemProp.org.gradle.internal.publish.checksums.insecure=true`
 so they stop at those two. Dropping the optional pair cut the bundle from 114
-files to 76. Verify after any publishing change:
+files to 76. Verify both metrics after any publishing change:
 
 ```console
 $ unzip -Z1 out/jreleaser/deploy/mavenCentral/uika/*-bundle.zip | wc -l
+$ unzip -l  out/jreleaser/deploy/mavenCentral/uika/*-bundle.zip | tail -1
 ```
 
 ## Required repository secrets 

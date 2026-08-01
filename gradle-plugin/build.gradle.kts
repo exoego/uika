@@ -39,8 +39,22 @@ java {
     withJavadocJar()
 }
 
+// Central requires the javadoc jar to exist, not to have content. The real API
+// docs were 133 KB published, over half of it the jQuery and stylesheet
+// boilerplate the standard doclet emits, and the Maven Central quota is shared
+// across the whole net.exoego namespace. Publish the jar empty and let readers
+// use the sources jar. See PUBLISHING.md.
 tasks.withType<Javadoc>().configureEach {
     (options as StandardJavadocDocletOptions).addStringOption("Xdoclint:none", "-quiet")
+    setSource(files())
+}
+
+// Emptying the source only stops the doclet running, it never cleans the output
+// directory, and the jar packages whatever is left there. Excluding everything
+// makes the jar empty whatever state the tree is in. The manifest is written by
+// the Jar task itself, so it survives.
+tasks.named<Jar>("javadocJar") {
+    exclude("**")
 }
 
 // uikaUpgradeCheck defaults the CLI version to the plugin's own version, read from here.

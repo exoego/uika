@@ -187,18 +187,37 @@
               </execution>
             </executions>
           </plugin>
+          <!-- Central requires the javadoc jar to exist, not to have content.
+               The real docs were 143 KB published, most of it the jQuery and
+               stylesheet boilerplate the standard doclet emits, and the Maven
+               Central quota is shared across the whole net.exoego namespace.
+               maven-javadoc-plugin has no "emit an empty jar" mode, so skip it
+               and attach a jar built from a directory that is never created.
+               maven-jar-plugin warns "JAR will be empty" and emits the manifest
+               alone, which is what Central wants. Pointing at a real directory
+               would publish whatever a dirty tree left in it. Readers use the
+               sources jar. See PUBLISHING.md. -->
           <plugin>
             <artifactId>maven-javadoc-plugin</artifactId>
             <version>3.12.0</version>
             <configuration>
-              <doclint>none</doclint>
+              <skip>true</skip>
             </configuration>
+          </plugin>
+          <plugin>
+            <artifactId>maven-jar-plugin</artifactId>
+            <version>3.4.2</version>
             <executions>
               <execution>
-                <id>attach-javadoc</id>
+                <id>attach-empty-javadoc</id>
+                <phase>package</phase>
                 <goals>
                   <goal>jar</goal>
                 </goals>
+                <configuration>
+                  <classifier>javadoc</classifier>
+                  <classesDirectory>${project.build.directory}/no-such-javadoc-dir</classesDirectory>
+                </configuration>
               </execution>
             </executions>
           </plugin>

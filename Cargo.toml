@@ -1,3 +1,29 @@
 [workspace]
 resolver = "3"
 members = ["cli"]
+
+# Tuned for published size. The four native ZIPs are the heaviest thing the
+# shared net.exoego namespace ships to Maven Central, and that quota is per
+# organization, so bytes saved here free budget for every other project under
+# it. Measured on macOS aarch64 against the stress workload (7 runs, median):
+#
+#   default                                 1,075,953 B zipped   1.67s
+#   lto/codegen-units/strip                   893,991 B          1.66s
+#   + panic = "abort"                         817,642 B          1.64s
+#   + opt-level = "s"                         665,269 B          1.79s
+#
+# opt-level = "s" is the deliberate trade: -38% published bytes for ~7% less
+# throughput. It is a real regression, not measurement noise, so re-measure
+# before assuming a slowdown elsewhere is a code change. Benchmark numbers in
+# .claude/skills/uika-performance/SKILL.md are quoted against this profile.
+#
+# panic = "abort" drops the unwind tables (__eh_frame + __gcc_except_tab was
+# ~313 KB). Nothing in cli/src uses catch_unwind, and the plugins treat every
+# non-zero exit other than 1 as an error, so aborting instead of exiting 101
+# keeps the contract. strip = "symbols" costs symbolized panic backtraces.
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
