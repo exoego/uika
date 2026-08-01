@@ -39,9 +39,8 @@ tag, so for uika alone Release Count is the binding metric, not file count or
 size. July 2026 shipped eight tags and tripped the release-count limit.
 
 All three metrics are metered per organization, so the quota is shared with
-every other project published under `net.exoego`, not scoped to uika. uika is
-the heavy one because it ships four native binaries, so its per-release bytes
-are worth minimizing even though its own bottleneck is Release Count.
+every other project under `net.exoego`. uika is the heavy one because it ships
+four native binaries.
 
 Three rules follow.
 
@@ -49,34 +48,12 @@ Batch changes into fewer tags. Do not publish for documentation or metadata
 updates, and do not cut a tag per merged PR. A burst for a security fix is
 explicitly tolerated by Sonatype and is not a reason to delay one.
 
-Keep the deployment small. It was 6.22 MB per release and is now about 3.0 MB.
-Two changes got it there, both measured, and neither should be reverted without
-a replacement.
-
-The native CLI ZIPs were 4.59 MB of that 6.22 MB. `[profile.release]` in the
-workspace `Cargo.toml` sets `opt-level = "s"`, `lto = "fat"`,
-`codegen-units = 1`, `panic = "abort"` and `strip = "symbols"`, which takes the
-macOS aarch64 binary from 1,075,953 to 665,269 zipped bytes. `opt-level = "s"`
-is a deliberate trade costing about 7% throughput on the stress workload; the
-rationale and the full measurement table live in that file's comment. The
-`check` JSON report and all 25,298 `--verdicts-json` records are byte-identical
-across the profile change, so it is a size and speed change only.
-
-The doc jars were 1.46 MB of that 6.22 MB, and almost none of it was
-documentation: sbt's scaladoc jar alone was 1.18 MB, of which 1.9 MB
-uncompressed was bundled fonts and jQuery plus a 498 KB index of the entire
-`sbt` API, against 236 KB of uika's own docs. Central requires a javadoc jar to
-exist, not to have content, so all three plugins now publish an empty one and
-readers use the sources jar. sbt uses `Compile / doc / sources := Seq.empty`;
-Gradle nulls out the `Javadoc` task source; Maven skips `maven-javadoc-plugin`
-and attaches an empty jar from an empty directory, because that plugin has no
-"emit an empty jar" mode.
-
-Beware stale doc output when verifying locally. sbt repackages
-`target/scala-2.12/sbt-1.0/api` without regenerating it, so a tree that built
-docs before the change will keep publishing the old 1.18 MB jar until that
-directory is removed. The same applies to `maven-plugin/target`. CI checks out
-clean, so this only bites local `make stage-all` runs.
+Keep the deployment small. Two things hold it at 3 MB instead of 6.2 MB, and
+reverting either without a replacement gives the bytes back. `[profile.release]`
+in the workspace `Cargo.toml` is tuned for size over speed, deliberately, and
+its comment carries the measurements. The three plugins publish an empty
+javadoc jar, because Central requires that jar to exist but not to have
+content, and readers have the sources jar; each build file comments how.
 
 Do not add files to the deployment without checking the cost. Every artifact
 carries a `.md5`, a `.sha1`, and an `.asc`, so one new artifact is four files
@@ -110,3 +87,7 @@ $ make native-publish-local UIKA_VERSION=0.1.0   # publish CLI ZIPs to ~/.m2 (ex
 $ make stage-all UIKA_VERSION=0.1.0              # stage all Maven artifacts locally
 $ mise exec -- jreleaser deploy --dry-run        # needs JRELEASER_* env vars. Validates POMs and signs without uploading
 ```
+
+Stage from a clean tree. sbt repackages `sbt-plugin/target/scala-2.12/sbt-1.0/api`
+without regenerating it, so a tree that built docs before they were emptied
+republishes the old 1.18 MB jar.
