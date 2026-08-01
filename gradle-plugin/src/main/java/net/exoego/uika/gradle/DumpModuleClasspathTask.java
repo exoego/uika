@@ -46,6 +46,13 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
     @Input
     public abstract Property<String> getConfigurationName();
 
+    /** The main source set, or null without a Java-family plugin (one spelling for the
+     * dump and the uikaBuildOutputs dependsOn wiring). */
+    static SourceSet mainSourceSet(Project p) {
+        JavaPluginExtension javaExt = p.getExtensions().findByType(JavaPluginExtension.class);
+        return javaExt == null ? null : javaExt.getSourceSets().findByName("main");
+    }
+
     @TaskAction
     public void dump() throws IOException {
         Project p = getProject();
@@ -68,7 +75,7 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
         json.append(",\"classesDirs\":[");
         boolean first = true;
         if (javaExt != null) {
-            SourceSet main = javaExt.getSourceSets().findByName("main");
+            SourceSet main = mainSourceSet(p);
             if (main != null) {
                 boolean any = false;
                 for (File dir : main.getOutput().getClassesDirs().getFiles()) {

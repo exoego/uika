@@ -841,9 +841,37 @@ fn run_uika(args: &[&str]) -> (i32, String, String) {
         String::from_utf8_lossy(&out.stderr).into_owned(),
     )
 }
+/// Writes the before/after dump JSON into a fresh scratch dir, runs `uika upgrade-check`
+/// with any extra args, cleans up, and returns (exit code, stdout, stderr). The six
+/// per-module e2e tests differ only in their dump JSON and assertions.
+fn run_upgrade_check_with_dumps(
+    tag: &str,
+    before: &str,
+    after: &str,
+    extra: &[&str],
+) -> (i32, String, String) {
+    let dir = std::env::temp_dir().join(format!("uika-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let before_path = dir.join("before.json");
+    let after_path = dir.join("after.json");
+    std::fs::write(&before_path, before).unwrap();
+    std::fs::write(&after_path, after).unwrap();
+    let mut args = vec![
+        "upgrade-check".to_string(),
+        "--before".to_string(),
+        before_path.display().to_string(),
+        "--after".to_string(),
+        after_path.display().to_string(),
+    ];
+    args.extend(extra.iter().map(|s| s.to_string()));
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let result = run_uika(&arg_refs);
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
 
 /// Per-module upgrade-check judges each module against its own resolution. Two properties on
-/// one fixture layout (the henry-backend netty shape):
+/// one fixture layout (the netty shape from a real multi-module monorepo incident):
 ///
 /// - A module pinned to the old version is skipped, so its jar's classes are never judged
 ///   against the sibling module's newer version (the cross-version false-positive class).
@@ -855,9 +883,6 @@ fn per_module_upgrade_check_gates_on_each_modules_own_resolution() {
     let old_sc = fixture("opentelemetry-sdk-common-1.42.1.jar");
     let new_sc = fixture("opentelemetry-sdk-common-1.60.1.jar");
     let sender = fixture("opentelemetry-exporter-sender-okhttp-1.42.1.jar");
-
-    let dir = std::env::temp_dir().join(format!("uika-permod-e2e-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
     let dump = |app_sc: &std::path::Path, app_sc_version: &str| {
         format!(
             r#"{{"modules":[
@@ -876,22 +901,12 @@ fn per_module_upgrade_check_gates_on_each_modules_own_resolution() {
             sender.display(),
         )
     };
-    let before_path = dir.join("before.json");
-    let after_path = dir.join("after.json");
-    std::fs::write(&before_path, dump(&old_sc, "1.42.1")).unwrap();
-    std::fs::write(&after_path, dump(&new_sc, "1.60.1")).unwrap();
-    let before_arg = before_path.display().to_string();
-    let after_arg = after_path.display().to_string();
+    let before = dump(&old_sc, "1.42.1");
+    let after = dump(&new_sc, "1.60.1");
 
     // Per-module (default): :app's upgrade is caught and attributed; :pinned is skipped.
-    let (code, stdout, stderr) = run_uika(&[
-        "upgrade-check",
-        "--before",
-        &before_arg,
-        "--after",
-        &after_arg,
-        "--json",
-    ]);
+    let (code, stdout, stderr) =
+        run_upgrade_check_with_dumps("permod-e2e", &before, &after, &["--json"]);
     assert_eq!(code, 1, "stdout:\n{stdout}\nstderr:\n{stderr}");
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let violations = json["violations"].as_array().unwrap();
@@ -915,13 +930,7 @@ fn per_module_upgrade_check_gates_on_each_modules_own_resolution() {
     assert_eq!(json["module_runs"]["unchanged_modules"], 1, "{stdout}");
 
     // Text mode carries the same attribution for humans.
-    let (code, stdout, _) = run_uika(&[
-        "upgrade-check",
-        "--before",
-        &before_arg,
-        "--after",
-        &after_arg,
-    ]);
+    let (code, stdout, _) = run_upgrade_check_with_dumps("permod-e2e", &before, &after, &[]);
     assert_eq!(code, 1);
     assert!(
         stdout.contains("per-module check: 1 of 2 modules"),
@@ -931,20 +940,11 @@ fn per_module_upgrade_check_gates_on_each_modules_own_resolution() {
 
     // --merged keeps the flat behavior: 1.42.1 is still resolved by :pinned, so the flat
     // diff has no removed version and the real break in :app goes unreported.
-    let (code, stdout, _) = run_uika(&[
-        "upgrade-check",
-        "--before",
-        &before_arg,
-        "--after",
-        &after_arg,
-        "--merged",
-        "--json",
-    ]);
+    let (code, stdout, _) =
+        run_upgrade_check_with_dumps("permod-e2e", &before, &after, &["--merged", "--json"]);
     assert_eq!(code, 0, "{stdout}");
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert!(json["violations"].is_null(), "{stdout}");
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A project-dependency artifact that was never built (jar path missing) falls back to the
@@ -956,8 +956,6 @@ fn per_module_project_dependency_falls_back_to_classes_dirs() {
     let new_sc = fixture("opentelemetry-sdk-common-1.60.1.jar");
     let sender = fixture("opentelemetry-exporter-sender-okhttp-1.42.1.jar");
 
-    let dir = std::env::temp_dir().join(format!("uika-permod-fallback-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
     // :app depends on project :sender-lib whose jar is unbuilt; :sender-lib's classesDirs
     // stand in for its output (a jar path works: scan targets may be jars or dirs).
     let dump = |sc: &std::path::Path, version: &str| {
@@ -965,28 +963,21 @@ fn per_module_project_dependency_falls_back_to_classes_dirs() {
             r#"{{"modules":[
                 {{"module":":app","classesDirs":[],"artifacts":[
                     {{"group":"io.opentelemetry","name":"opentelemetry-sdk-common","version":"{version}","file":"{}"}},
-                    {{"file":"{}","project":":sender-lib"}}
+                    {{"file":"/nonexistent/uika-test/sender-lib.jar","project":":sender-lib"}}
                 ]}},
                 {{"module":":sender-lib","classesDirs":["{}"],"artifacts":[]}}
             ]}}"#,
             sc.display(),
-            dir.join("never-built/sender-lib.jar").display(),
             sender.display(),
         )
     };
-    let before_path = dir.join("before.json");
-    let after_path = dir.join("after.json");
-    std::fs::write(&before_path, dump(&old_sc, "1.42.1")).unwrap();
-    std::fs::write(&after_path, dump(&new_sc, "1.60.1")).unwrap();
 
-    let (code, stdout, stderr) = run_uika(&[
-        "upgrade-check",
-        "--before",
-        &before_path.display().to_string(),
-        "--after",
-        &after_path.display().to_string(),
-        "--json",
-    ]);
+    let (code, stdout, stderr) = run_upgrade_check_with_dumps(
+        "permod-fallback",
+        &dump(&old_sc, "1.42.1"),
+        &dump(&new_sc, "1.60.1"),
+        &["--json"],
+    );
     assert_eq!(code, 1, "stdout:\n{stdout}\nstderr:\n{stderr}");
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert!(
@@ -1000,8 +991,6 @@ fn per_module_project_dependency_falls_back_to_classes_dirs() {
         stderr.contains("is not built; scanning module :sender-lib's classesDirs"),
         "stderr:\n{stderr}"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The stay-vs-upgrade shape: module :pinned stays on a THIRD version of the coordinate
@@ -1014,8 +1003,6 @@ fn per_module_check_detects_upgrade_beside_module_pinned_to_third_version() {
     let coroutines_new = fixture("kotlinx-coroutines-core-jvm-1.11.0.jar");
     let ktor_io = fixture("ktor-io-jvm-2.3.13.jar");
 
-    let dir = std::env::temp_dir().join(format!("uika-thirdver-e2e-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
     // :pinned resolves a distinct third version (the version string is what the diff sees;
     // the 1.7.1 jar stands in for its bytes). :upgrader moves 1.7.1 -> 1.11.0, which
     // removed EventLoopKt.processNextEventInCurrentThread that ktor-io references.
@@ -1037,19 +1024,13 @@ fn per_module_check_detects_upgrade_beside_module_pinned_to_third_version() {
             ktor_io.display(),
         )
     };
-    let before_path = dir.join("before.json");
-    let after_path = dir.join("after.json");
-    std::fs::write(&before_path, dump("1.7.1", &coroutines_old)).unwrap();
-    std::fs::write(&after_path, dump("1.11.0", &coroutines_new)).unwrap();
 
-    let (code, stdout, stderr) = run_uika(&[
-        "upgrade-check",
-        "--before",
-        &before_path.display().to_string(),
-        "--after",
-        &after_path.display().to_string(),
-        "--json",
-    ]);
+    let (code, stdout, stderr) = run_upgrade_check_with_dumps(
+        "thirdver-e2e",
+        &dump("1.7.1", &coroutines_old),
+        &dump("1.11.0", &coroutines_new),
+        &["--json"],
+    );
     assert_eq!(code, 1, "stdout:\n{stdout}\nstderr:\n{stderr}");
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let violations = json["violations"].as_array().unwrap();
@@ -1071,7 +1052,6 @@ fn per_module_check_detects_upgrade_beside_module_pinned_to_third_version() {
     let runs = json["module_runs"]["outcomes"].as_array().unwrap();
     assert_eq!(runs.len(), 1, "{stdout}");
     assert_eq!(runs[0]["modules"], serde_json::json!([":upgrader"]));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A version swap between modules leaves the universe-wide change list empty, but the
@@ -1084,8 +1064,6 @@ fn per_module_check_reports_break_when_global_version_set_is_unchanged() {
     let new_sc = fixture("opentelemetry-sdk-common-1.60.1.jar");
     let sender = fixture("opentelemetry-exporter-sender-okhttp-1.42.1.jar");
 
-    let dir = std::env::temp_dir().join(format!("uika-swap-e2e-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
     let dump = |a_version: &str,
                 a_jar: &std::path::Path,
                 b_version: &str,
@@ -1105,20 +1083,15 @@ fn per_module_check_reports_break_when_global_version_set_is_unchanged() {
             b_jar.display(),
         )
     };
-    let before_path = dir.join("before.json");
-    let after_path = dir.join("after.json");
+
     // :a upgrades 1.42.1 -> 1.60.1 (break), :b downgrades 1.60.1 -> 1.42.1: the union
     // version set {1.42.1, 1.60.1} is identical on both sides.
-    std::fs::write(&before_path, dump("1.42.1", &old_sc, "1.60.1", &new_sc)).unwrap();
-    std::fs::write(&after_path, dump("1.60.1", &new_sc, "1.42.1", &old_sc)).unwrap();
-
-    let (code, stdout, stderr) = run_uika(&[
-        "upgrade-check",
-        "--before",
-        &before_path.display().to_string(),
-        "--after",
-        &after_path.display().to_string(),
-    ]);
+    let (code, stdout, stderr) = run_upgrade_check_with_dumps(
+        "swap-e2e",
+        &dump("1.42.1", &old_sc, "1.60.1", &new_sc),
+        &dump("1.60.1", &new_sc, "1.42.1", &old_sc),
+        &[],
+    );
     assert_eq!(code, 1, "stdout:\n{stdout}\nstderr:\n{stderr}");
     assert!(stdout.contains("dependency changes: none"), "{stdout}");
     // Both sides of the swap changed their own resolution (a downgrade is a change too).
@@ -1135,7 +1108,6 @@ fn per_module_check_reports_break_when_global_version_set_is_unchanged() {
         stdout.contains("removed by: io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1"),
         "{stdout}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A module renamed while upgrading (no same-name before module) is checked against the
@@ -1146,8 +1118,6 @@ fn per_module_check_covers_renamed_module_via_union_fallback() {
     let new_sc = fixture("opentelemetry-sdk-common-1.60.1.jar");
     let sender = fixture("opentelemetry-exporter-sender-okhttp-1.42.1.jar");
 
-    let dir = std::env::temp_dir().join(format!("uika-rename-e2e-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
     let dump = |name: &str, version: &str, jar: &std::path::Path| {
         format!(
             r#"{{"modules":[
@@ -1160,19 +1130,13 @@ fn per_module_check_covers_renamed_module_via_union_fallback() {
             sender.display(),
         )
     };
-    let before_path = dir.join("before.json");
-    let after_path = dir.join("after.json");
-    std::fs::write(&before_path, dump(":server", "1.42.1", &old_sc)).unwrap();
-    std::fs::write(&after_path, dump(":backend", "1.60.1", &new_sc)).unwrap();
 
-    let (code, stdout, stderr) = run_uika(&[
-        "upgrade-check",
-        "--before",
-        &before_path.display().to_string(),
-        "--after",
-        &after_path.display().to_string(),
-        "--json",
-    ]);
+    let (code, stdout, stderr) = run_upgrade_check_with_dumps(
+        "rename-e2e",
+        &dump(":server", "1.42.1", &old_sc),
+        &dump(":backend", "1.60.1", &new_sc),
+        &["--json"],
+    );
     assert_eq!(code, 1, "stdout:\n{stdout}\nstderr:\n{stderr}");
     assert!(
         stderr.contains("module :backend is not in the before dump"),
@@ -1186,7 +1150,6 @@ fn per_module_check_covers_renamed_module_via_union_fallback() {
         }),
         "the renamed module's upgrade must still be checked:\n{stdout}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// An after-side module whose artifact list vanished (partial build, failed resolution) is
@@ -1196,8 +1159,6 @@ fn per_module_check_skips_module_with_vanished_artifacts() {
     let old_sc = fixture("opentelemetry-sdk-common-1.42.1.jar");
     let sender = fixture("opentelemetry-exporter-sender-okhttp-1.42.1.jar");
 
-    let dir = std::env::temp_dir().join(format!("uika-incomplete-e2e-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
     let before = format!(
         r#"{{"modules":[
             {{"module":":a","classesDirs":[],"artifacts":[
@@ -1218,19 +1179,9 @@ fn per_module_check_skips_module_with_vanished_artifacts() {
         ]}}"#,
         old_sc.display(),
     );
-    let before_path = dir.join("before.json");
-    let after_path = dir.join("after.json");
-    std::fs::write(&before_path, before).unwrap();
-    std::fs::write(&after_path, after).unwrap();
 
-    let (code, stdout, stderr) = run_uika(&[
-        "upgrade-check",
-        "--before",
-        &before_path.display().to_string(),
-        "--after",
-        &after_path.display().to_string(),
-        "--json",
-    ]);
+    let (code, stdout, stderr) =
+        run_upgrade_check_with_dumps("incomplete-e2e", &before, &after, &["--json"]);
     assert_eq!(code, 0, "stdout:\n{stdout}\nstderr:\n{stderr}");
     assert!(
         stderr.contains("module :a lists no resolved artifacts in the after dump"),
@@ -1239,5 +1190,4 @@ fn per_module_check_skips_module_with_vanished_artifacts() {
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(json["module_runs"]["incomplete_modules"], 1, "{stdout}");
     assert!(json["violations"].is_null(), "{stdout}");
-    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -156,10 +156,7 @@ fn cmd_check(
 /// output, and a silently truncated one would let an answer-check pass on a prefix of the
 /// verdicts. When the check already failed, its error stays primary and the stream failure
 /// degrades to a warning.
-fn finish_verdicts(
-    writer: Option<verdicts::VerdictWriter>,
-    result: Result<check::CheckReport>,
-) -> Result<check::CheckReport> {
+fn finish_verdicts<T>(writer: Option<verdicts::VerdictWriter>, result: Result<T>) -> Result<T> {
     let stream_error = writer.and_then(verdicts::VerdictWriter::finish);
     match (result, stream_error) {
         (Ok(_), Some(msg)) => Err(anyhow::anyhow!(msg)),
@@ -169,6 +166,20 @@ fn finish_verdicts(
         }
         (result, None) => result,
     }
+}
+
+/// Filter known false positives and record the unused-rule warnings on the report (the one
+/// exclusion site per report: run_check applies it to its own result, the per-module merger
+/// to the merged set).
+fn apply_excludes(report: &mut check::CheckReport, exclude_rules: &[exclude::ExcludeRule]) {
+    let stats = exclude::filter(&mut report.violations, exclude_rules);
+    report.suppressed = stats.suppressed;
+    report.warnings.extend(
+        stats
+            .unused
+            .into_iter()
+            .map(|u| format!("exclude rule matched nothing: {u}")),
+    );
 }
 
 /// Map a finished check to a process exit code per the selected policy. The report itself is
@@ -329,14 +340,7 @@ pub fn run_check_with_indexes(
         reach,
         verdicts,
     );
-    let stats = exclude::filter(&mut result.violations, exclude_rules);
-    result.suppressed = stats.suppressed;
-    result.warnings.extend(
-        stats
-            .unused
-            .into_iter()
-            .map(|u| format!("exclude rule matched nothing: {u}")),
-    );
+    apply_excludes(&mut result, exclude_rules);
     warn_all(&result.warnings);
     Ok(result)
 }
@@ -555,23 +559,22 @@ fn plan_module_runs(before: &gradle::Universe, after: &gradle::Universe) -> Modu
                 targets.push(artifact.file.clone());
                 continue;
             }
-            let producer_dirs = artifact
+            let producer = artifact
                 .project
                 .as_deref()
                 .and_then(|p| after.module(p))
-                .map(|m| m.classes_dirs.clone())
-                .unwrap_or_default();
-            if producer_dirs.is_empty() {
-                missing
-                    .entry(artifact.file.clone())
-                    .or_default()
-                    .insert(module.name.clone());
-            } else {
-                substituted.insert(
-                    artifact.file.clone(),
-                    artifact.project.clone().unwrap_or_default(),
-                );
-                targets.extend(producer_dirs);
+                .filter(|m| !m.classes_dirs.is_empty());
+            match producer {
+                Some(producer) => {
+                    substituted.insert(artifact.file.clone(), producer.name.clone());
+                    targets.extend(producer.classes_dirs.iter().cloned());
+                }
+                None => {
+                    missing
+                        .entry(artifact.file.clone())
+                        .or_default()
+                        .insert(module.name.clone());
+                }
             }
         }
 
@@ -636,6 +639,35 @@ struct RunOutcome {
     app_roots_matched: Option<bool>,
 }
 
+/// The merged violations attributed to one run's modules — the same predicate must decide
+/// both the per-run broken counts and the per-run exit decision, or the two would disagree.
+fn run_violations<'a>(
+    merged: &'a check::CheckReport,
+    names: &'a [String],
+) -> impl Iterator<Item = &'a model::Violation> {
+    merged
+        .violations
+        .iter()
+        .filter(|v| v.modules.iter().any(|m| names.contains(m)))
+}
+
+/// One library index per distinct jar list, one cache per side: modules pinned to different
+/// old versions that upgrade to one shared new version still build the new index once.
+fn cached_index<'a>(
+    cache: &'a mut Vec<(Vec<PathBuf>, ApiIndex)>,
+    jars: &[PathBuf],
+) -> Result<&'a ApiIndex> {
+    let position = match cache.iter().position(|(key, _)| key == jars) {
+        Some(i) => i,
+        None => {
+            let index = build_index_multi(jars)?;
+            cache.push((jars.to_vec(), index));
+            cache.len() - 1
+        }
+    };
+    Ok(&cache[position].1)
+}
+
 /// Run one check per changed module (deduplicated), merge the results into one report with
 /// per-violation module attribution, and apply exclude rules once to the merged set (the
 /// single policy site for this command; run_check is invoked with no rules).
@@ -658,68 +690,52 @@ fn upgrade_check_per_module(
         .transpose()?;
 
     if plan.runs.is_empty() {
-        if let Some(msg) = verdict_writer.and_then(verdicts::VerdictWriter::finish) {
-            return Err(anyhow::anyhow!(msg));
-        }
+        finish_verdicts(verdict_writer, Ok(()))?;
         let summary = module_summary(&plan, Vec::new());
         print_upgrade(json, &changes.changes, None, Some(&summary))?;
         return Ok(0);
     }
 
-    let mut merged = check::CheckReport {
-        violations: Vec::new(),
-        warnings: Vec::new(),
-        scanned_classes: 0,
-        unknown_refs: 0,
-        suppressed: 0,
-        reachability_computed: false,
-        app_roots_matched: None,
-    };
-    let mut run_outcomes: Vec<RunOutcome> = Vec::new();
-    // Library indexes per distinct (old, new) jar pair: most runs share one pair, and
-    // rebuilding full member tables per module would repeat the work.
-    #[allow(clippy::type_complexity)]
-    let mut index_cache: Vec<((Vec<PathBuf>, Vec<PathBuf>), (ApiIndex, ApiIndex))> = Vec::new();
-    // Cross-run violation identity: what the report prints, including the advice (per-run
-    // suggestions may legitimately differ for one reference when modules moved different
-    // versions), but NOT reachable — the same break found by runs that disagree on
-    // reachability must count once, kept at the most-reachable value (reachable_rank).
-    #[allow(clippy::type_complexity)]
-    let mut merged_index: rustc_hash::FxHashMap<
-        (
-            intern::Sym,
-            intern::Sym,
-            model::SymbolRef,
-            String,
-            Option<String>,
-        ),
-        usize,
-    > = rustc_hash::FxHashMap::default();
+    let mut annotator = suggest::Annotator::new(before_universe, after_universe);
+    let result = (|| {
+        let mut merged = check::CheckReport {
+            violations: Vec::new(),
+            warnings: Vec::new(),
+            scanned_classes: 0,
+            unknown_refs: 0,
+            suppressed: 0,
+            reachability_computed: false,
+            app_roots_matched: None,
+        };
+        let mut run_outcomes: Vec<RunOutcome> = Vec::new();
+        // One library-index cache per side (see cached_index).
+        let mut old_indexes: Vec<(Vec<PathBuf>, ApiIndex)> = Vec::new();
+        let mut new_indexes: Vec<(Vec<PathBuf>, ApiIndex)> = Vec::new();
+        // Cross-run violation identity: what the report prints, including the advice (per-run
+        // suggestions may legitimately differ for one reference when modules moved different
+        // versions), but NOT reachable — the same break found by runs that disagree on
+        // reachability must count once, kept at the most-reachable value (reachable_rank).
+        #[allow(clippy::type_complexity)]
+        let mut merged_index: rustc_hash::FxHashMap<
+            (
+                intern::Sym,
+                intern::Sym,
+                model::SymbolRef,
+                String,
+                Option<String>,
+            ),
+            usize,
+        > = rustc_hash::FxHashMap::default();
 
-    let mut loop_result: Result<()> = Ok(());
-    for run in &plan.runs {
-        if let Some(w) = verdict_writer.as_mut() {
-            w.set_module(Some(run.names.join(",")));
-        }
-        let result = (|| {
-            let pair = match index_cache
-                .iter()
-                .position(|(key, _)| key.0 == run.old_jars && key.1 == run.new_jars)
-            {
-                Some(i) => i,
-                None => {
-                    let indexes = (
-                        build_index_multi(&run.old_jars)?,
-                        build_index_multi(&run.new_jars)?,
-                    );
-                    index_cache.push(((run.old_jars.clone(), run.new_jars.clone()), indexes));
-                    index_cache.len() - 1
-                }
-            };
-            let (old_index, new_index) = &index_cache[pair].1;
+        for run in &plan.runs {
+            if let Some(w) = verdict_writer.as_mut() {
+                w.set_module(Some(run.names.join(",")));
+            }
+            let old_index = cached_index(&mut old_indexes, &run.old_jars)?;
+            let new_index = cached_index(&mut new_indexes, &run.new_jars)?;
             // Exclude rules are deliberately NOT applied per run: they filter the merged,
             // deduplicated set below, so counts and unused-rule warnings appear once.
-            run_check_with_indexes(
+            let mut result = run_check_with_indexes(
                 old_index,
                 new_index,
                 &run.old_jars,
@@ -729,64 +745,46 @@ fn upgrade_check_per_module(
                 &[],
                 jdk_indexer.as_deref_mut(),
                 verdict_writer.as_mut(),
-            )
-        })();
-        let mut result = match result {
-            Ok(r) => r,
-            Err(e) => {
-                loop_result = Err(e);
-                break;
-            }
-        };
-        merged.scanned_classes += result.scanned_classes;
-        merged.unknown_refs += result.unknown_refs;
-        merged.reachability_computed |= result.reachability_computed;
-        // For the report's roots warning only; the exit decision below stays per run so one
-        // degraded module does not change --fail-on reachable for the others.
-        merged.app_roots_matched = match (merged.app_roots_matched, result.app_roots_matched) {
-            (Some(false), _) | (_, Some(false)) => Some(false),
-            (Some(true), _) | (_, Some(true)) => Some(true),
-            (None, None) => None,
-        };
-        run_outcomes.push(RunOutcome {
-            names: run.names.clone(),
-            scanned_classes: result.scanned_classes,
-            unknown_refs: result.unknown_refs,
-            app_roots_matched: result.app_roots_matched,
-        });
-        // Per-run suggestions from this module's own change list: exact versions even when
-        // the universe-wide diff is empty (a swap) or unions several modules' moves.
-        suggest::annotate(
-            &mut result.violations,
-            before_universe,
-            after_universe,
-            &run.changes,
-        );
-        for mut v in result.violations {
-            let key = (
-                v.source,
-                v.source_class,
-                v.reference,
-                v.reason.clone(),
-                v.suggestion.as_ref().map(|s| s.advice.clone()),
-            );
-            match merged_index.get(&key) {
-                Some(&i) => {
-                    let existing = &mut merged.violations[i];
-                    existing.modules.extend(run.names.iter().cloned());
-                    if reachable_rank(v.reachable) > reachable_rank(existing.reachable) {
-                        existing.reachable = v.reachable;
+            )?;
+            merged.scanned_classes += result.scanned_classes;
+            merged.unknown_refs += result.unknown_refs;
+            merged.reachability_computed |= result.reachability_computed;
+            run_outcomes.push(RunOutcome {
+                names: run.names.clone(),
+                scanned_classes: result.scanned_classes,
+                unknown_refs: result.unknown_refs,
+                app_roots_matched: result.app_roots_matched,
+            });
+            // Per-run suggestions from this module's own change list: exact versions even
+            // when the universe-wide diff is empty (a swap) or unions several modules' moves.
+            annotator.annotate(&mut result.violations, &run.changes);
+            for mut v in result.violations {
+                let key = (
+                    v.source,
+                    v.source_class,
+                    v.reference,
+                    v.reason.clone(),
+                    v.suggestion.as_ref().map(|s| s.advice.clone()),
+                );
+                match merged_index.get(&key) {
+                    Some(&i) => {
+                        let existing = &mut merged.violations[i];
+                        existing.modules.extend(run.names.iter().cloned());
+                        if reachable_rank(v.reachable) > reachable_rank(existing.reachable) {
+                            existing.reachable = v.reachable;
+                        }
                     }
-                }
-                None => {
-                    merged_index.insert(key, merged.violations.len());
-                    v.modules = run.names.clone();
-                    merged.violations.push(v);
+                    None => {
+                        merged_index.insert(key, merged.violations.len());
+                        v.modules = run.names.clone();
+                        merged.violations.push(v);
+                    }
                 }
             }
         }
-    }
-    let mut merged = finish_verdicts(verdict_writer, loop_result.map(|()| merged))?;
+        Ok((merged, run_outcomes))
+    })();
+    let (mut merged, run_outcomes) = finish_verdicts(verdict_writer, result)?;
 
     // Canonical cross-run order: the same string-value key check_scanned sorts by, with the
     // module list as the tiebreak between entries merged from different runs.
@@ -798,26 +796,15 @@ fn upgrade_check_per_module(
         .violations
         .sort_by_cached_key(|v| (check::violation_sort_key(v), v.modules.clone()));
 
-    let stats = exclude::filter(&mut merged.violations, exclude_rules);
-    merged.suppressed = stats.suppressed;
-    let unused: Vec<String> = stats
-        .unused
-        .into_iter()
-        .map(|u| format!("exclude rule matched nothing: {u}"))
-        .collect();
-    warn_all(&unused);
-    merged.warnings.extend(unused);
+    apply_excludes(&mut merged, exclude_rules);
+    warn_all(&merged.warnings);
 
     // Fail per run with its own roots state: a module whose classesDirs matched nothing
     // degrades --fail-on reachable to any for ITS violations only (module attribution
     // reconstructs each run's post-exclusion set exactly).
     let failed = run_outcomes.iter().any(|outcome| {
         should_fail(
-            merged
-                .violations
-                .iter()
-                .filter(|v| v.modules.iter().any(|m| outcome.names.contains(m)))
-                .map(|v| v.reachable),
+            run_violations(&merged, &outcome.names).map(|v| v.reachable),
             outcome.app_roots_matched,
             fail_on,
         )
@@ -839,11 +826,7 @@ fn module_outcomes(
         .map(|outcome| report::ModuleOutcome {
             modules: outcome.names.clone(),
             scanned_classes: outcome.scanned_classes,
-            broken: merged
-                .violations
-                .iter()
-                .filter(|v| v.modules.iter().any(|m| outcome.names.contains(m)))
-                .count(),
+            broken: run_violations(merged, &outcome.names).count(),
             unknown_refs: outcome.unknown_refs,
         })
         .collect()

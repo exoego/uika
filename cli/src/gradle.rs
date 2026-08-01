@@ -359,16 +359,6 @@ pub fn diff_dumps(before: &Universe, after: &Universe) -> DependencyChanges {
     )
 }
 
-/// Same diff for one module's resolution (per-module upgrade-check). `exclude` is the
-/// project-coordinate union of both dumps (see [`project_coords_union`]).
-pub fn diff_modules(
-    before: &ModuleUniverse,
-    after: &ModuleUniverse,
-    exclude: &BTreeSet<(String, String)>,
-) -> DependencyChanges {
-    diff_version_maps(&before.versions(), &after.versions(), exclude)
-}
-
 /// Diff of a before/after version map pair, ignoring the coordinates in `exclude`.
 pub fn diff_version_maps(
     before: &VersionMap,
@@ -532,7 +522,10 @@ mod tests {
 
         // :app moved g:lib 1.0 -> 2.0.
         let exclude = project_coords_union(&before, &after);
-        let app_diff = diff_modules(before.module(":app").unwrap(), app, &exclude);
+        let module_diff = |b: &ModuleUniverse, a: &ModuleUniverse| {
+            diff_version_maps(&b.versions(), &a.versions(), &exclude)
+        };
+        let app_diff = module_diff(before.module(":app").unwrap(), app);
         assert_eq!(
             app_diff.old_jars,
             vec![PathBuf::from("/repo/cache/lib-1.0.jar")]
@@ -544,10 +537,9 @@ mod tests {
 
         // :pinned still resolves 1.0: nothing to check even though the universe-wide
         // version set for g:lib changed.
-        let pinned_diff = diff_modules(
+        let pinned_diff = module_diff(
             before.module(":pinned").unwrap(),
             after.module(":pinned").unwrap(),
-            &exclude,
         );
         assert!(pinned_diff.old_jars.is_empty());
 
@@ -596,9 +588,9 @@ mod tests {
         // In the maps (for suggestion attribution), out of the diff (not an upgrade).
         assert!(!before.versions.is_empty());
         let exclude = project_coords_union(&before, &after);
-        let app_diff = diff_modules(
-            before.module(":app").unwrap(),
-            after.module(":app").unwrap(),
+        let app_diff = diff_version_maps(
+            &before.module(":app").unwrap().versions(),
+            &after.module(":app").unwrap().versions(),
             &exclude,
         );
         assert!(app_diff.old_jars.is_empty());
@@ -617,9 +609,9 @@ mod tests {
         assert!(global.changes.is_empty(), "{:?}", global.changes);
         assert!(global.old_jars.is_empty());
         let exclude = project_coords_union(&before_old_plugin, &after_same);
-        let app_diff = diff_modules(
-            before_old_plugin.module(":app").unwrap(),
-            after_same.module(":app").unwrap(),
+        let app_diff = diff_version_maps(
+            &before_old_plugin.module(":app").unwrap().versions(),
+            &after_same.module(":app").unwrap().versions(),
             &exclude,
         );
         assert!(app_diff.old_jars.is_empty());

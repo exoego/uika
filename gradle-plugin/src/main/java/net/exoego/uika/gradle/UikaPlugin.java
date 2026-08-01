@@ -130,34 +130,27 @@ public class UikaPlugin implements Plugin<Project> {
                         // Build the outputs the dump refers to (project-dependency jars and
                         // this module's own classes) before dumping, so the CLI never scans
                         // a classpath with unbuilt holes. Opt out with
-                        // -PuikaBuildOutputs=false for a resolution-only dump. Providers,
-                        // evaluated at task-graph time: the java plugin may not be applied
-                        // yet at registration, and the property may be set after apply.
-                        // A Configuration is Buildable, so depending on it builds project
-                        // dependencies' jars; the main SourceSetOutput builds this module's
-                        // classes (matching the dumped classesDirs).
+                        // -PuikaBuildOutputs=false for a resolution-only dump. One lazy
+                        // provider, evaluated at task-graph time: the java plugin may not be
+                        // applied yet at registration, and the property may be set after
+                        // apply. A Configuration is Buildable, so depending on it builds
+                        // project dependencies' jars; the main SourceSetOutput builds this
+                        // module's classes (matching the dumped classesDirs).
                         task.dependsOn(p.provider(() -> {
                             if (!buildOutputs(root)) {
                                 return java.util.List.of();
                             }
+                            var dependencies = new java.util.ArrayList<>();
                             var conf = p.getConfigurations().findByName(
                                     task.getConfigurationName().get());
-                            return conf != null && conf.isCanBeResolved()
-                                    ? java.util.List.of(conf)
-                                    : java.util.List.of();
-                        }));
-                        task.dependsOn(p.provider(() -> {
-                            if (!buildOutputs(root)) {
-                                return java.util.List.of();
+                            if (conf != null && conf.isCanBeResolved()) {
+                                dependencies.add(conf);
                             }
-                            JavaPluginExtension javaExt =
-                                    p.getExtensions().findByType(JavaPluginExtension.class);
-                            var main = javaExt == null
-                                    ? null
-                                    : javaExt.getSourceSets().findByName("main");
-                            return main != null
-                                    ? java.util.List.of(main.getOutput())
-                                    : java.util.List.of();
+                            var main = DumpModuleClasspathTask.mainSourceSet(p);
+                            if (main != null) {
+                                dependencies.add(main.getOutput());
+                            }
+                            return dependencies;
                         }));
                     });
             merge.configure(m -> m.getFragments().from(moduleTask));

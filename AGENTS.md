@@ -441,7 +441,7 @@ pass-2 classes are typically below 0.1% of the scan.
 | `cli/src/memstats.rs`  | Feature-gated counting allocator.                                                                                                                     |
 | `cli/src/gradle.rs`    | Reads dump v1/v2 into the merged universe plus per-module classpaths (`ModuleUniverse`); computes universe-wide and per-module dependency diffs. One coordinate may map to several versions (modules can resolve differently).                       |
 | `cli/src/cli.rs`       | clap definitions: `diff`, `check`, `upgrade-check`, `dump` (`check`/`upgrade-check` take `--reachability`).                                           |
-| `cli/src/lib.rs`       | Command dispatch; `run_check` is shared by `check`/`upgrade-check`. `cli/src/main.rs` picks mimalloc or the memstats allocator.                       |
+| `cli/src/lib.rs`       | Command dispatch plus the per-module upgrade-check orchestration (planning, run loop, cross-run merge); `run_check` is shared by `check`/`upgrade-check`. `cli/src/main.rs` picks mimalloc or the memstats allocator.                       |
 | `jvm-plugin-core/`     | Shared dump model + v1/v2 reader/writer (`ClasspathDump`, `DumpFormat`) and CLI fetch/run helper (`UikaCli`). Compiled into each plugin by source inclusion; not a published artifact. |
 | `gradle-plugin/`       | Java Gradle plugin. `localGroovy()` only, `options.release = 17`, merges per-module fragments into the v2 dump.                                       |
 | `sbt-plugin/`          | sbt `AutoPlugin` (`sbt-uika`, Scala 2.12). Tested via `scripted`.                                                                                     |
@@ -512,7 +512,8 @@ pass-2 classes are typically below 0.1% of the scan.
 - Maven: reactor dependencies are attributed with `"project"` and are never
   dropped from the dump; an unpackaged sibling falls back to its output
   directory. Keeping their coordinates is safe because project-attributed
-  artifacts are excluded from the CLI's version maps.
+  coordinates are excluded from the version DIFF (they stay in the version
+  maps on purpose -- suggest's file->coordinate attribution reads them).
 
 ## Memory and Speed Rules
 
