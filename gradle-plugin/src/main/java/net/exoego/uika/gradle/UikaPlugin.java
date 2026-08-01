@@ -127,8 +127,37 @@ public class UikaPlugin implements Plugin<Project> {
                         task.getConfigurationName().convention(configurationName);
                         task.notCompatibleWithConfigurationCache(
                                 "resolves configurations at execution time (PoC)");
+                        // Build the outputs the dump refers to (project-dependency jars and
+                        // this module's own classes) before dumping, so the CLI never scans
+                        // a classpath with unbuilt holes. Opt out with
+                        // -PuikaBuildOutputs=false for a resolution-only dump. One lazy
+                        // provider, evaluated at task-graph time: the java plugin may not be
+                        // applied yet at registration, and the property may be set after
+                        // apply. A Configuration is Buildable, so depending on it builds
+                        // project dependencies' jars; the main SourceSetOutput builds this
+                        // module's classes (matching the dumped classesDirs).
+                        task.dependsOn(p.provider(() -> {
+                            if (!buildOutputs(root)) {
+                                return java.util.List.of();
+                            }
+                            var dependencies = new java.util.ArrayList<>();
+                            var conf = p.getConfigurations().findByName(
+                                    task.getConfigurationName().get());
+                            if (conf != null && conf.isCanBeResolved()) {
+                                dependencies.add(conf);
+                            }
+                            var main = DumpModuleClasspathTask.mainSourceSet(p);
+                            if (main != null) {
+                                dependencies.add(main.getOutput());
+                            }
+                            return dependencies;
+                        }));
                     });
             merge.configure(m -> m.getFragments().from(moduleTask));
         });
+    }
+
+    private static boolean buildOutputs(Project root) {
+        return !"false".equals(String.valueOf(root.findProperty("uikaBuildOutputs")));
     }
 }

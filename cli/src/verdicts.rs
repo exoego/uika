@@ -29,6 +29,11 @@ struct VerdictRecord<'a> {
     verdict: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<&'static str>,
+    /// Module label of the per-module upgrade-check run that produced this record
+    /// (modules sharing one deduplicated run are comma-joined). Absent for plain
+    /// check, so the probe's evaluation surface is unchanged there.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    module: Option<&'a str>,
 }
 
 /// Writes one JSON line per reference verdict. `out` is `Err` once the stream
@@ -36,6 +41,7 @@ struct VerdictRecord<'a> {
 /// exclusive by construction, and `record` is a no-op after a failure.
 pub struct VerdictWriter {
     out: std::result::Result<Box<dyn Write>, String>,
+    module: Option<String>,
 }
 
 fn truncated(e: impl std::fmt::Display) -> String {
@@ -48,7 +54,13 @@ impl VerdictWriter {
             .with_context(|| format!("cannot create verdicts output {}", path.display()))?;
         Ok(Self {
             out: Ok(Box::new(BufWriter::new(file))),
+            module: None,
         })
+    }
+
+    /// Label subsequent records with the per-module run that produces them (None to clear).
+    pub fn set_module(&mut self, module: Option<String>) {
+        self.module = module;
     }
 
     pub fn record(
@@ -65,6 +77,7 @@ impl VerdictWriter {
             reference,
             verdict,
             reason,
+            module: self.module.as_deref(),
         };
         let result = match &mut self.out {
             Ok(out) => (|| -> std::io::Result<()> {
@@ -163,6 +176,7 @@ mod tests {
 
         let mut w = VerdictWriter {
             out: Ok(Box::new(FailingWriter)),
+            module: None,
         };
         let r = SymbolRef {
             kind: RefKind::Class,

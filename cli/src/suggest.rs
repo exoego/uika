@@ -21,19 +21,74 @@ pub fn annotate(
     after: &Universe,
     changes: &[DependencyChange],
 ) {
-    if violations.is_empty() {
-        return;
-    }
-    let file_coord = file_coordinates(before, after);
-    let owner_change = owner_changes(before, changes);
+    Annotator::new(before, after).annotate(violations, changes);
+}
 
-    for v in violations.iter_mut() {
-        let Some(&ci) = owner_change.get(&v.reference.owner) else {
-            continue;
-        };
-        let change = &changes[ci];
-        let referenced_by = file_coord.get(v.source.as_str()).cloned();
-        v.suggestion = Some(build(change, referenced_by));
+/// Reusable annotation state for callers that annotate several violation sets against the
+/// same dump pair (the per-module upgrade-check annotates once per run): the file->coordinate
+/// map and each before-side jar's class-name listing depend only on the universes, so they
+/// are built or read once instead of once per run.
+pub struct Annotator<'a> {
+    before: &'a Universe,
+    file_coord: FxHashMap<String, String>,
+    class_names_by_file: FxHashMap<std::path::PathBuf, Vec<Sym>>,
+}
+
+impl<'a> Annotator<'a> {
+    pub fn new(before: &'a Universe, after: &'a Universe) -> Self {
+        Self {
+            before,
+            file_coord: file_coordinates(before, after),
+            class_names_by_file: FxHashMap::default(),
+        }
+    }
+
+    /// See [`annotate`]. `changes` may be the universe-wide list or one module's own.
+    pub fn annotate(&mut self, violations: &mut [Violation], changes: &[DependencyChange]) {
+        if violations.is_empty() {
+            return;
+        }
+        let owner_change = self.owner_changes(changes);
+
+        for v in violations.iter_mut() {
+            let Some(&ci) = owner_change.get(&v.reference.owner) else {
+                continue;
+            };
+            let change = &changes[ci];
+            let referenced_by = self.file_coord.get(v.source.as_str()).cloned();
+            v.suggestion = Some(build(change, referenced_by));
+        }
+    }
+
+    /// owner class -> index into `changes`, by reading the before-side JARs of each changed
+    /// coordinate (removed classes live there; classes losing only a member are there too).
+    fn owner_changes(&mut self, changes: &[DependencyChange]) -> FxHashMap<Sym, usize> {
+        let mut map = FxHashMap::default();
+        for (i, change) in changes.iter().enumerate() {
+            if change.kind == ChangeKind::Added {
+                continue;
+            }
+            let Some((group, name)) = change.coordinate.split_once(':') else {
+                continue;
+            };
+            let Some(versions) = self
+                .before
+                .versions
+                .get(&(group.to_string(), name.to_string()))
+            else {
+                continue;
+            };
+            for file in versions.values() {
+                let owners = self
+                    .class_names_by_file
+                    .entry(file.clone())
+                    .or_insert_with(|| class_names(file));
+                for owner in owners {
+                    map.entry(*owner).or_insert(i);
+                }
+            }
+        }
+        map
     }
 }
 
@@ -46,29 +101,6 @@ fn file_coordinates(before: &Universe, after: &Universe) -> FxHashMap<String, St
             for (version, file) in versions {
                 map.entry(file.display().to_string())
                     .or_insert_with(|| format!("{group}:{name}:{version}"));
-            }
-        }
-    }
-    map
-}
-
-/// owner class -> index into `changes`, by reading the before-side JARs of each changed
-/// coordinate (removed classes live there; classes losing only a member are there too).
-fn owner_changes(before: &Universe, changes: &[DependencyChange]) -> FxHashMap<Sym, usize> {
-    let mut map = FxHashMap::default();
-    for (i, change) in changes.iter().enumerate() {
-        if change.kind == ChangeKind::Added {
-            continue;
-        }
-        let Some((group, name)) = change.coordinate.split_once(':') else {
-            continue;
-        };
-        let Some(versions) = before.versions.get(&(group.to_string(), name.to_string())) else {
-            continue;
-        };
-        for file in versions.values() {
-            for owner in class_names(file) {
-                map.entry(owner).or_insert(i);
             }
         }
     }

@@ -5,6 +5,7 @@ import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.component.ComponentIdentifier;
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier;
 import org.gradle.api.artifacts.result.ResolvedArtifactResult;
 import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.plugins.JavaPluginExtension;
@@ -45,6 +46,13 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
     @Input
     public abstract Property<String> getConfigurationName();
 
+    /** The main source set, or null without a Java-family plugin (one spelling for the
+     * dump and the uikaBuildOutputs dependsOn wiring). */
+    static SourceSet mainSourceSet(Project p) {
+        JavaPluginExtension javaExt = p.getExtensions().findByType(JavaPluginExtension.class);
+        return javaExt == null ? null : javaExt.getSourceSets().findByName("main");
+    }
+
     @TaskAction
     public void dump() throws IOException {
         Project p = getProject();
@@ -67,18 +75,30 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
         json.append(",\"classesDirs\":[");
         boolean first = true;
         if (javaExt != null) {
-            SourceSet main = javaExt.getSourceSets().findByName("main");
+            SourceSet main = mainSourceSet(p);
             if (main != null) {
+                boolean any = false;
                 for (File dir : main.getOutput().getClassesDirs().getFiles()) {
                     // Do not include declared but unbuilt outputs (java/main in Kotlin-only modules, etc.).
                     if (!dir.exists()) {
                         continue;
                     }
+                    any = true;
                     if (!first) {
                         json.append(',');
                     }
                     first = false;
                     json.append(quote(dir.getAbsolutePath()));
+                }
+                // A module with sources but no built output would silently drop out of the
+                // scan (and out of the reachability roots); say so instead. Resources are
+                // not compilable, so a resources-only module must not warn (allSource
+                // includes them); allJava alone would miss Kotlin-only modules.
+                if (!any && !main.getAllSource().minus(main.getResources()).isEmpty()) {
+                    getLogger().warn(
+                            "uika: {} has no built classes; its own classes will not be checked"
+                                    + " (build first, or keep uikaBuildOutputs enabled)",
+                            p.getPath());
                 }
             }
         }
@@ -105,6 +125,14 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
                             .append(",\"name\":").append(quote(m.getModule()))
                             .append(",\"version\":").append(quote(m.getVersion()))
                             .append(',');
+                } else if (id instanceof ProjectComponentIdentifier project
+                        && project.getBuild().getBuildPath().equals(":")) {
+                    // Attribute project-dependency jars to their producing module so uika can
+                    // fall back to that module's classesDirs when the jar was never built.
+                    // Only for this build's own projects: an included build's project path
+                    // (":lib") can collide with a module of this build, and the fallback
+                    // would then scan the wrong module's classes.
+                    json.append("\"project\":").append(quote(project.getProjectPath())).append(',');
                 }
                 json.append("\"file\":").append(quote(artifact.getFile().getAbsolutePath()));
                 json.append('}');

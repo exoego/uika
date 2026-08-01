@@ -10,19 +10,6 @@
     <version>1.0.0</version>
   </parent>
 
-  <artifactId>dummy-maven-app</artifactId>
+  <artifactId>dummy-maven-lib</artifactId>
   <packaging>jar</packaging>
-
-  <dependencies>
-    <dependency>
-      <groupId>net.exoego.uika.it</groupId>
-      <artifactId>dummy-maven-lib</artifactId>
-      <version>1.0.0</version>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.commons</groupId>
-      <artifactId>commons-lang3</artifactId>
-      <version>3.20.0</version>
-    </dependency>
-  </dependencies>
 </project>

@@ -606,17 +606,7 @@ pub fn check_scanned(
     // is already deterministic, but add_final_violations discovers violations in
     // FxHashMap iteration order, which varies run to run. Sorting here makes the
     // JSON report (and the golden files pinning it) reproducible.
-    violations.sort_by_cached_key(|v| {
-        (
-            v.source.as_str(),
-            v.source_class.as_str(),
-            v.reference.owner.as_str(),
-            v.reference
-                .member
-                .map(|m| (m.name.as_str(), m.descriptor.as_str())),
-            v.reason.clone(),
-        )
-    });
+    violations.sort_by_cached_key(violation_sort_key);
 
     if let Some(result) = &reach_result {
         for v in &mut violations {
@@ -645,6 +635,29 @@ pub fn check_scanned(
         reachability_computed: reach_result.is_some(),
         app_roots_matched: reach_result.as_ref().map(|r| r.app_root_matched),
     }
+}
+
+/// Canonical report order for violations, by string value (never Sym ids — interning order
+/// is nondeterministic). Shared by check_scanned and the per-module upgrade-check merger so
+/// the two orders cannot drift.
+pub fn violation_sort_key(
+    v: &Violation,
+) -> (
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<(&'static str, &'static str)>,
+    String,
+) {
+    (
+        v.source.as_str(),
+        v.source_class.as_str(),
+        v.reference.owner.as_str(),
+        v.reference
+            .member
+            .map(|m| (m.name.as_str(), m.descriptor.as_str())),
+        v.reason.clone(),
+    )
 }
 
 /// Check consumer-side classes (pass 1 + pass 2 + verdict). Reachability is not computed here.
@@ -853,6 +866,7 @@ fn push_violation(
             reason: reason.to_string(),
             reachable: None,
             suggestion: None,
+            modules: Vec::new(),
         });
     }
 }

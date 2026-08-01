@@ -111,6 +111,11 @@ pub enum Command {
         /// to this file, for answer-checking against a real JVM (tools/jvm-probe)
         #[arg(long)]
         verdicts_json: Option<PathBuf>,
+        /// Check the union of all modules' classpaths as one flat classpath instead of
+        /// checking each module against its own resolved classpath. Also the automatic
+        /// fallback when the dumps carry no per-module artifact data
+        #[arg(long)]
+        merged: bool,
     },
     /// Debugging: dump the API surface extracted from a JAR or directory
     Dump { path: PathBuf },

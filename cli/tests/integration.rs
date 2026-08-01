@@ -828,3 +828,366 @@ fn detects_new_on_class_that_became_abstract() {
             .collect::<Vec<_>>()
     );
 }
+
+/// Runs the uika binary for end-to-end upgrade-check coverage (flags, JSON shape, exit code).
+fn run_uika(args: &[&str]) -> (i32, String, String) {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_uika"))
+        .args(args)
+        .output()
+        .expect("run uika binary");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+/// Writes the before/after dump JSON into a fresh scratch dir, runs `uika upgrade-check`
+/// with any extra args, cleans up, and returns (exit code, stdout, stderr). The six
+/// per-module e2e tests differ only in their dump JSON and assertions.
+fn run_upgrade_check_with_dumps(
+    tag: &str,
+    before: &str,
+    after: &str,
+    extra: &[&str],
+) -> (i32, String, String) {
+    let dir = std::env::temp_dir().join(format!("uika-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let before_path = dir.join("before.json");
+    let after_path = dir.join("after.json");
+    std::fs::write(&before_path, before).unwrap();
+    std::fs::write(&after_path, after).unwrap();
+    let mut args = vec![
+        "upgrade-check".to_string(),
+        "--before".to_string(),
+        before_path.display().to_string(),
+        "--after".to_string(),
+        after_path.display().to_string(),
+    ];
+    args.extend(extra.iter().map(|s| s.to_string()));
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let result = run_uika(&arg_refs);
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
+/// Per-module upgrade-check judges each module against its own resolution. Two properties on
+/// one fixture layout (the netty shape from a real multi-module monorepo incident):
+///
+/// - A module pinned to the old version is skipped, so its jar's classes are never judged
+///   against the sibling module's newer version (the cross-version false-positive class).
+/// - The merged universe still resolves the old version somewhere (the pinned module), so the
+///   flat diff has no old jars and reports NOTHING for the real break in the upgrading module
+///   (a false negative per-module mode fixes).
+#[test]
+fn per_module_upgrade_check_gates_on_each_modules_own_resolution() {
+    let old_sc = fixture("opentelemetry-sdk-common-1.42.1.jar");
+    let new_sc = fixture("opentelemetry-sdk-common-1.60.1.jar");
+    let sender = fixture("opentelemetry-exporter-sender-okhttp-1.42.1.jar");
+    let dump = |app_sc: &std::path::Path, app_sc_version: &str| {
+        format!(
+            r#"{{"modules":[
+                {{"module":":app","classesDirs":[],"artifacts":[
+                    {{"group":"io.opentelemetry","name":"opentelemetry-sdk-common","version":"{app_sc_version}","file":"{}"}},
+                    {{"group":"io.opentelemetry","name":"opentelemetry-exporter-sender-okhttp","version":"1.42.1","file":"{}"}}
+                ]}},
+                {{"module":":pinned","classesDirs":[],"artifacts":[
+                    {{"group":"io.opentelemetry","name":"opentelemetry-sdk-common","version":"1.42.1","file":"{}"}},
+                    {{"group":"io.opentelemetry","name":"opentelemetry-exporter-sender-okhttp","version":"1.42.1","file":"{}"}}
+                ]}}
+            ]}}"#,
+            app_sc.display(),
+            sender.display(),
+            old_sc.display(),
+            sender.display(),
+        )
+    };
+    let before = dump(&old_sc, "1.42.1");
+    let after = dump(&new_sc, "1.60.1");
+
+    // Per-module (default): :app's upgrade is caught and attributed; :pinned is skipped.
+    let (code, stdout, stderr) =
+        run_upgrade_check_with_dumps("permod-e2e", &before, &after, &["--json"]);
+    assert_eq!(code, 1, "stdout:\n{stdout}\nstderr:\n{stderr}");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let violations = json["violations"].as_array().unwrap();
+    assert!(
+        violations.iter().any(|v| {
+            v["source_class"] == "io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil"
+                && v["modules"] == serde_json::json!([":app"])
+        }),
+        "expected the :app-attributed DaemonThreadFactory break:\n{stdout}"
+    );
+    assert!(
+        violations.iter().all(|v| !v["modules"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!(":pinned"))),
+        "the pinned module must never be judged against the sibling's upgrade:\n{stdout}"
+    );
+    let runs = json["module_runs"]["outcomes"].as_array().unwrap();
+    assert_eq!(runs.len(), 1, "{stdout}");
+    assert_eq!(runs[0]["modules"], serde_json::json!([":app"]));
+    assert_eq!(json["module_runs"]["unchanged_modules"], 1, "{stdout}");
+
+    // Text mode carries the same attribution for humans.
+    let (code, stdout, _) = run_upgrade_check_with_dumps("permod-e2e", &before, &after, &[]);
+    assert_eq!(code, 1);
+    assert!(
+        stdout.contains("per-module check: 1 of 2 modules"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("modules: :app"), "{stdout}");
+
+    // --merged keeps the flat behavior: 1.42.1 is still resolved by :pinned, so the flat
+    // diff has no removed version and the real break in :app goes unreported.
+    let (code, stdout, _) =
+        run_upgrade_check_with_dumps("permod-e2e", &before, &after, &["--merged", "--json"]);
+    assert_eq!(code, 0, "{stdout}");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(json["violations"].is_null(), "{stdout}");
+}
+
+/// A project-dependency artifact that was never built (jar path missing) falls back to the
+/// producing module's classesDirs from the same dump, so the reference is still checked
+/// instead of being silently skipped.
+#[test]
+fn per_module_project_dependency_falls_back_to_classes_dirs() {
+    let old_sc = fixture("opentelemetry-sdk-common-1.42.1.jar");
+    let new_sc = fixture("opentelemetry-sdk-common-1.60.1.jar");
+    let sender = fixture("opentelemetry-exporter-sender-okhttp-1.42.1.jar");
+
+    // :app depends on project :sender-lib whose jar is unbuilt; :sender-lib's classesDirs
+    // stand in for its output (a jar path works: scan targets may be jars or dirs).
+    let dump = |sc: &std::path::Path, version: &str| {
+        format!(
+            r#"{{"modules":[
+                {{"module":":app","classesDirs":[],"artifacts":[
+                    {{"group":"io.opentelemetry","name":"opentelemetry-sdk-common","version":"{version}","file":"{}"}},
+                    {{"file":"/nonexistent/uika-test/sender-lib.jar","project":":sender-lib"}}
+                ]}},
+                {{"module":":sender-lib","classesDirs":["{}"],"artifacts":[]}}
+            ]}}"#,
+            sc.display(),
+            sender.display(),
+        )
+    };
+
+    let (code, stdout, stderr) = run_upgrade_check_with_dumps(
+        "permod-fallback",
+        &dump(&old_sc, "1.42.1"),
+        &dump(&new_sc, "1.60.1"),
+        &["--json"],
+    );
+    assert_eq!(code, 1, "stdout:\n{stdout}\nstderr:\n{stderr}");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(
+        json["violations"].as_array().unwrap().iter().any(|v| {
+            v["source_class"] == "io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil"
+                && v["modules"] == serde_json::json!([":app"])
+        }),
+        "the fallback classesDirs must be scanned in :app's run:\n{stdout}"
+    );
+    assert!(
+        stderr.contains("is not built; scanning module :sender-lib's classesDirs"),
+        "stderr:\n{stderr}"
+    );
+}
+
+/// The stay-vs-upgrade shape: module :pinned stays on a THIRD version of the coordinate
+/// (not the upgrading module's old version), module :upgrader moves old -> new across a
+/// breaking change. The pinned module's classpath must never be judged against the
+/// upgrading module's new version, and the break must be attributed to :upgrader alone.
+#[test]
+fn per_module_check_detects_upgrade_beside_module_pinned_to_third_version() {
+    let coroutines_old = fixture("kotlinx-coroutines-core-jvm-1.7.1.jar");
+    let coroutines_new = fixture("kotlinx-coroutines-core-jvm-1.11.0.jar");
+    let ktor_io = fixture("ktor-io-jvm-2.3.13.jar");
+
+    // :pinned resolves a distinct third version (the version string is what the diff sees;
+    // the 1.7.1 jar stands in for its bytes). :upgrader moves 1.7.1 -> 1.11.0, which
+    // removed EventLoopKt.processNextEventInCurrentThread that ktor-io references.
+    let dump = |upgrader_version: &str, upgrader_jar: &std::path::Path| {
+        format!(
+            r#"{{"modules":[
+                {{"module":":pinned","classesDirs":[],"artifacts":[
+                    {{"group":"org.jetbrains.kotlinx","name":"kotlinx-coroutines-core-jvm","version":"1.5.0","file":"{}"}},
+                    {{"group":"io.ktor","name":"ktor-io-jvm","version":"2.3.13","file":"{}"}}
+                ]}},
+                {{"module":":upgrader","classesDirs":[],"artifacts":[
+                    {{"group":"org.jetbrains.kotlinx","name":"kotlinx-coroutines-core-jvm","version":"{upgrader_version}","file":"{}"}},
+                    {{"group":"io.ktor","name":"ktor-io-jvm","version":"2.3.13","file":"{}"}}
+                ]}}
+            ]}}"#,
+            coroutines_old.display(),
+            ktor_io.display(),
+            upgrader_jar.display(),
+            ktor_io.display(),
+        )
+    };
+
+    let (code, stdout, stderr) = run_upgrade_check_with_dumps(
+        "thirdver-e2e",
+        &dump("1.7.1", &coroutines_old),
+        &dump("1.11.0", &coroutines_new),
+        &["--json"],
+    );
+    assert_eq!(code, 1, "stdout:\n{stdout}\nstderr:\n{stderr}");
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let violations = json["violations"].as_array().unwrap();
+    assert!(
+        violations.iter().any(|v| {
+            v["source_class"] == "io/ktor/utils/io/jvm/javaio/BlockingAdapter"
+                && v["modules"] == serde_json::json!([":upgrader"])
+        }),
+        "expected the BlockingAdapter break attributed to :upgrader only:\n{stdout}"
+    );
+    assert!(
+        violations.iter().all(|v| !v["modules"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!(":pinned"))),
+        "the third-version pinned module must never be judged against 1.11.0:\n{stdout}"
+    );
+    assert_eq!(json["module_runs"]["unchanged_modules"], 1, "{stdout}");
+    let runs = json["module_runs"]["outcomes"].as_array().unwrap();
+    assert_eq!(runs.len(), 1, "{stdout}");
+    assert_eq!(runs[0]["modules"], serde_json::json!([":upgrader"]));
+}
+
+/// A version swap between modules leaves the universe-wide change list empty, but the
+/// per-module diffs still find the break; the text report must show it (an empty global
+/// header must not swallow the violations) and the per-run suggestion must carry the
+/// module's own before -> after versions.
+#[test]
+fn per_module_check_reports_break_when_global_version_set_is_unchanged() {
+    let old_sc = fixture("opentelemetry-sdk-common-1.42.1.jar");
+    let new_sc = fixture("opentelemetry-sdk-common-1.60.1.jar");
+    let sender = fixture("opentelemetry-exporter-sender-okhttp-1.42.1.jar");
+
+    let dump = |a_version: &str,
+                a_jar: &std::path::Path,
+                b_version: &str,
+                b_jar: &std::path::Path| {
+        format!(
+            r#"{{"modules":[
+                {{"module":":a","classesDirs":[],"artifacts":[
+                    {{"group":"io.opentelemetry","name":"opentelemetry-sdk-common","version":"{a_version}","file":"{}"}},
+                    {{"group":"io.opentelemetry","name":"opentelemetry-exporter-sender-okhttp","version":"1.42.1","file":"{}"}}
+                ]}},
+                {{"module":":b","classesDirs":[],"artifacts":[
+                    {{"group":"io.opentelemetry","name":"opentelemetry-sdk-common","version":"{b_version}","file":"{}"}}
+                ]}}
+            ]}}"#,
+            a_jar.display(),
+            sender.display(),
+            b_jar.display(),
+        )
+    };
+
+    // :a upgrades 1.42.1 -> 1.60.1 (break), :b downgrades 1.60.1 -> 1.42.1: the union
+    // version set {1.42.1, 1.60.1} is identical on both sides.
+    let (code, stdout, stderr) = run_upgrade_check_with_dumps(
+        "swap-e2e",
+        &dump("1.42.1", &old_sc, "1.60.1", &new_sc),
+        &dump("1.60.1", &new_sc, "1.42.1", &old_sc),
+        &[],
+    );
+    assert_eq!(code, 1, "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert!(stdout.contains("dependency changes: none"), "{stdout}");
+    // Both sides of the swap changed their own resolution (a downgrade is a change too).
+    assert!(
+        stdout.contains("per-module check: 2 of 2 modules"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("io/opentelemetry/sdk/internal/DaemonThreadFactory"),
+        "the swap-hidden break must still be reported:\n{stdout}"
+    );
+    // The per-run suggestion quotes :a's own move, which the empty global list cannot.
+    assert!(
+        stdout.contains("removed by: io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1"),
+        "{stdout}"
+    );
+}
+
+/// A module renamed while upgrading (no same-name before module) is checked against the
+/// union's before versions instead of being silently skipped.
+#[test]
+fn per_module_check_covers_renamed_module_via_union_fallback() {
+    let old_sc = fixture("opentelemetry-sdk-common-1.42.1.jar");
+    let new_sc = fixture("opentelemetry-sdk-common-1.60.1.jar");
+    let sender = fixture("opentelemetry-exporter-sender-okhttp-1.42.1.jar");
+
+    let dump = |name: &str, version: &str, jar: &std::path::Path| {
+        format!(
+            r#"{{"modules":[
+                {{"module":"{name}","classesDirs":[],"artifacts":[
+                    {{"group":"io.opentelemetry","name":"opentelemetry-sdk-common","version":"{version}","file":"{}"}},
+                    {{"group":"io.opentelemetry","name":"opentelemetry-exporter-sender-okhttp","version":"1.42.1","file":"{}"}}
+                ]}}
+            ]}}"#,
+            jar.display(),
+            sender.display(),
+        )
+    };
+
+    let (code, stdout, stderr) = run_upgrade_check_with_dumps(
+        "rename-e2e",
+        &dump(":server", "1.42.1", &old_sc),
+        &dump(":backend", "1.60.1", &new_sc),
+        &["--json"],
+    );
+    assert_eq!(code, 1, "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert!(
+        stderr.contains("module :backend is not in the before dump"),
+        "stderr:\n{stderr}"
+    );
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(
+        json["violations"].as_array().unwrap().iter().any(|v| {
+            v["source_class"] == "io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil"
+                && v["modules"] == serde_json::json!([":backend"])
+        }),
+        "the renamed module's upgrade must still be checked:\n{stdout}"
+    );
+}
+
+/// An after-side module whose artifact list vanished (partial build, failed resolution) is
+/// skipped as incomplete instead of being diffed as "every dependency removed".
+#[test]
+fn per_module_check_skips_module_with_vanished_artifacts() {
+    let old_sc = fixture("opentelemetry-sdk-common-1.42.1.jar");
+    let sender = fixture("opentelemetry-exporter-sender-okhttp-1.42.1.jar");
+
+    let before = format!(
+        r#"{{"modules":[
+            {{"module":":a","classesDirs":[],"artifacts":[
+                {{"group":"io.opentelemetry","name":"opentelemetry-sdk-common","version":"1.42.1","file":"{}"}},
+                {{"group":"io.opentelemetry","name":"opentelemetry-exporter-sender-okhttp","version":"1.42.1","file":"{}"}}
+            ]}}
+        ]}}"#,
+        old_sc.display(),
+        sender.display(),
+    );
+    // :a still exists but resolved nothing; a second module keeps per-module mode on.
+    let after = format!(
+        r#"{{"modules":[
+            {{"module":":a","classesDirs":[],"artifacts":[]}},
+            {{"module":":b","classesDirs":[],"artifacts":[
+                {{"group":"io.opentelemetry","name":"opentelemetry-sdk-common","version":"1.42.1","file":"{}"}}
+            ]}}
+        ]}}"#,
+        old_sc.display(),
+    );
+
+    let (code, stdout, stderr) =
+        run_upgrade_check_with_dumps("incomplete-e2e", &before, &after, &["--json"]);
+    assert_eq!(code, 0, "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert!(
+        stderr.contains("module :a lists no resolved artifacts in the after dump"),
+        "stderr:\n{stderr}"
+    );
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["module_runs"]["incomplete_modules"], 1, "{stdout}");
+    assert!(json["violations"].is_null(), "{stdout}");
+}

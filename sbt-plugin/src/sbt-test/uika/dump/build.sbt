@@ -1,6 +1,24 @@
 ThisBuild / scalaVersion := "2.12.21"
 
+lazy val core = (project in file("core"))
+  .settings(
+    Compile / sourceGenerators += Def.task {
+      val out = (Compile / sourceManaged).value / "example" / "Core.scala"
+      IO.write(
+        out,
+        """package example
+          |
+          |final class Core {
+          |  def name: String = "core"
+          |}
+          |""".stripMargin
+      )
+      Seq(out)
+    }.taskValue
+  )
+
 lazy val app = (project in file("app"))
+  .dependsOn(core)
   .settings(
     libraryDependencies += "org.apache.commons" % "commons-lang3" % "3.20.0",
     Compile / sourceGenerators += Def.task {
@@ -10,7 +28,7 @@ lazy val app = (project in file("app"))
         """package example
           |
           |final class App {
-          |  def message: String = "ok"
+          |  def message: String = new Core().name
           |}
           |""".stripMargin
       )
@@ -41,9 +59,26 @@ checkDump := {
 
   val artifactRefs = module("artifactRefs").asInstanceOf[List[Double]].map(_.toInt)
   assert(artifactRefs.map(artifacts).exists { artifact =>
-    artifact("group") == "org.apache.commons" &&
-      artifact("name") == "commons-lang3" &&
-      artifact("version") == "3.20.0" &&
+    artifact.get("group").contains("org.apache.commons") &&
+      artifact.get("name").contains("commons-lang3") &&
+      artifact.get("version").contains("3.20.0") &&
       (roots(artifact("root").asInstanceOf[Double].toInt) + artifact("path")).endsWith("commons-lang3-3.20.0.jar")
   }, module)
+
+  // The inter-module dependency appears on :app's own classpath as a coordinate-less
+  // entry pointing at :core's class directory, so per-module checking sees it.
+  val coreClassesDir = (core / Compile / classDirectory).value.getAbsolutePath
+  assert(artifactRefs.map(artifacts).exists { artifact =>
+    !artifact.contains("group") &&
+      roots(artifact("root").asInstanceOf[Double].toInt) + artifact("path") == coreClassesDir
+  }, s"no internal-dependency entry for $coreClassesDir in $module")
+
+  // :core itself is dumped as a module with its own classesDirs.
+  val coreModule = json("modules")
+    .asInstanceOf[List[Map[String, Any]]]
+    .find(_("module") == ":core")
+    .getOrElse(sys.error(s":core module is missing from $json"))
+  assert(coreModule("classesDirs").asInstanceOf[List[Map[String, Any]]].exists { dir =>
+    roots(dir("root").asInstanceOf[Double].toInt) + dir("path") == coreClassesDir
+  }, coreModule)
 }

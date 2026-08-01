@@ -69,9 +69,22 @@ object UikaPlugin extends AutoPlugin {
   override def projectSettings: Seq[Setting[_]] = Seq(
     uikaModuleClasspath := {
       val modulePath = thisProject.value.id
-      val classDirs = (Compile / products).value
+      val ownProducts = (Compile / products).value
+      val classDirs = ownProducts
         .filter(_.exists)
         .map(_.getAbsolutePath)
+      // Inter-module dependencies (classes dirs, or jars with exportJars := true). They are
+      // not in update.value, so without these entries a module's classpath would be missing
+      // its sibling modules and per-module checking could not resolve inter-module
+      // references. Evaluating the task also compiles those siblings, so the paths exist.
+      // internalDependencyClasspath also returns this project's OWN Compile products
+      // (Runtime extends Compile); classesDirs already carries those, so keep siblings only.
+      val ownProductSet = ownProducts.map(_.getAbsoluteFile).toSet
+      val internalArtifacts = (Runtime / internalDependencyClasspath).value
+        .map(_.data.getAbsoluteFile)
+        .distinct
+        .filterNot(ownProductSet)
+        .map(file => new ClasspathDump.Artifact(null, null, null, file.getAbsolutePath))
       val runtimeFiles = (Runtime / dependencyClasspath).value
         .map(_.data.getAbsoluteFile)
         .toSet
@@ -88,7 +101,11 @@ object UikaPlugin extends AutoPlugin {
               )
           }
         }
-      new ClasspathDump.Module(":" + modulePath, classDirs.asJava, artifacts.asJava)
+      new ClasspathDump.Module(
+        ":" + modulePath,
+        classDirs.asJava,
+        (internalArtifacts ++ artifacts).asJava
+      )
     },
     uikaDumpClasspath := {
       val modules = uikaModuleClasspath.all(ScopeFilter(inAnyProject)).value

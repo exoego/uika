@@ -221,6 +221,16 @@ fn write_suggestion_groups(out: &mut String, violations: &[&Violation]) {
         if let Some(rb) = &s.referenced_by {
             writeln!(out, "   referenced by: {rb}").unwrap();
         }
+        // Per-module upgrade-check: the modules whose classpaths exhibit this group.
+        let mut modules: Vec<&str> = vs
+            .iter()
+            .flat_map(|v| v.modules.iter().map(String::as_str))
+            .collect();
+        modules.sort_unstable();
+        modules.dedup();
+        if !modules.is_empty() {
+            writeln!(out, "   modules: {}", modules.join(", ")).unwrap();
+        }
         let mut refs = vs.clone();
         refs.sort_by_cached_key(|v| (v.source_class.as_str(), ref_target(v), v.reason.as_str()));
         for v in refs {
@@ -252,7 +262,12 @@ fn write_source_groups(out: &mut String, violations: &[&Violation]) {
         for (class, vs) in by_class {
             writeln!(out, "  {class}").unwrap();
             for v in vs {
-                writeln!(out, "    -> {}: {}", v.reason, ref_target(v)).unwrap();
+                let modules = if v.modules.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", v.modules.join(", "))
+                };
+                writeln!(out, "    -> {}: {}{modules}", v.reason, ref_target(v)).unwrap();
             }
         }
     }
@@ -322,18 +337,45 @@ pub fn check_text(report: &CheckReport) -> String {
     out
 }
 
-/// upgrade-check: dependency-diff header + check result if a check ran.
+/// One deduplicated per-module check run (modules sharing identical inputs share one run).
+#[derive(Serialize)]
+pub struct ModuleOutcome {
+    pub modules: Vec<String>,
+    pub scanned_classes: usize,
+    /// Post-exclusion violations attributed to any module of this run.
+    pub broken: usize,
+    pub unknown_refs: usize,
+}
+
+/// How the per-module upgrade-check partitioned the dump's modules.
+#[derive(Serialize)]
+pub struct ModuleRunSummary {
+    pub outcomes: Vec<ModuleOutcome>,
+    pub total_modules: usize,
+    /// Modules whose own resolution lost no version: skipped, they cannot break.
+    pub unchanged_modules: usize,
+    /// Modules present only in the after dump with nothing checkable: skipped.
+    pub new_modules: usize,
+    /// After-side modules whose artifact list vanished (partial dump): skipped, warned.
+    pub incomplete_modules: usize,
+}
+
+/// upgrade-check: dependency-diff header + per-module run summary + check result if a check ran.
+/// The header never swallows the rest: per-module runs gate on each module's OWN diff, which
+/// can find violations while the universe-wide change list is empty (a version swap between
+/// modules), so the summary and result print regardless of `changes`.
 pub fn upgrade_text(
     changes: &[crate::gradle::DependencyChange],
     result: Option<&CheckReport>,
+    modules: Option<&ModuleRunSummary>,
 ) -> String {
     use crate::gradle::ChangeKind;
     let mut out = String::new();
     if changes.is_empty() {
         writeln!(out, "dependency changes: none").unwrap();
-        return out;
+    } else {
+        writeln!(out, "dependency changes: {}", changes.len()).unwrap();
     }
-    writeln!(out, "dependency changes: {}", changes.len()).unwrap();
     for c in changes {
         let label = match c.kind {
             ChangeKind::Changed => "CHANGED",
@@ -357,6 +399,35 @@ pub fn upgrade_text(
         )
         .unwrap();
     }
+    if let Some(m) = modules {
+        writeln!(out).unwrap();
+        let checked: usize = m.outcomes.iter().map(|o| o.modules.len()).sum();
+        let mut notes = vec![format!("{} unchanged", m.unchanged_modules)];
+        if m.new_modules > 0 {
+            notes.push(format!("{} new", m.new_modules));
+        }
+        if m.incomplete_modules > 0 {
+            notes.push(format!("{} incomplete", m.incomplete_modules));
+        }
+        writeln!(
+            out,
+            "per-module check: {checked} of {} modules changed resolution ({})",
+            m.total_modules,
+            notes.join(", ")
+        )
+        .unwrap();
+        for o in &m.outcomes {
+            writeln!(
+                out,
+                "  {}  scanned {} classes, {} broken, {} unverified",
+                o.modules.join(", "),
+                o.scanned_classes,
+                o.broken,
+                o.unknown_refs
+            )
+            .unwrap();
+        }
+    }
     if let Some(result) = result {
         writeln!(out).unwrap();
         out.push_str(&check_text(result));
@@ -367,6 +438,8 @@ pub fn upgrade_text(
 #[derive(Serialize)]
 struct UpgradeJson<'a> {
     changes: &'a [crate::gradle::DependencyChange],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    module_runs: Option<&'a ModuleRunSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     violations: Option<&'a [Violation]>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -380,9 +453,11 @@ struct UpgradeJson<'a> {
 pub fn upgrade_json(
     changes: &[crate::gradle::DependencyChange],
     result: Option<&CheckReport>,
+    modules: Option<&ModuleRunSummary>,
 ) -> Result<String> {
     Ok(serde_json::to_string_pretty(&UpgradeJson {
         changes,
+        module_runs: modules,
         violations: result.map(|r| r.violations.as_slice()),
         scanned_classes: result.map(|r| r.scanned_classes),
         unknown_refs: result.map(|r| r.unknown_refs),
@@ -442,6 +517,7 @@ mod tests {
                 after: "2".to_string(),
                 advice: a.to_string(),
             }),
+            modules: Vec::new(),
         }
     }
 

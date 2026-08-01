@@ -139,6 +139,121 @@ final class UikaPluginIntegrationTest {
                 "dump does not reflect the dependency added after the first run");
     }
 
+    /// Multi-module: a project dependency is attributed to its producing module ("project"
+    /// key), and the default uikaBuildOutputs wiring builds the dependency jar and the
+    /// module's own classes before dumping (no manual dependsOn, no pre-build step).
+    @Test
+    void attributesProjectDependenciesAndBuildsOutputsByDefault() throws Exception {
+        Path output = projectDir.resolve("classpath.json");
+        writeMultiModuleProject();
+
+        BuildResult result = runDump(output);
+        assertTaskSuccess(result, ":lib:jar");
+        assertTaskSuccess(result, ":app:compileJava");
+        assertTaskSuccess(result, ":app:uikaDumpModuleClasspath");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> modules = (List<Map<String, Object>>) doc.get("modules");
+        Map<String, Object> appModule = modules.stream()
+                .filter(module -> Objects.equals(":app", module.get("module")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(":app module is missing from " + modules));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> artifacts = (List<Map<String, Object>>) doc.get("artifacts");
+        @SuppressWarnings("unchecked")
+        List<Number> refs = (List<Number>) appModule.get("artifactRefs");
+        Map<String, Object> libArtifact = refs.stream()
+                .map(i -> artifacts.get(i.intValue()))
+                .filter(a -> Objects.equals(":lib", a.get("project")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        ":app has no artifact attributed to :lib in " + artifacts));
+        String libPath = rootedPath(doc, libArtifact);
+        assertTrue(libPath.endsWith("lib.jar"), libPath);
+        assertTrue(Files.isRegularFile(Path.of(libPath)),
+                "the dependsOn wiring must have built " + libPath);
+        // The module's own classes were compiled and dumped as classesDirs.
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> classesDirs =
+                (List<Map<String, Object>>) appModule.get("classesDirs");
+        assertFalse(classesDirs.isEmpty(), ":app classesDirs is empty: " + appModule);
+    }
+
+    /// -PuikaBuildOutputs=false keeps the old resolution-only dump: nothing is compiled,
+    /// and the unbuilt project-dependency jar still appears in the dump with its project
+    /// attribution, so the CLI can warn about (or substitute) the missing file instead of
+    /// silently losing the module from the classpath.
+    @Test
+    void buildOutputsOptOutSkipsCompilation() throws Exception {
+        Path output = projectDir.resolve("classpath.json");
+        writeMultiModuleProject();
+
+        BuildResult result = runDump(output, "-PuikaBuildOutputs=false");
+        assertTrue(result.task(":lib:jar") == null,
+                ":lib:jar must not run with uikaBuildOutputs=false");
+        assertTrue(result.task(":app:compileJava") == null,
+                ":app:compileJava must not run with uikaBuildOutputs=false");
+        assertTaskSuccess(result, ":app:uikaDumpModuleClasspath");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> artifacts = (List<Map<String, Object>>) doc.get("artifacts");
+        Map<String, Object> libArtifact = artifacts.stream()
+                .filter(a -> Objects.equals(":lib", a.get("project")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "unbuilt :lib jar missing from the resolution-only dump: " + artifacts));
+        assertTrue(rootedPath(doc, libArtifact).endsWith("lib.jar"));
+    }
+
+    private void writeMultiModuleProject() throws IOException {
+        write(projectDir.resolve("settings.gradle.kts"), """
+                rootProject.name = "dummy-uika-consumer"
+                include("app")
+                include("lib")
+                """);
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    id("net.exoego.uika")
+                }
+                """);
+        write(projectDir.resolve("lib/build.gradle.kts"), """
+                plugins {
+                    java
+                }
+                """);
+        write(projectDir.resolve("lib/src/main/java/example/Lib.java"), """
+                package example;
+
+                public final class Lib {
+                    public String name() {
+                        return "lib";
+                    }
+                }
+                """);
+        write(projectDir.resolve("app/build.gradle.kts"), """
+                plugins {
+                    java
+                }
+
+                dependencies {
+                    implementation(project(":lib"))
+                }
+                """);
+        write(projectDir.resolve("app/src/main/java/example/App.java"), """
+                package example;
+
+                public final class App {
+                    public String message() {
+                        return new Lib().name();
+                    }
+                }
+                """);
+    }
+
     private BuildResult runDump(Path output, String... extraArgs) {
         List<String> args = Stream.concat(
                 Stream.of("uikaDumpClasspath", "--stacktrace", "-PuikaOutput=" + output),

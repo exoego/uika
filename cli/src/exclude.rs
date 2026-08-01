@@ -203,6 +203,7 @@ mod tests {
             reason: reason.to_string(),
             reachable: None,
             suggestion: None,
+            modules: Vec::new(),
         }
     }
 
@@ -221,6 +222,7 @@ mod tests {
             reason: reason.to_string(),
             reachable: None,
             suggestion: None,
+            modules: Vec::new(),
         }
     }
 
