@@ -722,7 +722,7 @@ fn upgrade_check_per_module(
                 intern::Sym,
                 intern::Sym,
                 model::SymbolRef,
-                String,
+                model::Reason,
                 Option<String>,
             ),
             usize,
@@ -764,7 +764,7 @@ fn upgrade_check_per_module(
                     v.source,
                     v.source_class,
                     v.reference,
-                    v.reason.clone(),
+                    v.reason,
                     v.suggestion.as_ref().map(|s| s.advice.clone()),
                 );
                 match merged_index.get(&key) {

@@ -338,19 +338,26 @@ pass-2 classes are typically below 0.1% of the scan.
   Callable, long, TimeUnit, boolean)`), `<init>` as "constructor", and JAR
   sources shrunk to the file name. `$` stays in class names (part of the
   binary name).
+- Violation reasons are the closed enum `model.rs::Reason`, not strings. It
+  serializes through `Reason::as_str` (manual Serialize), so JSON, the
+  goldens, and the verdicts stream keep the exact human-readable strings, and
+  any ordering of reasons must also go through `as_str` — `Reason`
+  deliberately does not derive `Ord`, the same determinism rule as never
+  sorting by `Sym` id.
 - Unsuggested violations split by shape. Reference violations group by
   (pretty target, reason) — symbol-first, because the broken symbol is the
   unit a fix targets — with the referencing classes nested under `used by`.
-  Structural graph-walk violations (`class/method became final`, `extends
-  final class`, `method became abstract`, and the member-less `class kind
-  changed`) group by the scanned class, phrased as what that class does plus
-  the error the JVM raises; symbol-first would misattribute them, since the
-  broken thing is the scanned class itself. `is_structural` must stay in sync
-  with the reason strings check.rs emits — "class kind changed" exists in both
-  worlds and is told apart by `member.is_none()`.
+  Structural graph-walk violations (`ClassBecameFinal`, `MethodBecameFinal`,
+  `ExtendsFinalClass`, `MethodBecameAbstract`, and the member-less
+  `ClassKindChanged`) group by the scanned class, phrased as what that class
+  does plus the error the JVM raises; symbol-first would misattribute them,
+  since the broken thing is the scanned class itself. `ClassKindChanged`
+  exists in both worlds and is told apart by `member.is_none()`.
 - `runtime_error` maps each reference-style reason to the JVM error and the
-  moment it fires ("NoSuchMethodError at first call"); a new reason string
-  added in check.rs needs a mapping there or the line prints bare.
+  moment it fires ("NoSuchMethodError at first call"). It and `is_structural`
+  match exhaustively over `Reason` with no wildcard arm, so adding a variant
+  is a compile error at each rendering site, never a silently unhandled
+  reason.
 - Emoji vocabulary: 💥/⚠️ reachability sections, 💡 fix advice, ❌ one broken
   symbol or class, ❓ unverified, ✅ clean summary. Indentation is 4 spaces per
   level, never aligned to emoji width.

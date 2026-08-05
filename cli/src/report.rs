@@ -1,5 +1,5 @@
 use crate::check::CheckReport;
-use crate::model::{BreakingChange, RefKind, Violation, counts_as_reachable};
+use crate::model::{BreakingChange, Reason, RefKind, Violation, counts_as_reachable};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -263,39 +263,43 @@ fn is_constructor(v: &Violation) -> bool {
 }
 
 /// The reason as printed: "method ..." reads as "constructor ..." for `<init>` references.
-fn display_reason(v: &Violation) -> String {
-    if is_constructor(v) {
-        v.reason.replace("method", "constructor")
-    } else {
-        v.reason.clone()
+fn display_reason(v: &Violation) -> &'static str {
+    match (v.reason, is_constructor(v)) {
+        (Reason::MethodRemoved, true) => "constructor removed",
+        (Reason::MethodAccessNarrowed, true) => "constructor access narrowed",
+        (r, _) => r.as_str(),
     }
 }
 
 /// The error the JVM raises for a reference-style violation and when — the string a reader
-/// greps production logs for. Graph-walk reasons are not here; their consumer-first
-/// phrasing (structural_lines) carries its own error line.
+/// greps production logs for. Exhaustive over `Reason` so a new variant fails here at
+/// compile time; the structural arm returns None because those violations render through
+/// structural_lines, which carries its own error line.
 fn runtime_error(v: &Violation) -> Option<&'static str> {
+    use Reason::*;
     let ctor = is_constructor(v);
-    Some(match v.reason.as_str() {
-        "class removed" => "NoClassDefFoundError at first use",
-        "class access narrowed" => "IllegalAccessError at first use",
-        "class became abstract" => "InstantiationError at first `new`",
-        "class kind changed" => "IncompatibleClassChangeError at first call",
-        "method removed" if ctor => "NoSuchMethodError at first `new`",
-        "method removed" => "NoSuchMethodError at first call",
-        "field removed" => "NoSuchFieldError at first access",
-        "method access narrowed" if ctor => "IllegalAccessError at first `new`",
-        "method access narrowed" => "IllegalAccessError at first call",
-        "field access narrowed" => "IllegalAccessError at first access",
-        "field became final" => "IllegalAccessError at first write",
-        "member changed from static to instance" | "member changed from instance to static" => {
+    Some(match v.reason {
+        ClassRemoved => "NoClassDefFoundError at first use",
+        ClassAccessNarrowed => "IllegalAccessError at first use",
+        ClassBecameAbstract => "InstantiationError at first `new`",
+        ClassKindChanged => "IncompatibleClassChangeError at first call",
+        MethodRemoved if ctor => "NoSuchMethodError at first `new`",
+        MethodRemoved => "NoSuchMethodError at first call",
+        FieldRemoved => "NoSuchFieldError at first access",
+        MethodAccessNarrowed if ctor => "IllegalAccessError at first `new`",
+        MethodAccessNarrowed => "IllegalAccessError at first call",
+        FieldAccessNarrowed => "IllegalAccessError at first access",
+        FieldBecameFinal => "IllegalAccessError at first write",
+        StaticToInstance | InstanceToStatic => {
             if v.reference.kind == RefKind::Field {
                 "IncompatibleClassChangeError at first access"
             } else {
                 "IncompatibleClassChangeError at first call"
             }
         }
-        _ => return None,
+        ClassBecameFinal | MethodBecameFinal | ExtendsFinalClass | MethodBecameAbstract => {
+            return None;
+        }
     })
 }
 
@@ -311,16 +315,17 @@ fn source_display(source: &str) -> &str {
 
 /// Graph-walk violations: the broken thing is the scanned class itself (its hierarchy no
 /// longer loads or selects), so they read consumer-first, unlike reference violations
-/// which group by the symbol that changed. "class kind changed" exists in both worlds;
-/// the graph-walk variant is the member-less Class edge.
+/// which group by the symbol that changed. Exhaustive over `Reason`: ClassKindChanged
+/// exists in both worlds, and the graph-walk variant is the member-less Class edge.
 fn is_structural(v: &Violation) -> bool {
-    matches!(
-        v.reason.as_str(),
-        "class became final"
-            | "method became final"
-            | "extends final class"
-            | "method became abstract"
-    ) || (v.reason == "class kind changed" && v.reference.member.is_none())
+    use Reason::*;
+    match v.reason {
+        ClassBecameFinal | MethodBecameFinal | ExtendsFinalClass | MethodBecameAbstract => true,
+        ClassKindChanged => v.reference.member.is_none(),
+        ClassRemoved | ClassAccessNarrowed | ClassBecameAbstract | MethodRemoved
+        | MethodAccessNarrowed | FieldRemoved | FieldAccessNarrowed | FieldBecameFinal
+        | StaticToInstance | InstanceToStatic => false,
+    }
 }
 
 /// (what happened, what the JVM does about it) for one structural violation.
@@ -330,8 +335,8 @@ fn structural_lines(v: &Violation) -> (String, String) {
         "-> VerifyError when {} loads",
         simple(v.source_class.as_str())
     );
-    match (v.reason.as_str(), v.reference.member) {
-        ("method became abstract", Some(m)) => (
+    match (v.reason, v.reference.member) {
+        (Reason::MethodBecameAbstract, Some(m)) => (
             format!(
                 "inherits abstract {} without implementing it",
                 pretty_member(
@@ -342,7 +347,7 @@ fn structural_lines(v: &Violation) -> (String, String) {
             ),
             format!("-> AbstractMethodError when {} is called", m.name),
         ),
-        ("method became final", Some(m)) => (
+        (Reason::MethodBecameFinal, Some(m)) => (
             format!(
                 "overrides {} which became final",
                 pretty_member(
@@ -353,20 +358,21 @@ fn structural_lines(v: &Violation) -> (String, String) {
             ),
             loads,
         ),
-        ("class became final", _) => (format!("extends {owner} which became final"), loads),
-        ("extends final class", _) => (
+        (Reason::ClassBecameFinal, _) => (format!("extends {owner} which became final"), loads),
+        (Reason::ExtendsFinalClass, _) => (
             format!("extends {owner} which is final on the runtime classpath"),
             loads,
         ),
-        ("class kind changed", _) => (
+        (Reason::ClassKindChanged, _) => (
             format!("extends or implements {owner} whose kind changed (class <-> interface)"),
             format!(
                 "-> IncompatibleClassChangeError when {} loads",
                 simple(v.source_class.as_str())
             ),
         ),
-        // Unreachable while is_structural and this stay in sync; degrade readably, not by panic.
-        _ => (format!("{}: {owner}", v.reason), loads),
+        // Only structural reasons reach here (violation_blocks partitions on is_structural);
+        // a malformed member-less method reason degrades readably, not by panic.
+        (r, _) => (format!("{}: {owner}", r.as_str()), loads),
     }
 }
 
@@ -434,7 +440,7 @@ fn suggestion_blocks(violations: &[&Violation]) -> Vec<String> {
             }
             let mut refs = vs.clone();
             refs.sort_by_cached_key(|v| {
-                (v.source_class.as_str(), pretty_target(v), v.reason.clone())
+                (v.source_class.as_str(), pretty_target(v), v.reason.as_str())
             });
             for v in refs {
                 writeln!(
@@ -456,10 +462,10 @@ fn suggestion_blocks(violations: &[&Violation]) -> Vec<String> {
 /// error it causes, then every referencing class. BTreeMap on (heading, reason) strings
 /// keeps the order deterministic by string value.
 fn reference_blocks(violations: &[&Violation]) -> Vec<String> {
-    let mut grouped: BTreeMap<(String, String), Vec<&Violation>> = BTreeMap::new();
+    let mut grouped: BTreeMap<(String, &'static str), Vec<&Violation>> = BTreeMap::new();
     for &v in violations {
         grouped
-            .entry((pretty_target(v), v.reason.clone()))
+            .entry((pretty_target(v), v.reason.as_str()))
             .or_default()
             .push(v);
     }
@@ -511,7 +517,7 @@ fn structural_blocks(violations: &[&Violation]) -> Vec<String> {
         .map(|((class, source), mut vs)| {
             let mut out = String::new();
             writeln!(out, "❌ {class}  ({source})").unwrap();
-            vs.sort_by_cached_key(|v| (pretty_target(v), v.reason.clone()));
+            vs.sort_by_cached_key(|v| (pretty_target(v), v.reason.as_str()));
             for v in vs {
                 let (what, err) = structural_lines(v);
                 writeln!(out, "    {what}{}", modules_suffix(v)).unwrap();
@@ -773,7 +779,7 @@ mod tests {
     fn class_violation(
         source_class: &str,
         owner: &str,
-        reason: &str,
+        reason: Reason,
         reachable: Option<bool>,
         advice: Option<&str>,
     ) -> Violation {
@@ -788,7 +794,7 @@ mod tests {
                 field_write: None,
                 instantiated: None,
             },
-            reason: reason.to_string(),
+            reason,
             reachable,
             suggestion: advice.map(|a| Suggestion {
                 referenced_by: Some("g:referencer:1".to_string()),
@@ -819,7 +825,7 @@ mod tests {
         name: &str,
         descriptor: &str,
         kind: RefKind,
-        reason: &str,
+        reason: Reason,
     ) -> Violation {
         Violation {
             source: intern("consumer.jar"),
@@ -832,7 +838,7 @@ mod tests {
                 field_write: None,
                 instantiated: None,
             },
-            reason: reason.to_string(),
+            reason,
             reachable: None,
             suggestion: None,
             modules: Vec::new(),
@@ -848,21 +854,21 @@ mod tests {
             class_violation(
                 "a/Foo",
                 "x/GoneA",
-                "class removed",
+                Reason::ClassRemoved,
                 Some(true),
                 Some("ADVICE_A"),
             ),
             class_violation(
                 "a/Bar",
                 "x/GoneB",
-                "class removed",
+                Reason::ClassRemoved,
                 Some(true),
                 Some("ADVICE_A"),
             ),
             class_violation(
                 "a/Baz",
                 "x/GoneC",
-                "class removed",
+                Reason::ClassRemoved,
                 Some(true),
                 Some("ADVICE_B"),
             ),
@@ -894,14 +900,14 @@ mod tests {
             class_violation(
                 "a/Foo",
                 "x/Gone",
-                "class removed",
+                Reason::ClassRemoved,
                 Some(true),
                 Some("ADVICE_A"),
             ),
             class_violation(
                 "a/Bar",
                 "x/Gone",
-                "class removed",
+                Reason::ClassRemoved,
                 Some(false),
                 Some("ADVICE_A"),
             ),
@@ -921,8 +927,8 @@ mod tests {
     #[test]
     fn unattributed_violation_groups_by_symbol() {
         let mut r = report(vec![
-            class_violation("a/Foo", "x/Gone", "class removed", None, None),
-            class_violation("a/Bar", "x/Gone", "class removed", None, None),
+            class_violation("a/Foo", "x/Gone", Reason::ClassRemoved, None, None),
+            class_violation("a/Bar", "x/Gone", Reason::ClassRemoved, None, None),
         ]);
         r.reachability_computed = false;
         let out = check_text(&r);
@@ -949,7 +955,7 @@ mod tests {
                 "callWithTimeout",
                 "(Ljava/util/concurrent/Callable;JLjava/util/concurrent/TimeUnit;Z)Ljava/lang/Object;",
                 RefKind::Method,
-                "method removed",
+                Reason::MethodRemoved,
             ),
             member_violation(
                 "a/Foo",
@@ -957,7 +963,7 @@ mod tests {
                 "<init>",
                 "(Ljava/util/concurrent/ExecutorService;)V",
                 RefKind::Method,
-                "method access narrowed",
+                Reason::MethodAccessNarrowed,
             ),
             member_violation(
                 "a/Foo",
@@ -965,7 +971,7 @@ mod tests {
                 "COUNTS",
                 "[I",
                 RefKind::Field,
-                "field removed",
+                Reason::FieldRemoved,
             ),
         ]);
         r.reachability_computed = false;
@@ -1004,7 +1010,7 @@ mod tests {
                 "display",
                 "(Lorg/koin/core/logger/Level;Ljava/lang/String;)V",
                 RefKind::Method,
-                "method became abstract",
+                Reason::MethodBecameAbstract,
             ),
             member_violation(
                 "org/koin/logger/SLF4JLogger",
@@ -1012,7 +1018,7 @@ mod tests {
                 "log",
                 "(Lorg/koin/core/logger/Level;Ljava/lang/String;)V",
                 RefKind::Method,
-                "method became final",
+                Reason::MethodBecameFinal,
             ),
         ]);
         r.reachability_computed = false;
@@ -1079,7 +1085,7 @@ mod tests {
         let mut r = report(vec![class_violation(
             "a/Foo",
             "x/Gone",
-            "class removed",
+            Reason::ClassRemoved,
             Some(true),
             None,
         )]);

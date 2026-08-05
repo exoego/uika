@@ -166,6 +166,67 @@ pub enum RefKind {
     Class,
 }
 
+/// Why a reference or scanned class breaks. A closed set so every consumer (verdicts,
+/// report rendering, merging) matches exhaustively: adding a variant is a compile error
+/// at each site, never a silently unhandled string. JSON, the goldens, and the verdicts
+/// stream serialize through `as_str`, and any ordering of reasons must also go through
+/// `as_str` — deliberately no `Ord` derive, so nothing can sort by variant order (the
+/// same determinism rule as never sorting by `Sym` id).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Reason {
+    ClassRemoved,
+    ClassAccessNarrowed,
+    ClassBecameAbstract,
+    ClassBecameFinal,
+    ClassKindChanged,
+    ExtendsFinalClass,
+    MethodRemoved,
+    MethodAccessNarrowed,
+    MethodBecameAbstract,
+    MethodBecameFinal,
+    FieldRemoved,
+    FieldAccessNarrowed,
+    FieldBecameFinal,
+    StaticToInstance,
+    InstanceToStatic,
+}
+
+impl Reason {
+    /// The stable wire/report string. Everything user-visible (JSON, verdicts stream,
+    /// text report, sort order) speaks this form.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Reason::ClassRemoved => "class removed",
+            Reason::ClassAccessNarrowed => "class access narrowed",
+            Reason::ClassBecameAbstract => "class became abstract",
+            Reason::ClassBecameFinal => "class became final",
+            Reason::ClassKindChanged => "class kind changed",
+            Reason::ExtendsFinalClass => "extends final class",
+            Reason::MethodRemoved => "method removed",
+            Reason::MethodAccessNarrowed => "method access narrowed",
+            Reason::MethodBecameAbstract => "method became abstract",
+            Reason::MethodBecameFinal => "method became final",
+            Reason::FieldRemoved => "field removed",
+            Reason::FieldAccessNarrowed => "field access narrowed",
+            Reason::FieldBecameFinal => "field became final",
+            Reason::StaticToInstance => "member changed from static to instance",
+            Reason::InstanceToStatic => "member changed from instance to static",
+        }
+    }
+}
+
+impl std::fmt::Display for Reason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for Reason {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
 /// Symbol reference extracted from the consumer-side constant pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct SymbolRef {
@@ -189,7 +250,7 @@ pub struct Violation {
     pub source: Sym,
     pub source_class: ClassName,
     pub reference: SymbolRef,
-    pub reason: String,
+    pub reason: Reason,
     /// Whether the referencing class is class-load reachable from the application.
     /// None when reachability was not computed (no --reachability / no app roots).
     #[serde(skip_serializing_if = "Option::is_none")]

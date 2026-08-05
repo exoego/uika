@@ -12,7 +12,7 @@ use uika::check::check;
 use uika::diff::diff;
 use uika::index::ApiIndex;
 use uika::input::load;
-use uika::model::{BreakingChange, RefKind};
+use uika::model::{BreakingChange, Reason, RefKind};
 
 #[test]
 fn detects_ktor_io_break_against_coroutines_1_11() {
@@ -54,7 +54,7 @@ fn detects_ktor_io_break_against_coroutines_1_11() {
     );
     assert_eq!(v.reference.kind, RefKind::Method);
     assert_eq!(v.reference.owner.as_str(), "kotlinx/coroutines/EventLoopKt");
-    assert_eq!(v.reason, "method removed");
+    assert_eq!(v.reason, Reason::MethodRemoved);
 }
 
 /// ground truth 2: OTel 1.42 -> 1.60 moved DaemonThreadFactory from
@@ -98,7 +98,7 @@ fn detects_otel_daemon_thread_factory_package_move() {
         v.reference.owner.as_str(),
         "io/opentelemetry/sdk/internal/DaemonThreadFactory"
     );
-    assert_eq!(v.reason, "class removed");
+    assert_eq!(v.reason, Reason::ClassRemoved);
 }
 
 /// https://github.com/SeleniumHQ/selenium/issues/4381:
@@ -136,7 +136,7 @@ fn detects_selenium_guava_constructor_access_narrowing() {
                     m.name.as_str() == "<init>"
                         && m.descriptor.as_str() == "(Ljava/util/concurrent/ExecutorService;)V"
                 })
-                && v.reason == "method access narrowed"
+                && v.reason == Reason::MethodAccessNarrowed
         }),
         "violations: {:?}",
         report.violations
@@ -179,7 +179,7 @@ fn detects_koin_logger_final_method_override() {
                         && m.descriptor.as_str()
                             == "(Lorg/koin/core/logger/Level;Ljava/lang/String;)V"
                 })
-                && v.reason == "method became final"
+                && v.reason == Reason::MethodBecameFinal
         }),
         "violations: {:?}",
         report.violations
@@ -225,7 +225,7 @@ fn detects_okhttp_digest_static_to_instance_change() {
                     m.name.as_str() == "requestPath"
                         && m.descriptor.as_str() == "(Lokhttp3/HttpUrl;)Ljava/lang/String;"
                 })
-                && v.reason == "member changed from static to instance"
+                && v.reason == Reason::StaticToInstance
         }),
         "violations: {:?}",
         report.violations
@@ -487,7 +487,7 @@ fn detects_pact_class_became_final_under_version_lag() {
                 == "au/com/dius/pact/provider/spring/junit5/PactVerificationSpringExtension"
                 && v.reference.owner.as_str()
                     == "au/com/dius/pact/provider/junit5/PactVerificationExtension"
-                && v.reason == "class became final"
+                && v.reason == Reason::ClassBecameFinal
         }),
         "violations: {:?}",
         report.violations
@@ -512,7 +512,7 @@ fn detects_jetty_util_class_access_narrowing() {
         report.violations.iter().any(|v| {
             v.source_class.as_str() == "org/eclipse/jetty/http/MimeTypes"
                 && v.reference.owner.as_str() == "org/eclipse/jetty/util/ArrayTrie"
-                && v.reason == "class access narrowed"
+                && v.reason == Reason::ClassAccessNarrowed
         }),
         "violations: {:?}",
         report.violations
@@ -520,7 +520,7 @@ fn detects_jetty_util_class_access_narrowing() {
     assert!(
         report.violations.iter().any(|v| {
             v.reference.owner.as_str() == "org/eclipse/jetty/util/Trie"
-                && v.reason == "class removed"
+                && v.reason == Reason::ClassRemoved
         }),
         "violations: {:?}",
         report.violations
@@ -612,7 +612,7 @@ fn detects_upgraded_artifact_subclassing_final_class_of_lagging_sibling() {
         v.reference.owner.as_str(),
         "au/com/dius/pact/provider/junit5/PactVerificationExtension"
     );
-    assert_eq!(v.reason, "extends final class");
+    assert_eq!(v.reason, Reason::ExtendsFinalClass);
 }
 
 /// The old-relative gate for the version-lag check: when the changed artifact's old
@@ -784,13 +784,13 @@ fn detects_ktor_interface_became_class_under_module_skew() {
             v.source_class.as_str()
                 == "io/ktor/network/sockets/CIOReaderKt$attachForReadingDirectImpl$1"
                 && v.reference.owner.as_str() == "io/ktor/utils/io/ByteChannel"
-                && v.reason == "class kind changed"
+                && v.reason == Reason::ClassKindChanged
         }),
         "expected a class-kind-changed break on ByteChannel: {:?}",
         report
             .violations
             .iter()
-            .filter(|v| v.reason == "class kind changed")
+            .filter(|v| v.reason == Reason::ClassKindChanged)
             .map(|v| (v.source_class.as_str(), v.reference.owner.as_str()))
             .collect::<Vec<_>>()
     );
@@ -817,13 +817,13 @@ fn detects_new_on_class_that_became_abstract() {
                 && v.reference.owner.as_str()
                     == "com/fasterxml/jackson/module/kotlin/ValueClassBoxConverter"
                 && v.reference.instantiated == Some(true)
-                && v.reason == "class became abstract"
+                && v.reason == Reason::ClassBecameAbstract
         }),
         "expected an InstantiationError break on ValueClassBoxConverter: {:?}",
         report
             .violations
             .iter()
-            .filter(|v| v.reason == "class became abstract")
+            .filter(|v| v.reason == Reason::ClassBecameAbstract)
             .map(|v| (v.source_class.as_str(), v.reference.owner.as_str()))
             .collect::<Vec<_>>()
     );

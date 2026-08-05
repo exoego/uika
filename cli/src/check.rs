@@ -7,7 +7,7 @@ use crate::input::LoadedClass;
 use crate::intern::Sym;
 use crate::model::{
     ACC_ABSTRACT, ACC_BRIDGE, ACC_FINAL, ACC_INTERFACE, ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC,
-    ACC_STATIC, ACC_SYNTHETIC, MemberKey, RefKind, SymbolRef, Violation,
+    ACC_STATIC, ACC_SYNTHETIC, MemberKey, Reason, RefKind, SymbolRef, Violation,
 };
 use anyhow::Result;
 use rayon::prelude::*;
@@ -570,7 +570,7 @@ pub fn check_scanned(
                 };
                 // The raw reference, not the collapsed one a Broken verdict may carry:
                 // the stream is an evaluation surface and keeps what the bytecode says.
-                w.record(source, class_name, &r, name, reason);
+                w.record(source, class_name, &r, name, reason.map(Reason::as_str));
             }
             match v {
                 RefVerdict::Ok => {}
@@ -647,7 +647,7 @@ pub fn violation_sort_key(
     &'static str,
     &'static str,
     Option<(&'static str, &'static str)>,
-    String,
+    &'static str,
 ) {
     (
         v.source.as_str(),
@@ -656,7 +656,7 @@ pub fn violation_sort_key(
         v.reference
             .member
             .map(|m| (m.name.as_str(), m.descriptor.as_str())),
-        v.reason.clone(),
+        v.reason.as_str(),
     )
 }
 
@@ -672,7 +672,7 @@ enum RefVerdict {
     Ok,
     /// Reached a type outside the index and cannot be proven.
     Unknown,
-    Broken(SymbolRef, &'static str),
+    Broken(SymbolRef, Reason),
 }
 
 /// If the entire owner class disappeared, collapse member references into one Class reference
@@ -696,7 +696,7 @@ fn verdict(
                 field_write: None,
                 instantiated: None,
             },
-            "class removed",
+            Reason::ClassRemoved,
         );
     }
     // `new X` where X is now abstract or an interface throws InstantiationError.
@@ -708,7 +708,7 @@ fn verdict(
     {
         return match old.class_access(r.owner) {
             Some(old_access) if old_access & (ACC_ABSTRACT | ACC_INTERFACE) == 0 => {
-                RefVerdict::Broken(r, "class became abstract")
+                RefVerdict::Broken(r, Reason::ClassBecameAbstract)
             }
             Some(_) => RefVerdict::Ok,
             None => RefVerdict::Unknown,
@@ -731,7 +731,7 @@ fn verdict(
                 // classes and would demote real narrowing.
                 return match old.class_access(r.owner) {
                     Some(old_access) if access_level(access) < access_level(old_access) => {
-                        RefVerdict::Broken(r, "class access narrowed")
+                        RefVerdict::Broken(r, Reason::ClassAccessNarrowed)
                     }
                     Some(_) => RefVerdict::Ok,
                     None => RefVerdict::Unknown,
@@ -759,7 +759,7 @@ fn verdict(
         if (new_access & ACC_INTERFACE != 0) != ref_expects_interface {
             match old.class_access(r.owner) {
                 Some(old_access) if (old_access & ACC_INTERFACE != 0) == ref_expects_interface => {
-                    return RefVerdict::Broken(r, "class kind changed");
+                    return RefVerdict::Broken(r, Reason::ClassKindChanged);
                 }
                 None => return RefVerdict::Unknown,
                 _ => {}
@@ -778,9 +778,9 @@ fn verdict(
                         return RefVerdict::Broken(
                             r,
                             if expected_static {
-                                "member changed from static to instance"
+                                Reason::StaticToInstance
                             } else {
-                                "member changed from instance to static"
+                                Reason::InstanceToStatic
                             },
                         );
                     }
@@ -801,9 +801,9 @@ fn verdict(
                             RefVerdict::Broken(
                                 r,
                                 if kind == MemberKind::Field {
-                                    "field access narrowed"
+                                    Reason::FieldAccessNarrowed
                                 } else {
-                                    "method access narrowed"
+                                    Reason::MethodAccessNarrowed
                                 },
                             )
                         }
@@ -820,7 +820,7 @@ fn verdict(
             {
                 match old.resolve_member(r.owner, member, kind) {
                     MemberResolution::Found(old_found) if old_found.access & ACC_FINAL == 0 => {
-                        return RefVerdict::Broken(r, "field became final");
+                        return RefVerdict::Broken(r, Reason::FieldBecameFinal);
                     }
                     MemberResolution::Unknown => return RefVerdict::Unknown,
                     _ => return RefVerdict::Ok,
@@ -834,9 +834,9 @@ fn verdict(
             match old.resolve(r.owner, member, kind) {
                 Resolution::Found => {
                     let what = if kind == MemberKind::Field {
-                        "field removed"
+                        Reason::FieldRemoved
                     } else {
-                        "method removed"
+                        Reason::MethodRemoved
                     };
                     RefVerdict::Broken(r, what)
                 }
@@ -856,14 +856,14 @@ fn push_violation(
     source: Sym,
     source_class: Sym,
     reference: SymbolRef,
-    reason: &str,
+    reason: Reason,
 ) {
     if seen.insert((source, source_class, reference)) {
         violations.push(Violation {
             source,
             source_class,
             reference,
-            reason: reason.to_string(),
+            reason,
             reachable: None,
             suggestion: None,
             modules: Vec::new(),
@@ -898,7 +898,7 @@ fn add_final_violations(
                 node.source,
                 class_name,
                 reference,
-                "class became final",
+                Reason::ClassBecameFinal,
             );
         }
     }
@@ -934,7 +934,7 @@ fn add_final_violations(
                     node.source,
                     class_name,
                     reference,
-                    "method became final",
+                    Reason::MethodBecameFinal,
                 );
             }
         }
@@ -986,7 +986,7 @@ fn add_extends_final_violations(
             source,
             class_name,
             reference,
-            "extends final class",
+            Reason::ExtendsFinalClass,
         );
     }
 }
@@ -1034,7 +1034,7 @@ fn add_kind_flip_violations(
             node.source,
             class_name,
             reference,
-            "class kind changed",
+            Reason::ClassKindChanged,
         );
     };
     for (class_name, node) in graph.iter() {
@@ -1227,7 +1227,7 @@ fn add_abstract_method_violations(
                 node.source,
                 class_name,
                 reference,
-                "method became abstract",
+                Reason::MethodBecameAbstract,
             );
         }
     }
@@ -1553,7 +1553,7 @@ mod tests {
         }
     }
 
-    fn broken(v: RefVerdict) -> Option<(SymbolRef, &'static str)> {
+    fn broken(v: RefVerdict) -> Option<(SymbolRef, Reason)> {
         match v {
             RefVerdict::Broken(r, reason) => Some((r, reason)),
             _ => None,
@@ -1571,7 +1571,7 @@ mod tests {
             &Scope::new(vec![&new]),
             &ClassGraph::new(),
         );
-        assert_eq!(broken(v).unwrap().1, "method removed");
+        assert_eq!(broken(v).unwrap().1, Reason::MethodRemoved);
     }
 
     #[test]
@@ -1616,7 +1616,7 @@ mod tests {
             &ClassGraph::new(),
         );
         let (r, reason) = broken(v).unwrap();
-        assert_eq!(reason, "class removed");
+        assert_eq!(reason, Reason::ClassRemoved);
         assert_eq!(r.kind, RefKind::Class);
         assert!(r.member.is_none());
     }
@@ -1745,7 +1745,7 @@ mod tests {
             &Scope::new(vec![&new]),
             &ClassGraph::new(),
         );
-        assert_eq!(broken(v).unwrap().1, "class became abstract");
+        assert_eq!(broken(v).unwrap().1, Reason::ClassBecameAbstract);
     }
 
     #[test]
@@ -1759,7 +1759,7 @@ mod tests {
             &Scope::new(vec![&new]),
             &ClassGraph::new(),
         );
-        assert_eq!(broken(v).unwrap().1, "class became abstract");
+        assert_eq!(broken(v).unwrap().1, Reason::ClassBecameAbstract);
     }
 
     #[test]
@@ -1811,7 +1811,7 @@ mod tests {
             &Scope::new(vec![&new]),
             &ClassGraph::new(),
         );
-        assert_eq!(broken(v).unwrap().1, "class kind changed");
+        assert_eq!(broken(v).unwrap().1, Reason::ClassKindChanged);
     }
 
     #[test]
@@ -1825,7 +1825,7 @@ mod tests {
             &Scope::new(vec![&new]),
             &ClassGraph::new(),
         );
-        assert_eq!(broken(v).unwrap().1, "class kind changed");
+        assert_eq!(broken(v).unwrap().1, Reason::ClassKindChanged);
     }
 
     #[test]
@@ -1860,7 +1860,7 @@ mod tests {
         let mut seen = FxHashSet::default();
         add_kind_flip_violations(&old, &new, &graph, &mut violations, &mut seen);
         assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].reason, "class kind changed");
+        assert_eq!(violations[0].reason, Reason::ClassKindChanged);
         assert_eq!(violations[0].reference.owner.as_str(), "lib/Base");
         assert_eq!(violations[0].source_class.as_str(), "app/Sub");
     }
@@ -1882,7 +1882,7 @@ mod tests {
         let mut seen = FxHashSet::default();
         add_kind_flip_violations(&old, &new, &graph, &mut violations, &mut seen);
         assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].reason, "class kind changed");
+        assert_eq!(violations[0].reason, Reason::ClassKindChanged);
         assert_eq!(violations[0].reference.owner.as_str(), "lib/I");
     }
 
@@ -1916,7 +1916,7 @@ mod tests {
             &Scope::new(vec![&new]),
             &ClassGraph::new(),
         );
-        assert_eq!(broken(v).unwrap().1, "field access narrowed");
+        assert_eq!(broken(v).unwrap().1, Reason::FieldAccessNarrowed);
     }
 
     #[test]
@@ -1984,7 +1984,11 @@ mod tests {
                 &Scope::new(vec![&new]),
                 &ClassGraph::new(),
             );
-            assert_eq!(broken(v).unwrap().1, "field access narrowed", "{source}");
+            assert_eq!(
+                broken(v).unwrap().1,
+                Reason::FieldAccessNarrowed,
+                "{source}"
+            );
         }
     }
 
@@ -2008,7 +2012,7 @@ mod tests {
             &Scope::new(vec![&new]),
             &ClassGraph::new(),
         );
-        assert_eq!(broken(v).unwrap().1, "method access narrowed");
+        assert_eq!(broken(v).unwrap().1, Reason::MethodAccessNarrowed);
     }
 
     #[test]
@@ -2074,7 +2078,7 @@ mod tests {
             &Scope::new(vec![&new]),
             &graph,
         );
-        assert_eq!(broken(v).unwrap().1, "method access narrowed");
+        assert_eq!(broken(v).unwrap().1, Reason::MethodAccessNarrowed);
     }
 
     #[test]
@@ -2100,7 +2104,7 @@ mod tests {
             &Scope::new(vec![&new]),
             &ClassGraph::new(),
         );
-        assert_eq!(broken(v).unwrap().1, "method removed");
+        assert_eq!(broken(v).unwrap().1, Reason::MethodRemoved);
     }
 
     #[test]
@@ -2139,7 +2143,7 @@ mod tests {
             &Scope::new(vec![&new]),
             &ClassGraph::new(),
         );
-        assert_eq!(broken(v).unwrap().1, "class access narrowed");
+        assert_eq!(broken(v).unwrap().1, Reason::ClassAccessNarrowed);
 
         let old_same = ApiIndex::build([package_private()]);
         let v = verdict(
@@ -2169,10 +2173,7 @@ mod tests {
             &Scope::new(vec![&new]),
             &ClassGraph::new(),
         );
-        assert_eq!(
-            broken(v).unwrap().1,
-            "member changed from static to instance"
-        );
+        assert_eq!(broken(v).unwrap().1, Reason::StaticToInstance);
 
         let old_already_mismatched = ApiIndex::build([class_with_method_access(
             "lib/C",
@@ -2206,7 +2207,7 @@ mod tests {
             &Scope::new(vec![&new]),
             &ClassGraph::new(),
         );
-        assert_eq!(broken(v).unwrap().1, "field became final");
+        assert_eq!(broken(v).unwrap().1, Reason::FieldBecameFinal);
     }
 
     #[test]
@@ -2248,7 +2249,7 @@ mod tests {
         let mut seen = FxHashSet::default();
         add_extends_final_violations(&edges, &old, &runtime, &mut violations, &mut seen);
         assert_eq!(violations.len(), 1, "violations: {violations:?}");
-        assert_eq!(violations[0].reason, "extends final class");
+        assert_eq!(violations[0].reason, Reason::ExtendsFinalClass);
         assert_eq!(violations[0].reference.owner.as_str(), "cp/X");
         assert_eq!(violations[0].source_class.as_str(), "lib/C");
     }
@@ -2512,7 +2513,7 @@ mod tests {
         let graph = scanned_graph(&[("app/C", "lib/A")]);
         let v = abstract_violations(&old, &new, &fetched, &graph);
         assert_eq!(v.len(), 1, "{v:?}");
-        assert_eq!(v[0].reason, "method became abstract");
+        assert_eq!(v[0].reason, Reason::MethodBecameAbstract);
         assert_eq!(v[0].source_class.as_str(), "app/C");
         assert_eq!(v[0].reference.owner.as_str(), "lib/A");
         let m = v[0].reference.member.unwrap();
@@ -2764,7 +2765,7 @@ mod tests {
         let graph = scanned_graph_full(&[("app/C", JAVA_LANG_OBJECT, &["lib/I"])]);
         let v = abstract_violations(&old, &new, &fetched, &graph);
         assert_eq!(v.len(), 1, "{v:?}");
-        assert_eq!(v[0].reason, "method became abstract");
+        assert_eq!(v[0].reason, Reason::MethodBecameAbstract);
         assert_eq!(v[0].source_class.as_str(), "app/C");
         assert_eq!(v[0].reference.owner.as_str(), "lib/I");
         let m = v[0].reference.member.unwrap();
