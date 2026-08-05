@@ -154,16 +154,15 @@ per-module check: 2 of 41 modules changed resolution (39 unchanged)
 💥 reachable from the application (likely to break)
 
 💡 align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
-    removed by: io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
-    referenced by: io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1
-    modules: :app
-    -> io.opentelemetry.exporter.sender.okhttp.internal.OkHttpUtil  class removed: io.opentelemetry.sdk.internal.DaemonThreadFactory
-    -> io.opentelemetry.exporter.sender.okhttp.internal.OkHttpGrpcSender  class removed: io.opentelemetry.sdk.internal.DaemonThreadFactory
+    affected modules: :app
+    why: io.opentelemetry:opentelemetry-sdk-common changed 1.42.1 -> 1.60.1, which breaks io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1:
+        io.opentelemetry.sdk.internal.DaemonThreadFactory was removed, but io.opentelemetry.exporter.sender.okhttp.internal.OkHttpGrpcSender still uses it
+        io.opentelemetry.sdk.internal.DaemonThreadFactory was removed, but io.opentelemetry.exporter.sender.okhttp.internal.OkHttpUtil still uses it
 
 ⚠️  not proven reachable (no static path found; may still load via reflection)
 
 💡 ...
-    -> ...
+    why: ...
 
 scanned 168496 classes: ❌ 42 broken (💥 25 reachable, ⚠️ 17 not proven reachable)
 
@@ -598,16 +597,15 @@ per-module check: 2 of 41 modules changed resolution (39 unchanged)
 💥 reachable from the application (likely to break)
 
 💡 align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
-    removed by: io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
-    referenced by: io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1
-    modules: :app
-    -> io.opentelemetry.exporter.sender.okhttp.internal.OkHttpUtil  class removed: io.opentelemetry.sdk.internal.DaemonThreadFactory
-    -> io.opentelemetry.exporter.sender.okhttp.internal.OkHttpGrpcSender  class removed: io.opentelemetry.sdk.internal.DaemonThreadFactory
+    affected modules: :app
+    why: io.opentelemetry:opentelemetry-sdk-common changed 1.42.1 -> 1.60.1, which breaks io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1:
+        io.opentelemetry.sdk.internal.DaemonThreadFactory was removed, but io.opentelemetry.exporter.sender.okhttp.internal.OkHttpGrpcSender still uses it
+        io.opentelemetry.sdk.internal.DaemonThreadFactory was removed, but io.opentelemetry.exporter.sender.okhttp.internal.OkHttpUtil still uses it
 
 ⚠️  not proven reachable (no static path found; may still load via reflection)
 
 💡 ...
-    -> ...
+    why: ...
 
 scanned 168496 classes: ❌ 42 broken (💥 25 reachable, ⚠️ 17 not proven reachable)
 

@@ -936,7 +936,7 @@ fn per_module_upgrade_check_gates_on_each_modules_own_resolution() {
         stdout.contains("per-module check: 1 of 2 modules"),
         "{stdout}"
     );
-    assert!(stdout.contains("modules: :app"), "{stdout}");
+    assert!(stdout.contains("affected modules: :app"), "{stdout}");
 
     // --merged keeps the flat behavior: 1.42.1 is still resolved by :pinned, so the flat
     // diff has no removed version and the real break in :app goes unreported.
@@ -1105,7 +1105,7 @@ fn per_module_check_reports_break_when_global_version_set_is_unchanged() {
     );
     // The per-run suggestion quotes :a's own move, which the empty global list cannot.
     assert!(
-        stdout.contains("removed by: io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1"),
+        stdout.contains("why: io.opentelemetry:opentelemetry-sdk-common changed 1.42.1 -> 1.60.1"),
         "{stdout}"
     );
 }

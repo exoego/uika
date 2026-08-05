@@ -405,8 +405,10 @@ fn violation_blocks(violations: &[&Violation]) -> Vec<String> {
 
 /// One 💡 block per distinct fix. Identical advice implies the same removed_by / referenced_by /
 /// before / after (the advice string embeds the coordinates and changed versions), so the header
-/// is built from any member of the group. Groups are ordered by advice and references within a
-/// group by class/target/reason, keeping the output deterministic.
+/// is built from any member of the group. The block reads as prose — the advice, a "why:"
+/// sentence naming the version change as the cause, then one sentence per broken reference —
+/// so the advice never looks like the thing the labels below it accuse. References are
+/// deduplicated and ordered by sentence text, keeping the output deterministic.
 fn suggestion_blocks(violations: &[&Violation]) -> Vec<String> {
     let mut grouped: BTreeMap<&str, Vec<&Violation>> = BTreeMap::new();
     for &v in violations {
@@ -419,15 +421,6 @@ fn suggestion_blocks(violations: &[&Violation]) -> Vec<String> {
             let mut out = String::new();
             let s = vs[0].suggestion.as_ref().unwrap();
             writeln!(out, "💡 {}", s.advice).unwrap();
-            writeln!(
-                out,
-                "    removed by: {} {} -> {}",
-                s.removed_by, s.before, s.after
-            )
-            .unwrap();
-            if let Some(rb) = &s.referenced_by {
-                writeln!(out, "    referenced by: {rb}").unwrap();
-            }
             // Per-module upgrade-check: the modules whose classpaths exhibit this group.
             let mut modules: Vec<&str> = vs
                 .iter()
@@ -436,26 +429,94 @@ fn suggestion_blocks(violations: &[&Violation]) -> Vec<String> {
             modules.sort_unstable();
             modules.dedup();
             if !modules.is_empty() {
-                writeln!(out, "    modules: {}", modules.join(", ")).unwrap();
+                writeln!(out, "    affected modules: {}", modules.join(", ")).unwrap();
             }
-            let mut refs = vs.clone();
-            refs.sort_by_cached_key(|v| {
-                (v.source_class.as_str(), pretty_target(v), v.reason.as_str())
-            });
-            for v in refs {
-                writeln!(
+            match &s.referenced_by {
+                Some(rb) => writeln!(
                     out,
-                    "    -> {}  {}: {}",
-                    dotted(v.source_class.as_str()),
-                    display_reason(v),
-                    pretty_target(v)
+                    "    why: {} changed {} -> {}, which breaks {rb}:",
+                    s.removed_by, s.before, s.after
                 )
-                .unwrap();
+                .unwrap(),
+                None => writeln!(
+                    out,
+                    "    why: {} changed {} -> {}:",
+                    s.removed_by, s.before, s.after
+                )
+                .unwrap(),
+            }
+            let sentences: std::collections::BTreeSet<String> =
+                vs.iter().map(|v| suggestion_line(v)).collect();
+            for sentence in sentences {
+                writeln!(out, "        {sentence}").unwrap();
             }
             out.truncate(out.trim_end().len());
             out
         })
         .collect()
+}
+
+/// One reference in a 💡 block as an English sentence: what the library change did, and
+/// what the consumer still does that no longer works. Exhaustive over `Reason`, like
+/// runtime_error, so a new variant must pick its phrasing here at compile time.
+fn suggestion_line(v: &Violation) -> String {
+    use Reason::*;
+    let class = dotted(v.source_class.as_str());
+    let target = pretty_target(v);
+    let owner = dotted(v.reference.owner.as_str());
+    let ctor = is_constructor(v);
+    let access_verb = if v.reference.kind == RefKind::Field {
+        "accesses"
+    } else {
+        "calls"
+    };
+    match v.reason {
+        ClassRemoved => format!("{target} was removed, but {class} still uses it"),
+        MethodRemoved if ctor => format!("{target} was removed, but {class} still instantiates it"),
+        MethodRemoved => format!("{target} was removed, but {class} still calls it"),
+        FieldRemoved => format!("{target} was removed, but {class} still accesses it"),
+        ClassAccessNarrowed => {
+            format!("{target} is no longer accessible, but {class} still uses it")
+        }
+        MethodAccessNarrowed if ctor => {
+            format!("{target} is no longer accessible, but {class} still instantiates it")
+        }
+        MethodAccessNarrowed => {
+            format!("{target} is no longer accessible, but {class} still calls it")
+        }
+        FieldAccessNarrowed => {
+            format!("{target} is no longer accessible, but {class} still accesses it")
+        }
+        FieldBecameFinal => format!("{target} became final, but {class} still writes to it"),
+        ClassBecameAbstract => {
+            format!("{target} became abstract, but {class} still instantiates it")
+        }
+        ClassKindChanged => {
+            if v.reference.member.is_some() {
+                format!(
+                    "{owner} changed kind (class <-> interface), but {class} was compiled against the old kind"
+                )
+            } else {
+                format!(
+                    "{class} extends or implements {owner}, whose kind changed (class <-> interface)"
+                )
+            }
+        }
+        StaticToInstance => format!(
+            "{target} changed from static to instance, but {class} still {access_verb} it as static"
+        ),
+        InstanceToStatic => format!(
+            "{target} changed from instance to static, but {class} still {access_verb} it as an instance member"
+        ),
+        ClassBecameFinal => format!("{owner} became final, but {class} still extends it"),
+        MethodBecameFinal => format!("{target} became final, but {class} still overrides it"),
+        ExtendsFinalClass => {
+            format!("{class} extends {owner}, which is final on the runtime classpath")
+        }
+        MethodBecameAbstract => {
+            format!("{target} became abstract, but {class} does not implement it")
+        }
+    }
 }
 
 /// One ❌ block per broken symbol: the symbol as heading, the reason with the runtime
@@ -878,11 +939,15 @@ mod tests {
         assert_eq!(out.matches("💡 ADVICE_A").count(), 1, "\n{out}");
         assert_eq!(out.matches("💡 ADVICE_B").count(), 1, "\n{out}");
         assert!(
-            out.contains("    -> a.Foo  class removed: x.GoneA"),
+            out.contains("    why: g:owner changed 1 -> 2, which breaks g:referencer:1:"),
             "\n{out}"
         );
         assert!(
-            out.contains("    -> a.Bar  class removed: x.GoneB"),
+            out.contains("        x.GoneA was removed, but a.Foo still uses it"),
+            "\n{out}"
+        );
+        assert!(
+            out.contains("        x.GoneB was removed, but a.Bar still uses it"),
             "\n{out}"
         );
         // Deterministic order: ADVICE_A group before ADVICE_B group.

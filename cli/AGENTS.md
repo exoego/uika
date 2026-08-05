@@ -315,10 +315,15 @@ pass-2 classes are typically below 0.1% of the scan.
   repeating the advice per reference. Identical `advice` implies identical
   `removed_by`/`referenced_by`/`before`/`after` (the advice embeds the
   coordinates and changed versions), so the header is built from any group
-  member. Grouping is done inside each reachability section, so a fix spanning
-  both tiers prints once under 💥 and once under ⚠️. Violations with no
-  suggestion (plain `check`, or unattributed upgrade-check leftovers) fall back
-  to the shape-split ❌ blocks described under Report Text Layer.
+  member. The block reads as prose so the advice is never mistaken for the
+  cause: the advice line, `affected modules:`, a `why:` sentence built from
+  removed_by/before/after/referenced_by naming the version change as the
+  culprit, then one English sentence per reference ("X was removed, but Y
+  still calls it" — `suggestion_line`, exhaustive over `Reason`). Grouping is
+  done inside each reachability section, so a fix spanning both tiers prints
+  once under 💥 and once under ⚠️. Violations with no suggestion (plain
+  `check`, or unattributed upgrade-check leftovers) fall back to the
+  shape-split ❌ blocks described under Report Text Layer.
 - `referenced_by` comes from a dump `file-display-string -> "g:n:v"` map (both
   before and after sides). `removed_by` comes from mapping the violation's owner
   class to a changed coordinate by reading the before-side JARs' class names

@@ -42,9 +42,8 @@ dependency changes: 1
     CHANGED org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm 1.7.1 -> 1.11.0
 
 💡 upgrade io.ktor:ktor-io-jvm:2.3.13 to a release built against kotlinx-coroutines-core-jvm 1.11.0, or pin it to 1.7.1
-    removed by: org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm 1.7.1 -> 1.11.0
-    referenced by: io.ktor:ktor-io-jvm:2.3.13
-    -> io.ktor.utils.io.jvm.javaio.BlockingAdapter  method removed: kotlinx.coroutines.EventLoopKt.processNextEventInCurrentThread()
+    why: org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm changed 1.7.1 -> 1.11.0, which breaks io.ktor:ktor-io-jvm:2.3.13:
+        kotlinx.coroutines.EventLoopKt.processNextEventInCurrentThread() was removed, but io.ktor.utils.io.jvm.javaio.BlockingAdapter still calls it
 
 scanned 8164 classes: ❌ 2 broken
 ```
