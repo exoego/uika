@@ -31,6 +31,10 @@ pub struct CheckReport {
     /// none matched (e.g. build outputs not compiled), so the not-proven-reachable labels are
     /// untrustworthy.
     pub app_roots_matched: Option<bool>,
+    /// Scan target paths actually admitted (after missing-path skips, stale-old-version
+    /// exclusion, and duplicate dedup). 0 here; lib.rs::run_check_with_indexes, which owns
+    /// the admission step, overwrites it. Feeds the plain-check header only, never JSON.
+    pub scan_targets: usize,
 }
 
 /// Pass-1 result for one class. Does not carry member tables
@@ -634,6 +638,7 @@ pub fn check_scanned(
         suppressed: 0,
         reachability_computed: reach_result.is_some(),
         app_roots_matched: reach_result.as_ref().map(|r| r.app_root_matched),
+        scan_targets: 0,
     }
 }
 
