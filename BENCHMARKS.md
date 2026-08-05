@@ -39,22 +39,20 @@ resolves the reference, names the artifact on each end, and suggests a fix:
 
 ```text
 dependency changes: 1
-  CHANGED org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm 1.7.1 -> 1.11.0
+    CHANGED org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm 1.7.1 -> 1.11.0
 
-VIOLATION in ktor-io-jvm-2.3.13.jar
-  io/ktor/utils/io/jvm/javaio/BlockingAdapter
-    -> method removed: kotlinx/coroutines/EventLoopKt.processNextEventInCurrentThread ()J
-       referenced by: io.ktor:ktor-io-jvm:2.3.13
-       removed by:    org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm 1.7.1 -> 1.11.0
-       suggestion:    upgrade io.ktor:ktor-io-jvm:2.3.13 to a release built against
-                      kotlinx-coroutines-core-jvm 1.11.0, or pin it to 1.7.1
+💡 upgrade io.ktor:ktor-io-jvm:2.3.13 to a release built against kotlinx-coroutines-core-jvm 1.11.0, or pin it to 1.7.1
+    removed by: org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm 1.7.1 -> 1.11.0
+    referenced by: io.ktor:ktor-io-jvm:2.3.13
+    -> io.ktor.utils.io.jvm.javaio.BlockingAdapter  method removed: kotlinx.coroutines.EventLoopKt.processNextEventInCurrentThread()
 
-scanned 8164 classes, 2 broken reference(s)
+scanned 8164 classes: ❌ 2 broken
 ```
 
-Plain `uika check`, given bare JAR paths instead of a resolved dump, prints the
-same violation without the `referenced by` / `removed by` / `suggestion`
-lines (it has file paths, not coordinates).
+Plain `uika check`, given bare JAR paths instead of a resolved dump, groups the
+same violation under the broken symbol with the runtime error it causes
+(`method removed -> NoSuchMethodError at first call`), without the 💡 fix
+block (it has file paths, not coordinates).
 
 uika `diff` (library only) lists every bytecode-level removal, the real one
 among them:

@@ -318,7 +318,7 @@ pass-2 classes are typically below 0.1% of the scan.
   member. Grouping is done inside each reachability section, so a fix spanning
   both tiers prints once under 💥 and once under ⚠️. Violations with no
   suggestion (plain `check`, or unattributed upgrade-check leftovers) fall back
-  to the `source -> class` listing.
+  to the shape-split ❌ blocks described under Report Text Layer.
 - `referenced_by` comes from a dump `file-display-string -> "g:n:v"` map (both
   before and after sides). `removed_by` comes from mapping the violation's owner
   class to a changed coordinate by reading the before-side JARs' class names
@@ -329,4 +329,33 @@ pass-2 classes are typically below 0.1% of the scan.
   cross-group leads with upgrade-the-referencer-or-pin-the-owner. This mirrors
   the real fixes found for the OpenTelemetry case (BOM-align the 41 skew breaks;
   handle the cross-group firestore/grpc one separately).
+
+## Report Text Layer
+
+- All prettifying is presentation-only and lives in `report.rs`: JSON output,
+  the goldens, and the verdicts stream keep raw slashed names and descriptors.
+  Text renders dotted class names, Java-ish signatures (`callWithTimeout(
+  Callable, long, TimeUnit, boolean)`), `<init>` as "constructor", and JAR
+  sources shrunk to the file name. `$` stays in class names (part of the
+  binary name).
+- Unsuggested violations split by shape. Reference violations group by
+  (pretty target, reason) — symbol-first, because the broken symbol is the
+  unit a fix targets — with the referencing classes nested under `used by`.
+  Structural graph-walk violations (`class/method became final`, `extends
+  final class`, `method became abstract`, and the member-less `class kind
+  changed`) group by the scanned class, phrased as what that class does plus
+  the error the JVM raises; symbol-first would misattribute them, since the
+  broken thing is the scanned class itself. `is_structural` must stay in sync
+  with the reason strings check.rs emits — "class kind changed" exists in both
+  worlds and is told apart by `member.is_none()`.
+- `runtime_error` maps each reference-style reason to the JVM error and the
+  moment it fires ("NoSuchMethodError at first call"); a new reason string
+  added in check.rs needs a mapping there or the line prints bare.
+- Emoji vocabulary: 💥/⚠️ reachability sections, 💡 fix advice, ❌ one broken
+  symbol or class, ❓ unverified, ✅ clean summary. Indentation is 4 spaces per
+  level, never aligned to emoji width.
+- The `checked A -> B against N scan targets` header comes from
+  `check_header`, printed by cmd_check only (upgrade-check has its
+  dependency-change header instead), so `check_text` stays header-free for
+  both callers.
 

@@ -1100,7 +1100,7 @@ fn per_module_check_reports_break_when_global_version_set_is_unchanged() {
         "{stdout}"
     );
     assert!(
-        stdout.contains("io/opentelemetry/sdk/internal/DaemonThreadFactory"),
+        stdout.contains("io.opentelemetry.sdk.internal.DaemonThreadFactory"),
         "the swap-hidden break must still be reported:\n{stdout}"
     );
     // The per-run suggestion quotes :a's own move, which the empty global list cannot.

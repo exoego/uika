@@ -174,167 +174,439 @@ pub fn diff_json(changes: &[BreakingChange]) -> Result<String> {
     })?)
 }
 
-/// The referenced symbol as shown on a violation line: bare owner for a class reference,
-/// otherwise "owner.member descriptor".
-fn ref_target(v: &Violation) -> String {
-    match (&v.reference.kind, &v.reference.member) {
-        (RefKind::Class, _) | (_, None) => v.reference.owner.to_string(),
-        (_, Some(m)) => format!("{}.{} {}", v.reference.owner, m.name, m.descriptor),
+/// "com/google/Foo$Bar" -> "com.google.Foo$Bar". `$` is kept: it is part of the class's
+/// binary name and dotting it would fabricate a nesting that does not exist for Foo$1.
+fn dotted(name: &str) -> String {
+    name.replace('/', ".")
+}
+
+/// Last segment of an internal class name: "org/koin/logger/SLF4JLogger" -> "SLF4JLogger".
+fn simple(name: &str) -> &str {
+    name.rsplit('/').next().unwrap_or(name)
+}
+
+/// One JVM type descriptor -> (Java-ish simple name, bytes consumed). None on malformed input.
+fn parse_type(s: &str) -> Option<(String, usize)> {
+    match s.as_bytes().first()? {
+        b'B' => Some(("byte".to_string(), 1)),
+        b'C' => Some(("char".to_string(), 1)),
+        b'D' => Some(("double".to_string(), 1)),
+        b'F' => Some(("float".to_string(), 1)),
+        b'I' => Some(("int".to_string(), 1)),
+        b'J' => Some(("long".to_string(), 1)),
+        b'S' => Some(("short".to_string(), 1)),
+        b'Z' => Some(("boolean".to_string(), 1)),
+        b'V' => Some(("void".to_string(), 1)),
+        b'L' => {
+            let end = s.find(';')?;
+            Some((simple(&s[1..end]).to_string(), end + 1))
+        }
+        b'[' => {
+            let (inner, used) = parse_type(&s[1..])?;
+            Some((format!("{inner}[]"), used + 1))
+        }
+        _ => None,
     }
 }
 
-/// Write a set of violations. upgrade-check violations carry a suggestion, so they are grouped by
-/// the fix (one 💡 block lists every reference a single piece of advice covers) instead of
-/// repeating the advice per reference. Plain `check` has no suggestions and keeps the
-/// source -> class listing. In a mixed run the attributed groups come first, then the rest.
-fn write_violation_groups(out: &mut String, violations: &[&Violation]) {
+/// Parameter list of a method descriptor as Java-ish simple names:
+/// "(Ljava/util/concurrent/Callable;JLjava/util/concurrent/TimeUnit;Z)Ljava/lang/Object;"
+/// -> "Callable, long, TimeUnit, boolean". None if the descriptor does not parse.
+fn pretty_params(descriptor: &str) -> Option<String> {
+    let inner = descriptor.strip_prefix('(')?;
+    let mut rest = &inner[..inner.find(')')?];
+    let mut params = Vec::new();
+    while !rest.is_empty() {
+        let (name, used) = parse_type(rest)?;
+        params.push(name);
+        rest = &rest[used..];
+    }
+    Some(params.join(", "))
+}
+
+/// A member as a Java-ish signature: "owner.name(params)" for methods,
+/// "owner constructor (params)" for `<init>`, "owner.name: type" for fields.
+/// A descriptor that does not parse falls back to the raw form.
+fn pretty_member(owner: &str, name: &str, descriptor: &str) -> String {
+    let owner = dotted(owner);
+    if descriptor.starts_with('(') {
+        match (pretty_params(descriptor), name) {
+            (Some(p), "<init>") => format!("{owner} constructor ({p})"),
+            (Some(p), _) => format!("{owner}.{name}({p})"),
+            (None, _) => format!("{owner}.{name} {descriptor}"),
+        }
+    } else {
+        match parse_type(descriptor) {
+            Some((t, _)) => format!("{owner}.{name}: {t}"),
+            None => format!("{owner}.{name} {descriptor}"),
+        }
+    }
+}
+
+/// The referenced symbol as shown on a violation line: bare owner for a class reference,
+/// otherwise the pretty member signature.
+fn pretty_target(v: &Violation) -> String {
+    match &v.reference.member {
+        None => dotted(v.reference.owner.as_str()),
+        Some(m) => pretty_member(
+            v.reference.owner.as_str(),
+            m.name.as_str(),
+            m.descriptor.as_str(),
+        ),
+    }
+}
+
+fn is_constructor(v: &Violation) -> bool {
+    v.reference
+        .member
+        .is_some_and(|m| m.name.as_str() == "<init>")
+}
+
+/// The reason as printed: "method ..." reads as "constructor ..." for `<init>` references.
+fn display_reason(v: &Violation) -> String {
+    if is_constructor(v) {
+        v.reason.replace("method", "constructor")
+    } else {
+        v.reason.clone()
+    }
+}
+
+/// The error the JVM raises for a reference-style violation and when — the string a reader
+/// greps production logs for. Graph-walk reasons are not here; their consumer-first
+/// phrasing (structural_lines) carries its own error line.
+fn runtime_error(v: &Violation) -> Option<&'static str> {
+    let ctor = is_constructor(v);
+    Some(match v.reason.as_str() {
+        "class removed" => "NoClassDefFoundError at first use",
+        "class access narrowed" => "IllegalAccessError at first use",
+        "class became abstract" => "InstantiationError at first `new`",
+        "class kind changed" => "IncompatibleClassChangeError at first call",
+        "method removed" if ctor => "NoSuchMethodError at first `new`",
+        "method removed" => "NoSuchMethodError at first call",
+        "field removed" => "NoSuchFieldError at first access",
+        "method access narrowed" if ctor => "IllegalAccessError at first `new`",
+        "method access narrowed" => "IllegalAccessError at first call",
+        "field access narrowed" => "IllegalAccessError at first access",
+        "field became final" => "IllegalAccessError at first write",
+        "member changed from static to instance" | "member changed from instance to static" => {
+            if v.reference.kind == RefKind::Field {
+                "IncompatibleClassChangeError at first access"
+            } else {
+                "IncompatibleClassChangeError at first call"
+            }
+        }
+        _ => return None,
+    })
+}
+
+/// JAR paths shrink to the file name (the full path stays in the JSON output); directories
+/// keep the full display string, whose basename alone (e.g. "main") says nothing.
+fn source_display(source: &str) -> &str {
+    if source.ends_with(".jar") {
+        source.rsplit(['/', '\\']).next().unwrap_or(source)
+    } else {
+        source
+    }
+}
+
+/// Graph-walk violations: the broken thing is the scanned class itself (its hierarchy no
+/// longer loads or selects), so they read consumer-first, unlike reference violations
+/// which group by the symbol that changed. "class kind changed" exists in both worlds;
+/// the graph-walk variant is the member-less Class edge.
+fn is_structural(v: &Violation) -> bool {
+    matches!(
+        v.reason.as_str(),
+        "class became final"
+            | "method became final"
+            | "extends final class"
+            | "method became abstract"
+    ) || (v.reason == "class kind changed" && v.reference.member.is_none())
+}
+
+/// (what happened, what the JVM does about it) for one structural violation.
+fn structural_lines(v: &Violation) -> (String, String) {
+    let owner = dotted(v.reference.owner.as_str());
+    let loads = format!(
+        "-> VerifyError when {} loads",
+        simple(v.source_class.as_str())
+    );
+    match (v.reason.as_str(), v.reference.member) {
+        ("method became abstract", Some(m)) => (
+            format!(
+                "inherits abstract {} without implementing it",
+                pretty_member(
+                    v.reference.owner.as_str(),
+                    m.name.as_str(),
+                    m.descriptor.as_str()
+                )
+            ),
+            format!("-> AbstractMethodError when {} is called", m.name),
+        ),
+        ("method became final", Some(m)) => (
+            format!(
+                "overrides {} which became final",
+                pretty_member(
+                    v.reference.owner.as_str(),
+                    m.name.as_str(),
+                    m.descriptor.as_str()
+                )
+            ),
+            loads,
+        ),
+        ("class became final", _) => (format!("extends {owner} which became final"), loads),
+        ("extends final class", _) => (
+            format!("extends {owner} which is final on the runtime classpath"),
+            loads,
+        ),
+        ("class kind changed", _) => (
+            format!("extends or implements {owner} whose kind changed (class <-> interface)"),
+            format!(
+                "-> IncompatibleClassChangeError when {} loads",
+                simple(v.source_class.as_str())
+            ),
+        ),
+        // Unreachable while is_structural and this stay in sync; degrade readably, not by panic.
+        _ => (format!("{}: {owner}", v.reason), loads),
+    }
+}
+
+/// Per-module upgrade-check attribution, appended to the line a violation prints on.
+fn modules_suffix(v: &Violation) -> String {
+    if v.modules.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", v.modules.join(", "))
+    }
+}
+
+/// Render a set of violations as blocks (no trailing newlines; the caller joins with blank
+/// lines). upgrade-check violations carry a suggestion and group by the fix (one 💡 block
+/// lists every reference a single piece of advice covers). The rest split by shape:
+/// reference violations group by the broken symbol (the unit a fix targets), structural
+/// graph-walk violations by the scanned class that no longer loads.
+fn violation_blocks(violations: &[&Violation]) -> Vec<String> {
     let (with_sugg, without): (Vec<&Violation>, Vec<&Violation>) = violations
         .iter()
         .copied()
         .partition(|v| v.suggestion.is_some());
-    write_suggestion_groups(out, &with_sugg);
-    if !with_sugg.is_empty() && !without.is_empty() {
-        writeln!(out).unwrap();
-    }
-    write_source_groups(out, &without);
+    let (structural, reference): (Vec<&Violation>, Vec<&Violation>) =
+        without.into_iter().partition(|v| is_structural(v));
+    let mut blocks = suggestion_blocks(&with_sugg);
+    blocks.extend(reference_blocks(&reference));
+    blocks.extend(structural_blocks(&structural));
+    blocks
 }
 
 /// One 💡 block per distinct fix. Identical advice implies the same removed_by / referenced_by /
 /// before / after (the advice string embeds the coordinates and changed versions), so the header
 /// is built from any member of the group. Groups are ordered by advice and references within a
 /// group by class/target/reason, keeping the output deterministic.
-fn write_suggestion_groups(out: &mut String, violations: &[&Violation]) {
+fn suggestion_blocks(violations: &[&Violation]) -> Vec<String> {
     let mut grouped: BTreeMap<&str, Vec<&Violation>> = BTreeMap::new();
     for &v in violations {
         let advice = v.suggestion.as_ref().unwrap().advice.as_str();
         grouped.entry(advice).or_default().push(v);
     }
-    for vs in grouped.values() {
-        let s = vs[0].suggestion.as_ref().unwrap();
-        writeln!(out, "💡 {}", s.advice).unwrap();
-        writeln!(
-            out,
-            "   removed by: {} {} -> {}",
-            s.removed_by, s.before, s.after
-        )
-        .unwrap();
-        if let Some(rb) = &s.referenced_by {
-            writeln!(out, "   referenced by: {rb}").unwrap();
-        }
-        // Per-module upgrade-check: the modules whose classpaths exhibit this group.
-        let mut modules: Vec<&str> = vs
-            .iter()
-            .flat_map(|v| v.modules.iter().map(String::as_str))
-            .collect();
-        modules.sort_unstable();
-        modules.dedup();
-        if !modules.is_empty() {
-            writeln!(out, "   modules: {}", modules.join(", ")).unwrap();
-        }
-        let mut refs = vs.clone();
-        refs.sort_by_cached_key(|v| (v.source_class.as_str(), ref_target(v), v.reason.as_str()));
-        for v in refs {
+    grouped
+        .into_values()
+        .map(|vs| {
+            let mut out = String::new();
+            let s = vs[0].suggestion.as_ref().unwrap();
+            writeln!(out, "💡 {}", s.advice).unwrap();
             writeln!(
                 out,
-                "   -> {}  {}: {}",
-                v.source_class,
-                v.reason,
-                ref_target(v)
+                "    removed by: {} {} -> {}",
+                s.removed_by, s.before, s.after
             )
             .unwrap();
-        }
-    }
+            if let Some(rb) = &s.referenced_by {
+                writeln!(out, "    referenced by: {rb}").unwrap();
+            }
+            // Per-module upgrade-check: the modules whose classpaths exhibit this group.
+            let mut modules: Vec<&str> = vs
+                .iter()
+                .flat_map(|v| v.modules.iter().map(String::as_str))
+                .collect();
+            modules.sort_unstable();
+            modules.dedup();
+            if !modules.is_empty() {
+                writeln!(out, "    modules: {}", modules.join(", ")).unwrap();
+            }
+            let mut refs = vs.clone();
+            refs.sort_by_cached_key(|v| {
+                (v.source_class.as_str(), pretty_target(v), v.reason.clone())
+            });
+            for v in refs {
+                writeln!(
+                    out,
+                    "    -> {}  {}: {}",
+                    dotted(v.source_class.as_str()),
+                    display_reason(v),
+                    pretty_target(v)
+                )
+                .unwrap();
+            }
+            out.truncate(out.trim_end().len());
+            out
+        })
+        .collect()
 }
 
-/// Stable source -> source_class -> reference listing for violations without a suggestion.
-fn write_source_groups(out: &mut String, violations: &[&Violation]) {
-    let mut grouped: BTreeMap<&str, BTreeMap<&str, Vec<&Violation>>> = BTreeMap::new();
+/// One ❌ block per broken symbol: the symbol as heading, the reason with the runtime
+/// error it causes, then every referencing class. BTreeMap on (heading, reason) strings
+/// keeps the order deterministic by string value.
+fn reference_blocks(violations: &[&Violation]) -> Vec<String> {
+    let mut grouped: BTreeMap<(String, String), Vec<&Violation>> = BTreeMap::new();
     for &v in violations {
         grouped
-            .entry(v.source.as_str())
-            .or_default()
-            .entry(v.source_class.as_str())
+            .entry((pretty_target(v), v.reason.clone()))
             .or_default()
             .push(v);
     }
-    for (source, by_class) in &grouped {
-        writeln!(out, "VIOLATION in {source}").unwrap();
-        for (class, vs) in by_class {
-            writeln!(out, "  {class}").unwrap();
-            for v in vs {
-                let modules = if v.modules.is_empty() {
-                    String::new()
-                } else {
-                    format!(" [{}]", v.modules.join(", "))
-                };
-                writeln!(out, "    -> {}: {}{modules}", v.reason, ref_target(v)).unwrap();
+    grouped
+        .into_iter()
+        .map(|((target, _), vs)| {
+            let mut out = String::new();
+            writeln!(out, "❌ {target}").unwrap();
+            match runtime_error(vs[0]) {
+                Some(err) => writeln!(out, "    {} -> {err}", display_reason(vs[0])).unwrap(),
+                None => writeln!(out, "    {}", display_reason(vs[0])).unwrap(),
             }
-        }
+            let users: std::collections::BTreeSet<(String, String, String)> = vs
+                .iter()
+                .map(|v| {
+                    (
+                        dotted(v.source_class.as_str()),
+                        source_display(v.source.as_str()).to_string(),
+                        modules_suffix(v),
+                    )
+                })
+                .collect();
+            let plural = if users.len() == 1 { "" } else { "es" };
+            writeln!(out, "    used by {} class{plural}:", users.len()).unwrap();
+            for (class, source, mods) in users {
+                writeln!(out, "        {class}  ({source}){mods}").unwrap();
+            }
+            out.truncate(out.trim_end().len());
+            out
+        })
+        .collect()
+}
+
+/// One ❌ block per scanned class whose own shape broke; each entry pairs what happened
+/// with the error the JVM raises for it.
+fn structural_blocks(violations: &[&Violation]) -> Vec<String> {
+    let mut grouped: BTreeMap<(String, String), Vec<&Violation>> = BTreeMap::new();
+    for &v in violations {
+        grouped
+            .entry((
+                dotted(v.source_class.as_str()),
+                source_display(v.source.as_str()).to_string(),
+            ))
+            .or_default()
+            .push(v);
     }
+    grouped
+        .into_iter()
+        .map(|((class, source), mut vs)| {
+            let mut out = String::new();
+            writeln!(out, "❌ {class}  ({source})").unwrap();
+            vs.sort_by_cached_key(|v| (pretty_target(v), v.reason.clone()));
+            for v in vs {
+                let (what, err) = structural_lines(v);
+                writeln!(out, "    {what}{}", modules_suffix(v)).unwrap();
+                writeln!(out, "        {err}").unwrap();
+            }
+            out.truncate(out.trim_end().len());
+            out
+        })
+        .collect()
+}
+
+/// Bottom line: totals plus per-tier counts. ✅ marks a clean run; ❌/❓ mirror the block
+/// markers above.
+fn summary_line(report: &CheckReport, reachable: usize, unproven: usize) -> String {
+    let broken = report.violations.len();
+    let mut line = if broken == 0 {
+        format!("✅ scanned {} classes: 0 broken", report.scanned_classes)
+    } else {
+        format!(
+            "scanned {} classes: ❌ {broken} broken",
+            report.scanned_classes
+        )
+    };
+    if report.reachability_computed && broken > 0 {
+        write!(
+            line,
+            " (💥 {reachable} reachable, ⚠️ {unproven} not proven reachable)"
+        )
+        .unwrap();
+    }
+    if report.unknown_refs > 0 {
+        write!(
+            line,
+            ", ❓ {} unverified (hierarchy escapes scope)",
+            report.unknown_refs
+        )
+        .unwrap();
+    }
+    if report.suppressed > 0 {
+        write!(line, ", {} suppressed by --exclude-file", report.suppressed).unwrap();
+    }
+    line
+}
+
+/// One-line context header for plain `check`: which library pair was compared and against
+/// how many scan targets. upgrade-check prints its dependency-change header instead.
+pub fn check_header(
+    old: &[std::path::PathBuf],
+    new: &[std::path::PathBuf],
+    targets: usize,
+) -> String {
+    fn names(paths: &[std::path::PathBuf]) -> String {
+        paths
+            .iter()
+            .map(|p| match p.file_name() {
+                Some(n) => n.to_string_lossy().into_owned(),
+                None => p.display().to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+    let plural = if targets == 1 { "" } else { "s" };
+    format!(
+        "checked {} -> {} against {targets} scan target{plural}\n\n",
+        names(old),
+        names(new)
+    )
 }
 
 pub fn check_text(report: &CheckReport) -> String {
-    let mut out = String::new();
-    let has_body = !report.violations.is_empty();
-    // Partition once (reused for both the sections and the summary count).
-    let reach_note = if report.reachability_computed {
-        // Reachable first (likely to break), then the ones we could not prove reachable
-        // (no static path found, but reflection may still load them).
-        let (reachable, unproven): (Vec<&Violation>, Vec<&Violation>) = report
-            .violations
-            .iter()
-            .partition(|v| counts_as_reachable(v.reachable));
+    let mut sections: Vec<String> = Vec::new();
+    // Reachable first (likely to break), then the ones we could not prove reachable
+    // (no static path found, but reflection may still load them).
+    let (reachable, unproven): (Vec<&Violation>, Vec<&Violation>) = report
+        .violations
+        .iter()
+        .partition(|v| counts_as_reachable(v.reachable));
+    if report.reachability_computed {
         if !reachable.is_empty() {
-            writeln!(out, "💥 reachable from the application (likely to break)").unwrap();
-            write_violation_groups(&mut out, &reachable);
+            sections.push(format!(
+                "💥 reachable from the application (likely to break)\n\n{}",
+                violation_blocks(&reachable).join("\n\n")
+            ));
         }
         if !unproven.is_empty() {
-            if !reachable.is_empty() {
-                writeln!(out).unwrap();
-            }
-            writeln!(
-                out,
-                "⚠️  not proven reachable (no static path found; may still load via reflection)"
-            )
-            .unwrap();
-            write_violation_groups(&mut out, &unproven);
+            sections.push(format!(
+                "⚠️  not proven reachable (no static path found; may still load via reflection)\n\n{}",
+                violation_blocks(&unproven).join("\n\n")
+            ));
         }
-        // Only annotate the summary once there is something to rank.
-        if has_body {
-            format!(
-                " (💥 {} reachable, ⚠️ {} not proven reachable)",
-                reachable.len(),
-                unproven.len()
-            )
-        } else {
-            String::new()
-        }
-    } else {
-        write_violation_groups(&mut out, &report.violations.iter().collect::<Vec<_>>());
-        String::new()
-    };
-    let unknown_note = if report.unknown_refs > 0 {
-        format!(
-            ", {} unverified (hierarchy escapes scope)",
-            report.unknown_refs
-        )
-    } else {
-        String::new()
-    };
-    let suppressed_note = if report.suppressed > 0 {
-        format!(", {} suppressed by --exclude-file", report.suppressed)
-    } else {
-        String::new()
-    };
-    writeln!(
-        out,
-        "{}scanned {} classes, {} broken reference(s){reach_note}{unknown_note}{suppressed_note}",
-        if has_body { "\n" } else { "" },
-        report.scanned_classes,
-        report.violations.len()
-    )
-    .unwrap();
-    out
+    } else if !report.violations.is_empty() {
+        sections.push(violation_blocks(&report.violations.iter().collect::<Vec<_>>()).join("\n\n"));
+    }
+    sections.push(summary_line(report, reachable.len(), unproven.len()));
+    sections.join("\n\n") + "\n"
 }
 
 /// One deduplicated per-module check run (modules sharing identical inputs share one run).
@@ -384,7 +656,7 @@ pub fn upgrade_text(
         };
         writeln!(
             out,
-            "  {label} {} {} -> {}",
+            "    {label} {} {} -> {}",
             c.coordinate,
             if c.before.is_empty() {
                 "-".to_string()
@@ -417,13 +689,21 @@ pub fn upgrade_text(
         )
         .unwrap();
         for o in &m.outcomes {
+            let broken = if o.broken == 0 {
+                "✅ 0 broken".to_string()
+            } else {
+                format!("❌ {} broken", o.broken)
+            };
+            let unverified = if o.unknown_refs == 0 {
+                "0 unverified".to_string()
+            } else {
+                format!("❓ {} unverified", o.unknown_refs)
+            };
             writeln!(
                 out,
-                "  {}  scanned {} classes, {} broken, {} unverified",
+                "    {}  scanned {} classes, {broken}, {unverified}",
                 o.modules.join(", "),
                 o.scanned_classes,
-                o.broken,
-                o.unknown_refs
             )
             .unwrap();
         }
@@ -488,7 +768,7 @@ pub fn check_json(report: &CheckReport) -> Result<String> {
 mod tests {
     use super::*;
     use crate::intern::intern;
-    use crate::model::{Suggestion, SymbolRef};
+    use crate::model::{MemberKey, Suggestion, SymbolRef};
 
     fn class_violation(
         source_class: &str,
@@ -533,9 +813,35 @@ mod tests {
         }
     }
 
+    fn member_violation(
+        source_class: &str,
+        owner: &str,
+        name: &str,
+        descriptor: &str,
+        kind: RefKind,
+        reason: &str,
+    ) -> Violation {
+        Violation {
+            source: intern("consumer.jar"),
+            source_class: intern(source_class),
+            reference: SymbolRef {
+                kind,
+                owner: intern(owner),
+                member: Some(MemberKey::new(name, descriptor)),
+                expected_static: None,
+                field_write: None,
+                instantiated: None,
+            },
+            reason: reason.to_string(),
+            reachable: None,
+            suggestion: None,
+            modules: Vec::new(),
+        }
+    }
+
     /// Several references sharing one piece of advice collapse into a single 💡 block, and the
     /// block is ordered before a distinct one; a violation without a suggestion falls back to the
-    /// source listing.
+    /// symbol listing.
     #[test]
     fn suggestions_group_by_advice() {
         let r = report(vec![
@@ -566,11 +872,11 @@ mod tests {
         assert_eq!(out.matches("💡 ADVICE_A").count(), 1, "\n{out}");
         assert_eq!(out.matches("💡 ADVICE_B").count(), 1, "\n{out}");
         assert!(
-            out.contains("   -> a/Foo  class removed: x/GoneA"),
+            out.contains("    -> a.Foo  class removed: x.GoneA"),
             "\n{out}"
         );
         assert!(
-            out.contains("   -> a/Bar  class removed: x/GoneB"),
+            out.contains("    -> a.Bar  class removed: x.GoneB"),
             "\n{out}"
         );
         // Deterministic order: ADVICE_A group before ADVICE_B group.
@@ -606,26 +912,165 @@ mod tests {
         let unproven = out.find("not proven reachable").unwrap();
         assert!(reachable < unproven);
         // Foo (reachable) sits in the 💥 section, Bar (unproven) in the ⚠️ section.
-        assert!(out.find("a/Foo").unwrap() < unproven, "\n{out}");
-        assert!(out.find("a/Bar").unwrap() > unproven, "\n{out}");
+        assert!(out.find("a.Foo").unwrap() < unproven, "\n{out}");
+        assert!(out.find("a.Bar").unwrap() > unproven, "\n{out}");
     }
 
-    /// Violations without a suggestion keep the source -> class listing.
+    /// Violations without a suggestion group by the broken symbol, with the runtime error
+    /// the reason maps to and the referencing classes listed under it.
     #[test]
-    fn unattributed_violation_uses_source_listing() {
-        let mut r = report(vec![class_violation(
-            "a/Foo",
-            "x/Gone",
-            "class removed",
-            None,
-            None,
-        )]);
+    fn unattributed_violation_groups_by_symbol() {
+        let mut r = report(vec![
+            class_violation("a/Foo", "x/Gone", "class removed", None, None),
+            class_violation("a/Bar", "x/Gone", "class removed", None, None),
+        ]);
         r.reachability_computed = false;
         let out = check_text(&r);
-        assert!(out.contains("VIOLATION in consumer.jar"), "\n{out}");
-        assert!(out.contains("  a/Foo"), "\n{out}");
-        assert!(out.contains("    -> class removed: x/Gone"), "\n{out}");
+        // One block for the one removed symbol, both users under it.
+        assert_eq!(out.matches("❌ x.Gone").count(), 1, "\n{out}");
+        assert!(
+            out.contains("    class removed -> NoClassDefFoundError at first use"),
+            "\n{out}"
+        );
+        assert!(out.contains("    used by 2 classes:"), "\n{out}");
+        assert!(out.contains("        a.Bar  (consumer.jar)"), "\n{out}");
+        assert!(out.contains("        a.Foo  (consumer.jar)"), "\n{out}");
         assert!(!out.contains("💡"), "\n{out}");
+    }
+
+    /// Method and field references render as Java-ish signatures: descriptors are decoded,
+    /// `<init>` reads as a constructor, and the reason wording follows.
+    #[test]
+    fn member_references_render_as_signatures() {
+        let mut r = report(vec![
+            member_violation(
+                "a/Foo",
+                "x/TimeLimiter",
+                "callWithTimeout",
+                "(Ljava/util/concurrent/Callable;JLjava/util/concurrent/TimeUnit;Z)Ljava/lang/Object;",
+                RefKind::Method,
+                "method removed",
+            ),
+            member_violation(
+                "a/Foo",
+                "x/SimpleTimeLimiter",
+                "<init>",
+                "(Ljava/util/concurrent/ExecutorService;)V",
+                RefKind::Method,
+                "method access narrowed",
+            ),
+            member_violation(
+                "a/Foo",
+                "x/Fields",
+                "COUNTS",
+                "[I",
+                RefKind::Field,
+                "field removed",
+            ),
+        ]);
+        r.reachability_computed = false;
+        let out = check_text(&r);
+        assert!(
+            out.contains("❌ x.TimeLimiter.callWithTimeout(Callable, long, TimeUnit, boolean)"),
+            "\n{out}"
+        );
+        assert!(
+            out.contains("    method removed -> NoSuchMethodError at first call"),
+            "\n{out}"
+        );
+        assert!(
+            out.contains("❌ x.SimpleTimeLimiter constructor (ExecutorService)"),
+            "\n{out}"
+        );
+        assert!(
+            out.contains("    constructor access narrowed -> IllegalAccessError at first `new`"),
+            "\n{out}"
+        );
+        assert!(out.contains("❌ x.Fields.COUNTS: int[]"), "\n{out}");
+        assert!(
+            out.contains("    field removed -> NoSuchFieldError at first access"),
+            "\n{out}"
+        );
+    }
+
+    /// Graph-walk violations stay consumer-first: one block per broken scanned class,
+    /// each entry phrased as what the class does and the error the JVM raises.
+    #[test]
+    fn structural_violations_group_by_consumer_class() {
+        let mut r = report(vec![
+            member_violation(
+                "org/koin/logger/SLF4JLogger",
+                "org/koin/core/logger/Logger",
+                "display",
+                "(Lorg/koin/core/logger/Level;Ljava/lang/String;)V",
+                RefKind::Method,
+                "method became abstract",
+            ),
+            member_violation(
+                "org/koin/logger/SLF4JLogger",
+                "org/koin/core/logger/Logger",
+                "log",
+                "(Lorg/koin/core/logger/Level;Ljava/lang/String;)V",
+                RefKind::Method,
+                "method became final",
+            ),
+        ]);
+        r.reachability_computed = false;
+        let out = check_text(&r);
+        // One consumer-class block holding both structural breaks.
+        assert_eq!(
+            out.matches("❌ org.koin.logger.SLF4JLogger  (consumer.jar)")
+                .count(),
+            1,
+            "\n{out}"
+        );
+        assert!(
+            out.contains(
+                "    inherits abstract org.koin.core.logger.Logger.display(Level, String) without implementing it"
+            ),
+            "\n{out}"
+        );
+        assert!(
+            out.contains("        -> AbstractMethodError when display is called"),
+            "\n{out}"
+        );
+        assert!(
+            out.contains(
+                "    overrides org.koin.core.logger.Logger.log(Level, String) which became final"
+            ),
+            "\n{out}"
+        );
+        assert!(
+            out.contains("        -> VerifyError when SLF4JLogger loads"),
+            "\n{out}"
+        );
+    }
+
+    /// A clean run collapses to the ✅ summary line, still carrying the unverified count.
+    #[test]
+    fn clean_run_summary_leads_with_check_mark() {
+        let mut r = report(Vec::new());
+        r.unknown_refs = 16;
+        let out = check_text(&r);
+        assert_eq!(
+            out,
+            "✅ scanned 100 classes: 0 broken, ❓ 16 unverified (hierarchy escapes scope)\n"
+        );
+    }
+
+    /// The plain-check header names the compared pair and the scan target count.
+    #[test]
+    fn check_header_names_pair_and_targets() {
+        let old = vec![std::path::PathBuf::from("/x/guava-22.0.jar")];
+        let new = vec![std::path::PathBuf::from("/y/guava-23.0-rc1.jar")];
+        assert_eq!(
+            check_header(&old, &new, 1),
+            "checked guava-22.0.jar -> guava-23.0-rc1.jar against 1 scan target\n\n"
+        );
+        assert_eq!(
+            check_header(&old, &new, 3),
+            "checked guava-22.0.jar -> guava-23.0-rc1.jar against 3 scan targets\n\n"
+        );
     }
 
     /// The summary line notes suppressed violations only when the count is nonzero.

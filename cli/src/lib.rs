@@ -145,6 +145,7 @@ fn cmd_check(
     if json {
         println!("{}", report::check_json(&result)?);
     } else {
+        print!("{}", report::check_header(old, new, targets.len()));
         print!("{}", report::check_text(&result));
     }
     Ok(exit_code(&result, fail_on))

@@ -131,36 +131,41 @@ $ uika check --old kotlinx-coroutines-core-jvm-1.7.1.jar \
              --new kotlinx-coroutines-core-jvm-1.11.0.jar \
              --classpath ktor-io-jvm-2.3.13.jar:other-dep.jar \
              --app build/classes/kotlin/main
-VIOLATION in ktor-io-jvm-2.3.13.jar
-  io/ktor/utils/io/jvm/javaio/BlockingAdapter
-    -> method removed: kotlinx/coroutines/EventLoopKt.processNextEventInCurrentThread ()J
+checked kotlinx-coroutines-core-jvm-1.7.1.jar -> kotlinx-coroutines-core-jvm-1.11.0.jar against 3 scan targets
 
-scanned 372 classes, 1 broken reference(s), 5 unverified (hierarchy escapes scope)
+❌ kotlinx.coroutines.EventLoopKt.processNextEventInCurrentThread()
+    method removed -> NoSuchMethodError at first call
+    used by 1 class:
+        io.ktor.utils.io.jvm.javaio.BlockingAdapter  (ktor-io-jvm-2.3.13.jar)
+
+scanned 372 classes: ❌ 1 broken, ❓ 5 unverified (hierarchy escapes scope)
 
 # Detect broken references caused by every artifact whose version changed.
 # When application roots are known (build outputs in the dump, or --app), violations
 # are ranked: reachable first, then the ones no static path reaches.
 $ uika upgrade-check --before /tmp/before.json --after /tmp/after.json
 dependency changes: 1
-  CHANGED io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
+    CHANGED io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
 
 per-module check: 2 of 41 modules changed resolution (39 unchanged)
-  :app  scanned 84013 classes, 42 broken, 118 unverified
-  :worker  scanned 61200 classes, 0 broken, 87 unverified
+    :app  scanned 84013 classes, ❌ 42 broken, ❓ 118 unverified
+    :worker  scanned 61200 classes, ✅ 0 broken, ❓ 87 unverified
 
 💥 reachable from the application (likely to break)
+
 💡 align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
-   removed by: io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
-   referenced by: io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1
-   modules: :app
-   -> io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil  class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
-   -> io/opentelemetry/exporter/sender/okhttp/internal/OkHttpGrpcSender  class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
+    removed by: io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
+    referenced by: io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1
+    modules: :app
+    -> io.opentelemetry.exporter.sender.okhttp.internal.OkHttpUtil  class removed: io.opentelemetry.sdk.internal.DaemonThreadFactory
+    -> io.opentelemetry.exporter.sender.okhttp.internal.OkHttpGrpcSender  class removed: io.opentelemetry.sdk.internal.DaemonThreadFactory
 
 ⚠️  not proven reachable (no static path found; may still load via reflection)
-💡 ...
-   -> ...
 
-scanned 168496 classes, 42 broken reference(s) (💥 25 reachable, ⚠️ 17 not proven reachable)
+💡 ...
+    -> ...
+
+scanned 168496 classes: ❌ 42 broken (💥 25 reachable, ⚠️ 17 not proven reachable)
 
 # Debugging aid: dump the extracted API surface of a JAR
 $ uika dump some.jar
@@ -570,36 +575,41 @@ $ uika check --old kotlinx-coroutines-core-jvm-1.7.1.jar \
              --new kotlinx-coroutines-core-jvm-1.11.0.jar \
              --classpath ktor-io-jvm-2.3.13.jar:other-dep.jar \
              --app build/classes/kotlin/main
-VIOLATION in ktor-io-jvm-2.3.13.jar
-  io/ktor/utils/io/jvm/javaio/BlockingAdapter
-    -> method removed: kotlinx/coroutines/EventLoopKt.processNextEventInCurrentThread ()J
+checked kotlinx-coroutines-core-jvm-1.7.1.jar -> kotlinx-coroutines-core-jvm-1.11.0.jar against 3 scan targets
 
-scanned 372 classes, 1 broken reference(s), 5 unverified (hierarchy escapes scope)
+❌ kotlinx.coroutines.EventLoopKt.processNextEventInCurrentThread()
+    method removed -> NoSuchMethodError at first call
+    used by 1 class:
+        io.ktor.utils.io.jvm.javaio.BlockingAdapter  (ktor-io-jvm-2.3.13.jar)
+
+scanned 372 classes: ❌ 1 broken, ❓ 5 unverified (hierarchy escapes scope)
 
 # Detect broken references caused by every artifact whose version changed.
 # When application roots are known (build outputs in the dump, or --app), violations
 # are ranked: reachable first, then the ones no static path reaches.
 $ uika upgrade-check --before /tmp/before.json --after /tmp/after.json
 dependency changes: 1
-  CHANGED io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
+    CHANGED io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
 
 per-module check: 2 of 41 modules changed resolution (39 unchanged)
-  :app  scanned 84013 classes, 42 broken, 118 unverified
-  :worker  scanned 61200 classes, 0 broken, 87 unverified
+    :app  scanned 84013 classes, ❌ 42 broken, ❓ 118 unverified
+    :worker  scanned 61200 classes, ✅ 0 broken, ❓ 87 unverified
 
 💥 reachable from the application (likely to break)
+
 💡 align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
-   removed by: io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
-   referenced by: io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1
-   modules: :app
-   -> io/opentelemetry/exporter/sender/okhttp/internal/OkHttpUtil  class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
-   -> io/opentelemetry/exporter/sender/okhttp/internal/OkHttpGrpcSender  class removed: io/opentelemetry/sdk/internal/DaemonThreadFactory
+    removed by: io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
+    referenced by: io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1
+    modules: :app
+    -> io.opentelemetry.exporter.sender.okhttp.internal.OkHttpUtil  class removed: io.opentelemetry.sdk.internal.DaemonThreadFactory
+    -> io.opentelemetry.exporter.sender.okhttp.internal.OkHttpGrpcSender  class removed: io.opentelemetry.sdk.internal.DaemonThreadFactory
 
 ⚠️  not proven reachable (no static path found; may still load via reflection)
-💡 ...
-   -> ...
 
-scanned 168496 classes, 42 broken reference(s) (💥 25 reachable, ⚠️ 17 not proven reachable)
+💡 ...
+    -> ...
+
+scanned 168496 classes: ❌ 42 broken (💥 25 reachable, ⚠️ 17 not proven reachable)
 
 # Debugging aid: dump the extracted API surface of a JAR
 $ uika dump some.jar
