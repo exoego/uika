@@ -420,7 +420,7 @@ fn suggestion_blocks(violations: &[&Violation]) -> Vec<String> {
         .map(|vs| {
             let mut out = String::new();
             let s = vs[0].suggestion.as_ref().unwrap();
-            writeln!(out, "💡 {}", s.advice).unwrap();
+            writeln!(out, "💡 suggestion: {}", s.advice).unwrap();
             // Per-module upgrade-check: the modules whose classpaths exhibit this group.
             let mut modules: Vec<&str> = vs
                 .iter()
@@ -936,8 +936,8 @@ mod tests {
         ]);
         let out = check_text(&r);
         // Shared advice printed once, both references listed under it.
-        assert_eq!(out.matches("💡 ADVICE_A").count(), 1, "\n{out}");
-        assert_eq!(out.matches("💡 ADVICE_B").count(), 1, "\n{out}");
+        assert_eq!(out.matches("💡 suggestion: ADVICE_A").count(), 1, "\n{out}");
+        assert_eq!(out.matches("💡 suggestion: ADVICE_B").count(), 1, "\n{out}");
         assert!(
             out.contains("    why: g:owner changed 1 -> 2, which breaks g:referencer:1:"),
             "\n{out}"
@@ -978,7 +978,7 @@ mod tests {
             ),
         ]);
         let out = check_text(&r);
-        assert_eq!(out.matches("💡 ADVICE_A").count(), 2, "\n{out}");
+        assert_eq!(out.matches("💡 suggestion: ADVICE_A").count(), 2, "\n{out}");
         let reachable = out.find("reachable from the application").unwrap();
         let unproven = out.find("not proven reachable").unwrap();
         assert!(reachable < unproven);

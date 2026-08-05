@@ -153,7 +153,7 @@ per-module check: 2 of 41 modules changed resolution (39 unchanged)
 
 💥 reachable from the application (likely to break)
 
-💡 align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
+💡 suggestion: align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
     affected modules: :app
     why: io.opentelemetry:opentelemetry-sdk-common changed 1.42.1 -> 1.60.1, which breaks io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1:
         io.opentelemetry.sdk.internal.DaemonThreadFactory was removed, but io.opentelemetry.exporter.sender.okhttp.internal.OkHttpGrpcSender still uses it
@@ -161,7 +161,7 @@ per-module check: 2 of 41 modules changed resolution (39 unchanged)
 
 ⚠️  not proven reachable (no static path found; may still load via reflection)
 
-💡 ...
+💡 suggestion: ...
     why: ...
 
 scanned 168496 classes: ❌ 42 broken (💥 25 reachable, ⚠️ 17 not proven reachable)
@@ -596,7 +596,7 @@ per-module check: 2 of 41 modules changed resolution (39 unchanged)
 
 💥 reachable from the application (likely to break)
 
-💡 align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
+💡 suggestion: align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
     affected modules: :app
     why: io.opentelemetry:opentelemetry-sdk-common changed 1.42.1 -> 1.60.1, which breaks io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1:
         io.opentelemetry.sdk.internal.DaemonThreadFactory was removed, but io.opentelemetry.exporter.sender.okhttp.internal.OkHttpGrpcSender still uses it
@@ -604,7 +604,7 @@ per-module check: 2 of 41 modules changed resolution (39 unchanged)
 
 ⚠️  not proven reachable (no static path found; may still load via reflection)
 
-💡 ...
+💡 suggestion: ...
     why: ...
 
 scanned 168496 classes: ❌ 42 broken (💥 25 reachable, ⚠️ 17 not proven reachable)

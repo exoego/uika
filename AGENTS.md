@@ -104,7 +104,8 @@ not be relearned by experiment.
   each JAR/dir. Nested rayon provides the load balancing.
 - Preserve determinism: output sorted by string value; duplicates first-wins by
   input path order. Never sort or compare output by `Sym` id — interning order
-  is nondeterministic.
+  is nondeterministic. The same rule covers `model::Reason`: order via
+  `as_str()`, never variant position (it deliberately derives no `Ord`).
 - Keep old/new library indexing simple and complete — the two-pass savings are
   for the huge consumer classpath, not the small compared-library set.
 - Reachability edges are the one arena proportional to the whole scan that is
