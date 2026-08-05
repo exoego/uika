@@ -723,6 +723,14 @@ pub fn check_header(
     )
 }
 
+/// A reachability-tier title sandwiched in 80-column rules, so the section boundary
+/// stands out when scrolling a long report.
+fn section_heading(title: &str) -> String {
+    const RULE: &str =
+        "--------------------------------------------------------------------------------";
+    format!("{RULE}\n{title}\n{RULE}")
+}
+
 pub fn check_text(report: &CheckReport) -> String {
     let mut sections: Vec<String> = Vec::new();
     // Reachable first (likely to break), then the ones we could not prove reachable
@@ -734,13 +742,17 @@ pub fn check_text(report: &CheckReport) -> String {
     if report.reachability_computed {
         if !reachable.is_empty() {
             sections.push(format!(
-                "💥 reachable from the application (likely to break)\n\n{}",
+                "{}\n\n{}",
+                section_heading("💥 reachable from the application (likely to break)"),
                 violation_blocks(&reachable).join("\n\n")
             ));
         }
         if !unproven.is_empty() {
             sections.push(format!(
-                "⚠️  not proven reachable (no static path found; may still load via reflection)\n\n{}",
+                "{}\n\n{}",
+                section_heading(
+                    "⚠️  not proven reachable (no static path found; may still load via reflection)"
+                ),
                 violation_blocks(&unproven).join("\n\n")
             ));
         }

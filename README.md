@@ -133,7 +133,9 @@ $ uika check --old kotlinx-coroutines-core-jvm-1.7.1.jar \
              --app build/classes/kotlin/main
 checked kotlinx-coroutines-core-jvm-1.7.1.jar -> kotlinx-coroutines-core-jvm-1.11.0.jar against 3 scan targets
 
+--------------------------------------------------------------------------------
 💥 reachable from the application (likely to break)
+--------------------------------------------------------------------------------
 
 ❌ kotlinx.coroutines.EventLoopKt.processNextEventInCurrentThread()
     method removed -> NoSuchMethodError at first call
@@ -153,7 +155,9 @@ per-module check: 2 of 41 modules changed resolution (39 unchanged)
     :app  scanned 84013 classes, ❌ 42 broken, ❓ 118 unverified
     :worker  scanned 61200 classes, ✅ 0 broken, ❓ 87 unverified
 
+--------------------------------------------------------------------------------
 💥 reachable from the application (likely to break)
+--------------------------------------------------------------------------------
 
 💡 suggestion: align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
     affected modules: :app
@@ -161,7 +165,9 @@ per-module check: 2 of 41 modules changed resolution (39 unchanged)
         io.opentelemetry.sdk.internal.DaemonThreadFactory was removed, but io.opentelemetry.exporter.sender.okhttp.internal.OkHttpGrpcSender still uses it
         io.opentelemetry.sdk.internal.DaemonThreadFactory was removed, but io.opentelemetry.exporter.sender.okhttp.internal.OkHttpUtil still uses it
 
+--------------------------------------------------------------------------------
 ⚠️  not proven reachable (no static path found; may still load via reflection)
+--------------------------------------------------------------------------------
 
 💡 suggestion: ...
     why: ...
@@ -581,7 +587,9 @@ $ uika check --old kotlinx-coroutines-core-jvm-1.7.1.jar \
              --app build/classes/kotlin/main
 checked kotlinx-coroutines-core-jvm-1.7.1.jar -> kotlinx-coroutines-core-jvm-1.11.0.jar against 3 scan targets
 
+--------------------------------------------------------------------------------
 💥 reachable from the application (likely to break)
+--------------------------------------------------------------------------------
 
 ❌ kotlinx.coroutines.EventLoopKt.processNextEventInCurrentThread()
     method removed -> NoSuchMethodError at first call
@@ -601,7 +609,9 @@ per-module check: 2 of 41 modules changed resolution (39 unchanged)
     :app  scanned 84013 classes, ❌ 42 broken, ❓ 118 unverified
     :worker  scanned 61200 classes, ✅ 0 broken, ❓ 87 unverified
 
+--------------------------------------------------------------------------------
 💥 reachable from the application (likely to break)
+--------------------------------------------------------------------------------
 
 💡 suggestion: align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
     affected modules: :app
@@ -609,7 +619,9 @@ per-module check: 2 of 41 modules changed resolution (39 unchanged)
         io.opentelemetry.sdk.internal.DaemonThreadFactory was removed, but io.opentelemetry.exporter.sender.okhttp.internal.OkHttpGrpcSender still uses it
         io.opentelemetry.sdk.internal.DaemonThreadFactory was removed, but io.opentelemetry.exporter.sender.okhttp.internal.OkHttpUtil still uses it
 
+--------------------------------------------------------------------------------
 ⚠️  not proven reachable (no static path found; may still load via reflection)
+--------------------------------------------------------------------------------
 
 💡 suggestion: ...
     why: ...
