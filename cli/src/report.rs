@@ -605,15 +605,16 @@ fn summary_line(report: &CheckReport, reachable: usize, unproven: usize) -> Stri
     if report.reachability_computed && broken > 0 {
         write!(
             line,
-            " (💥 {reachable} reachable, ⚠️ {unproven} not proven reachable)"
+            " (of which 💥 {reachable} reachable, ⚠️ {unproven} not proven reachable)"
         )
         .unwrap();
     }
     if report.unknown_refs > 0 {
         write!(
             line,
-            ", ❓ {} unverified (hierarchy escapes scope)",
-            report.unknown_refs
+            ", ❓ {} unverified reference{} (hierarchy escapes scope)",
+            report.unknown_refs,
+            if report.unknown_refs == 1 { "" } else { "s" }
         )
         .unwrap();
     }
@@ -1125,7 +1126,7 @@ mod tests {
         let out = check_text(&r);
         assert_eq!(
             out,
-            "✅ scanned 100 classes: 0 broken, ❓ 16 unverified (hierarchy escapes scope)\n"
+            "✅ scanned 100 classes: 0 broken, ❓ 16 unverified references (hierarchy escapes scope)\n"
         );
     }
 

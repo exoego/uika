@@ -138,7 +138,7 @@ checked kotlinx-coroutines-core-jvm-1.7.1.jar -> kotlinx-coroutines-core-jvm-1.1
     used by 1 class:
         io.ktor.utils.io.jvm.javaio.BlockingAdapter  (ktor-io-jvm-2.3.13.jar)
 
-scanned 372 classes: ❌ 1 broken, ❓ 5 unverified (hierarchy escapes scope)
+scanned 372 classes: ❌ 1 broken, ❓ 5 unverified references (hierarchy escapes scope)
 
 # Detect broken references caused by every artifact whose version changed.
 # When application roots are known (build outputs in the dump, or --app), violations
@@ -164,7 +164,7 @@ per-module check: 2 of 41 modules changed resolution (39 unchanged)
 💡 suggestion: ...
     why: ...
 
-scanned 168496 classes: ❌ 42 broken (💥 25 reachable, ⚠️ 17 not proven reachable)
+scanned 168496 classes: ❌ 42 broken (of which 💥 25 reachable, ⚠️ 17 not proven reachable)
 
 # Debugging aid: dump the extracted API surface of a JAR
 $ uika dump some.jar
@@ -581,7 +581,7 @@ checked kotlinx-coroutines-core-jvm-1.7.1.jar -> kotlinx-coroutines-core-jvm-1.1
     used by 1 class:
         io.ktor.utils.io.jvm.javaio.BlockingAdapter  (ktor-io-jvm-2.3.13.jar)
 
-scanned 372 classes: ❌ 1 broken, ❓ 5 unverified (hierarchy escapes scope)
+scanned 372 classes: ❌ 1 broken, ❓ 5 unverified references (hierarchy escapes scope)
 
 # Detect broken references caused by every artifact whose version changed.
 # When application roots are known (build outputs in the dump, or --app), violations
@@ -607,7 +607,7 @@ per-module check: 2 of 41 modules changed resolution (39 unchanged)
 💡 suggestion: ...
     why: ...
 
-scanned 168496 classes: ❌ 42 broken (💥 25 reachable, ⚠️ 17 not proven reachable)
+scanned 168496 classes: ❌ 42 broken (of which 💥 25 reachable, ⚠️ 17 not proven reachable)
 
 # Debugging aid: dump the extracted API surface of a JAR
 $ uika dump some.jar
