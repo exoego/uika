@@ -186,9 +186,9 @@ pub fn filter(violations: &mut Vec<Violation>, rules: &[ExcludeRule]) -> Exclude
 mod tests {
     use super::*;
     use crate::intern::intern;
-    use crate::model::{MemberKey, RefKind, SymbolRef};
+    use crate::model::{MemberKey, Reason, RefKind, SymbolRef};
 
-    fn class_violation(owner: &str, reason: &str) -> Violation {
+    fn class_violation(owner: &str) -> Violation {
         Violation {
             source: intern("consumer.jar"),
             source_class: intern("app/Use"),
@@ -200,14 +200,14 @@ mod tests {
                 field_write: None,
                 instantiated: None,
             },
-            reason: reason.to_string(),
+            reason: Reason::ClassRemoved,
             reachable: None,
             suggestion: None,
             modules: Vec::new(),
         }
     }
 
-    fn member_violation(owner: &str, name: &str, descriptor: &str, reason: &str) -> Violation {
+    fn member_violation(owner: &str, name: &str, descriptor: &str) -> Violation {
         Violation {
             source: intern("consumer.jar"),
             source_class: intern("app/Use"),
@@ -219,7 +219,7 @@ mod tests {
                 field_write: None,
                 instantiated: None,
             },
-            reason: reason.to_string(),
+            reason: Reason::MethodRemoved,
             reachable: None,
             suggestion: None,
             modules: Vec::new(),
@@ -242,13 +242,11 @@ mod tests {
                 "org/apache/commons/logging/impl/LogFactoryImpl",
                 "classesToDiscover",
                 "[Ljava/lang/String;",
-                "field removed",
             ),
             member_violation(
                 "org/apache/commons/logging/impl/LogFactoryImpl",
                 "otherField",
                 "I",
-                "field removed",
             ),
         ];
         let stats = filter(&mut violations, &rules);
@@ -273,8 +271,8 @@ mod tests {
         )
         .unwrap();
         let mut violations = vec![
-            member_violation("lib/C", "m", "()V", "method removed"),
-            member_violation("lib/C", "m", "(I)V", "method removed"),
+            member_violation("lib/C", "m", "()V"),
+            member_violation("lib/C", "m", "(I)V"),
         ];
         let stats = filter(&mut violations, &rules);
         assert_eq!(stats.suppressed, 2);
@@ -296,8 +294,8 @@ mod tests {
         )
         .unwrap();
         let mut violations = vec![
-            member_violation("lib/C", "m", "()V", "method removed"),
-            member_violation("lib/C", "m", "(I)V", "method removed"),
+            member_violation("lib/C", "m", "()V"),
+            member_violation("lib/C", "m", "(I)V"),
         ];
         let stats = filter(&mut violations, &rules);
         assert_eq!(stats.suppressed, 1);
@@ -341,7 +339,7 @@ mod tests {
         )
         .unwrap();
         // Only the (I)V overload breaks; the pinned ()V overload never appears.
-        let mut violations = vec![member_violation("lib/C", "m", "(I)V", "method removed")];
+        let mut violations = vec![member_violation("lib/C", "m", "(I)V")];
         let stats = filter(&mut violations, &rules);
         assert_eq!(stats.suppressed, 0);
         assert_eq!(violations.len(), 1);
@@ -365,8 +363,8 @@ mod tests {
         )
         .unwrap();
         let mut violations = vec![
-            class_violation("lib/Gone", "class removed"),
-            member_violation("lib/Gone", "m", "()V", "method removed"),
+            class_violation("lib/Gone"),
+            member_violation("lib/Gone", "m", "()V"),
         ];
         let stats = filter(&mut violations, &rules);
         assert_eq!(stats.suppressed, 2);
@@ -384,9 +382,9 @@ mod tests {
         )
         .unwrap();
         let mut violations = vec![
-            class_violation("org/apache/commons/logging/impl/LogFactoryImpl", "x"),
-            class_violation("org/apache/commons/logging/LogFactory", "x"),
-            class_violation("org/other/Unrelated", "x"),
+            class_violation("org/apache/commons/logging/impl/LogFactoryImpl"),
+            class_violation("org/apache/commons/logging/LogFactory"),
+            class_violation("org/other/Unrelated"),
         ];
         let stats = filter(&mut violations, &rules);
         assert_eq!(stats.suppressed, 2);
@@ -407,7 +405,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        let mut violations = vec![class_violation("lib/Other", "class removed")];
+        let mut violations = vec![class_violation("lib/Other")];
         let stats = filter(&mut violations, &rules);
         assert_eq!(stats.suppressed, 0);
         assert_eq!(violations.len(), 1);
@@ -457,7 +455,7 @@ mod tests {
 
     #[test]
     fn empty_rule_list_is_a_no_op() {
-        let mut violations = vec![class_violation("lib/C", "class removed")];
+        let mut violations = vec![class_violation("lib/C")];
         let stats = filter(&mut violations, &[]);
         assert_eq!(stats.suppressed, 0);
         assert!(stats.unused.is_empty());

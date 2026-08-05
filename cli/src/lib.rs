@@ -145,6 +145,9 @@ fn cmd_check(
     if json {
         println!("{}", report::check_json(&result)?);
     } else {
+        // scan_targets, not targets.len(): the header must agree with what was actually
+        // scanned after missing-path skips, stale-old-version exclusion, and dedup.
+        print!("{}", report::check_header(old, new, result.scan_targets));
         print!("{}", report::check_text(&result));
     }
     Ok(exit_code(&result, fail_on))
@@ -340,6 +343,7 @@ pub fn run_check_with_indexes(
         reach,
         verdicts,
     );
+    result.scan_targets = paths.len();
     apply_excludes(&mut result, exclude_rules);
     warn_all(&result.warnings);
     Ok(result)
@@ -706,6 +710,7 @@ fn upgrade_check_per_module(
             suppressed: 0,
             reachability_computed: false,
             app_roots_matched: None,
+            scan_targets: 0,
         };
         let mut run_outcomes: Vec<RunOutcome> = Vec::new();
         // One library-index cache per side (see cached_index).
@@ -721,7 +726,7 @@ fn upgrade_check_per_module(
                 intern::Sym,
                 intern::Sym,
                 model::SymbolRef,
-                String,
+                model::Reason,
                 Option<String>,
             ),
             usize,
@@ -763,7 +768,7 @@ fn upgrade_check_per_module(
                     v.source,
                     v.source_class,
                     v.reference,
-                    v.reason.clone(),
+                    v.reason,
                     v.suggestion.as_ref().map(|s| s.advice.clone()),
                 );
                 match merged_index.get(&key) {
