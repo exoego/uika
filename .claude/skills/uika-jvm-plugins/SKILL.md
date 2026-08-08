@@ -27,6 +27,10 @@ description: Invariants for the uika Gradle, sbt, and Maven build-tool plugins a
   `ArtifactCollection.getResolvedArtifacts().map(static method ref)` into
   serializable record entries — mapper lambdas must capture nothing or the
   cache cannot serialize the provider.
+- The root tasks are soft-ordered (`uikaUpgradeCheck.mustRunAfter(merge,
+  resolve)`) so dump/resolve/check compose into a single invocation, paying one
+  configuration instead of one per task. Standalone invocations are unaffected;
+  keep the ordering when reshaping the tasks.
 - The resolution provider refuses ANY query (configuration or execution time)
   while a producer task has not run ("Querying the mapped value ... before task
   ':lib:jar' has completed"). The default dump is safe because the

@@ -2,6 +2,7 @@ package net.exoego.uika.gradle;
 
 import net.exoego.uika.plugin.core.UikaCli;
 import org.gradle.testkit.runner.BuildResult;
+import org.gradle.testkit.runner.BuildTask;
 import org.gradle.testkit.runner.GradleRunner;
 import org.gradle.testkit.runner.TaskOutcome;
 import org.junit.jupiter.api.Assumptions;
@@ -13,6 +14,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -275,6 +277,33 @@ final class UpgradeCheckTaskIntegrationTest {
         String disabled = Files.readString(Path.of(before + ".args"));
         assertTrue(!disabled.contains("--jdk-release"),
                 () -> "-PuikaJdkRelease=0 must disable the JDK API layer: " + disabled);
+    }
+
+    /// The root tasks have no data dependencies on each other, so a single invocation must
+    /// order the check after the dump that writes its after file (mustRunAfter). Without
+    /// the ordering the check could start first and fail on the missing input.
+    @Test
+    void singleInvocationRunsDumpBeforeCheck() throws Exception {
+        Path afterDump = projectDir.resolve("after-dump.json");
+        BuildResult result = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments(
+                        "uikaDumpClasspath",
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaOutput=" + afterDump,
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + afterDump,
+                        "-PuikaCliVersion=" + CLEAN_VERSION)
+                .withPluginClasspath()
+                .forwardOutput()
+                .build();
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaDumpClasspath").getOutcome());
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
+        List<String> order = result.getTasks().stream().map(BuildTask::getPath).toList();
+        assertTrue(order.indexOf(":uikaDumpClasspath") < order.indexOf(":uikaUpgradeCheck"),
+                () -> "the check ran before the dump: " + order);
     }
 
     /// The check invocation is configuration-cache compatible: the CLI ZIP's detached
