@@ -80,7 +80,8 @@ on every push. The PR job only resolves its own side.
 
 ```console
 # --- On push to develop (baseline generation) ---
-$ ./gradlew uikaDumpClasspath -PuikaOutput=classpath.json   # store as artifact keyed by SHA
+# Resolution only. The baseline feeds the version diff, so it needs no build outputs.
+$ ./gradlew uikaDumpClasspath -PuikaOutput=classpath.json -PuikaBuildOutputs=false   # store as artifact keyed by SHA
 
 # --- On the PR job (after the normal build, so build outputs exist and
 #     anchor the reachability ranking) ---
@@ -99,11 +100,12 @@ build's repositories and credentials.
 ### Local check before pushing
 
 After bumping `libs.versions.toml`, verify with resolution only, no
-compilation:
+compilation. Classes already built on disk still anchor the reachability
+ranking:
 
 ```console
-$ git stash && ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json && git stash pop
-$ ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
+$ git stash && ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json -PuikaBuildOutputs=false && git stash pop
+$ ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json -PuikaBuildOutputs=false
 $ ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
 ```
 
@@ -474,9 +476,11 @@ jobs:
       - name: Dump baseline classpath (base branch)
         id: baseline
         continue-on-error: true
+        # Resolution only. The baseline feeds the version diff, so skip
+        # compiling the base branch (-PuikaBuildOutputs=false).
         run: |
           git checkout ${{ github.event.pull_request.base.sha }}
-          if ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json; then
+          if ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json -PuikaBuildOutputs=false; then
             status=0
           else
             status=1
@@ -553,11 +557,12 @@ For Maven:
 ### Local check before pushing
 
 After bumping `libs.versions.toml`, verify with resolution only, no
-compilation:
+compilation. Classes already built on disk still anchor the reachability
+ranking:
 
 ```console
-$ git stash && ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json && git stash pop
-$ ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
+$ git stash && ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json -PuikaBuildOutputs=false && git stash pop
+$ ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json -PuikaBuildOutputs=false
 $ ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
 ```
 
