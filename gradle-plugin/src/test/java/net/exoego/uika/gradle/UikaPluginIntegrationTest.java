@@ -145,17 +145,7 @@ final class UikaPluginIntegrationTest {
         assertTrue(result.task(":app:compileJava") == null,
                 ":app:compileJava must not run with uikaBuildOutputs=false");
         assertTaskSuccess(result, ":app:uikaDumpModuleClasspath");
-
-        @SuppressWarnings("unchecked")
-        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> artifacts = (List<Map<String, Object>>) doc.get("artifacts");
-        Map<String, Object> libArtifact = artifacts.stream()
-                .filter(a -> Objects.equals(":lib", a.get("project")))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError(
-                        "unbuilt :lib jar missing from the resolution-only dump: " + artifacts));
-        assertTrue(rootedPath(doc, libArtifact).endsWith("lib.jar"));
+        assertUnbuiltLibAttributed(output);
     }
 
     /// The dump invocation is configuration-cache compatible: the first run stores an

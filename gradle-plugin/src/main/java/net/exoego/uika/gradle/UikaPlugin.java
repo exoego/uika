@@ -9,8 +9,6 @@ import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.TaskProvider;
 
-import java.io.File;
-
 /**
  * uika integration plugin.
  * When applied to the root project, it creates:
@@ -106,15 +104,18 @@ public class UikaPlugin implements Plugin<Project> {
         // set up at configuration time (a detached configuration per notation) for the task
         // action to stay configuration-cache compatible. After evaluation so a build-script
         // inputFile.set() is visible; the input therefore must exist before the build starts.
+        // The content is read through providers.fileContents, which registers it as a
+        // configuration input: a cached entry is never reused for a changed dump.
         root.afterEvaluate(r -> resolve.configure(task -> {
-            File input = task.getInputFile().isPresent()
-                    ? task.getInputFile().get().getAsFile()
-                    : null;
-            if (input == null || !input.isFile()) {
+            String content = root.getProviders()
+                    .fileContents(task.getInputFile())
+                    .getAsText()
+                    .getOrNull();
+            if (content == null) {
                 return;
             }
             for (String notation
-                    : ResolveClasspathTask.wantedNotations(ResolveClasspathTask.readModules(input))) {
+                    : ResolveClasspathTask.wantedNotations(ResolveClasspathTask.parseModules(content))) {
                 task.getResolvedFiles().addAll(detachedFor(root, notation).getIncoming()
                         .artifactView(view -> view.lenient(true))
                         .getArtifacts()
@@ -171,11 +172,21 @@ public class UikaPlugin implements Plugin<Project> {
         // (convention, -PuikaCliVersion, or a build-script override) is final. Absent version
         // stays unwired; the action reports the friendly error.
         root.afterEvaluate(r -> upgradeCheck.configure(task -> {
-            if (task.getCliVersion().isPresent()) {
-                String notation = UikaCli.GROUP + ":" + UikaCli.ARTIFACT + ":"
-                        + task.getCliVersion().get() + ":" + UikaCli.platformClassifier() + "@zip";
-                task.getCliZip().from(detachedFor(root, notation));
+            if (!task.getCliVersion().isPresent()) {
+                return;
             }
+            String classifier;
+            try {
+                classifier = UikaCli.platformClassifier();
+            } catch (IllegalStateException unsupportedPlatform) {
+                // Wiring runs whenever the task is realized (IDE sync, `gradle tasks`),
+                // so an unsupported platform must not fail here; the task action calls
+                // platformClassifier() again and reports the same error on execution.
+                return;
+            }
+            String notation = UikaCli.GROUP + ":" + UikaCli.ARTIFACT + ":"
+                    + task.getCliVersion().get() + ":" + classifier + "@zip";
+            task.getCliZip().from(detachedFor(root, notation));
         }));
 
         root.allprojects(p -> {

@@ -97,8 +97,8 @@ public abstract class ResolveClasspathTask extends DefaultTask {
     }
 
     @SuppressWarnings("unchecked")
-    static List<Module> readModules(File input) {
-        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(input);
+    static List<Module> parseModules(String json) {
+        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parseText(json);
         return DumpFormat.normalize(doc);
     }
 
@@ -119,7 +119,8 @@ public abstract class ResolveClasspathTask extends DefaultTask {
     @TaskAction
     public void resolve() throws IOException {
         File input = getInputFile().get().getAsFile();
-        List<Module> modules = readModules(input);
+        List<Module> modules = parseModules(
+                Files.readString(input.toPath(), StandardCharsets.UTF_8));
 
         Set<String> wanted = wantedNotations(modules);
         if (!wanted.isEmpty() && !getWiredAtConfiguration().getOrElse(false)) {

@@ -37,11 +37,15 @@ description: Invariants for the uika Gradle, sbt, and Maven build-tool plugins a
   Do not "simplify" the two paths into one provider.
 - Rehydration's missing notations come from the input dump's content, so the
   detached configurations are created at configuration time and the input file
-  must exist before the build starts. If it appears mid-build, the task fails
-  with an explicit message (`getWiredAtConfiguration()`), never silently skips
-  fetching. The CLI-zip detached configuration is wired in `afterEvaluate` from
-  the final `cliVersion` (register action would miss `configureEach`
-  overrides).
+  must exist before the build starts. The content is read through
+  `providers.fileContents` so it is a tracked configuration input (a cached
+  entry is never reused for a changed dump). If the file appears mid-build, the
+  task fails with an explicit message (`getWiredAtConfiguration()`), never
+  silently skips fetching. The CLI-zip detached configuration is wired in
+  `afterEvaluate` from the final `cliVersion` (register action would miss
+  `configureEach` overrides); `platformClassifier()` is guarded there because
+  wiring runs on any task realization (IDE sync, `gradle tasks`) and an
+  unsupported platform must only fail the task action.
 - `DumpFormat` changes propagate to all three plugins via source inclusion from
   `jvm-plugin-core/` — no core artifact to publish.
 - The upgrade-check tasks (`uikaUpgradeCheck`, Maven `uika:upgrade-check`)
