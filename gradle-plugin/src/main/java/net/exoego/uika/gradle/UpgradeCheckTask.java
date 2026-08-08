@@ -3,8 +3,6 @@ package net.exoego.uika.gradle;
 import net.exoego.uika.plugin.core.UikaCli;
 import org.gradle.api.DefaultTask;
 import org.gradle.api.GradleException;
-import org.gradle.api.artifacts.Configuration;
-import org.gradle.api.artifacts.ModuleDependency;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.file.RegularFileProperty;
@@ -29,7 +27,9 @@ import java.util.Set;
  * {@code net.exoego.uika:uika-cli:<version>:<platform>@zip} through this build's repositories
  * (same philosophy as {@link ResolveClasspathTask}: uika needs no repository knowledge of its
  * own), so downloads land in the Gradle cache and the version lives in the build, where bots
- * bump it.
+ * bump it. {@link UikaPlugin} wires the detached configuration for the ZIP into
+ * {@link #getCliZip()} lazily from {@link #getCliVersion()}, so the action never touches
+ * {@code getProject()} and the task is configuration-cache compatible.
  */
 @DisableCachingByDefault(because = "Resolves the CLI through environment-specific Gradle repositories")
 public abstract class UpgradeCheckTask extends DefaultTask {
@@ -44,7 +44,14 @@ public abstract class UpgradeCheckTask extends DefaultTask {
 
     /** uika-cli version; defaults to the plugin's own version. */
     @Input
+    @Optional
     public abstract Property<String> getCliVersion();
+
+    /** The resolved CLI distribution ZIP (one file), wired from {@link #getCliVersion()}.
+     * Internal, not InputFiles: with no CLI version the friendly error below must win, not
+     * a fingerprinting failure on an absent provider. */
+    @Internal
+    public abstract ConfigurableFileCollection getCliZip();
 
     /** When to fail the build: {@code never}, {@code reachable}, or {@code any} (default). */
     @Input
@@ -79,15 +86,11 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         String version = getCliVersion().get();
         String classifier = UikaCli.platformClassifier();
 
-        String notation = UikaCli.GROUP + ":" + UikaCli.ARTIFACT + ":" + version
-                + ":" + classifier + "@zip";
-        ModuleDependency dependency =
-                (ModuleDependency) getProject().getDependencies().create(notation);
-        dependency.setTransitive(false);
-        Configuration configuration =
-                getProject().getConfigurations().detachedConfiguration(dependency);
-        configuration.setTransitive(false);
-        Set<File> files = configuration.resolve();
+        Set<File> files = getCliZip().getFiles();
+        if (files.isEmpty()) {
+            throw new GradleException("uika-cli " + version + " (" + classifier
+                    + ") did not resolve to a distribution ZIP");
+        }
         File zip = files.iterator().next();
 
         Path installDir = getInstallDir().get().getAsFile().toPath()

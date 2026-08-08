@@ -5,15 +5,16 @@ import net.exoego.uika.plugin.core.ClasspathDump.Module;
 import net.exoego.uika.plugin.core.DumpFormat;
 import groovy.json.JsonSlurper;
 import org.gradle.api.DefaultTask;
-import org.gradle.api.artifacts.Configuration;
-import org.gradle.api.artifacts.ModuleDependency;
+import org.gradle.api.GradleException;
 import org.gradle.api.artifacts.component.ComponentIdentifier;
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
 import org.gradle.api.artifacts.result.ResolvedArtifactResult;
 import org.gradle.api.file.RegularFileProperty;
+import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.InputFile;
+import org.gradle.api.tasks.Internal;
 import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.PathSensitive;
 import org.gradle.api.tasks.PathSensitivity;
@@ -22,9 +23,11 @@ import org.gradle.work.DisableCachingByDefault;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -38,12 +41,22 @@ import java.util.Set;
  * and proxies configured for this build are reused as-is and uika does not need repository
  * knowledge.
  *
+ * <p>The input dump is read once more at configuration time by {@link UikaPlugin} to set up
+ * one detached configuration per missing notation (configuration-cache compatible: the file
+ * becomes a tracked build input, and the resolution results reach the action through
+ * {@link #getResolvedFiles()}). The input file must therefore exist before the build starts;
+ * producing it and rehydrating it in one invocation is not supported.
+ *
  * <p>For JARs with classifiers (netty natives, etc.), the classifier is recovered from the
  * original file name "name-version-classifier.jar" so the exact artifact is requested.
  * Entries that cannot be resolved are warned and left unchanged (uika will skip them).
  */
 @DisableCachingByDefault(because = "Resolves artifacts through environment-specific Gradle repositories")
 public abstract class ResolveClasspathTask extends DefaultTask {
+
+    /** One artifact Gradle resolved for a wanted notation. The key matches
+     * {@link #keyOf(Artifact)} so classifier variants stay distinct. */
+    record ResolvedFile(String key, String file) implements Serializable {}
 
     @InputFile
     @PathSensitive(PathSensitivity.NONE)
@@ -56,14 +69,41 @@ public abstract class ResolveClasspathTask extends DefaultTask {
     @Input
     public abstract Property<String> getRootDirPath();
 
-    @TaskAction
-    @SuppressWarnings("unchecked")
-    public void resolve() throws IOException {
-        File input = getInputFile().get().getAsFile();
-        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(input);
-        List<Module> modules = DumpFormat.normalize(doc);
+    /** Resolution results for the missing notations, wired by {@link UikaPlugin} from one
+     * detached configuration per notation. */
+    @Internal
+    public abstract ListProperty<ResolvedFile> getResolvedFiles();
 
-        // Collect missing artifacts with coordinates (notation = g:n:v[:classifier]).
+    /** True when the plugin saw the input file at configuration time and set up resolution.
+     * False means the file appeared only after the build was configured, so nothing can be
+     * fetched in this invocation. */
+    @Internal
+    public abstract Property<Boolean> getWiredAtConfiguration();
+
+    /** Static (captures nothing) so the configuration cache can serialize the mapped provider. */
+    static List<ResolvedFile> toResolvedFiles(Collection<ResolvedArtifactResult> artifacts) {
+        List<ResolvedFile> files = new ArrayList<>();
+        for (ResolvedArtifactResult result : artifacts) {
+            ComponentIdentifier id = result.getId().getComponentIdentifier();
+            if (id instanceof ModuleComponentIdentifier m) {
+                // Include the file name in the key to distinguish classifier variants.
+                files.add(new ResolvedFile(
+                        m.getGroup() + ":" + m.getModule() + ":" + m.getVersion()
+                                + ":" + result.getFile().getName(),
+                        result.getFile().getAbsolutePath()));
+            }
+        }
+        return files;
+    }
+
+    @SuppressWarnings("unchecked")
+    static List<Module> readModules(File input) {
+        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(input);
+        return DumpFormat.normalize(doc);
+    }
+
+    /** Notations (g:n:v[:classifier]) of coordinate-carrying artifacts whose file is absent here. */
+    static Set<String> wantedNotations(List<Module> modules) {
         Set<String> wanted = new LinkedHashSet<>();
         for (Module module : modules) {
             for (Artifact artifact : module.artifacts()) {
@@ -73,36 +113,27 @@ public abstract class ResolveClasspathTask extends DefaultTask {
                 }
             }
         }
+        return wanted;
+    }
 
-        // Let Gradle resolve them (non-transitive = only the entity listed in the dump).
-        // Keep each notation in a separate configuration because putting multiple versions
-        // of the same module into one configuration lets conflict resolution retain only
-        // the highest version.
-        Map<String, File> resolvedByKey = new HashMap<>();
+    @TaskAction
+    public void resolve() throws IOException {
+        File input = getInputFile().get().getAsFile();
+        List<Module> modules = readModules(input);
+
+        Set<String> wanted = wantedNotations(modules);
+        if (!wanted.isEmpty() && !getWiredAtConfiguration().getOrElse(false)) {
+            throw new GradleException("uika: " + input + " did not exist when the build was"
+                    + " configured, so Gradle could not set up resolution for " + wanted.size()
+                    + " missing artifact(s). Create the dump before invoking"
+                    + " uikaResolveClasspath (a separate invocation).");
+        }
         if (!wanted.isEmpty()) {
             getLogger().lifecycle("uika: resolving {} missing artifact(s) via Gradle", wanted.size());
         }
-        for (String notation : wanted) {
-            ModuleDependency dependency =
-                    (ModuleDependency) getProject().getDependencies().create(notation);
-            dependency.setTransitive(false);
-            Configuration configuration =
-                    getProject().getConfigurations().detachedConfiguration(dependency);
-            configuration.setTransitive(false);
-            Iterable<ResolvedArtifactResult> results = configuration.getIncoming()
-                    .artifactView(view -> view.lenient(true))
-                    .getArtifacts()
-                    .getArtifacts();
-            for (ResolvedArtifactResult result : results) {
-                ComponentIdentifier id = result.getId().getComponentIdentifier();
-                if (id instanceof ModuleComponentIdentifier m) {
-                    // Include the file name in the key to distinguish classifier variants.
-                    resolvedByKey.put(
-                            m.getGroup() + ":" + m.getModule() + ":" + m.getVersion()
-                                    + ":" + result.getFile().getName(),
-                            result.getFile());
-                }
-            }
+        Map<String, File> resolvedByKey = new HashMap<>();
+        for (ResolvedFile resolved : getResolvedFiles().get()) {
+            resolvedByKey.put(resolved.key(), new File(resolved.file()));
         }
 
         // Rebuild the common model with real paths.
@@ -113,8 +144,7 @@ public abstract class ResolveClasspathTask extends DefaultTask {
             List<Artifact> artifacts = new ArrayList<>();
             for (Artifact artifact : module.artifacts()) {
                 if (!new File(artifact.file()).exists() && artifact.group() != null) {
-                    File local = resolvedByKey.get(artifact.group() + ":" + artifact.name() + ":"
-                            + artifact.version() + ":" + new File(artifact.file()).getName());
+                    File local = resolvedByKey.get(keyOf(artifact));
                     if (local != null) {
                         artifact = new Artifact(artifact.group(), artifact.name(),
                                 artifact.version(), local.getAbsolutePath());
@@ -142,8 +172,13 @@ public abstract class ResolveClasspathTask extends DefaultTask {
                 out, rewritten, unresolved);
     }
 
+    private static String keyOf(Artifact artifact) {
+        return artifact.group() + ":" + artifact.name() + ":" + artifact.version()
+                + ":" + new File(artifact.file()).getName();
+    }
+
     /** g:n:v[:classifier]. The classifier is recovered from the original file name "name-version-classifier.jar". */
-    private static String notationOf(Artifact artifact) {
+    static String notationOf(Artifact artifact) {
         if (artifact.group() == null || artifact.name() == null || artifact.version() == null) {
             return null;
         }

@@ -277,6 +277,41 @@ final class UpgradeCheckTaskIntegrationTest {
                 () -> "-PuikaJdkRelease=0 must disable the JDK API layer: " + disabled);
     }
 
+    /// The check invocation is configuration-cache compatible: the CLI ZIP's detached
+    /// configuration is wired at configuration time, and a reused entry still runs the CLI.
+    @Test
+    void configurationCacheReusesUpgradeCheck() throws Exception {
+        BuildResult first = runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--configuration-cache",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION)
+                .build();
+        assertEquals(TaskOutcome.SUCCESS, first.task(":uikaUpgradeCheck").getOutcome());
+        assertTrue(first.getOutput().contains("Configuration cache entry stored"),
+                () -> "no configuration cache entry was stored:\n" + first.getOutput());
+        assertTrue(Files.exists(Path.of(before + ".marker")), "stub binary was not executed");
+
+        Files.delete(Path.of(before + ".marker"));
+        BuildResult second = runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--configuration-cache",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION)
+                .build();
+        assertEquals(TaskOutcome.SUCCESS, second.task(":uikaUpgradeCheck").getOutcome());
+        assertTrue(second.getOutput().contains("Configuration cache entry reused"),
+                () -> "the configuration cache entry was not reused:\n" + second.getOutput());
+        assertTrue(Files.exists(Path.of(before + ".marker")),
+                "stub binary was not executed on the cache-reuse run");
+    }
+
     @Test
     void violationExitCodeFailsTheBuild() {
         BuildResult result = runner(VIOLATION_VERSION).buildAndFail();
