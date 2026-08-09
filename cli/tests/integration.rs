@@ -22,7 +22,8 @@ fn detects_ktor_io_break_against_coroutines_1_11() {
 
     let (old_index, warnings) = ApiIndex::from_classes(&load(&old_jar).unwrap());
     assert!(warnings.is_empty(), "old jar parse warnings: {warnings:?}");
-    let (new_index, warnings) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+    let new_classes = load(&new_jar).unwrap();
+    let (new_index, warnings) = ApiIndex::from_classes(&new_classes);
     assert!(warnings.is_empty(), "new jar parse warnings: {warnings:?}");
 
     // diff: the original method removal is detected.
@@ -40,7 +41,7 @@ fn detects_ktor_io_break_against_coroutines_1_11() {
 
     // check: the reference from BlockingAdapter is detected as the only violation.
     let targets = load(&ktor_io).unwrap();
-    let report = check(&targets, &old_index, &new_index);
+    let report = check(&targets, &old_index, &new_index, &new_classes);
     assert_eq!(
         report.violations.len(),
         1,
@@ -68,7 +69,8 @@ fn detects_otel_daemon_thread_factory_package_move() {
     let sender = fixture("opentelemetry-exporter-sender-okhttp-1.42.1.jar");
 
     let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
-    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+    let new_classes = load(&new_jar).unwrap();
+    let (new_index, _) = ApiIndex::from_classes(&new_classes);
 
     let changes = diff(&old_index, &new_index);
     assert!(
@@ -80,7 +82,12 @@ fn detects_otel_daemon_thread_factory_package_move() {
         "DaemonThreadFactory removal is missing from diff"
     );
 
-    let report = check(&load(&sender).unwrap(), &old_index, &new_index);
+    let report = check(
+        &load(&sender).unwrap(),
+        &old_index,
+        &new_index,
+        &new_classes,
+    );
     assert_eq!(
         report.violations.len(),
         1,
@@ -112,7 +119,8 @@ fn detects_selenium_guava_constructor_access_narrowing() {
     let selenium = fixture("selenium-remote-driver-3.4.0.jar");
 
     let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
-    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+    let new_classes = load(&new_jar).unwrap();
+    let (new_index, _) = ApiIndex::from_classes(&new_classes);
 
     let changes = diff(&old_index, &new_index);
     assert!(
@@ -126,7 +134,12 @@ fn detects_selenium_guava_constructor_access_narrowing() {
         "SimpleTimeLimiter constructor access narrowing is missing from diff"
     );
 
-    let report = check(&load(&selenium).unwrap(), &old_index, &new_index);
+    let report = check(
+        &load(&selenium).unwrap(),
+        &old_index,
+        &new_index,
+        &new_classes,
+    );
     assert!(
         report.violations.iter().any(|v| {
             v.source_class.as_str() == "org/openqa/selenium/net/UrlChecker"
@@ -154,7 +167,8 @@ fn detects_koin_logger_final_method_override() {
     let logger = fixture("koin-logger-slf4j-3.2.2.jar");
 
     let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
-    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+    let new_classes = load(&new_jar).unwrap();
+    let (new_index, _) = ApiIndex::from_classes(&new_classes);
 
     let changes = diff(&old_index, &new_index);
     assert!(
@@ -169,7 +183,12 @@ fn detects_koin_logger_final_method_override() {
         "Logger.log final addition is missing from diff"
     );
 
-    let report = check(&load(&logger).unwrap(), &old_index, &new_index);
+    let report = check(
+        &load(&logger).unwrap(),
+        &old_index,
+        &new_index,
+        &new_classes,
+    );
     assert!(
         report.violations.iter().any(|v| {
             v.source_class.as_str() == "org/koin/logger/SLF4JLogger"
@@ -186,6 +205,70 @@ fn detects_koin_logger_final_method_override() {
     );
 }
 
+/// The invoked side on real jars: koin-core 3.3.0 renamed abstract `Logger.log` to
+/// `display`, and koin-core's own code calls it, so the caller lives in the library rather
+/// than in the consumer jar. Dropping `library_classes` makes this a false latent.
+#[test]
+fn koin_abstract_break_is_invocable_via_the_librarys_own_call() {
+    let old_jar = fixture("koin-core-jvm-3.2.2.jar");
+    let new_jar = fixture("koin-core-jvm-3.3.0.jar");
+    let logger = fixture("koin-logger-slf4j-3.2.2.jar");
+
+    let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
+    let new_classes = load(&new_jar).unwrap();
+    let (new_index, _) = ApiIndex::from_classes(&new_classes);
+
+    let abstract_break = |library: &[uika::input::LoadedClass]| {
+        let report = check(&load(&logger).unwrap(), &old_index, &new_index, library);
+        report
+            .violations
+            .iter()
+            .find(|v| {
+                v.reason == Reason::MethodBecameAbstract
+                    && v.reference
+                        .member
+                        .is_some_and(|m| m.name.as_str() == "display")
+            })
+            .map(|v| v.invocation_found)
+            .expect("the display() AbstractMethodError break must be reported")
+    };
+
+    assert_eq!(abstract_break(&new_classes), Some(true));
+    assert_eq!(abstract_break(&[]), Some(false));
+}
+
+/// `listener::end` compiles to invokedynamic plus a MethodHandle constant, so no invoke
+/// opcode names the member. Narrowing evidence collection to `code_refs` would file this
+/// invocable break as latent and let `--fail-on reachable` pass.
+#[test]
+fn method_reference_only_call_site_counts_as_invocation() {
+    let old_jar = fixture("synthetic-abstract-added-1.0.jar");
+    let new_jar = fixture("synthetic-abstract-added-2.0.jar");
+    let consumer = fixture("synthetic-abstract-added-consumer.jar");
+    let caller = fixture("synthetic-abstract-added-methodref-caller.jar");
+
+    let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
+    let new_classes = load(&new_jar).unwrap();
+    let (new_index, _) = ApiIndex::from_classes(&new_classes);
+
+    let found = |targets: &[&std::path::PathBuf]| {
+        let mut classes = Vec::new();
+        for t in targets {
+            classes.extend(load(t).unwrap());
+        }
+        let report = check(&classes, &old_index, &new_index, &new_classes);
+        report
+            .violations
+            .iter()
+            .find(|v| v.reason == Reason::MethodBecameAbstract)
+            .map(|v| v.invocation_found)
+            .expect("BrokenTranslator must inherit the unimplemented end()")
+    };
+
+    assert_eq!(found(&[&consumer]), Some(false));
+    assert_eq!(found(&[&consumer, &caller]), Some(true));
+}
+
 /// https://github.com/rburgst/okhttp-digest/issues/57:
 /// okhttp-digest 1.x calls RequestLine.requestPath as a static OkHttp 3 method.
 /// OkHttp 4.0.x changed RequestLine into a Kotlin object, making requestPath an
@@ -197,7 +280,8 @@ fn detects_okhttp_digest_static_to_instance_change() {
     let digest = fixture("okhttp-digest-1.21.jar");
 
     let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
-    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+    let new_classes = load(&new_jar).unwrap();
+    let (new_index, _) = ApiIndex::from_classes(&new_classes);
 
     let changes = diff(&old_index, &new_index);
     assert!(
@@ -216,7 +300,12 @@ fn detects_okhttp_digest_static_to_instance_change() {
         "RequestLine.requestPath static-to-instance change is missing from diff"
     );
 
-    let report = check(&load(&digest).unwrap(), &old_index, &new_index);
+    let report = check(
+        &load(&digest).unwrap(),
+        &old_index,
+        &new_index,
+        &new_classes,
+    );
     assert!(
         report.violations.iter().any(|v| {
             v.source_class.as_str() == "com/burgstaller/okhttp/digest/DigestAuthenticator"
@@ -468,7 +557,8 @@ fn detects_pact_class_became_final_under_version_lag() {
     let spring = fixture("junit5spring-4.2.3.jar");
 
     let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
-    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+    let new_classes = load(&new_jar).unwrap();
+    let (new_index, _) = ApiIndex::from_classes(&new_classes);
 
     let changes = diff(&old_index, &new_index);
     assert!(
@@ -480,7 +570,12 @@ fn detects_pact_class_became_final_under_version_lag() {
         "PactVerificationExtension final change is missing from diff"
     );
 
-    let report = check(&load(&spring).unwrap(), &old_index, &new_index);
+    let report = check(
+        &load(&spring).unwrap(),
+        &old_index,
+        &new_index,
+        &new_classes,
+    );
     assert!(
         report.violations.iter().any(|v| {
             v.source_class.as_str()
@@ -505,9 +600,10 @@ fn detects_jetty_util_class_access_narrowing() {
     let http = fixture("jetty-http-9.4.49.v20220914.jar");
 
     let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
-    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+    let new_classes = load(&new_jar).unwrap();
+    let (new_index, _) = ApiIndex::from_classes(&new_classes);
 
-    let report = check(&load(&http).unwrap(), &old_index, &new_index);
+    let report = check(&load(&http).unwrap(), &old_index, &new_index, &new_classes);
     assert!(
         report.violations.iter().any(|v| {
             v.source_class.as_str() == "org/eclipse/jetty/http/MimeTypes"
@@ -535,8 +631,14 @@ fn unrelated_jar_reports_no_violations() {
     let unrelated = fixture("opentelemetry-sdk-common-1.60.1.jar");
 
     let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
-    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
-    let report = check(&load(&unrelated).unwrap(), &old_index, &new_index);
+    let new_classes = load(&new_jar).unwrap();
+    let (new_index, _) = ApiIndex::from_classes(&new_classes);
+    let report = check(
+        &load(&unrelated).unwrap(),
+        &old_index,
+        &new_index,
+        &new_classes,
+    );
     assert!(
         report.violations.is_empty(),
         "violations: {:?}",
@@ -559,12 +661,13 @@ fn refs_from_shadowed_duplicate_jar_copies_are_not_reported() {
     let sisu_100 = fixture("org.eclipse.sisu.inject-1.0.0.jar");
 
     let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
-    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+    let new_classes = load(&new_jar).unwrap();
+    let (new_index, _) = ApiIndex::from_classes(&new_classes);
 
     for order in [[&sisu_034, &sisu_100], [&sisu_100, &sisu_034]] {
         let mut targets = load(order[0]).unwrap();
         targets.extend(load(order[1]).unwrap());
-        let report = check(&targets, &old_index, &new_index);
+        let report = check(&targets, &old_index, &new_index, &new_classes);
         assert!(
             report.violations.is_empty(),
             "order {:?}: violations: {:?}",
@@ -684,9 +787,16 @@ fn jdk_layer_resolves_hierarchy_escapes_without_changing_verdicts() {
     let selenium = fixture("selenium-remote-driver-3.4.0.jar");
 
     let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
-    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+    let new_classes = load(&new_jar).unwrap();
+    let (new_index, _) = ApiIndex::from_classes(&new_classes);
     let scan = || {
-        uika::check::scan_target_paths(std::slice::from_ref(&selenium), &old_index, false).unwrap()
+        uika::check::scan_target_paths(
+            std::slice::from_ref(&selenium),
+            &old_index,
+            &new_index,
+            false,
+        )
+        .unwrap()
     };
 
     let baseline = uika::check::check_scanned(
@@ -776,9 +886,15 @@ fn detects_ktor_interface_became_class_under_module_skew() {
     let network = fixture("ktor-network-jvm-2.3.13.jar");
 
     let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
-    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+    let new_classes = load(&new_jar).unwrap();
+    let (new_index, _) = ApiIndex::from_classes(&new_classes);
 
-    let report = check(&load(&network).unwrap(), &old_index, &new_index);
+    let report = check(
+        &load(&network).unwrap(),
+        &old_index,
+        &new_index,
+        &new_classes,
+    );
     assert!(
         report.violations.iter().any(|v| {
             v.source_class.as_str()
@@ -807,10 +923,16 @@ fn detects_new_on_class_that_became_abstract() {
     let new_jar = fixture("jackson-module-kotlin-2.20.1.jar");
 
     let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
-    let (new_index, _) = ApiIndex::from_classes(&load(&new_jar).unwrap());
+    let new_classes = load(&new_jar).unwrap();
+    let (new_index, _) = ApiIndex::from_classes(&new_classes);
 
     // The old jar's own classes are the consumer: they carry the `new` sites.
-    let report = check(&load(&old_jar).unwrap(), &old_index, &new_index);
+    let report = check(
+        &load(&old_jar).unwrap(),
+        &old_index,
+        &new_index,
+        &new_classes,
+    );
     assert!(
         report.violations.iter().any(|v| {
             v.source_class.as_str() == "com/fasterxml/jackson/module/kotlin/ReflectionCache"

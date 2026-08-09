@@ -58,6 +58,11 @@ pub struct ParsedTargets {
     pub targets: Vec<ParsedTarget>,
     pub warnings: Vec<String>,
     pub scanned_classes: usize,
+    /// (owner, member) of method references to a newly-abstract member, ANY owner —
+    /// invocation evidence for the latent tier. Empty when nothing became abstract.
+    /// Per batch rather than per class: a Vec on `ParsedTarget` cost ~35MB RSS on the
+    /// stress workload for no gain.
+    pub invocations: Vec<(Sym, MemberKey)>,
 }
 
 /// Pass 1: parse loaded classes in parallel and extract hierarchy plus references to old.
@@ -69,8 +74,13 @@ pub fn parse_targets(
     old_names: &FxHashSet<&str>,
     known: &ClassGraph,
     collect_edges: bool,
+    abstract_probe: &FxHashMap<(&str, &str), MemberKey>,
 ) -> ParsedTargets {
-    let results: Vec<Result<ParsedTarget, String>> = classes
+    // Evidence rides alongside each result and is folded away below. Collecting it here
+    // rather than in a second pass matters: reparsing the batch cost ~21% CPU on the
+    // stress workload.
+    type Parsed = (ParsedTarget, Vec<(Sym, MemberKey)>);
+    let results: Vec<Result<Parsed, String>> = classes
         .par_iter()
         .map(|lc| {
             let with_ctx = |e: anyhow::Error| format!("{}!{}: {e}", lc.source, lc.entry_name);
@@ -80,15 +90,27 @@ pub fn parse_targets(
             // loser: the graph only grows, so merge will drop this copy's hierarchy,
             // references, and edges. Skip extracting them (references dominate the
             // remaining per-class work and duplicates are a large share of the scan).
+            //
+            // Evidence is swept even here. `known` holds whatever the earlier chunks
+            // merged, and chunk size defaults to the thread count, so skipping it would
+            // make invocation_found vary by core count.
             if known.contains(class_name) {
-                return Ok(ParsedTarget {
-                    source: lc.source,
-                    class_name,
-                    hierarchy: None,
-                    entry_override: None,
-                    refs: Vec::new(),
-                    edges: Vec::new(),
-                });
+                let invocations = if abstract_probe.is_empty() {
+                    Vec::new()
+                } else {
+                    crate::extract::extract_invocation_evidence(&rc, abstract_probe)
+                };
+                return Ok((
+                    ParsedTarget {
+                        source: lc.source,
+                        class_name,
+                        hierarchy: None,
+                        entry_override: None,
+                        refs: Vec::new(),
+                        edges: Vec::new(),
+                    },
+                    invocations,
+                ));
             }
             let (_, super_name, interfaces, nest_host) =
                 extract_hierarchy(&rc).map_err(with_ctx)?;
@@ -104,23 +126,38 @@ pub fn parse_targets(
             } else {
                 Vec::new()
             };
-            Ok(ParsedTarget {
-                source: lc.source,
-                class_name,
-                hierarchy: Some((super_name, interfaces, nest_host)),
-                entry_override,
-                refs,
-                edges,
-            })
+            // The probe is NOT empty on a typical upgrade — it covers newly ADDED
+            // abstract methods, not just concrete->abstract ones — so this sweep is the
+            // normal path, not a rare one. ~3% CPU on the stress workload.
+            let invocations = if abstract_probe.is_empty() {
+                Vec::new()
+            } else {
+                crate::extract::extract_invocation_evidence(&rc, abstract_probe)
+            };
+            Ok((
+                ParsedTarget {
+                    source: lc.source,
+                    class_name,
+                    hierarchy: Some((super_name, interfaces, nest_host)),
+                    entry_override,
+                    refs,
+                    edges,
+                },
+                invocations,
+            ))
         })
         .collect();
 
     let scanned_classes = classes.len();
     let mut targets = Vec::with_capacity(results.len());
     let mut warnings = Vec::new();
+    let mut invocations = Vec::new();
     for r in results {
         match r {
-            Ok(t) => targets.push(t),
+            Ok((t, mut inv)) => {
+                targets.push(t);
+                invocations.append(&mut inv);
+            }
             Err(w) => warnings.push(w),
         }
     }
@@ -128,6 +165,7 @@ pub fn parse_targets(
         targets,
         warnings,
         scanned_classes,
+        invocations,
     }
 }
 
@@ -138,6 +176,10 @@ pub struct ScanResult {
     records: Vec<(Sym, Sym, Vec<SymbolRef>)>,
     /// Reread locations for classes whose entry name is not "{name}.class" (directory outputs, etc.).
     entry_overrides: FxHashMap<Sym, String>,
+    /// Distinct (owner, member) method references matching a newly-abstract member —
+    /// invocation evidence for the latent classification, deduplicated across the scan.
+    /// Unlike `records` this is NOT filtered by first-wins (see `ParsedTargets`).
+    invocations: FxHashSet<(Sym, MemberKey)>,
     pub warnings: Vec<String>,
     pub scanned_classes: usize,
 }
@@ -148,9 +190,15 @@ impl ScanResult {
             graph: ClassGraph::new(),
             records: Vec::new(),
             entry_overrides: FxHashMap::default(),
+            invocations: FxHashSet::default(),
             warnings: Vec::new(),
             scanned_classes: 0,
         }
+    }
+
+    /// Merge invocation evidence found outside pass 1 (the new library's own jars).
+    pub fn extend_invocations(&mut self, extra: Vec<(Sym, MemberKey)>) {
+        self.invocations.extend(extra);
     }
 
     /// Fold parsed results into the graph (duplicate class names are first-wins = JVM classpath resolution order).
@@ -182,6 +230,7 @@ impl ScanResult {
                 }
             }
         }
+        self.invocations.extend(parsed.invocations);
         self.warnings.extend(parsed.warnings);
         self.scanned_classes += parsed.scanned_classes;
     }
@@ -194,6 +243,7 @@ impl ScanResult {
 pub fn scan_target_paths(
     paths: &[PathBuf],
     old: &ApiIndex,
+    new: &ApiIndex,
     collect_edges: bool,
 ) -> Result<ScanResult> {
     let chunk_size = std::env::var("UIKA_CHUNK")
@@ -203,6 +253,9 @@ pub fn scan_target_paths(
     // Build the owner filter once: extract_refs tests candidate owners against these raw
     // names instead of interning every constant-pool owner just to reject it.
     let old_names = old.class_name_set();
+    // Raw name+descriptor pairs of newly-abstract methods. Empty only when the upgrade
+    // made nothing abstract, in which case pass 1 skips evidence collection entirely.
+    let abstract_probe = abstract_member_probe(old, new);
     // Decide, from central directories alone (no inflate), which entries to inflate: a
     // byte-identical duplicate class bundled in a later JAR is skipped because first-wins
     // would discard it anyway. On large classpaths most scanned classes are such duplicates.
@@ -222,12 +275,15 @@ pub fn scan_target_paths(
                     targets: Vec::new(),
                     warnings: Vec::new(),
                     scanned_classes: 0,
+                    invocations: Vec::new(),
                 };
                 crate::input::for_each_batch(p, 512, keep, |batch| {
-                    let parsed = parse_targets(&batch, &old_names, known, collect_edges);
+                    let parsed =
+                        parse_targets(&batch, &old_names, known, collect_edges, &abstract_probe);
                     acc.targets.extend(parsed.targets);
                     acc.warnings.extend(parsed.warnings);
                     acc.scanned_classes += parsed.scanned_classes;
+                    acc.invocations.extend(parsed.invocations);
                     Ok(())
                 })?;
                 Ok(acc)
@@ -544,6 +600,7 @@ pub fn check_scanned(
     let ScanResult {
         graph,
         records,
+        invocations,
         warnings: mut all_warnings,
         scanned_classes,
         ..
@@ -602,6 +659,7 @@ pub fn check_scanned(
         new,
         &fetched,
         &graph,
+        &invocations,
         &mut violations,
         &mut seen,
     );
@@ -623,7 +681,7 @@ pub fn check_scanned(
             all_warnings.push(
                 "reachability: no application root matched a scanned class \
                  (were the project's build outputs compiled?); \
-                 all violations are reported as not proven reachable"
+                 violations are not ranked by reachability in this run"
                     .to_string(),
             );
         }
@@ -666,10 +724,25 @@ pub fn violation_sort_key(
 }
 
 /// Check consumer-side classes (pass 1 + pass 2 + verdict). Reachability is not computed here.
-pub fn check(targets: &[LoadedClass], old: &ApiIndex, new: &ApiIndex) -> CheckReport {
+/// `library_classes` is the new-version library's own bytecode — the same classes `new` was
+/// built from — swept for invocation evidence exactly as the CLI does with the `--new` jars.
+/// It is not optional in the "nice to have" sense: passing `&[]` while the library itself is
+/// the only caller of a newly-abstract member reports that real break as latent (the koin
+/// `Logger.display` shape, pinned by `koin_abstract_break_is_invocable_via_the_librarys_own_call`),
+/// which `--fail-on reachable` then lets through.
+pub fn check(
+    targets: &[LoadedClass],
+    old: &ApiIndex,
+    new: &ApiIndex,
+    library_classes: &[LoadedClass],
+) -> CheckReport {
+    let probe = abstract_member_probe(old, new);
     let mut scan = ScanResult::new();
-    let parsed = parse_targets(targets, &old.class_name_set(), &scan.graph, false);
+    let parsed = parse_targets(targets, &old.class_name_set(), &scan.graph, false, &probe);
     scan.merge(parsed);
+    if !probe.is_empty() {
+        scan.extend_invocations(class_invocation_evidence(library_classes, &probe));
+    }
     check_scanned(scan, old, new, &FxHashSet::default(), None, None, None)
 }
 
@@ -855,25 +928,33 @@ fn verdict(
 /// Record a violation, deduplicated on `(source, class, reference)`. Every graph walk and
 /// the per-reference loop funnel through here so the `Violation` shape and the dedup key
 /// live in one place.
-fn push_violation(
-    violations: &mut Vec<Violation>,
+///
+/// Returns the pushed entry so a caller can refine fields on it (invocation evidence), and
+/// `None` when the triple was already recorded. Handing back the reference rather than a
+/// bool keeps the entry tied to the push: a caller cannot reach for `violations.last_mut()`
+/// and silently patch a different violation if this ever stops appending.
+fn push_violation<'v>(
+    violations: &'v mut Vec<Violation>,
     seen: &mut FxHashSet<(Sym, Sym, SymbolRef)>,
     source: Sym,
     source_class: Sym,
     reference: SymbolRef,
     reason: Reason,
-) {
-    if seen.insert((source, source_class, reference)) {
-        violations.push(Violation {
-            source,
-            source_class,
-            reference,
-            reason,
-            reachable: None,
-            suggestion: None,
-            modules: Vec::new(),
-        });
+) -> Option<&'v mut Violation> {
+    if !seen.insert((source, source_class, reference)) {
+        return None;
     }
+    violations.push(Violation {
+        source,
+        source_class,
+        reference,
+        reason,
+        reachable: None,
+        invocation_found: None,
+        suggestion: None,
+        modules: Vec::new(),
+    });
+    violations.last_mut()
 }
 
 fn add_final_violations(
@@ -1173,6 +1254,7 @@ fn add_abstract_method_violations(
     new: &ApiIndex,
     fetched: &ApiIndex,
     graph: &ClassGraph,
+    invocations: &FxHashSet<(Sym, MemberKey)>,
     violations: &mut Vec<Violation>,
     seen: &mut FxHashSet<(Sym, Sym, SymbolRef)>,
 ) {
@@ -1180,6 +1262,17 @@ fn add_abstract_method_violations(
     if abstract_methods.is_empty() {
         return;
     }
+    // Index the scan-wide evidence by member. The lookup key is the MemberKey alone, so the
+    // (owner, member) set would have to be scanned end to end per violation — and the scan
+    // cannot short-circuit in exactly the latent case, the one the tier exists to find.
+    // Built after the early return above, so it stays free when nothing became abstract.
+    let mut invoked_by: FxHashMap<MemberKey, Vec<Sym>> = FxHashMap::default();
+    for &(owner, key) in invocations {
+        invoked_by.entry(key).or_default().push(owner);
+    }
+    // Reused across classes: `for_each_supertype` allocates internally, so keeping the
+    // result out of `on_dispatch_chain` also keeps it out of the per-evidence-owner loop.
+    let mut supertypes: FxHashSet<Sym> = FxHashSet::default();
     for (class_name, node) in graph.iter() {
         // Only a concrete, instantiable class triggers AbstractMethodError. Access flags
         // come from the pass-2 fetched table (the graph carries none); an unfetched
@@ -1191,9 +1284,16 @@ fn add_abstract_method_violations(
             continue;
         }
         // Newly-abstract methods declared by any supertype of this class, mapped to the
-        // owner that declared them (smallest by name for a deterministic report).
+        // owner that declared them (smallest by name for a deterministic report). The same
+        // walk records what `on_dispatch_chain` needs, which is loop-invariant below.
         let mut candidates: FxHashMap<MemberKey, Sym> = FxHashMap::default();
+        supertypes.clear();
+        let mut supertypes_escaped = Escapes::default();
         for_each_supertype(class_name, new, graph, |anc| {
+            supertypes.insert(anc);
+            if !new.classes.contains_key(&anc) && !graph.contains(anc) {
+                supertypes_escaped.add(anc);
+            }
             if let Some(keys) = abstract_methods.get(&anc) {
                 for &key in keys {
                     candidates
@@ -1226,16 +1326,87 @@ fn add_abstract_method_violations(
                 field_write: None,
                 instantiated: None,
             };
-            push_violation(
+            if let Some(v) = push_violation(
                 violations,
                 seen,
                 node.source,
                 class_name,
                 reference,
                 Reason::MethodBecameAbstract,
-            );
+            ) {
+                // AbstractMethodError throws at invocation, not at class load, so a
+                // violation nothing can call is latent rather than dropped.
+                v.invocation_found = Some(invoked_by.get(&key).is_some_and(|owners| {
+                    owners.iter().any(|&e_owner| {
+                        on_dispatch_chain(
+                            e_owner,
+                            class_name,
+                            &supertypes,
+                            &supertypes_escaped,
+                            new,
+                            graph,
+                        )
+                    })
+                }));
+            }
         }
     }
+}
+
+/// Types a hierarchy walk left analyzed scope through. An escape normally forces "related",
+/// since the unseen hierarchy could hold the evidence owner, with one provable exception:
+/// the JVM reserves `java.*`, so a `java/`-named type is a platform class and so is
+/// everything the boot loader resolves above it. Such an escape cannot hide a library or
+/// application class. Without the carve-out the filter is nearly inert, because any class
+/// implementing Serializable or Comparable escapes. `javax/`, `sun/` and `com/sun/` do not
+/// qualify — javax.servlet and friends ship as ordinary artifacts.
+#[derive(Default)]
+struct Escapes {
+    platform: bool,
+    other: bool,
+}
+
+impl Escapes {
+    fn add(&mut self, class: Sym) {
+        if class.as_str().starts_with("java/") {
+            self.platform = true;
+        } else {
+            self.other = true;
+        }
+    }
+
+    /// Whether the escaped-past types could hide `owner`.
+    fn could_hide(&self, owner: Sym) -> bool {
+        self.other || (self.platform && owner.as_str().starts_with("java/"))
+    }
+}
+
+/// Whether a call on `evidence_owner` can dispatch onto an instance of `class_name`: the
+/// owner is the class, a supertype, or a subtype. A sibling subtype is provably unrelated,
+/// its receivers can never be this class. `supertypes` is the caller's precomputed up-walk.
+fn on_dispatch_chain(
+    evidence_owner: Sym,
+    class_name: Sym,
+    supertypes: &FxHashSet<Sym>,
+    supertypes_escaped: &Escapes,
+    new: &ApiIndex,
+    graph: &ClassGraph,
+) -> bool {
+    if evidence_owner == class_name
+        || supertypes_escaped.could_hide(evidence_owner)
+        || supertypes.contains(&evidence_owner)
+    {
+        return true;
+    }
+    let mut down_found = false;
+    let mut down_escaped = Escapes::default();
+    for_each_supertype(evidence_owner, new, graph, |anc| {
+        down_found |= anc == class_name;
+        if !new.classes.contains_key(&anc) && !graph.contains(anc) {
+            down_escaped.add(anc);
+        }
+    });
+    down_found || down_escaped.could_hide(class_name)
 }
 
 fn newly_final_classes(old: &ApiIndex, new: &ApiIndex) -> FxHashSet<Sym> {
@@ -1309,6 +1480,60 @@ fn methods_newly_abstract(old: &ApiIndex, new: &ApiIndex) -> FxHashMap<Sym, FxHa
                     .or_insert_with(FxHashSet::default)
                     .insert(*key);
             }
+        }
+    }
+    out
+}
+
+/// Raw name+descriptor pairs of every newly-abstract method mapped to their interned
+/// `MemberKey`, for matching un-interned constant-pool references during pass 1 (invocation
+/// evidence for the latent tier). Carrying the key means a hit interns only the owner.
+fn abstract_member_probe(
+    old: &ApiIndex,
+    new: &ApiIndex,
+) -> FxHashMap<(&'static str, &'static str), MemberKey> {
+    methods_newly_abstract(old, new)
+        .values()
+        .flatten()
+        .map(|k| ((k.name.as_str(), k.descriptor.as_str()), *k))
+        .collect()
+}
+
+/// Invocation evidence from the checked library's own new-version jars. The library is
+/// often the only caller of a newly-abstract member (koin-core invokes `Logger.display`),
+/// and in plain `check` those jars need not be scan targets. Old jars are not swept, they
+/// are not runtime code.
+///
+/// A read failure yields no evidence, which pushes a break INTO the latent tier and so
+/// WEAKENS the gate. Tolerated only because an unreadable jar already failed at index
+/// build. Batched rather than `input::load`, which holds a whole jar inflated at once.
+pub fn library_invocation_evidence(
+    new_paths: &[PathBuf],
+    old: &ApiIndex,
+    new: &ApiIndex,
+) -> Vec<(Sym, MemberKey)> {
+    let probe = abstract_member_probe(old, new);
+    if probe.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for path in new_paths {
+        let _ = crate::input::for_each_batch(path, 512, None, |batch| {
+            out.extend(class_invocation_evidence(&batch, &probe));
+            Ok(())
+        });
+    }
+    out
+}
+
+fn class_invocation_evidence(
+    classes: &[LoadedClass],
+    probe: &FxHashMap<(&str, &str), MemberKey>,
+) -> Vec<(Sym, MemberKey)> {
+    let mut out = Vec::new();
+    for lc in classes {
+        if let Ok(rc) = crate::classfile::RawClass::parse(&lc.bytes) {
+            out.extend(crate::extract::extract_invocation_evidence(&rc, probe));
         }
     }
     out
@@ -2390,6 +2615,7 @@ mod tests {
             }],
             warnings: vec![],
             scanned_classes: 1,
+            invocations: vec![],
         });
         let (_, escapes) = collect_wanted(&scan, &old, &new, true);
         assert!(escapes.contains(&intern("javax/xml/Gone")));
@@ -2418,6 +2644,7 @@ mod tests {
             ],
             warnings: vec![],
             scanned_classes: 2,
+            invocations: vec![],
         });
         // Later chunk: the graph already had the class at parse time, so hierarchy is None.
         let mut late = target("third.jar", "other/Base");
@@ -2426,6 +2653,7 @@ mod tests {
             targets: vec![late],
             warnings: vec![],
             scanned_classes: 1,
+            invocations: vec![],
         });
 
         // Only the winning copy defines the node and keeps its references; the
@@ -2481,6 +2709,16 @@ mod tests {
         fetched: &ApiIndex,
         graph: &ClassGraph,
     ) -> Vec<Violation> {
+        abstract_violations_with(old, new, fetched, graph, &FxHashSet::default())
+    }
+
+    fn abstract_violations_with(
+        old: &ApiIndex,
+        new: &ApiIndex,
+        fetched: &ApiIndex,
+        graph: &ClassGraph,
+        invocations: &FxHashSet<(Sym, MemberKey)>,
+    ) -> Vec<Violation> {
         let old_scope = Scope::new(vec![old, fetched]);
         let runtime = Scope::new(vec![new, fetched]);
         let mut violations = Vec::new();
@@ -2492,10 +2730,314 @@ mod tests {
             new,
             fetched,
             graph,
+            invocations,
             &mut violations,
             &mut seen,
         );
         violations
+    }
+
+    fn invoked(pairs: &[(&str, &str, &str)]) -> FxHashSet<(Sym, MemberKey)> {
+        pairs
+            .iter()
+            .map(|&(owner, name, desc)| (intern(owner), MemberKey::new(name, desc)))
+            .collect()
+    }
+
+    /// https://github.com/exoego/uika/issues/81: reachable and instantiated, but nothing
+    /// invokes the member, so the JVM cannot throw yet.
+    #[test]
+    fn uninvoked_abstract_method_is_reported_as_latent() {
+        let old = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &[("m", "()V", ACC_PUBLIC)],
+        )]);
+        let new = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC | ACC_ABSTRACT,
+            &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+        )]);
+        let fetched = ApiIndex::build([amv_class("app/C", "lib/A", ACC_PUBLIC, &[])]);
+        let graph = scanned_graph(&[("app/C", "lib/A")]);
+        let v = abstract_violations(&old, &new, &fetched, &graph);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert_eq!(v[0].invocation_found, Some(false));
+    }
+
+    /// The conscrypt/netty shape: the library invokes the member on the abstract base.
+    #[test]
+    fn invocation_through_supertype_owner_is_evidence() {
+        let old = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &[("m", "()V", ACC_PUBLIC)],
+        )]);
+        let new = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC | ACC_ABSTRACT,
+            &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+        )]);
+        let fetched = ApiIndex::build([amv_class("app/C", "lib/A", ACC_PUBLIC, &[])]);
+        let graph = scanned_graph(&[("app/C", "lib/A")]);
+        let v = abstract_violations_with(
+            &old,
+            &new,
+            &fetched,
+            &graph,
+            &invoked(&[("lib/A", "m", "()V")]),
+        );
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert_eq!(v[0].invocation_found, Some(true));
+    }
+
+    /// The pass-1 sweep matches on name+descriptor alone, so without this filter one
+    /// unrelated `close ()V` call would suppress every latent classification.
+    #[test]
+    fn invocation_on_unrelated_owner_is_not_evidence() {
+        let old = ApiIndex::build([
+            amv_class(
+                "lib/A",
+                JAVA_LANG_OBJECT,
+                ACC_PUBLIC,
+                &[("m", "()V", ACC_PUBLIC)],
+            ),
+            amv_class(
+                "lib/Other",
+                JAVA_LANG_OBJECT,
+                ACC_PUBLIC,
+                &[("m", "()V", ACC_PUBLIC)],
+            ),
+        ]);
+        let new = ApiIndex::build([
+            amv_class(
+                "lib/A",
+                JAVA_LANG_OBJECT,
+                ACC_PUBLIC | ACC_ABSTRACT,
+                &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+            ),
+            amv_class(
+                "lib/Other",
+                JAVA_LANG_OBJECT,
+                ACC_PUBLIC,
+                &[("m", "()V", ACC_PUBLIC)],
+            ),
+        ]);
+        let fetched = ApiIndex::build([amv_class("app/C", "lib/A", ACC_PUBLIC, &[])]);
+        let graph = scanned_graph(&[("app/C", "lib/A")]);
+        let v = abstract_violations_with(
+            &old,
+            &new,
+            &fetched,
+            &graph,
+            &invoked(&[("lib/Other", "m", "()V")]),
+        );
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert_eq!(v[0].invocation_found, Some(false));
+    }
+
+    /// A subtype-typed receiver IS an instance of the broken class.
+    #[test]
+    fn invocation_on_subtype_owner_is_evidence() {
+        let old = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &[("m", "()V", ACC_PUBLIC)],
+        )]);
+        let new = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC | ACC_ABSTRACT,
+            &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+        )]);
+        let fetched = ApiIndex::build([
+            amv_class("app/C", "lib/A", ACC_PUBLIC, &[]),
+            amv_class("app/Sub", "app/C", ACC_PUBLIC, &[]),
+        ]);
+        let graph = scanned_graph(&[("app/C", "lib/A"), ("app/Sub", "app/C")]);
+        let v = abstract_violations_with(
+            &old,
+            &new,
+            &fetched,
+            &graph,
+            &invoked(&[("app/Sub", "m", "()V")]),
+        );
+        // Both classes inherit the unimplemented method, and the call reaches both.
+        assert_eq!(v.len(), 2, "{v:?}");
+        assert!(v.iter().all(|v| v.invocation_found == Some(true)), "{v:?}");
+    }
+
+    /// An escape must not license the downgrade: unseen types could relate the two.
+    #[test]
+    fn unrelated_owner_with_escaping_hierarchy_stays_evidence() {
+        let old = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &[("m", "()V", ACC_PUBLIC)],
+        )]);
+        let new = ApiIndex::build([amv_class(
+            "lib/A",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC | ACC_ABSTRACT,
+            &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+        )]);
+        let fetched = ApiIndex::build([amv_class("app/C", "lib/A", ACC_PUBLIC, &[])]);
+        // app/Mystery's superclass is in no scope, so the walk cannot prove it unrelated.
+        let graph = scanned_graph(&[("app/C", "lib/A"), ("app/Mystery", "off/Scope")]);
+        let v = abstract_violations_with(
+            &old,
+            &new,
+            &fetched,
+            &graph,
+            &invoked(&[("app/Mystery", "m", "()V")]),
+        );
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert_eq!(v[0].invocation_found, Some(true));
+    }
+
+    /// `known` is the graph as of the chunk start and chunk size defaults to the thread
+    /// count, so evidence skipped on that path would vary by core count.
+    #[test]
+    fn invocation_evidence_is_chunk_boundary_independent() {
+        let class_name = intern("dup/C");
+        // Only the LOSING copy of dup/C invokes the newly-abstract member.
+        let winner = ParsedTarget {
+            source: intern("first.jar"),
+            class_name,
+            hierarchy: Some((Some(intern("lib/Base")), vec![], None)),
+            entry_override: None,
+            refs: vec![],
+            edges: vec![],
+        };
+        let loser = ParsedTarget {
+            source: intern("second.jar"),
+            class_name,
+            hierarchy: None, // parse-time skip: already in the graph (a later chunk)
+            entry_override: None,
+            refs: vec![],
+            edges: vec![],
+        };
+        let evidence = vec![(intern("lib/Base"), MemberKey::new("m", "()V"))];
+
+        // Same chunk: both copies parsed together, evidence rides on the batch.
+        let mut same_chunk = ScanResult::new();
+        same_chunk.merge(ParsedTargets {
+            targets: vec![winner, loser],
+            warnings: vec![],
+            scanned_classes: 2,
+            invocations: evidence.clone(),
+        });
+        // Separate chunks: the loser hits the `known.contains` fast path, which must still
+        // contribute its evidence.
+        let mut split = ScanResult::new();
+        split.merge(ParsedTargets {
+            targets: vec![ParsedTarget {
+                source: intern("first.jar"),
+                class_name,
+                hierarchy: Some((Some(intern("lib/Base")), vec![], None)),
+                entry_override: None,
+                refs: vec![],
+                edges: vec![],
+            }],
+            warnings: vec![],
+            scanned_classes: 1,
+            invocations: vec![],
+        });
+        split.merge(ParsedTargets {
+            targets: vec![ParsedTarget {
+                source: intern("second.jar"),
+                class_name,
+                hierarchy: None,
+                entry_override: None,
+                refs: vec![],
+                edges: vec![],
+            }],
+            warnings: vec![],
+            scanned_classes: 1,
+            invocations: evidence,
+        });
+        assert_eq!(same_chunk.invocations, split.invocations);
+        assert!(!split.invocations.is_empty());
+    }
+
+    /// The JVM reserves `java.*`, so the types above such an escape are all platform
+    /// classes and none can be `lib/Other`.
+    #[test]
+    fn escape_into_the_jdk_does_not_block_the_latent_downgrade() {
+        let old = ApiIndex::build([
+            amv_class(
+                "lib/A",
+                JAVA_LANG_OBJECT,
+                ACC_PUBLIC,
+                &[("m", "()V", ACC_PUBLIC)],
+            ),
+            amv_class(
+                "lib/Other",
+                JAVA_LANG_OBJECT,
+                ACC_PUBLIC,
+                &[("m", "()V", ACC_PUBLIC)],
+            ),
+        ]);
+        let new = ApiIndex::build([
+            amv_class(
+                "lib/A",
+                JAVA_LANG_OBJECT,
+                ACC_PUBLIC | ACC_ABSTRACT,
+                &[("m", "()V", ACC_PUBLIC | ACC_ABSTRACT)],
+            ),
+            amv_class(
+                "lib/Other",
+                JAVA_LANG_OBJECT,
+                ACC_PUBLIC,
+                &[("m", "()V", ACC_PUBLIC)],
+            ),
+        ]);
+        let fetched = ApiIndex::build([amv_class("app/C", "lib/A", ACC_PUBLIC, &[])]);
+        // app/C implements a JDK interface that is in neither scope.
+        let graph = scanned_graph_full(&[
+            ("app/C", "lib/A", &["java/io/Serializable"]),
+            ("lib/Other", JAVA_LANG_OBJECT, &[]),
+        ]);
+        let v = abstract_violations_with(
+            &old,
+            &new,
+            &fetched,
+            &graph,
+            &invoked(&[("lib/Other", "m", "()V")]),
+        );
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert_eq!(v[0].invocation_found, Some(false));
+
+        // A JDK-owned evidence reference is still blocked by the same escape: the unseen
+        // platform types above Serializable could well include it.
+        let jdk_owned = abstract_violations_with(
+            &old,
+            &new,
+            &fetched,
+            &graph,
+            &invoked(&[("java/util/List", "m", "()V")]),
+        );
+        assert_eq!(jdk_owned[0].invocation_found, Some(true));
+
+        // A non-JDK escape keeps blocking, since an unseen library type could relate them.
+        let library_escape = scanned_graph_full(&[
+            ("app/C", "lib/A", &["off/Scope"]),
+            ("lib/Other", JAVA_LANG_OBJECT, &[]),
+        ]);
+        let v = abstract_violations_with(
+            &old,
+            &new,
+            &fetched,
+            &library_escape,
+            &invoked(&[("lib/Other", "m", "()V")]),
+        );
+        assert_eq!(v[0].invocation_found, Some(true));
     }
 
     #[test]

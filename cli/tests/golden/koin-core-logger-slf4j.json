@@ -12,7 +12,8 @@
         },
         "expected_static": false
       },
-      "reason": "method became abstract"
+      "reason": "method became abstract",
+      "invocation_found": true
     },
     {
       "source": "tests/fixtures/koin-logger-slf4j-3.2.2.jar",

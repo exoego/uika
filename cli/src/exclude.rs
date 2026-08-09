@@ -6,23 +6,44 @@
 //! dropping it here is fine as long as the assertion stays visible -- a committed TOML file with
 //! a required reason, a suppressed count in the report, and a warning for entries that matched
 //! nothing (so the list does not silently rot as the checked libraries change).
+//!
+//! Rules scope by `owner` (class or trailing-`*` package prefix), by `kind` (one violation
+//! kind, a `Reason::config_str` string), or by both. A kind-only rule is the policy knob "this
+//! category is acceptable for us everywhere"; owner+kind pins one category on one library.
+//! Kind matching lives here rather than in `--fail-on` so the gate stays a pure tier
+//! threshold that always matches the displayed grouping (model::tier).
+//!
+//! A kind rule inherits the waiver semantics of the rest of the file: matches are DROPPED,
+//! not merely un-gated. Right for "we never want to see this category", wrong for "keep
+//! showing it, just do not fail the build", which has no mechanism here.
 
-use crate::model::Violation;
+use crate::model::{Reason, Violation};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::path::PathBuf;
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ExcludeFile {
     #[serde(default)]
     exclude: Vec<RawEntry>,
 }
 
+/// Unknown keys are rejected, not ignored: every scoping field is optional, so a misspelled
+/// `onwer` would deserialize to `None` and silently WIDEN the rule to every owner. It would
+/// still match, so the unused-rule warning could not catch it either.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawEntry {
-    owner: String,
+    /// Class or package (trailing-`*` prefix) the rule is scoped to. Optional when `kind`
+    /// is present: a kind-only rule suppresses one violation kind across every owner.
+    owner: Option<String>,
     member: Option<String>,
     descriptor: Option<String>,
+    /// Violation kind, in the snake_case config spelling (e.g. "method_became_abstract").
+    /// `Reason::parse` also accepts the spaced form the report and `--json` print.
+    /// Combines with `owner`: both present means both must match.
+    kind: Option<String>,
     reason: String,
 }
 
@@ -53,7 +74,8 @@ impl std::fmt::Display for OwnerPattern {
 
 #[derive(Debug)]
 pub struct ExcludeRule {
-    owner: OwnerPattern,
+    /// None (only with a kind) matches every owner.
+    owner: Option<OwnerPattern>,
     /// Member name. None excludes the owner outright, matching class-level violations too
     /// (e.g. "class removed").
     member: Option<String>,
@@ -61,16 +83,25 @@ pub struct ExcludeRule {
     /// which over-suppresses when only one overload is a known false positive: pinning the
     /// descriptor keeps a real break on a sibling overload reported.
     descriptor: Option<String>,
+    /// Violation kind the rule is pinned to. None matches every kind.
+    kind: Option<Reason>,
     reason: String,
 }
 
 impl ExcludeRule {
     fn describe(&self) -> String {
-        match (&self.member, &self.descriptor) {
-            (Some(m), Some(d)) => format!("{}#{} {} ({})", self.owner, m, d, self.reason),
-            (Some(m), None) => format!("{}#{} ({})", self.owner, m, self.reason),
-            (None, _) => format!("{} ({})", self.owner, self.reason),
+        let mut parts = Vec::new();
+        if let Some(owner) = &self.owner {
+            parts.push(match (&self.member, &self.descriptor) {
+                (Some(m), Some(d)) => format!("{owner}#{m} {d}"),
+                (Some(m), None) => format!("{owner}#{m}"),
+                (None, _) => format!("{owner}"),
+            });
         }
+        if let Some(kind) = self.kind {
+            parts.push(format!("kind \"{}\"", kind.config_str()));
+        }
+        format!("{} ({})", parts.join(" "), self.reason)
     }
 }
 
@@ -81,33 +112,68 @@ fn parse(content: &str) -> Result<Vec<ExcludeRule>> {
 }
 
 fn compile(entry: RawEntry) -> Result<ExcludeRule> {
+    // Best identifier for error messages, whichever scoping field the rule has.
+    let label = entry
+        .owner
+        .clone()
+        .or_else(|| entry.kind.clone())
+        .unwrap_or_default();
     if entry.reason.trim().is_empty() {
         bail!(
-            "exclude rule for owner \"{}\" is missing a reason (reason must explain why the reference is a known false positive)",
-            entry.owner
+            "exclude rule \"{label}\" is missing a reason (reason must explain why the violation is a known false positive)"
         );
     }
-    let stars = entry.owner.matches('*').count();
-    if stars > 1 || (stars == 1 && !entry.owner.ends_with('*')) {
+    if entry.owner.is_none() && entry.kind.is_none() {
         bail!(
-            "exclude rule owner \"{}\": '*' is only supported once, as a trailing wildcard (prefix match)",
-            entry.owner
+            "exclude rule needs an owner, a kind, or both (owner scopes it to a class or package, kind to one violation kind such as \"method_became_abstract\")"
+        );
+    }
+    if entry.member.is_some() && entry.owner.is_none() {
+        bail!(
+            "exclude rule \"{label}\": member requires an owner (a member name only means something on a class)"
         );
     }
     if entry.descriptor.is_some() && entry.member.is_none() {
         bail!(
-            "exclude rule owner \"{}\": descriptor requires a member (a descriptor pins one overload of a named member)",
-            entry.owner
+            "exclude rule \"{label}\": descriptor requires a member (a descriptor pins one overload of a named member)"
         );
     }
-    let owner = match entry.owner.strip_suffix('*') {
-        Some(prefix) => OwnerPattern::Prefix(prefix.to_string()),
-        None => OwnerPattern::Exact(entry.owner),
-    };
+    let kind = entry
+        .kind
+        .as_deref()
+        .map(|k| {
+            Reason::parse(k).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "exclude rule \"{label}\": unknown kind \"{k}\"; valid kinds: {}",
+                    Reason::ALL
+                        .iter()
+                        .map(|r| r.config_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
+        })
+        .transpose()?;
+    let owner = entry
+        .owner
+        .map(|o| {
+            let stars = o.matches('*').count();
+            if stars > 1 || (stars == 1 && !o.ends_with('*')) {
+                bail!(
+                    "exclude rule owner \"{o}\": '*' is only supported once, as a trailing wildcard (prefix match)"
+                );
+            }
+            Ok(match o.strip_suffix('*') {
+                Some(prefix) => OwnerPattern::Prefix(prefix.to_string()),
+                None => OwnerPattern::Exact(o),
+            })
+        })
+        .transpose()?;
     Ok(ExcludeRule {
         owner,
         member: entry.member,
         descriptor: entry.descriptor,
+        kind,
         reason: entry.reason,
     })
 }
@@ -149,7 +215,14 @@ pub fn filter(violations: &mut Vec<Violation>, rules: &[ExcludeRule]) -> Exclude
         let member_descriptor = v.reference.member.map(|m| m.descriptor.as_str());
         let mut matched = false;
         for (i, rule) in rules.iter().enumerate() {
-            if !rule.owner.matches(owner) {
+            if let Some(pattern) = &rule.owner
+                && !pattern.matches(owner)
+            {
+                continue;
+            }
+            if let Some(kind) = rule.kind
+                && v.reason != kind
+            {
                 continue;
             }
             let member_matches = match &rule.member {
@@ -202,6 +275,7 @@ mod tests {
             },
             reason: Reason::ClassRemoved,
             reachable: None,
+            invocation_found: None,
             suggestion: None,
             modules: Vec::new(),
         }
@@ -221,6 +295,7 @@ mod tests {
             },
             reason: Reason::MethodRemoved,
             reachable: None,
+            invocation_found: None,
             suggestion: None,
             modules: Vec::new(),
         }
@@ -451,6 +526,206 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("trailing wildcard"), "{err}");
+    }
+
+    fn kind_violation(owner: &str, reason: Reason) -> Violation {
+        let mut v = class_violation(owner);
+        v.reason = reason;
+        v
+    }
+
+    #[test]
+    fn kind_only_rule_suppresses_that_kind_across_all_owners() {
+        let rules = parse(
+            r#"
+            [[exclude]]
+            kind = "method_became_abstract"
+            reason = "we accept latent AbstractMethodError risk and track it separately"
+            "#,
+        )
+        .unwrap();
+        let mut violations = vec![
+            kind_violation("lib/A", Reason::MethodBecameAbstract),
+            kind_violation("other/B", Reason::MethodBecameAbstract),
+            kind_violation("lib/A", Reason::ClassRemoved),
+        ];
+        let stats = filter(&mut violations, &rules);
+        assert_eq!(stats.suppressed, 2);
+        assert!(stats.unused.is_empty());
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, Reason::ClassRemoved);
+    }
+
+    #[test]
+    fn owner_and_kind_combine() {
+        let rules = parse(
+            r#"
+            [[exclude]]
+            owner = "org/conscrypt/*"
+            kind = "method_became_abstract"
+            reason = "conscrypt adds abstract methods nothing calls yet"
+            "#,
+        )
+        .unwrap();
+        let mut violations = vec![
+            kind_violation(
+                "org/conscrypt/BufferAllocator",
+                Reason::MethodBecameAbstract,
+            ),
+            // Same owner, different kind: still reported.
+            kind_violation("org/conscrypt/BufferAllocator", Reason::MethodRemoved),
+            // Same kind, different owner: still reported.
+            kind_violation("other/Lib", Reason::MethodBecameAbstract),
+        ];
+        let stats = filter(&mut violations, &rules);
+        assert_eq!(stats.suppressed, 1);
+        assert_eq!(violations.len(), 2);
+    }
+
+    #[test]
+    fn member_and_kind_narrow_together() {
+        let rules = parse(
+            r#"
+            [[exclude]]
+            owner = "lib/C"
+            member = "m"
+            kind = "method_became_abstract"
+            reason = "only this member's abstractness is known-safe"
+            "#,
+        )
+        .unwrap();
+        let mut abstract_m = member_violation("lib/C", "m", "()V");
+        abstract_m.reason = Reason::MethodBecameAbstract;
+        let mut violations = vec![
+            abstract_m,
+            // Same member, different kind.
+            member_violation("lib/C", "m", "()V"),
+        ];
+        let stats = filter(&mut violations, &rules);
+        assert_eq!(stats.suppressed, 1);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, Reason::MethodRemoved);
+    }
+
+    #[test]
+    fn unknown_kind_is_rejected_with_the_valid_list() {
+        let err = parse(
+            r#"
+            [[exclude]]
+            kind = "method went weird"
+            reason = "typo"
+            "#,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("unknown kind"), "{msg}");
+        assert!(msg.contains("method_became_abstract"), "{msg}");
+        assert!(!msg.contains("method became abstract"), "{msg}");
+    }
+
+    #[test]
+    fn misspelled_key_is_rejected_instead_of_widening_the_rule() {
+        let err = parse(
+            r#"
+            [[exclude]]
+            onwer = "org/conscrypt/*"
+            kind = "method_became_abstract"
+            reason = "conscrypt only"
+            "#,
+        )
+        .unwrap_err();
+        // The offending key is named by the TOML deserializer, so read the whole chain.
+        assert!(format!("{err:#}").contains("onwer"), "{err:#}");
+        let err = parse(
+            r#"
+            [[exclude]]
+            owner = "org/conscrypt/*"
+            kimd = "method became abstract"
+            reason = "conscrypt only"
+            "#,
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("kimd"), "{err:#}");
+    }
+
+    #[test]
+    fn rule_without_owner_or_kind_is_rejected() {
+        let err = parse(
+            r#"
+            [[exclude]]
+            reason = "suppress everything"
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("needs an owner, a kind, or both"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn member_without_owner_is_rejected() {
+        let err = parse(
+            r#"
+            [[exclude]]
+            member = "m"
+            kind = "method_removed"
+            reason = "bogus"
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("member requires an owner"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn unused_kind_rule_names_the_kind() {
+        let rules = parse(
+            r#"
+            [[exclude]]
+            kind = "field_became_final"
+            reason = "not expected to occur"
+            "#,
+        )
+        .unwrap();
+        let mut violations = vec![kind_violation("lib/A", Reason::ClassRemoved)];
+        let stats = filter(&mut violations, &rules);
+        assert_eq!(stats.suppressed, 0);
+        assert_eq!(stats.unused.len(), 1);
+        assert!(
+            stats.unused[0].contains("kind \"field_became_final\""),
+            "{}",
+            stats.unused[0]
+        );
+    }
+
+    /// The spaced form is what a report prints under `reason`, so pasting one in works.
+    #[test]
+    fn kind_accepts_both_snake_case_and_the_spaced_report_form() {
+        for spelling in ["method_became_abstract", "method became abstract"] {
+            let rules = parse(&format!(
+                r#"
+                [[exclude]]
+                kind = "{spelling}"
+                reason = "handled outside the gate"
+                "#
+            ))
+            .unwrap();
+            let mut violations = vec![
+                kind_violation("lib/A", Reason::MethodBecameAbstract),
+                kind_violation("lib/A", Reason::ClassRemoved),
+            ];
+            let stats = filter(&mut violations, &rules);
+            assert_eq!(stats.suppressed, 1, "spelling {spelling}");
+            assert_eq!(violations.len(), 1);
+        }
+        // A half-converted spelling still resolves to the same reason.
+        assert_eq!(
+            Reason::parse("member_changed from_static to_instance"),
+            Some(Reason::StaticToInstance)
+        );
     }
 
     #[test]

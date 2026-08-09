@@ -187,17 +187,61 @@ A changed library often drags in transitive JARs the application never touches,
 so a run can report violations in code that is present on the classpath but
 never loaded. When application roots are available (the module `classesDirs` in
 a dump, or `--app` build outputs), uika walks the class-load graph from them and
-splits the report into two sections: reachable violations (💥, likely to break)
-first, then the ones it could not prove reachable (⚠️). Edges are constant-pool
-class references, superclass/interface links, class-name-shaped string constants
-(an over-approximation of `Class.forName`), and `META-INF/services` providers.
+splits the report by tier: reachable violations (💥, likely to break) first,
+then [latent](#latent-breaks-) ones (💤), then the ones it could not prove
+reachable (⚠️). Edges are constant-pool class references, superclass/interface
+links, class-name-shaped string constants (an over-approximation of
+`Class.forName`), and `META-INF/services` providers.
 
 It never hides a violation: reachability is an over-approximation, so ⚠️ means
 "no static path from the application reaches this class" (reflection driven
 purely by external configuration stays invisible), a signal to deprioritize
 rather than a guarantee. With no application roots (a bare
-`check --classpath ...`) there is nothing to rank from, so the report stays a
+`check --classpath ...`) there is nothing to rank from, so the 💥 and ⚠️ split
+disappears. 💤 does not: invocation evidence comes from the scanned bytecode,
+so latent findings keep their own section and their own count. The rest stays a
 single flat list.
+
+### Latent breaks (💤)
+
+Most breaks fire when a class loads or links, so "is the class reachable" is
+the right question to ask about them. `AbstractMethodError` is the exception: a
+concrete class that inherits an unimplemented abstract method loads, verifies,
+and instantiates without complaint, and throws only when the missing method is
+actually called. Ranking such a break by class reachability alone flags it as
+likely to break even when nothing in the scanned bytecode ever calls the member
+(https://github.com/exoego/uika/issues/81).
+
+So for `method became abstract` uika also asks whether anything invokes the
+member. It sweeps every scanned class, plus the new version of the checked
+library, for method references to the affected member, keeping those whose
+owner can dispatch onto the broken class (the class itself, a supertype, or a
+subtype). When none exists the violation gets its own 💤 section between 💥 and
+⚠️, and `--fail-on reachable` treats it as a warning:
+
+```text
+--------------------------------------------------------------------------------
+💤 latent (class reachable, but no scanned code invokes the affected member)
+--------------------------------------------------------------------------------
+
+❌ app.B  (build/classes/java/main)
+    inherits abstract lib.A.heap() without implementing it
+        -> AbstractMethodError only when heap is first called (no invocation found in scanned bytecode)
+```
+
+Like ⚠️, this is a confidence tier and not a proof: a call through reflection or
+JNI, or from code outside the scan, stays invisible. It separates "this breaks
+in production now" from "this is latent until something starts calling the
+method". `--fail-on any` still fails on 💤, and
+[`--exclude-file`](#excluding-known-false-positives---exclude-file) can drop the
+whole category with `kind = "method_became_abstract"`.
+
+The tier errs toward 💥. When a class's hierarchy leaves the scanned scope the
+unseen types could relate an otherwise unrelated caller, so the break stays 💥
+rather than being downgraded. The one exception is an escape into `java.*`,
+which the JVM reserves: those types are always platform classes, so they cannot
+hide a library class, and the downgrade still applies. Without that a class
+implementing `Serializable` would never be reported latent.
 
 ### Per-module checking (`upgrade-check`)
 
@@ -234,9 +278,14 @@ written by plugins too old to carry per-module artifact lists.
 controls whether the run exits non-zero (so CI fails). It has three values:
 
 - `any` (default, strictest): exit 1 if any violation is found.
-- `reachable`: exit 1 only when a reachable violation exists (💥). Violations
-  that are not proven reachable (⚠️) do not fail the run.
+- `reachable`: exit 1 only for violations in the 💥 tier. Violations that are
+  not proven reachable (⚠️) or [latent](#latent-breaks-) (💤) do not fail the
+  run.
 - `never`: always exit 0, reporting violations as warnings only.
+
+The threshold is the report's section split, so what fails CI is exactly what
+the report shows above the warning sections. The gate and the sections are the
+same call on the same inputs, and that holds in the degraded cases below too.
 
 Because reachability is an over-approximation (reflection driven purely by
 external configuration is invisible), `reachable` treats a violation whose
@@ -244,9 +293,12 @@ reachability could not be determined as reachable, consistent with the
 report's 💥 grouping. Two cases feed into that: with no application roots
 nothing is walked, so `reachable` behaves like `any`; and when application
 roots are supplied but none matched a scanned class (the build outputs were
-not compiled, so the ⚠️ labels have no basis), `reachable` again falls back
-to `any` rather than passing every violation off as unreachable. Errors always
-exit 2 regardless of `--fail-on`.
+not compiled, so the ⚠️ labels have no basis), the reachable axis is dropped
+rather than passing every violation off as unreachable, so non-latent
+violations print as 💥 and fail the run, with a warning naming the cause. The
+latent tier survives both cases, because its evidence comes from the scanned
+bytecode rather than from application roots, so a 💤 finding stays a warning
+and does not fail `reachable`. Errors always exit 2 regardless of `--fail-on`.
 
 ### Excluding known false positives (`--exclude-file`)
 
@@ -284,11 +336,33 @@ owner = "lib/C"
 member = "m"
 descriptor = "()V"
 reason = "only the no-arg m() is invoked reflectively"
+
+# kind pins a rule to one violation kind. With an owner, both must match:
+# this waives only newly-abstract methods from conscrypt, leaving every other
+# kind of conscrypt break — and this kind elsewhere — reported.
+[[exclude]]
+owner = "org/conscrypt/*"
+kind = "method_became_abstract"
+reason = "conscrypt adds abstract methods its own code never calls; tracked in DEP-142"
+
+# kind alone applies to every owner. Note that exclusion REMOVES a violation from
+# the report, it does not merely stop it failing the build, so use this only for a
+# category you have decided not to see at all.
+[[exclude]]
+kind = "extends_final_class"
+reason = "we ship a shaded copy of the lagging artifact, so version-lag finals never link"
 ```
 
 `owner`/`member`/`descriptor` use raw JVM internal forms (`/`-separated owner
 names, `$` for nested classes, `<init>` for constructors, undecoded
-descriptors like `(Ljava/util/Date;)V`), matched exactly. The text report
+descriptors like `(Ljava/util/Date;)V`). `member` and `descriptor` are matched
+exactly; `owner` is matched exactly too unless it ends in a single `*`, which
+makes it a prefix match over the package or class. `kind` is the
+violation kind in snake_case, for example `class_removed`, `method_removed`,
+`method_became_abstract`, or `extends_final_class`; an unknown value is
+rejected at load with the valid list. The spaced form that `--json` and the
+text report print under `reason` is accepted too, so a value pasted straight
+out of a report works. A rule needs an `owner`, a `kind`, or both. The text report
 prints Java-ish dotted signatures, so copy entries from the `--json` output
 (each violation's `reference` carries the raw `owner`, `member.name`, and
 `member.descriptor`). The summary line reports how many violations were
@@ -552,110 +626,6 @@ For Maven:
         if: steps.baseline.outcome == 'success'
         run: mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json
 ```
-
-## As CLI
-
-### Local check before pushing
-
-After bumping `libs.versions.toml`, verify with resolution only, no
-compilation. Classes already built on disk still anchor the reachability
-ranking, and the check orders itself after the dump so both fit one
-invocation:
-
-```console
-$ git stash && ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json -PuikaBuildOutputs=false && git stash pop
-$ ./gradlew uikaDumpClasspath uikaUpgradeCheck -PuikaOutput=/tmp/after.json -PuikaBuildOutputs=false \
-      -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
-```
-
-### Ad-hoc investigation
-
-"What breaks between these two versions, and who dies?" needs only the JAR
-files. Uika is a static binary and does not need a JVM:
-
-```console
-$ uika diff old.jar new.jar
-$ uika check --old old.jar --new new.jar --classpath ~/.gradle/caches/.../suspect.jar
-```
-
-### Command reference
-
-```console
-# List breaking changes between old/new versions of a library
-# (removals, access narrowing, static/instance changes, newly-final/abstract classes/members, class<->interface flips)
-$ uika diff old.jar new.jar [--json]
-
-# Find usages of breaking changes across classpath JARs / your build output
-# (--old/--new may be repeated to check several changed libraries in one run)
-# Exit codes: 0 = clean, 1 = violations found, 2 = error
-$ uika check --old kotlinx-coroutines-core-jvm-1.7.1.jar \
-             --new kotlinx-coroutines-core-jvm-1.11.0.jar \
-             --classpath ktor-io-jvm-2.3.13.jar:other-dep.jar \
-             --app build/classes/kotlin/main
-checked kotlinx-coroutines-core-jvm-1.7.1.jar -> kotlinx-coroutines-core-jvm-1.11.0.jar against 3 scan targets
-
---------------------------------------------------------------------------------
-💥 reachable from the application (likely to break)
---------------------------------------------------------------------------------
-
-❌ kotlinx.coroutines.EventLoopKt.processNextEventInCurrentThread()
-    method removed -> NoSuchMethodError at first call
-    used by 1 class:
-        io.ktor.utils.io.jvm.javaio.BlockingAdapter  (ktor-io-jvm-2.3.13.jar)
-
-scanned 372 classes: ❌ 1 broken (of which 💥 1 reachable, ⚠️ 0 not proven reachable), ❓ 5 unverified references (hierarchy escapes scope)
-
-# Detect broken references caused by every artifact whose version changed.
-# When application roots are known (build outputs in the dump, or --app), violations
-# are ranked: reachable first, then the ones no static path reaches.
-$ uika upgrade-check --before /tmp/before.json --after /tmp/after.json
-dependency changes: 1
-    CHANGED io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
-
-per-module check: 2 of 41 modules changed resolution (39 unchanged)
-    :app  scanned 84013 classes, ❌ 42 broken, ❓ 118 unverified
-    :worker  scanned 61200 classes, ✅ 0 broken, ❓ 87 unverified
-
---------------------------------------------------------------------------------
-💥 reachable from the application (likely to break)
---------------------------------------------------------------------------------
-
-💡 suggestion: align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
-    affected modules: :app
-    why: io.opentelemetry:opentelemetry-sdk-common changed 1.42.1 -> 1.60.1, which breaks io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1:
-        io.opentelemetry.sdk.internal.DaemonThreadFactory was removed, but io.opentelemetry.exporter.sender.okhttp.internal.OkHttpGrpcSender still uses it
-        io.opentelemetry.sdk.internal.DaemonThreadFactory was removed, but io.opentelemetry.exporter.sender.okhttp.internal.OkHttpUtil still uses it
-
---------------------------------------------------------------------------------
-⚠️  not proven reachable (no static path found; may still load via reflection)
---------------------------------------------------------------------------------
-
-💡 suggestion: ...
-    why: ...
-
-scanned 145213 classes: ❌ 42 broken (of which 💥 25 reachable, ⚠️ 17 not proven reachable), ❓ 205 unverified references (hierarchy escapes scope)
-
-# Debugging aid: dump the extracted API surface of a JAR
-$ uika dump some.jar
-```
-
-### Reachability ranking
-
-A changed library often drags in transitive JARs the application never touches,
-so a run can report violations in code that is present on the classpath but
-never loaded. When application roots are available (the module `classesDirs` in
-a dump, or `--app` build outputs), uika walks the class-load graph from them and
-splits the report into two sections: reachable violations (💥, likely to break)
-first, then the ones it could not prove reachable (⚠️). Edges are constant-pool
-class references, superclass/interface links, class-name-shaped string constants
-(an over-approximation of `Class.forName`), and `META-INF/services` providers.
-
-It never hides a violation: reachability is an over-approximation, so ⚠️ means
-"no static path from the application reaches this class" (reflection driven
-purely by external configuration stays invisible), a signal to deprioritize
-rather than a guarantee. With no application roots (a bare
-`check --classpath ...`) there is nothing to rank from, so the report stays a
-single flat list.
 
 ## How it works
 

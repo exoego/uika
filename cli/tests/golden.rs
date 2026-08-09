@@ -43,8 +43,16 @@ fn scenario(name: &str) -> (String, String, String) {
 fn scenario_json(name: &str) -> String {
     let (old, new, target) = scenario(name);
     let (old_index, _) = ApiIndex::from_classes(&load(&fixture(&old)).unwrap());
-    let (new_index, _) = ApiIndex::from_classes(&load(&fixture(&new)).unwrap());
-    let report = check(&load(&fixture(&target)).unwrap(), &old_index, &new_index);
+    let new_classes = load(&fixture(&new)).unwrap();
+    let (new_index, _) = ApiIndex::from_classes(&new_classes);
+    // The new library's own bytecode is swept for invocation evidence, matching what the
+    // CLI does with --new, so the goldens pin the same latent classification users see.
+    let report = check(
+        &load(&fixture(&target)).unwrap(),
+        &old_index,
+        &new_index,
+        &new_classes,
+    );
     check_json(&report).unwrap()
 }
 

@@ -192,6 +192,27 @@ pub enum Reason {
 }
 
 impl Reason {
+    /// ADD NEW VARIANTS HERE TOO — the compiler cannot check this, since an exhaustive
+    /// `match` forces a new arm and never a new array entry. A variant missing here loses
+    /// its exclude-rule `kind` string, so a legitimate rule fails with `unknown kind`.
+    pub const ALL: [Reason; 15] = [
+        Reason::ClassRemoved,
+        Reason::ClassAccessNarrowed,
+        Reason::ClassBecameAbstract,
+        Reason::ClassBecameFinal,
+        Reason::ClassKindChanged,
+        Reason::ExtendsFinalClass,
+        Reason::MethodRemoved,
+        Reason::MethodAccessNarrowed,
+        Reason::MethodBecameAbstract,
+        Reason::MethodBecameFinal,
+        Reason::FieldRemoved,
+        Reason::FieldAccessNarrowed,
+        Reason::FieldBecameFinal,
+        Reason::StaticToInstance,
+        Reason::InstanceToStatic,
+    ];
+
     /// The stable wire/report string. Everything user-visible (JSON, verdicts stream,
     /// text report, sort order) speaks this form.
     pub fn as_str(self) -> &'static str {
@@ -212,6 +233,20 @@ impl Reason {
             Reason::StaticToInstance => "member changed from static to instance",
             Reason::InstanceToStatic => "member changed from instance to static",
         }
+    }
+
+    /// The exclude-rule `kind` spelling: `as_str` with underscores ("method_became_abstract").
+    /// Derived rather than a second list of literals, so the two cannot drift. The wire form
+    /// keeps its spaces — JSON, the verdicts stream and the goldens are unchanged.
+    pub fn config_str(self) -> String {
+        self.as_str().replace(' ', "_")
+    }
+
+    /// Accepts both spellings: `_` <-> ` ` is a 1:1 swap over this set, so normalizing is
+    /// unambiguous and a `reason` pasted straight out of a report works.
+    pub fn parse(s: &str) -> Option<Reason> {
+        let spaced = s.replace('_', " ");
+        Reason::ALL.iter().copied().find(|r| r.as_str() == spaced)
     }
 }
 
@@ -249,6 +284,14 @@ pub struct Violation {
     /// None when reachability was not computed (no --reachability / no app roots).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reachable: Option<bool>,
+    /// Only for `method became abstract` violations (None on every other reason): whether
+    /// any scanned class holds a method reference that could invoke the affected member.
+    /// AbstractMethodError throws at invocation, not at class load, so `Some(false)` means
+    /// the break is latent — the class loads and instantiates fine, and nothing in scanned
+    /// bytecode can trigger the throw (reflection, JNI, and unscanned code stay invisible,
+    /// so this is evidence, not proof).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invocation_found: Option<bool>,
     /// Actionable fix hint attributing the break to the artifacts involved. Only populated by
     /// upgrade-check (where dumps carry coordinates); None otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -260,12 +303,76 @@ pub struct Violation {
     pub modules: Vec<String>,
 }
 
-/// Whether a violation's `reachable` flag puts it in the 💥 group: proven-reachable
+/// Whether a violation's `reachable` flag puts it in the reachable group: proven-reachable
 /// (`Some(true)`) and unproven (`None`) both count; only proven-not-reachable (`Some(false)`)
-/// does not. This is the single boundary shared by the report's 💥/⚠️ split and `--fail-on
-/// reachable` gating, so the CI gate always matches the displayed grouping.
+/// does not.
 pub fn counts_as_reachable(reachable: Option<bool>) -> bool {
     reachable != Some(false)
+}
+
+/// Report/gating tier of one violation, most severe first. This is the single boundary
+/// shared by the report's 💥/💤/⚠️ section split and `--fail-on reachable` gating, so the
+/// CI gate always matches the displayed grouping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tier {
+    /// 💥 likely to break: the class is reachable (or unproven) and, for invocation-
+    /// triggered reasons, an invocation of the affected member exists in scanned bytecode.
+    Breaks,
+    /// 💤 latent: the class is reachable but no scanned bytecode invokes the affected
+    /// member, so the error cannot throw until something starts calling it. Warning tier —
+    /// same conservative stance as Unproven (reflection and JNI stay invisible).
+    Latent,
+    /// ⚠️ not proven reachable: no static class-load path from the application.
+    Unproven,
+}
+
+/// Positive evidence that nothing in the scan can invoke the member. Reasons without the
+/// invocation axis are never latent.
+pub fn is_latent(v: &Violation) -> bool {
+    v.invocation_found == Some(false)
+}
+
+/// The one policy site mapping evidence to a tier. The report's section split and
+/// `--fail-on reachable` both go through it, so the gate always matches what is displayed.
+/// Proven-unreachable wins over latent, an unreachable class cannot even load.
+///
+/// `reachable_axis_valid` is false when app roots were supplied but matched nothing: every
+/// violation then carries `reachable = Some(false)` with nothing behind it. The latent axis
+/// survives that, its evidence comes from the bytecode rather than from roots.
+pub fn tier(v: &Violation, reachable_axis_valid: bool) -> Tier {
+    if reachable_axis_valid && !counts_as_reachable(v.reachable) {
+        Tier::Unproven
+    } else if is_latent(v) {
+        Tier::Latent
+    } else {
+        Tier::Breaks
+    }
+}
+
+/// Whether a report's reachability labels rest on anything. `Some(false)` means roots were
+/// given and matched nothing.
+pub fn reachable_axis_valid(app_roots_matched: Option<bool>) -> bool {
+    app_roots_matched != Some(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Note this cannot check that `ALL` lists every variant — enumerating them is what
+    /// `ALL` is for. See the sync note there.
+    #[test]
+    fn reason_strings_are_distinct_and_round_trip() {
+        for r in Reason::ALL {
+            assert_eq!(Reason::parse(r.as_str()), Some(r), "wire form {r:?}");
+            assert_eq!(Reason::parse(&r.config_str()), Some(r), "config form {r:?}");
+        }
+        let mut seen: Vec<&str> = Reason::ALL.iter().map(|r| r.as_str()).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), Reason::ALL.len(), "duplicate reason strings");
+        assert_eq!(Reason::parse("not a reason"), None);
+    }
 }
 
 /// Which artifacts a violation involves and how to fix it. Coordinates are "group:name[:version]".
