@@ -12,7 +12,8 @@
         },
         "expected_static": false
       },
-      "reason": "method became abstract"
+      "reason": "method became abstract",
+      "invocation_found": false
     }
   ],
   "scanned_classes": 2,

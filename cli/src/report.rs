@@ -1,5 +1,5 @@
 use crate::check::CheckReport;
-use crate::model::{BreakingChange, Reason, RefKind, Violation, counts_as_reachable};
+use crate::model::{BreakingChange, Reason, RefKind, Tier, Violation, reachable_axis_valid, tier};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -364,7 +364,13 @@ fn structural_lines(v: &Violation) -> (String, String) {
                 "inherits abstract {} without implementing it",
                 pretty_target(v)
             ),
-            format!("-> AbstractMethodError when {} is called", m.name),
+            match v.invocation_found {
+                Some(false) => format!(
+                    "-> AbstractMethodError only when {} is first called (no invocation found in scanned bytecode)",
+                    m.name
+                ),
+                _ => format!("-> AbstractMethodError when {} is called", m.name),
+            },
         ),
         (MethodBecameFinal, Some(_)) => (
             format!("overrides {} which became final", pretty_target(v)),
@@ -662,7 +668,7 @@ fn structural_blocks(violations: &[&Violation]) -> Vec<String> {
 
 /// Bottom line: totals plus per-tier counts. ✅ marks a clean run; ❌/❓ mirror the block
 /// markers above.
-fn summary_line(report: &CheckReport, reachable: usize, unproven: usize) -> String {
+fn summary_line(report: &CheckReport, reachable: usize, latent: usize, unproven: usize) -> String {
     let broken = report.violations.len();
     let mut line = if broken == 0 {
         format!("✅ scanned {} classes: 0 broken", report.scanned_classes)
@@ -673,11 +679,18 @@ fn summary_line(report: &CheckReport, reachable: usize, unproven: usize) -> Stri
         )
     };
     if report.reachability_computed && broken > 0 {
+        let latent_segment = if latent > 0 {
+            format!(", 💤 {latent} latent")
+        } else {
+            String::new()
+        };
         write!(
             line,
-            " (of which 💥 {reachable} reachable, ⚠️ {unproven} not proven reachable)"
+            " (of which 💥 {reachable} reachable{latent_segment}, ⚠️ {unproven} not proven reachable)"
         )
         .unwrap();
+    } else if latent > 0 && broken > 0 {
+        write!(line, " (of which 💤 {latent} latent)").unwrap();
     }
     if report.unknown_refs > 0 {
         write!(
@@ -731,20 +744,41 @@ fn section_heading(title: &str) -> String {
     format!("{RULE}\n{title}\n{RULE}")
 }
 
+/// The 💤 headings for the two report shapes, kept side by side so their wording cannot
+/// drift apart: the only difference is that the ranked report can also say the class is
+/// reachable, which the flat report has no basis to claim.
+const LATENT_HEADING: &str = "💤 latent (no scanned code invokes the affected member)";
+const LATENT_HEADING_RANKED: &str =
+    "💤 latent (class reachable, but no scanned code invokes the affected member)";
+
 pub fn check_text(report: &CheckReport) -> String {
     let mut sections: Vec<String> = Vec::new();
-    // Reachable first (likely to break), then the ones we could not prove reachable
-    // (no static path found, but reflection may still load them).
-    let (reachable, unproven): (Vec<&Violation>, Vec<&Violation>) = report
-        .violations
-        .iter()
-        .partition(|v| counts_as_reachable(v.reachable));
+    // Most severe first.
+    let mut breaks: Vec<&Violation> = Vec::new();
+    let mut latent: Vec<&Violation> = Vec::new();
+    let mut unproven: Vec<&Violation> = Vec::new();
+    // Same judgement the exit gate makes, so sections and --fail-on cannot drift.
+    let axis = reachable_axis_valid(report.app_roots_matched);
+    for v in &report.violations {
+        match tier(v, axis) {
+            Tier::Breaks => breaks.push(v),
+            Tier::Latent => latent.push(v),
+            Tier::Unproven => unproven.push(v),
+        }
+    }
     if report.reachability_computed {
-        if !reachable.is_empty() {
+        if !breaks.is_empty() {
             sections.push(format!(
                 "{}\n\n{}",
                 section_heading("💥 reachable from the application (likely to break)"),
-                violation_blocks(&reachable).join("\n\n")
+                violation_blocks(&breaks).join("\n\n")
+            ));
+        }
+        if !latent.is_empty() {
+            sections.push(format!(
+                "{}\n\n{}",
+                section_heading(LATENT_HEADING_RANKED),
+                violation_blocks(&latent).join("\n\n")
             ));
         }
         if !unproven.is_empty() {
@@ -757,9 +791,26 @@ pub fn check_text(report: &CheckReport) -> String {
             ));
         }
     } else if !report.violations.is_empty() {
-        sections.push(violation_blocks(&report.violations.iter().collect::<Vec<_>>()).join("\n\n"));
+        // No reachability axis, so one flat list, but latency is scan-derived and keeps
+        // its section. `unproven` is always empty here; chaining it survives that changing.
+        let flat: Vec<&Violation> = breaks.iter().chain(&unproven).copied().collect();
+        if !flat.is_empty() {
+            sections.push(violation_blocks(&flat).join("\n\n"));
+        }
+        if !latent.is_empty() {
+            sections.push(format!(
+                "{}\n\n{}",
+                section_heading(LATENT_HEADING),
+                violation_blocks(&latent).join("\n\n")
+            ));
+        }
     }
-    sections.push(summary_line(report, reachable.len(), unproven.len()));
+    sections.push(summary_line(
+        report,
+        breaks.len(),
+        latent.len(),
+        unproven.len(),
+    ));
     sections.join("\n\n") + "\n"
 }
 
@@ -944,6 +995,7 @@ mod tests {
             },
             reason,
             reachable,
+            invocation_found: None,
             suggestion: advice.map(|a| Suggestion {
                 referenced_by: Some("g:referencer:1".to_string()),
                 removed_by: "g:owner".to_string(),
@@ -989,6 +1041,7 @@ mod tests {
             },
             reason,
             reachable: None,
+            invocation_found: None,
             suggestion: None,
             modules: Vec::new(),
         }
@@ -1043,6 +1096,82 @@ mod tests {
             out.find("ADVICE_A").unwrap() < out.find("ADVICE_B").unwrap(),
             "\n{out}"
         );
+    }
+
+    /// A `method became abstract` violation with no invocation in scanned bytecode gets
+    /// its own section between 💥 and ⚠️, and the summary counts it separately: the class
+    /// is reachable, but AbstractMethodError throws at invocation, not at class load.
+    #[test]
+    fn latent_violations_get_their_own_section() {
+        let mut latent = member_violation(
+            "app/Adapter",
+            "lib/Base",
+            "allocateHeapBuffer",
+            "(I)V",
+            RefKind::Method,
+            Reason::MethodBecameAbstract,
+        );
+        latent.reachable = Some(true);
+        latent.invocation_found = Some(false);
+        let mut invoked = member_violation(
+            "app/Other",
+            "lib/Base",
+            "allocateDirectBuffer",
+            "(I)V",
+            RefKind::Method,
+            Reason::MethodBecameAbstract,
+        );
+        invoked.reachable = Some(true);
+        invoked.invocation_found = Some(true);
+        let mut unproven = class_violation(
+            "app/Dead",
+            "lib/Gone",
+            Reason::ClassRemoved,
+            Some(false),
+            None,
+        );
+        unproven.reachable = Some(false);
+
+        let out = check_text(&report(vec![latent, invoked, unproven]));
+        let breaks_at = out.find("reachable from the application").unwrap();
+        let latent_at = out.find("💤 latent").unwrap();
+        let unproven_at = out.find("not proven reachable (no static path").unwrap();
+        assert!(breaks_at < latent_at && latent_at < unproven_at, "{out}");
+        // Each violation sits in its own tier.
+        let latent_body = &out[latent_at..unproven_at];
+        assert!(
+            latent_body.contains("app/Adapter".replace('/', ".").as_str())
+                || latent_body.contains("Adapter"),
+            "{out}"
+        );
+        assert!(!latent_body.contains("allocateDirectBuffer"), "{out}");
+        // The latent block explains that the error waits for a first call.
+        assert!(
+            latent_body.contains("no invocation found in scanned bytecode"),
+            "{out}"
+        );
+        assert!(
+            out.contains("💥 1 reachable, 💤 1 latent, ⚠️ 1 not proven reachable"),
+            "{out}"
+        );
+    }
+
+    /// With no latent violations the summary keeps its original two-tier wording, so the
+    /// common report is untouched by the new tier.
+    #[test]
+    fn summary_omits_latent_segment_when_empty() {
+        let out = check_text(&report(vec![class_violation(
+            "app/Foo",
+            "lib/Gone",
+            Reason::ClassRemoved,
+            Some(true),
+            None,
+        )]));
+        assert!(
+            out.contains("💥 1 reachable, ⚠️ 0 not proven reachable"),
+            "{out}"
+        );
+        assert!(!out.contains("latent"), "{out}");
     }
 
     /// The same advice covering both a reachable and an unproven reference appears once per

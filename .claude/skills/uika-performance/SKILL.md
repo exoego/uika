@@ -87,6 +87,19 @@ Not helpful, measured and rejected: `lto`/`codegen-units=1` (inflate is the wall
 and lives in a self-contained crate, so cross-crate inlining gained nothing while
 tripling release build time).
 
+Invocation evidence for the latent tier (`extract_invocation_evidence`, issue
+81) adds a second constant-pool sweep per scanned class. Measured on the stress
+workload against the same classpath: user time 8.86s -> 9.15s (+3.2%), wall
+time and RSS unchanged, detection byte-identical. Do not assume the sweep is
+rare — its probe covers newly ADDED abstract methods, so it is non-empty on
+ordinary upgrades (`diff.rs`'s `MethodBecameAbstract` counts only
+concrete->abstract and is a much narrower set; do not use it to reason about
+this cost). Two alternatives were measured and rejected: a per-class `Vec` on
+`ParsedTarget` (extra time and RSS, and it violates the per-class structure
+rule), and a separate rayon pass that reparses each batch (+21% user time,
+since reparsing costs far more than the sweep it avoids). `#[inline(never)]`
+on the sweep changed nothing.
+
 A Java port with the same two-pass/int-intern/span-read architecture matched
 Rust on CPU time (the `experiments/` comparison, since removed). Rust's real
 advantages here: memory footprint, startup time for short CLI runs, and static

@@ -188,34 +188,29 @@ fn apply_excludes(report: &mut check::CheckReport, exclude_rules: &[exclude::Exc
 /// Map a finished check to a process exit code per the selected policy. The report itself is
 /// always printed in full; this only decides whether the run fails the caller (e.g. CI).
 fn exit_code(result: &CheckReport, fail_on: FailOn) -> i32 {
-    if should_fail(
-        result.violations.iter().map(|v| v.reachable),
-        result.app_roots_matched,
-        fail_on,
-    ) {
+    if should_fail(result.violations.iter(), result.app_roots_matched, fail_on) {
         1
     } else {
         0
     }
 }
 
-/// Exit policy over each violation's reachability flag. `Reachable` counts a violation unless it
-/// is proven not reachable (`Some(false)`), so when reachability was not computed (all `None`) it
-/// degrades to `Any`, matching the conservative stance that an unproven case is never dropped.
-/// `app_roots_matched == Some(false)` means app roots were supplied but none matched a scanned
-/// class, so the not-proven-reachable labels have no basis (nothing was walked from); `Reachable`
-/// then also degrades to `Any` rather than passing every violation off as unreachable.
-fn should_fail(
-    mut reachables: impl Iterator<Item = Option<bool>>,
+/// Exit policy, purely a threshold on `model::tier` — the same call the report's section
+/// split makes, with the same `app_roots_matched`, so the gate always agrees with what the
+/// report shows. Keep it that way: reasoning about violation fields here instead of about
+/// the tier is how the two drift apart. Both degraded cases are handled inside `tier`.
+fn should_fail<'a>(
+    mut violations: impl Iterator<Item = &'a model::Violation>,
     app_roots_matched: Option<bool>,
     fail_on: FailOn,
 ) -> bool {
     match fail_on {
         FailOn::Never => false,
-        FailOn::Reachable if app_roots_matched != Some(false) => {
-            reachables.any(model::counts_as_reachable)
+        FailOn::Reachable => {
+            let axis = model::reachable_axis_valid(app_roots_matched);
+            violations.any(|v| model::tier(v, axis) == model::Tier::Breaks)
         }
-        FailOn::Reachable | FailOn::Any => reachables.next().is_some(),
+        FailOn::Any => violations.next().is_some(),
     }
 }
 
@@ -332,7 +327,11 @@ pub fn run_check_with_indexes(
     };
 
     // Read and parse in parallel by chunk, then merge directly into the index.
-    let scanned = check::scan_target_paths(&paths, old_index, reachability)?;
+    let mut scanned = check::scan_target_paths(&paths, old_index, new_index, reachability)?;
+    // The new library's own bytecode counts as evidence too, scan target or not.
+    scanned.extend_invocations(check::library_invocation_evidence(
+        new, old_index, new_index,
+    ));
     memstats::report("after scan target indexing");
     let mut result = check::check_scanned(
         scanned,
@@ -778,6 +777,11 @@ fn upgrade_check_per_module(
                         if reachable_rank(v.reachable) > reachable_rank(existing.reachable) {
                             existing.reachable = v.reachable;
                         }
+                        // Most-dangerous-wins, like reachable: runs scan different
+                        // classpaths, and one invocation is enough.
+                        if v.invocation_found == Some(true) {
+                            existing.invocation_found = Some(true);
+                        }
                     }
                     None => {
                         merged_index.insert(key, merged.violations.len());
@@ -809,7 +813,7 @@ fn upgrade_check_per_module(
     // reconstructs each run's post-exclusion set exactly).
     let failed = run_outcomes.iter().any(|outcome| {
         should_fail(
-            run_violations(&merged, &outcome.names).map(|v| v.reachable),
+            run_violations(&merged, &outcome.names),
             outcome.app_roots_matched,
             fail_on,
         )
@@ -931,11 +935,39 @@ fn flags_str(access: u16) -> String {
 #[cfg(test)]
 mod tests {
     use super::{FailOn, should_fail};
+    use crate::intern::intern;
+    use crate::model::{Reason, RefKind, SymbolRef, Violation};
+
+    fn violation(reachable: Option<bool>, invocation_found: Option<bool>) -> Violation {
+        Violation {
+            source: intern("consumer.jar"),
+            source_class: intern("app/Use"),
+            reference: SymbolRef {
+                kind: RefKind::Class,
+                owner: intern("lib/C"),
+                member: None,
+                expected_static: None,
+                field_write: None,
+                instantiated: None,
+            },
+            // The invocation axis only exists on `method became abstract` violations.
+            reason: if invocation_found.is_some() {
+                Reason::MethodBecameAbstract
+            } else {
+                Reason::ClassRemoved
+            },
+            reachable,
+            invocation_found,
+            suggestion: None,
+            modules: Vec::new(),
+        }
+    }
 
     /// `matched` is the app-root match state: None = reachability off, Some(true)/Some(false)
     /// = on and whether any app root matched a scanned class.
     fn fail(reachables: &[Option<bool>], matched: Option<bool>, fail_on: FailOn) -> bool {
-        should_fail(reachables.iter().copied(), matched, fail_on)
+        let violations: Vec<Violation> = reachables.iter().map(|&r| violation(r, None)).collect();
+        should_fail(violations.iter(), matched, fail_on)
     }
 
     #[test]
@@ -983,5 +1015,74 @@ mod tests {
         ));
         // Still nothing to fail on with zero violations.
         assert!(!fail(&[], Some(false), FailOn::Reachable));
+    }
+
+    #[test]
+    fn reachable_does_not_fail_on_latent_violations() {
+        // Reachable class, but no scanned invocation of the newly-abstract member: the
+        // break cannot throw yet, so `reachable` treats it as a warning tier.
+        let latent = violation(Some(true), Some(false));
+        assert!(!should_fail(
+            [&latent].into_iter(),
+            Some(true),
+            FailOn::Reachable
+        ));
+        // An invocation in scanned bytecode keeps it failing.
+        let invoked = violation(Some(true), Some(true));
+        assert!(should_fail(
+            [&invoked].into_iter(),
+            Some(true),
+            FailOn::Reachable
+        ));
+        // `any` stays the strict escape hatch: latent still fails there.
+        assert!(should_fail([&latent].into_iter(), Some(true), FailOn::Any));
+    }
+
+    #[test]
+    fn latent_gating_holds_without_reachability_basis() {
+        // Scan-derived, so it does not degrade with the reachable axis.
+        let latent = violation(None, Some(false));
+        assert!(!should_fail([&latent].into_iter(), None, FailOn::Reachable));
+        let latent_unmatched = violation(Some(false), Some(false));
+        assert!(!should_fail(
+            [&latent_unmatched].into_iter(),
+            Some(false),
+            FailOn::Reachable
+        ));
+        // A non-latent violation alongside it still fails under the degraded mode.
+        let plain = violation(Some(false), None);
+        assert!(should_fail(
+            [&latent_unmatched, &plain].into_iter(),
+            Some(false),
+            FailOn::Reachable
+        ));
+    }
+
+    /// A reader must be able to predict the exit code from the report, including when
+    /// roots matched nothing and the reachable axis is dropped on both sides.
+    #[test]
+    fn gate_threshold_matches_the_reported_tier() {
+        let cases = [
+            (violation(Some(true), None), Some(true)),
+            (violation(Some(false), None), Some(true)),
+            (violation(Some(true), Some(false)), Some(true)),
+            (violation(Some(false), Some(false)), Some(true)),
+            // Roots supplied but unmatched: reachable is Some(false) with nothing behind it.
+            (violation(Some(false), None), Some(false)),
+            (violation(Some(false), Some(false)), Some(false)),
+            // Reachability off entirely.
+            (violation(None, None), None),
+            (violation(None, Some(false)), None),
+        ];
+        for (v, matched) in cases {
+            let axis = crate::model::reachable_axis_valid(matched);
+            let shown_as_breaks = crate::model::tier(&v, axis) == crate::model::Tier::Breaks;
+            let fails = should_fail([&v].into_iter(), matched, FailOn::Reachable);
+            assert_eq!(
+                shown_as_breaks, fails,
+                "tier and gate disagree for reachable={:?} invocation_found={:?} matched={matched:?}",
+                v.reachable, v.invocation_found
+            );
+        }
     }
 }

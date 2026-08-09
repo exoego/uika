@@ -2,6 +2,7 @@ use crate::classfile::{CpEntry, RawClass};
 use crate::intern::{Sym, intern};
 use crate::model::{ClassApi, MemberKey, RefKind, SymbolRef, build_members};
 use anyhow::Result;
+use rustc_hash::FxHashMap;
 
 /// Extract the API surface from RawClass.
 pub fn extract_api(rc: &RawClass) -> Result<ClassApi> {
@@ -167,6 +168,56 @@ pub fn extract_refs(rc: &RawClass, accept: impl Fn(&str) -> bool) -> Result<Vec<
         }
     }
     Ok(refs)
+}
+
+/// Method references matching a newly-abstract member by name+descriptor, REGARDLESS of
+/// owner: `extract_refs` drops owners outside the checked library, but AbstractMethodError
+/// can be triggered through any owner on the broken subclass's hierarchy (the conscrypt
+/// case calls `allocateHeapBuffer` on netty's subclass). The probe carries the interned
+/// `MemberKey`, so a hit interns only the owner rather than taking the shard lock twice
+/// more inside pass 1's rayon region.
+///
+/// The whole constant pool is scanned, NOT just the invoke opcodes in `code_refs`. A method
+/// reference or lambda compiles to `invokedynamic` plus a MethodHandle constant naming the
+/// Methodref, and `CpEntry` skips MethodHandle (tag 15), so no invoke opcode names the
+/// member at all. Narrowing to `code_refs` would file such a break as latent and let
+/// `--fail-on reachable` pass. The wider scan's cost is counting a Methodref no code path
+/// reaches, which only keeps a break in the 💥 tier.
+///
+/// A skipped malformed entry loses evidence, which pushes a break INTO the latent tier and
+/// so weakens the gate. Tolerated only because such a class already warned at parse.
+pub fn extract_invocation_evidence(
+    rc: &RawClass,
+    probe: &FxHashMap<(&str, &str), MemberKey>,
+) -> Vec<(Sym, MemberKey)> {
+    let mut out = Vec::new();
+    for entry in rc.cp() {
+        let (class_index, nat_index) = match *entry {
+            CpEntry::Methodref {
+                class,
+                name_and_type,
+            }
+            | CpEntry::InterfaceMethodref {
+                class,
+                name_and_type,
+            } => (class, name_and_type),
+            _ => continue,
+        };
+        let Ok((name, descriptor)) = rc.name_and_type(nat_index) else {
+            continue;
+        };
+        let Some(&key) = probe.get(&(name.as_ref(), descriptor.as_ref())) else {
+            continue;
+        };
+        let Ok(raw_owner) = rc.class_name(class_index) else {
+            continue;
+        };
+        if raw_owner.starts_with('[') {
+            continue;
+        }
+        out.push((intern(&raw_owner), key));
+    }
+    out
 }
 
 fn ref_from_cp_entry(

@@ -243,6 +243,39 @@ pass-2 classes are typically below 0.1% of the scan.
   shapes), and the koin fixture (koin 3.3.0 renamed the abstract `Logger.log` to
   `display`, so `SLF4JLogger` inherits an unimplemented abstract method — a real
   shape-2 break the golden pins alongside the log-became-final one).
+- Invocation evidence (the latent tier) makes `method became abstract` the one
+  violation judged on more than reachability, because AbstractMethodError throws
+  at INVOCATION, not at class load (https://github.com/exoego/uika/issues/81).
+  `Violation.invocation_found` is `Some(false)` when no scanned method reference
+  can dispatch the affected member onto the broken class.
+  - The probe (`abstract_member_probe`) is NOT empty on a typical upgrade: it
+    covers newly ADDED abstract methods, unlike `diff.rs`'s `MethodBecameAbstract`
+    (concrete->abstract only). Do not treat the sweep as rare. ~3% CPU on the
+    stress workload, wall time and RSS unchanged. Collecting it inside pass 1's
+    existing closure is load-bearing: reparsing the batch in a second pass cost
+    ~21%, and a per-class Vec on `ParsedTarget` cost ~35MB RSS.
+  - Matching is by name+descriptor for ANY owner, since `extract_refs` keeps only
+    owners in the old index and the call may go through the subclass. The whole
+    constant pool is scanned, not just `code_refs`: a method reference names the
+    member only via a MethodHandle constant, which `CpEntry` does not model.
+  - `ScanResult.invocations` is a second arena proportional to the whole scan when
+    a probed signature is common, gated only on "something became abstract" —
+    weaker than the `collect_edges` gate on reachability edges.
+  - Evidence is deliberately NOT filtered by first-wins: the duplicate fast path
+    still sweeps. Filtering there would tie `invocation_found` to whether two
+    copies landed in the same chunk, and chunk size defaults to the thread count.
+  - `on_dispatch_chain` restricts evidence to the broken class's dispatch chain,
+    otherwise one `close ()V` call anywhere suppresses every latent case. Escapes
+    force "related", except into `java/*` (`Escapes`) — the JVM reserves that
+    package, so such an escape cannot hide a library class. Without the carve-out
+    the filter is nearly inert. `javax/`, `sun/`, `com/sun/` do not qualify.
+  - `library_invocation_evidence` sweeps the --new jars, which need not be scan
+    targets; koin-core calls its own `Logger.display`. NOT cached across
+    per-module runs, so upgrade-check re-sweeps once per run.
+  - Losing evidence is the WEAK direction: no evidence means latent means
+    `--fail-on reachable` passes. The swallowed errors here (unreadable jar,
+    undecodable pool) are tolerated only because such a class warned elsewhere.
+  - Per-module merging folds `Some(true)` as dominant, like `reachable_rank`.
 - Bridge/synthetic guard: `ACC_BRIDGE`/`ACC_SYNTHETIC` methods are excluded as
   the SUBJECT of the library-side `became abstract`/`became final` inferences
   (`methods_newly_abstract`/`newly_final_methods`), since a generic-signature
@@ -276,8 +309,22 @@ pass-2 classes are typically below 0.1% of the scan.
   only when no static path reaches the class. It is an over-approximation, so
   "not proven reachable" (⚠️) is a deprioritize hint, never grounds to drop a
   violation (reflection from external config is invisible). Same conservative
-  stance as Unknown. `report.rs` splits the text report into a reachable (💥)
-  section then a ⚠️ section.
+  stance as Unknown.
+- `model::tier(v, reachable_axis_valid)` is the single policy site turning a
+  violation's evidence into its report/gating tier (💥 Breaks / 💤 Latent /
+  ⚠️ Unproven). `report.rs` sections and `should_fail` make the SAME call with the
+  same `app_roots_matched`, so the gate always matches the displayed grouping —
+  `--fail-on reachable` is nothing but "fails on Breaks". Keep it that way; a gate
+  that reasons about fields directly instead of about the tier is how the two
+  drift apart. Proven-unreachable wins over latent (an unreachable class cannot
+  load at all). The reachable axis is dropped when `app_roots_matched ==
+  Some(false)` — roots were given and matched nothing, so `reachable = Some(false)`
+  on every violation means nothing — and those violations then report AND gate as
+  💥, with the "no application root matched a scanned class" warning explaining
+  why. The latent axis survives that, and reachability-off entirely, because its
+  evidence comes from scanned bytecode rather than from app roots. Pinned by
+  `gate_threshold_matches_the_reported_tier`. Exclude rules, not `--fail-on`, are
+  where a kind-level policy lives, so the gate stays a pure tier threshold.
 - On automatically, gated by app roots, not a flag: `run_check` computes
   `reachability = !app_roots.is_empty()` (single policy site). `upgrade-check`
   dumps and `check --app` have roots (on); a bare `check --classpath` has none

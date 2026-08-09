@@ -7,10 +7,12 @@ use std::path::PathBuf;
 pub enum FailOn {
     /// Always exit 0; just print the violations as warnings.
     Never,
-    /// Exit 1 only when a violation is reachable from the application
-    /// (💥; a violation that is not proven reachable does not fail the run).
-    /// Falls back to `any` when reachability was not computed (no application
-    /// roots) or no application root matched a scanned class.
+    /// Exit 1 only when a violation is in the 💥 tier (likely to break). A violation
+    /// that is not proven reachable (⚠️) or latent (💤: the class is reachable but no
+    /// scanned bytecode invokes the newly-abstract member, so it cannot throw yet)
+    /// does not fail the run. The reachable axis falls back to `any` when reachability
+    /// was not computed (no application roots) or no application root matched a
+    /// scanned class; the latent axis is scan-derived and never falls back.
     Reachable,
     /// Exit 1 when any violation is found, regardless of reachability (default, strictest).
     #[default]

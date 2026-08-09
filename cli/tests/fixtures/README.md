@@ -116,6 +116,32 @@ The consumer is compiled against 1.0, so it never mentions `end`. `BrokenTransla
 inherits the new abstract method with no implementation; `GoodTranslator` supplies
 one and is the not-reported control.
 
+Nothing in the triple calls `end()` — the library side is a bare interface
+declaration and the consumer was compiled before the method existed — so the
+golden also pins `invocation_found: false`, the latent tier. That is correct
+here: the break is real but cannot throw until something invokes `end()`. The
+koin fixture is the counterpart that pins `invocation_found: true`, because
+koin-core itself calls the renamed `Logger.display`.
+
+`synthetic-abstract-added-methodref-caller.jar` is a fourth jar in the same
+family, used only by `method_reference_only_call_site_counts_as_invocation` (not
+by the golden scenario, which would flip to `true` if it were on the classpath).
+Its single class references `end()` exclusively through a method reference, so
+the member is named by a MethodHandle constant and never by an invoke opcode —
+the case that proves invocation evidence must scan the whole constant pool:
+
+```bash
+cat > caller/fixture/caller/MethodRefCaller.java <<'EOF'
+package fixture.caller;
+public class MethodRefCaller {
+    public static Runnable ender(fixture.lib.EventListener l) { return l::end; }
+}
+EOF
+
+javac --release 11 -cp o2 -d oc caller/fixture/caller/MethodRefCaller.java
+(cd oc && jar cf ../synthetic-abstract-added-methodref-caller.jar fixture)
+```
+
 ## Contents
 
 | Artifact (Maven Central coordinates) | SHA-256 |
