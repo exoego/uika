@@ -125,7 +125,14 @@ $ uika check --old old.jar --new new.jar --classpath ~/.gradle/caches/.../suspec
 ```console
 # List breaking changes between old/new versions of a library
 # (removals, access narrowing, static/instance changes, newly-final/abstract classes/members, class<->interface flips)
-$ uika diff old.jar new.jar [--json]
+# Each line opens with the change kind, which is also what --json puts in its "kind" field:
+# jq '.breaking_changes[] | select(.kind == "class_became_final")' selects those lines.
+$ uika diff guava-22.0.jar guava-23.0-rc1.jar [--json]
+CLASS BECAME FINAL     com/google/common/collect/BoundType
+FIELD REMOVED          com/google/common/graph/GraphConstants.EDGE_CONNECTING_NOT_IN_GRAPH Ljava/lang/String;
+METHOD ACCESS NARROWED com/google/common/collect/Iterators$ConcatenatedIterator.<init> (Ljava/util/Iterator;)V (public -> package-private)
+
+breaking changes: 93 (classes: 26, methods: 61, fields: 6)
 
 # Find usages of breaking changes across classpath JARs / your build output
 # (--old/--new may be repeated to check several changed libraries in one run)
@@ -362,7 +369,9 @@ violation kind in snake_case, for example `class_removed`, `method_removed`,
 `method_became_abstract`, or `extends_final_class`; an unknown value is
 rejected at load with the valid list. The spaced form that `--json` and the
 text report print under `reason` is accepted too, so a value pasted straight
-out of a report works. A rule needs an `owner`, a `kind`, or both. The text report
+out of a report works, as is a kind from before it was split by direction and
+member kind (`class_kind_changed` still waives both of the flips that replaced
+it). A rule needs an `owner`, a `kind`, or both. The text report
 prints Java-ish dotted signatures, so copy entries from the `--json` output
 (each violation's `reference` carries the raw `owner`, `member.name`, and
 `member.descriptor`). The summary line reports how many violations were

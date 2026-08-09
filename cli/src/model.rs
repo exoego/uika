@@ -71,6 +71,49 @@ impl ClassApi {
     }
 }
 
+/// Access narrowing has four possible levels a side, so both sides travel with the change,
+/// spelled the way `diff` prints them in text and in JSON alike. They used to be raw JVM
+/// access flag words, leaving every reader to decode `"old_access": 1` for themselves.
+/// A two-state flip needs no such pair, since its variant name states the direction.
+///
+/// This is also the one access lattice. The derived `Ord` follows declaration order, so
+/// `Visibility::of(new) < Visibility::of(old)` IS narrowing. Both the `diff` listing and
+/// `check`'s old-relative narrowing gate compare through it, so the words a report prints
+/// and the comparison that decided to print them can never disagree. Declaration order is
+/// therefore load-bearing. Reordering the variants inverts every narrowing test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Visibility {
+    Private,
+    PackagePrivate,
+    Protected,
+    Public,
+}
+
+impl Visibility {
+    /// Mutually exclusive per JVMS 4.1. The order only matters for a malformed class file.
+    pub fn of(access: u16) -> Self {
+        if access & ACC_PUBLIC != 0 {
+            Visibility::Public
+        } else if access & ACC_PROTECTED != 0 {
+            Visibility::Protected
+        } else if access & ACC_PRIVATE != 0 {
+            Visibility::Private
+        } else {
+            Visibility::PackagePrivate
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Visibility::Public => "public",
+            Visibility::Protected => "protected",
+            Visibility::PackagePrivate => "package-private",
+            Visibility::Private => "private",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BreakingChange {
@@ -92,8 +135,8 @@ pub enum BreakingChange {
     },
     ClassAccessNarrowed {
         class: ClassName,
-        old_access: u16,
-        new_access: u16,
+        from: Visibility,
+        to: Visibility,
     },
     ClassBecameFinal {
         class: ClassName,
@@ -105,10 +148,11 @@ pub enum BreakingChange {
     },
     /// class <-> interface flip: references and hierarchy edges compiled against
     /// the old kind fail with IncompatibleClassChangeError.
-    ClassKindChanged {
+    ClassBecameInterface {
         class: ClassName,
-        /// True when the old side was the interface (interface -> class).
-        old_interface: bool,
+    },
+    InterfaceBecameClass {
+        class: ClassName,
     },
     /// A concrete method became abstract: a subclass compiled without an
     /// override inherits nothing to call (AbstractMethodError).
@@ -121,29 +165,35 @@ pub enum BreakingChange {
         class: ClassName,
         name: Sym,
         descriptor: Sym,
-        old_access: u16,
-        new_access: u16,
+        from: Visibility,
+        to: Visibility,
     },
     FieldAccessNarrowed {
         class: ClassName,
         name: Sym,
         descriptor: Sym,
-        old_access: u16,
-        new_access: u16,
+        from: Visibility,
+        to: Visibility,
     },
-    MethodStaticChanged {
+    MethodBecameStatic {
         class: ClassName,
         name: Sym,
         descriptor: Sym,
-        old_static: bool,
-        new_static: bool,
     },
-    FieldStaticChanged {
+    MethodBecameInstance {
         class: ClassName,
         name: Sym,
         descriptor: Sym,
-        old_static: bool,
-        new_static: bool,
+    },
+    FieldBecameStatic {
+        class: ClassName,
+        name: Sym,
+        descriptor: Sym,
+    },
+    FieldBecameInstance {
+        class: ClassName,
+        name: Sym,
+        descriptor: Sym,
     },
     FieldBecameFinal {
         class: ClassName,
@@ -155,6 +205,37 @@ pub enum BreakingChange {
         name: Sym,
         descriptor: Sym,
     },
+}
+
+impl BreakingChange {
+    /// The `kind` JSON tags the change with, which is also the word the text listing prints
+    /// (uppercased, underscores as spaces). One vocabulary for both, so
+    /// `jq '.breaking_changes[] | select(.kind == "method_became_final")'` selects exactly
+    /// listing labels METHOD BECAME FINAL. Every direction is its own kind for that reason:
+    /// a tag that read METHOD STATIC CHANGED could not tell a reader which way it went, and
+    /// splitting it in the text alone would have left the two out of step.
+    /// `kind_matches_the_serialized_tag` pins this against the serde tag.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            BreakingChange::ClassRemoved { .. } => "class_removed",
+            BreakingChange::MethodRemoved { .. } => "method_removed",
+            BreakingChange::FieldRemoved { .. } => "field_removed",
+            BreakingChange::ClassAccessNarrowed { .. } => "class_access_narrowed",
+            BreakingChange::ClassBecameFinal { .. } => "class_became_final",
+            BreakingChange::ClassBecameAbstract { .. } => "class_became_abstract",
+            BreakingChange::ClassBecameInterface { .. } => "class_became_interface",
+            BreakingChange::InterfaceBecameClass { .. } => "interface_became_class",
+            BreakingChange::MethodBecameAbstract { .. } => "method_became_abstract",
+            BreakingChange::MethodAccessNarrowed { .. } => "method_access_narrowed",
+            BreakingChange::FieldAccessNarrowed { .. } => "field_access_narrowed",
+            BreakingChange::MethodBecameStatic { .. } => "method_became_static",
+            BreakingChange::MethodBecameInstance { .. } => "method_became_instance",
+            BreakingChange::FieldBecameStatic { .. } => "field_became_static",
+            BreakingChange::FieldBecameInstance { .. } => "field_became_instance",
+            BreakingChange::FieldBecameFinal { .. } => "field_became_final",
+            BreakingChange::MethodBecameFinal { .. } => "method_became_final",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -178,39 +259,45 @@ pub enum Reason {
     ClassAccessNarrowed,
     ClassBecameAbstract,
     ClassBecameFinal,
-    ClassKindChanged,
+    ClassBecameInterface,
+    InterfaceBecameClass,
     ExtendsFinalClass,
     MethodRemoved,
     MethodAccessNarrowed,
     MethodBecameAbstract,
     MethodBecameFinal,
+    MethodBecameStatic,
+    MethodBecameInstance,
     FieldRemoved,
     FieldAccessNarrowed,
     FieldBecameFinal,
-    StaticToInstance,
-    InstanceToStatic,
+    FieldBecameStatic,
+    FieldBecameInstance,
 }
 
 impl Reason {
     /// ADD NEW VARIANTS HERE TOO — the compiler cannot check this, since an exhaustive
     /// `match` forces a new arm and never a new array entry. A variant missing here loses
     /// its exclude-rule `kind` string, so a legitimate rule fails with `unknown kind`.
-    pub const ALL: [Reason; 15] = [
+    pub const ALL: [Reason; 18] = [
         Reason::ClassRemoved,
         Reason::ClassAccessNarrowed,
         Reason::ClassBecameAbstract,
         Reason::ClassBecameFinal,
-        Reason::ClassKindChanged,
+        Reason::ClassBecameInterface,
+        Reason::InterfaceBecameClass,
         Reason::ExtendsFinalClass,
         Reason::MethodRemoved,
         Reason::MethodAccessNarrowed,
         Reason::MethodBecameAbstract,
         Reason::MethodBecameFinal,
+        Reason::MethodBecameStatic,
+        Reason::MethodBecameInstance,
         Reason::FieldRemoved,
         Reason::FieldAccessNarrowed,
         Reason::FieldBecameFinal,
-        Reason::StaticToInstance,
-        Reason::InstanceToStatic,
+        Reason::FieldBecameStatic,
+        Reason::FieldBecameInstance,
     ];
 
     /// The stable wire/report string. Everything user-visible (JSON, verdicts stream,
@@ -221,7 +308,8 @@ impl Reason {
             Reason::ClassAccessNarrowed => "class access narrowed",
             Reason::ClassBecameAbstract => "class became abstract",
             Reason::ClassBecameFinal => "class became final",
-            Reason::ClassKindChanged => "class kind changed",
+            Reason::ClassBecameInterface => "class became interface",
+            Reason::InterfaceBecameClass => "interface became class",
             Reason::ExtendsFinalClass => "extends final class",
             Reason::MethodRemoved => "method removed",
             Reason::MethodAccessNarrowed => "method access narrowed",
@@ -229,9 +317,11 @@ impl Reason {
             Reason::MethodBecameFinal => "method became final",
             Reason::FieldRemoved => "field removed",
             Reason::FieldAccessNarrowed => "field access narrowed",
+            Reason::MethodBecameStatic => "method became static",
+            Reason::MethodBecameInstance => "method became instance",
             Reason::FieldBecameFinal => "field became final",
-            Reason::StaticToInstance => "member changed from static to instance",
-            Reason::InstanceToStatic => "member changed from instance to static",
+            Reason::FieldBecameStatic => "field became static",
+            Reason::FieldBecameInstance => "field became instance",
         }
     }
 
@@ -247,6 +337,32 @@ impl Reason {
     pub fn parse(s: &str) -> Option<Reason> {
         let spaced = s.replace('_', " ");
         Reason::ALL.iter().copied().find(|r| r.as_str() == spaced)
+    }
+
+    /// The reasons an exclude rule's `kind` names. One for a current spelling; several for
+    /// a spelling that named a category before it was split by direction and member kind,
+    /// so a rule file written against an older uika keeps waiving what it used to.
+    ///
+    /// SPLITTING A VARIANT MEANS ADDING ITS OLD SPELLING HERE. The compiler cannot check
+    /// this either, since the old name simply stops existing. Every string below was a
+    /// released `as_str()` value. Drop one and an exclude file that names it fails the
+    /// build with `unknown kind` on nothing but a uika upgrade.
+    pub fn parse_kinds(s: &str) -> Option<Vec<Reason>> {
+        if let Some(one) = Reason::parse(s) {
+            return Some(vec![one]);
+        }
+        Some(match s.replace('_', " ").as_str() {
+            "class kind changed" => {
+                vec![Reason::ClassBecameInterface, Reason::InterfaceBecameClass]
+            }
+            "member changed from static to instance" => {
+                vec![Reason::MethodBecameInstance, Reason::FieldBecameInstance]
+            }
+            "member changed from instance to static" => {
+                vec![Reason::MethodBecameStatic, Reason::FieldBecameStatic]
+            }
+            _ => return None,
+        })
     }
 }
 

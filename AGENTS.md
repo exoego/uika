@@ -31,7 +31,7 @@ not be relearned by experiment.
   stream carries the raw constant-pool reference (never the collapsed Class
   ref a "class removed" violation reports), is written before --exclude-file
   filtering, and does not include graph-walk violations (class/method became
-  final, extends final class, class kind changed, method became abstract). One line per reference record — call-site
+  final, extends final class, class/interface kind flips, method became abstract). One line per reference record — call-site
   duplicates are not deduped, so line counts exceed violation counts. It streams one line at a
   time, so it adds no RSS proportional to the scan. A write failure lets the
   scan finish but fails the command afterwards; a truncated stream must never
@@ -51,7 +51,7 @@ not be relearned by experiment.
   their coverage lives in the integration tests. The class-shape breaks are also
   not probeable and live in integration tests: `MethodHandles.Lookup` does not
   model the Methodref/InterfaceMethodref owner-kind requirement or
-  InstantiationError, so it would link a `class kind changed` or `class became
+  InstantiationError, so it would link a kind-flip or `class became
   abstract` verdict the JVM actually rejects. The fixture scenarios in
   scenarios.tsv are chosen so none of them produce a class-shape verdict, so
   `make probe` never answer-checks one. The probe is evidence, not truth:

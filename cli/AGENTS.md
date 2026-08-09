@@ -202,11 +202,11 @@ pass-2 classes are typically below 0.1% of the scan.
     whose owner is now an interface, or an InterfaceMethodref whose owner is now
     a class, makes resolution throw IncompatibleClassChangeError. Judged in
     `verdict` by comparing `RefKind::InterfaceMethod` against the owner's
-    `ACC_INTERFACE`. Reason `class kind changed`.
+    `ACC_INTERFACE`. Reason `class became interface` / `interface became class`.
   - class<->interface flip at a hierarchy edge: a scanned class extends a class
     that became an interface, or implements an interface that became a class,
     fails to load. Found by a graph walk, `check.rs::add_kind_flip_violations`,
-    like the newly-final walk. Reason `class kind changed`. Real fixtures:
+    like the newly-final walk. Same two reasons. Real fixtures:
     ktor-io ByteChannel interface -> class (a Methodref-side flip), coroutines
     CancelHandler abstract-class -> interface (an extends-side flip on the
     stress workload).

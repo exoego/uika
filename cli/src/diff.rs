@@ -2,7 +2,7 @@ use crate::index::{ApiIndex, MemberKind, Resolution};
 use crate::intern::Sym;
 use crate::model::{
     ACC_ABSTRACT, ACC_FINAL, ACC_INTERFACE, ACC_PRIVATE, ACC_STATIC, BreakingChange, ClassName,
-    MemberKey,
+    MemberKey, Visibility,
 };
 
 /// List APIs that existed in old but can no longer be resolved in new, plus incompatibility
@@ -29,8 +29,8 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
         if access_narrowed(entry.access, new_entry.access) {
             changes.push(BreakingChange::ClassAccessNarrowed {
                 class: name,
-                old_access: entry.access,
-                new_access: new_entry.access,
+                from: Visibility::of(entry.access),
+                to: Visibility::of(new_entry.access),
             });
         }
         if entry.access & ACC_FINAL == 0 && new_entry.access & ACC_FINAL != 0 {
@@ -41,9 +41,10 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
         if old_interface != new_interface {
             // The kind flip subsumes becoming abstract (an interface is always
             // abstract), so report only the flip.
-            changes.push(BreakingChange::ClassKindChanged {
-                class: name,
-                old_interface,
+            changes.push(if new_interface {
+                BreakingChange::ClassBecameInterface { class: name }
+            } else {
+                BreakingChange::InterfaceBecameClass { class: name }
             });
         } else if entry.access & ACC_ABSTRACT == 0 && new_entry.access & ACC_ABSTRACT != 0 {
             changes.push(BreakingChange::ClassBecameAbstract { class: name });
@@ -56,8 +57,8 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
                         class: name,
                         name: key.name,
                         descriptor: key.descriptor,
-                        old_access,
-                        new_access,
+                        from: Visibility::of(old_access),
+                        to: Visibility::of(new_access),
                     });
                 }
                 if old_access & ACC_ABSTRACT == 0 && new_access & ACC_ABSTRACT != 0 {
@@ -68,12 +69,18 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
                     });
                 }
                 if old_access & ACC_STATIC != new_access & ACC_STATIC {
-                    changes.push(BreakingChange::MethodStaticChanged {
-                        class: name,
-                        name: key.name,
-                        descriptor: key.descriptor,
-                        old_static: old_access & ACC_STATIC != 0,
-                        new_static: new_access & ACC_STATIC != 0,
+                    changes.push(if new_access & ACC_STATIC != 0 {
+                        BreakingChange::MethodBecameStatic {
+                            class: name,
+                            name: key.name,
+                            descriptor: key.descriptor,
+                        }
+                    } else {
+                        BreakingChange::MethodBecameInstance {
+                            class: name,
+                            name: key.name,
+                            descriptor: key.descriptor,
+                        }
                     });
                 }
                 if old_access & ACC_FINAL == 0 && new_access & ACC_FINAL != 0 {
@@ -99,17 +106,23 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
                         class: name,
                         name: key.name,
                         descriptor: key.descriptor,
-                        old_access,
-                        new_access,
+                        from: Visibility::of(old_access),
+                        to: Visibility::of(new_access),
                     });
                 }
                 if old_access & ACC_STATIC != new_access & ACC_STATIC {
-                    changes.push(BreakingChange::FieldStaticChanged {
-                        class: name,
-                        name: key.name,
-                        descriptor: key.descriptor,
-                        old_static: old_access & ACC_STATIC != 0,
-                        new_static: new_access & ACC_STATIC != 0,
+                    changes.push(if new_access & ACC_STATIC != 0 {
+                        BreakingChange::FieldBecameStatic {
+                            class: name,
+                            name: key.name,
+                            descriptor: key.descriptor,
+                        }
+                    } else {
+                        BreakingChange::FieldBecameInstance {
+                            class: name,
+                            name: key.name,
+                            descriptor: key.descriptor,
+                        }
                     });
                 }
                 if old_access & ACC_FINAL == 0 && new_access & ACC_FINAL != 0 {
@@ -133,19 +146,7 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
 }
 
 fn access_narrowed(old_access: u16, new_access: u16) -> bool {
-    access_rank(new_access) < access_rank(old_access)
-}
-
-fn access_rank(access: u16) -> u8 {
-    if access & crate::model::ACC_PUBLIC != 0 {
-        3
-    } else if access & crate::model::ACC_PROTECTED != 0 {
-        2
-    } else if access & ACC_PRIVATE == 0 {
-        1
-    } else {
-        0
-    }
+    Visibility::of(new_access) < Visibility::of(old_access)
 }
 
 /// Members excluding private ones, sorted by string value for display.

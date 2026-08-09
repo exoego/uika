@@ -287,12 +287,10 @@ fn detects_okhttp_digest_static_to_instance_change() {
     assert!(
         changes.iter().any(|c| matches!(
             c,
-            BreakingChange::MethodStaticChanged {
+            BreakingChange::MethodBecameInstance {
                 class,
                 name,
                 descriptor,
-                old_static: true,
-                new_static: false,
             } if class.as_str() == "okhttp3/internal/http/RequestLine"
                 && name.as_str() == "requestPath"
                 && descriptor.as_str() == "(Lokhttp3/HttpUrl;)Ljava/lang/String;"
@@ -314,7 +312,7 @@ fn detects_okhttp_digest_static_to_instance_change() {
                     m.name.as_str() == "requestPath"
                         && m.descriptor.as_str() == "(Lokhttp3/HttpUrl;)Ljava/lang/String;"
                 })
-                && v.reason == Reason::StaticToInstance
+                && v.reason == Reason::MethodBecameInstance
         }),
         "violations: {:?}",
         report.violations
@@ -900,13 +898,13 @@ fn detects_ktor_interface_became_class_under_module_skew() {
             v.source_class.as_str()
                 == "io/ktor/network/sockets/CIOReaderKt$attachForReadingDirectImpl$1"
                 && v.reference.owner.as_str() == "io/ktor/utils/io/ByteChannel"
-                && v.reason == Reason::ClassKindChanged
+                && v.reason == Reason::InterfaceBecameClass
         }),
-        "expected a class-kind-changed break on ByteChannel: {:?}",
+        "expected an interface-became-class break on ByteChannel: {:?}",
         report
             .violations
             .iter()
-            .filter(|v| v.reason == Reason::ClassKindChanged)
+            .filter(|v| v.reason == Reason::InterfaceBecameClass)
             .map(|v| (v.source_class.as_str(), v.reference.owner.as_str()))
             .collect::<Vec<_>>()
     );

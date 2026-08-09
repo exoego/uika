@@ -1,24 +1,62 @@
 use crate::check::CheckReport;
+use crate::intern::Sym;
 use crate::model::{BreakingChange, Reason, RefKind, Tier, Violation, reachable_axis_valid, tier};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-/// How a member is held, as the STATIC CHANGED lines name it. Printing the raw booleans
-/// left the reader to work out which side of the flag "true" was.
-fn static_word(is_static: bool) -> &'static str {
-    if is_static { "static" } else { "instance" }
+/// Width of the tag column every `diff` line opens with. Padding to one width here is what
+/// keeps the names starting at the same column. The tags used to be padded by hand and had
+/// drifted into three columns (17, 23 and 24) inside a single listing. Five kinds tie at
+/// this width, so it is not one tag's length to chase: CLASS BECAME INTERFACE, INTERFACE
+/// BECAME CLASS, METHOD BECAME ABSTRACT, METHOD ACCESS NARROWED and METHOD BECAME INSTANCE.
+/// `tag_column_fits_every_kind` pins the width against every kind. A longer kind does not
+/// truncate, it just pushes its own line's name out of the column.
+const TAG_WIDTH: usize = 22;
+
+/// The tag a change opens its line with: its JSON `kind`, uppercased. Derived rather than
+/// spelled out per arm, so the listing and `--json` cannot come to disagree, and so a new
+/// kind cannot arrive without a tag.
+fn tag(change: &BreakingChange) -> String {
+    change.kind().replace('_', " ").to_uppercase()
+}
+
+/// The `(descriptor changed? now: ...)` hint, as a continuation line indented to the name
+/// column. The indent is derived from TAG_WIDTH, never spelled out, so it cannot drift.
+fn replacement_hint(replacements: &[Sym]) -> String {
+    if replacements.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\n{:TAG_WIDTH$} (descriptor changed? now: {})",
+        "",
+        replacements
+            .iter()
+            .map(|d| d.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 pub fn diff_text(changes: &[BreakingChange]) -> String {
     let mut out = String::new();
     let (mut classes, mut methods, mut fields) = (0usize, 0usize, 0usize);
     for c in changes {
-        match c {
-            BreakingChange::ClassRemoved { class } => {
+        // Only the subject varies per arm. The tag comes from the kind, and one writeln
+        // below owns the column, so no arm can invent its own.
+        let subject = match c {
+            BreakingChange::ClassRemoved { class }
+            | BreakingChange::ClassBecameFinal { class }
+            | BreakingChange::ClassBecameAbstract { class }
+            | BreakingChange::ClassBecameInterface { class }
+            | BreakingChange::InterfaceBecameClass { class } => {
                 classes += 1;
-                writeln!(out, "CLASS REMOVED   {class}").unwrap();
+                format!("{class}")
+            }
+            BreakingChange::ClassAccessNarrowed { class, from, to } => {
+                classes += 1;
+                format!("{class} ({} -> {})", from.as_str(), to.as_str())
             }
             BreakingChange::MethodRemoved {
                 class,
@@ -27,19 +65,10 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 replacement_descriptors,
             } => {
                 methods += 1;
-                writeln!(out, "METHOD REMOVED  {class}.{name} {descriptor}").unwrap();
-                if !replacement_descriptors.is_empty() {
-                    writeln!(
-                        out,
-                        "                (descriptor changed? now: {})",
-                        replacement_descriptors
-                            .iter()
-                            .map(|d| d.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                    .unwrap();
-                }
+                format!(
+                    "{class}.{name} {descriptor}{}",
+                    replacement_hint(replacement_descriptors)
+                )
             }
             BreakingChange::FieldRemoved {
                 class,
@@ -48,119 +77,82 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 replacement_descriptors,
             } => {
                 fields += 1;
-                writeln!(out, "FIELD REMOVED   {class}.{name} {descriptor}").unwrap();
-                if !replacement_descriptors.is_empty() {
-                    writeln!(
-                        out,
-                        "                (descriptor changed? now: {})",
-                        replacement_descriptors
-                            .iter()
-                            .map(|d| d.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                    .unwrap();
-                }
-            }
-            BreakingChange::ClassAccessNarrowed { class, .. } => {
-                classes += 1;
-                writeln!(out, "CLASS ACCESS NARROWED {class}").unwrap();
-            }
-            BreakingChange::ClassBecameFinal { class } => {
-                classes += 1;
-                writeln!(out, "CLASS BECAME FINAL    {class}").unwrap();
-            }
-            BreakingChange::ClassBecameAbstract { class } => {
-                classes += 1;
-                writeln!(out, "CLASS BECAME ABSTRACT {class}").unwrap();
-            }
-            BreakingChange::ClassKindChanged {
-                class,
-                old_interface,
-            } => {
-                classes += 1;
-                let flip = if *old_interface {
-                    "INTERFACE BECAME CLASS"
-                } else {
-                    "CLASS BECAME INTERFACE"
-                };
-                writeln!(out, "{flip} {class}").unwrap();
-            }
-            BreakingChange::MethodBecameAbstract {
-                class,
-                name,
-                descriptor,
-            } => {
-                methods += 1;
-                writeln!(out, "METHOD BECAME ABSTRACT {class}.{name} {descriptor}").unwrap();
+                format!(
+                    "{class}.{name} {descriptor}{}",
+                    replacement_hint(replacement_descriptors)
+                )
             }
             BreakingChange::MethodAccessNarrowed {
                 class,
                 name,
                 descriptor,
-                ..
+                from,
+                to,
             } => {
                 methods += 1;
-                writeln!(out, "METHOD ACCESS NARROWED {class}.{name} {descriptor}").unwrap();
+                format!(
+                    "{class}.{name} {descriptor} ({} -> {})",
+                    from.as_str(),
+                    to.as_str()
+                )
             }
             BreakingChange::FieldAccessNarrowed {
                 class,
                 name,
                 descriptor,
-                ..
+                from,
+                to,
             } => {
                 fields += 1;
-                writeln!(out, "FIELD ACCESS NARROWED  {class}.{name} {descriptor}").unwrap();
-            }
-            BreakingChange::MethodStaticChanged {
-                class,
-                name,
-                descriptor,
-                old_static,
-                new_static,
-            } => {
-                methods += 1;
-                writeln!(
-                    out,
-                    "METHOD STATIC CHANGED  {class}.{name} {descriptor} ({} -> {})",
-                    static_word(*old_static),
-                    static_word(*new_static)
+                format!(
+                    "{class}.{name} {descriptor} ({} -> {})",
+                    from.as_str(),
+                    to.as_str()
                 )
-                .unwrap();
             }
-            BreakingChange::FieldStaticChanged {
+            BreakingChange::MethodBecameAbstract {
                 class,
                 name,
                 descriptor,
-                old_static,
-                new_static,
-            } => {
-                fields += 1;
-                writeln!(
-                    out,
-                    "FIELD STATIC CHANGED   {class}.{name} {descriptor} ({} -> {})",
-                    static_word(*old_static),
-                    static_word(*new_static)
-                )
-                .unwrap();
             }
-            BreakingChange::FieldBecameFinal {
+            | BreakingChange::MethodBecameStatic {
                 class,
                 name,
                 descriptor,
-            } => {
-                fields += 1;
-                writeln!(out, "FIELD BECAME FINAL    {class}.{name} {descriptor}").unwrap();
             }
-            BreakingChange::MethodBecameFinal {
+            | BreakingChange::MethodBecameInstance {
+                class,
+                name,
+                descriptor,
+            }
+            | BreakingChange::MethodBecameFinal {
                 class,
                 name,
                 descriptor,
             } => {
                 methods += 1;
-                writeln!(out, "METHOD BECAME FINAL   {class}.{name} {descriptor}").unwrap();
+                format!("{class}.{name} {descriptor}")
             }
-        }
+            BreakingChange::FieldBecameStatic {
+                class,
+                name,
+                descriptor,
+            }
+            | BreakingChange::FieldBecameInstance {
+                class,
+                name,
+                descriptor,
+            }
+            | BreakingChange::FieldBecameFinal {
+                class,
+                name,
+                descriptor,
+            } => {
+                fields += 1;
+                format!("{class}.{name} {descriptor}")
+            }
+        };
+        writeln!(out, "{:<TAG_WIDTH$} {subject}", tag(c)).unwrap();
     }
     writeln!(
         out,
@@ -314,7 +306,7 @@ fn runtime_error(v: &Violation) -> Option<&'static str> {
         ClassRemoved => "NoClassDefFoundError at first use",
         ClassAccessNarrowed => "IllegalAccessError at first use",
         ClassBecameAbstract => "InstantiationError at first `new`",
-        ClassKindChanged => "IncompatibleClassChangeError at first call",
+        ClassBecameInterface | InterfaceBecameClass => "IncompatibleClassChangeError at first call",
         MethodRemoved if ctor => "NoSuchMethodError at first `new`",
         MethodRemoved => "NoSuchMethodError at first call",
         FieldRemoved => "NoSuchFieldError at first access",
@@ -322,13 +314,8 @@ fn runtime_error(v: &Violation) -> Option<&'static str> {
         MethodAccessNarrowed => "IllegalAccessError at first call",
         FieldAccessNarrowed => "IllegalAccessError at first access",
         FieldBecameFinal => "IllegalAccessError at first write",
-        StaticToInstance | InstanceToStatic => {
-            if v.reference.kind == RefKind::Field {
-                "IncompatibleClassChangeError at first access"
-            } else {
-                "IncompatibleClassChangeError at first call"
-            }
-        }
+        MethodBecameStatic | MethodBecameInstance => "IncompatibleClassChangeError at first call",
+        FieldBecameStatic | FieldBecameInstance => "IncompatibleClassChangeError at first access",
         ClassBecameFinal | MethodBecameFinal | ExtendsFinalClass | MethodBecameAbstract => {
             return None;
         }
@@ -347,16 +334,18 @@ fn source_display(source: &str) -> &str {
 
 /// Graph-walk violations: the broken thing is the scanned class itself (its hierarchy no
 /// longer loads or selects), so they read consumer-first, unlike reference violations
-/// which group by the symbol that changed. Exhaustive over `Reason`: ClassKindChanged
-/// exists in both worlds, and the graph-walk variant is the member-less Class edge.
+/// which group by the symbol that changed. Exhaustive over `Reason`: the two kind flips
+/// exist in both worlds, and the graph-walk variant is the member-less Class edge.
 fn is_structural(v: &Violation) -> bool {
     use Reason::*;
     match v.reason {
         ClassBecameFinal | MethodBecameFinal | ExtendsFinalClass | MethodBecameAbstract => true,
-        ClassKindChanged => v.reference.member.is_none(),
+        ClassBecameInterface | InterfaceBecameClass => v.reference.member.is_none(),
         ClassRemoved | ClassAccessNarrowed | ClassBecameAbstract | MethodRemoved
         | MethodAccessNarrowed | FieldRemoved | FieldAccessNarrowed | FieldBecameFinal
-        | StaticToInstance | InstanceToStatic => false,
+        | MethodBecameStatic | MethodBecameInstance | FieldBecameStatic | FieldBecameInstance => {
+            false
+        }
     }
 }
 
@@ -368,6 +357,12 @@ fn structural_lines(v: &Violation) -> (String, String) {
         "throws VerifyError when {} loads",
         simple(v.source_class.as_str())
     );
+    let kind_flip_error = || {
+        format!(
+            "throws IncompatibleClassChangeError when {} loads",
+            simple(v.source_class.as_str())
+        )
+    };
     match (v.reason, v.reference.member) {
         (MethodBecameAbstract, Some(m)) => (
             format!(
@@ -391,12 +386,17 @@ fn structural_lines(v: &Violation) -> (String, String) {
             format!("extends {owner}, which is final on the runtime classpath"),
             loads,
         ),
-        (ClassKindChanged, _) => (
-            format!("extends or implements {owner}, whose kind changed (class <-> interface)"),
-            format!(
-                "throws IncompatibleClassChangeError when {} loads",
-                simple(v.source_class.as_str())
-            ),
+        // A class that became an interface can only have been reached over the superclass
+        // edge, so that one names the edge. The other side cannot: an interface's
+        // superinterfaces sit in the same interfaces array a class's implements does, and
+        // the graph keeps no access flags to tell an extends from an implements.
+        (ClassBecameInterface, _) => (
+            format!("extends {owner}, which became an interface"),
+            kind_flip_error(),
+        ),
+        (InterfaceBecameClass, _) => (
+            format!("extends or implements {owner}, which became a class"),
+            kind_flip_error(),
         ),
         // The graph walks always attach the member to these two reasons (check.rs); a
         // member-less one would be malformed, so degrade readably rather than panic.
@@ -409,7 +409,7 @@ fn structural_lines(v: &Violation) -> (String, String) {
         (
             ClassRemoved | ClassAccessNarrowed | ClassBecameAbstract | MethodRemoved
             | MethodAccessNarrowed | FieldRemoved | FieldAccessNarrowed | FieldBecameFinal
-            | StaticToInstance | InstanceToStatic,
+            | MethodBecameStatic | MethodBecameInstance | FieldBecameStatic | FieldBecameInstance,
             _,
         ) => (format!("{}: {owner}", v.reason.as_str()), loads),
     }
@@ -561,22 +561,25 @@ fn suggestion_line(v: &Violation, target: &str) -> String {
         ClassBecameAbstract => {
             format!("{target} became abstract, but {class} still instantiates it")
         }
-        ClassKindChanged => {
-            if v.reference.member.is_some() {
-                format!(
-                    "{owner} changed kind (class <-> interface), but {class} was compiled against the old kind"
-                )
-            } else {
-                format!(
-                    "{class} extends or implements {owner}, whose kind changed (class <-> interface)"
-                )
-            }
+        // With a member the break is at a call site compiled against the old kind; without
+        // one it is the hierarchy edge itself, which the reason names.
+        ClassBecameInterface if v.reference.member.is_some() => {
+            format!("{owner} became an interface, but {class} was compiled against it as a class")
         }
-        StaticToInstance => format!(
-            "{target} changed from static to instance, but {class} still {access_verb} it as a static member"
+        ClassBecameInterface => {
+            format!("{class} extends {owner}, which became an interface")
+        }
+        InterfaceBecameClass if v.reference.member.is_some() => {
+            format!("{owner} became a class, but {class} was compiled against it as an interface")
+        }
+        InterfaceBecameClass => {
+            format!("{class} extends or implements {owner}, which became a class")
+        }
+        MethodBecameInstance | FieldBecameInstance => format!(
+            "{target} became an instance member, but {class} still {access_verb} it as a static member"
         ),
-        InstanceToStatic => format!(
-            "{target} changed from instance to static, but {class} still {access_verb} it as an instance member"
+        MethodBecameStatic | FieldBecameStatic => format!(
+            "{target} became static, but {class} still {access_verb} it as an instance member"
         ),
         ClassBecameFinal => format!("{owner} became final, but {class} still extends it"),
         MethodBecameFinal => format!("{target} became final, but {class} still overrides it"),
@@ -983,7 +986,7 @@ pub fn check_json(report: &CheckReport) -> Result<String> {
 mod tests {
     use super::*;
     use crate::intern::intern;
-    use crate::model::{MemberKey, Suggestion, SymbolRef};
+    use crate::model::{MemberKey, Suggestion, SymbolRef, Visibility};
 
     fn class_violation(
         source_class: &str,
@@ -1346,6 +1349,42 @@ mod tests {
         );
     }
 
+    /// A kind flip on a hierarchy edge names the edge it breaks. The walk only reaches it
+    /// through that edge, so the reason is enough to say extends or implements.
+    #[test]
+    fn kind_flip_blocks_name_the_broken_edge() {
+        let mut r = report(vec![
+            class_violation(
+                "app/Sub",
+                "lib/Base",
+                Reason::ClassBecameInterface,
+                None,
+                None,
+            ),
+            class_violation(
+                "app/Impl",
+                "lib/Iface",
+                Reason::InterfaceBecameClass,
+                None,
+                None,
+            ),
+        ]);
+        r.reachability_computed = false;
+        let out = check_text(&r);
+        assert!(
+            out.contains("    extends lib.Base, which became an interface"),
+            "\n{out}"
+        );
+        assert!(
+            out.contains("        throws IncompatibleClassChangeError when Sub loads"),
+            "\n{out}"
+        );
+        assert!(
+            out.contains("    extends or implements lib.Iface, which became a class"),
+            "\n{out}"
+        );
+    }
+
     /// A clean run collapses to the ✅ summary line, still carrying the unverified count.
     #[test]
     fn clean_run_summary_leads_with_check_mark() {
@@ -1520,44 +1559,233 @@ mod tests {
         assert_eq!(parse_type(&"[".repeat(300)), None);
     }
 
-    /// `diff` names both sides of a static/instance flip in words, and counts a
-    /// newly-final method as a method: with a bucket for "other" it read as miscellaneous,
-    /// which put every method of a Kotlin library (final by default) in the wrong column.
-    #[test]
-    fn diff_text_names_static_sides_and_counts_final_methods_as_methods() {
-        let out = diff_text(&[
-            BreakingChange::MethodStaticChanged {
-                class: intern("x/C"),
-                name: intern("m"),
-                descriptor: intern("()V"),
-                old_static: true,
-                new_static: false,
+    /// One change of every kind, so the listing below is the whole vocabulary of `diff`.
+    /// EVERY variant has to be here, not just an interesting sample. Three tests pin
+    /// TAG_WIDTH, the tag-to-`kind` mapping and the column against this list alone, so a
+    /// variant left out is a kind whose tag could outgrow the column, or whose `kind()`
+    /// could disagree with serde, with all three still green.
+    /// `every_breaking_change_kind_is_covered` fails when one goes missing.
+    fn one_of_every_change() -> Vec<BreakingChange> {
+        let (class, method, field, desc) = (intern("x/C"), intern("m"), intern("F"), intern("()V"));
+        vec![
+            BreakingChange::ClassRemoved { class },
+            BreakingChange::MethodRemoved {
+                class,
+                name: method,
+                descriptor: desc,
+                replacement_descriptors: vec![intern("(I)V")],
             },
-            BreakingChange::FieldStaticChanged {
-                class: intern("x/C"),
-                name: intern("F"),
+            BreakingChange::FieldRemoved {
+                class,
+                name: field,
                 descriptor: intern("I"),
-                old_static: false,
-                new_static: true,
+                replacement_descriptors: Vec::new(),
+            },
+            BreakingChange::ClassAccessNarrowed {
+                class,
+                from: Visibility::Public,
+                to: Visibility::PackagePrivate,
+            },
+            BreakingChange::ClassBecameFinal { class },
+            BreakingChange::ClassBecameAbstract { class },
+            BreakingChange::InterfaceBecameClass { class },
+            BreakingChange::ClassBecameInterface { class },
+            BreakingChange::MethodBecameAbstract {
+                class,
+                name: method,
+                descriptor: desc,
+            },
+            BreakingChange::MethodAccessNarrowed {
+                class,
+                name: method,
+                descriptor: desc,
+                from: Visibility::Public,
+                to: Visibility::Protected,
+            },
+            BreakingChange::FieldAccessNarrowed {
+                class,
+                name: field,
+                descriptor: intern("I"),
+                from: Visibility::Protected,
+                to: Visibility::Private,
+            },
+            BreakingChange::MethodBecameInstance {
+                class,
+                name: method,
+                descriptor: desc,
+            },
+            BreakingChange::MethodBecameStatic {
+                class,
+                name: method,
+                descriptor: desc,
+            },
+            BreakingChange::FieldBecameStatic {
+                class,
+                name: field,
+                descriptor: intern("I"),
+            },
+            BreakingChange::FieldBecameInstance {
+                class,
+                name: field,
+                descriptor: intern("I"),
+            },
+            BreakingChange::FieldBecameFinal {
+                class,
+                name: field,
+                descriptor: intern("I"),
             },
             BreakingChange::MethodBecameFinal {
-                class: intern("x/C"),
-                name: intern("n"),
-                descriptor: intern("()V"),
+                class,
+                name: method,
+                descriptor: desc,
             },
-        ]);
+        ]
+    }
+
+    /// `one_of_every_change` really is one of EVERY change. Three tests below read nothing
+    /// but that helper, so a variant missing from it is a kind whose tag never meets
+    /// TAG_WIDTH and whose `kind()` never meets serde, with all three still passing. The
+    /// match is exhaustive, so a new variant cannot compile without an arm here. The arm
+    /// then needs a slot, and an unlisted slot fails this assertion.
+    #[test]
+    fn every_breaking_change_kind_is_covered() {
+        fn slot(c: &BreakingChange) -> usize {
+            use BreakingChange::*;
+            match c {
+                ClassRemoved { .. } => 0,
+                MethodRemoved { .. } => 1,
+                FieldRemoved { .. } => 2,
+                ClassAccessNarrowed { .. } => 3,
+                ClassBecameFinal { .. } => 4,
+                ClassBecameAbstract { .. } => 5,
+                ClassBecameInterface { .. } => 6,
+                InterfaceBecameClass { .. } => 7,
+                MethodBecameAbstract { .. } => 8,
+                MethodAccessNarrowed { .. } => 9,
+                FieldAccessNarrowed { .. } => 10,
+                MethodBecameStatic { .. } => 11,
+                MethodBecameInstance { .. } => 12,
+                FieldBecameStatic { .. } => 13,
+                FieldBecameInstance { .. } => 14,
+                FieldBecameFinal { .. } => 15,
+                MethodBecameFinal { .. } => 16,
+            }
+        }
+        const VARIANTS: usize = 17;
+        let changes = one_of_every_change();
+        let mut seen = [false; VARIANTS];
+        for c in &changes {
+            let s = slot(c);
+            assert!(
+                s < VARIANTS,
+                "slot {s} is past VARIANTS; bump it when adding a variant"
+            );
+            seen[s] = true;
+        }
         assert!(
-            out.contains("METHOD STATIC CHANGED  x/C.m ()V (static -> instance)"),
-            "\n{out}"
+            seen.iter().all(|&s| s),
+            "one_of_every_change is missing a variant (slots covered: {seen:?})"
         );
-        assert!(
-            out.contains("FIELD STATIC CHANGED   x/C.F I (instance -> static)"),
-            "\n{out}"
+        assert_eq!(
+            changes.len(),
+            VARIANTS,
+            "one change per kind, no duplicates"
         );
-        assert!(
-            out.contains("breaking changes: 3 (classes: 0, methods: 2, fields: 1)"),
-            "\n{out}"
-        );
+    }
+
+    /// Every `diff` line starts the name at the same column, continuation lines included.
+    /// The tags used to be padded by hand and had drifted into three columns at once, so
+    /// this asserts the property rather than the individual spellings.
+    #[test]
+    fn diff_text_starts_every_name_at_one_column() {
+        let out = diff_text(&one_of_every_change());
+        let body = out.lines().take_while(|l| !l.is_empty());
+        for line in body {
+            let name_at = line.find("x/C").or_else(|| line.find('(')).unwrap();
+            assert_eq!(name_at, TAG_WIDTH + 1, "misaligned: {line:?}\n{out}");
+            assert!(
+                line.as_bytes()[TAG_WIDTH] == b' ',
+                "tag {line:?} fills the separator column\n{out}"
+            );
+        }
+    }
+
+    /// The parentheticals carry what the short tags leave out, and a newly-final method
+    /// counts as a method: under a bucket for "other" it read as miscellaneous, which put
+    /// every method of a Kotlin library (final by default) in the wrong column.
+    #[test]
+    fn diff_text_names_both_sides_of_a_change() {
+        let out = diff_text(&one_of_every_change());
+        for expected in [
+            "CLASS REMOVED          x/C",
+            "METHOD REMOVED         x/C.m ()V",
+            "                       (descriptor changed? now: (I)V)",
+            "CLASS ACCESS NARROWED  x/C (public -> package-private)",
+            "CLASS BECAME FINAL     x/C",
+            "CLASS BECAME ABSTRACT  x/C",
+            "INTERFACE BECAME CLASS x/C",
+            "CLASS BECAME INTERFACE x/C",
+            "METHOD BECAME ABSTRACT x/C.m ()V",
+            "METHOD ACCESS NARROWED x/C.m ()V (public -> protected)",
+            "FIELD ACCESS NARROWED  x/C.F I (protected -> private)",
+            "METHOD BECAME INSTANCE x/C.m ()V",
+            "METHOD BECAME STATIC   x/C.m ()V",
+            "FIELD BECAME STATIC    x/C.F I",
+            "FIELD BECAME INSTANCE  x/C.F I",
+            "METHOD BECAME FINAL    x/C.m ()V",
+            "breaking changes: 17 (classes: 6, methods: 6, fields: 5)",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}\n{out}");
+        }
+    }
+
+    /// `--json` says what the text says. It used to hand out the raw JVM data the text was
+    /// built from, so a reader had to know that access flag 1 means public.
+    #[test]
+    fn diff_json_speaks_the_same_words_as_the_text() {
+        let out = diff_json(&one_of_every_change()).unwrap();
+        for expected in [
+            r#""kind": "class_access_narrowed""#,
+            r#""from": "public""#,
+            r#""to": "package-private""#,
+            r#""from": "protected""#,
+            r#""to": "private""#,
+            r#""kind": "method_became_instance""#,
+            r#""kind": "interface_became_class""#,
+        ] {
+            assert!(out.contains(expected), "missing {expected}\n{out}");
+        }
+        // No raw flag words or bools left to decode.
+        for gone in ["old_access", "new_access", "old_static", "old_interface"] {
+            assert!(!out.contains(gone), "{gone} still in\n{out}");
+        }
+    }
+
+    /// The text tag is the JSON `kind` uppercased, so a jq filter on `kind` and the
+    /// listing pick out the same changes. Both sides come from `kind()`, so this checks the
+    /// one thing that could still drift: that `kind()` is what serde actually writes.
+    #[test]
+    fn kind_matches_the_serialized_tag() {
+        for change in one_of_every_change() {
+            let json: serde_json::Value =
+                serde_json::from_str(&diff_json(std::slice::from_ref(&change)).unwrap()).unwrap();
+            let serialized = json["breaking_changes"][0]["kind"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            assert_eq!(change.kind(), serialized, "{change:?}");
+        }
+    }
+
+    /// No kind outgrows the column it has to print in.
+    #[test]
+    fn tag_column_fits_every_kind() {
+        let widest = one_of_every_change()
+            .iter()
+            .map(|c| tag(c).len())
+            .max()
+            .unwrap();
+        assert_eq!(widest, TAG_WIDTH, "TAG_WIDTH should be the longest tag");
     }
 
     /// The summary line notes suppressed violations only when the count is nonzero.
