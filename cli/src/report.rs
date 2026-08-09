@@ -1,24 +1,69 @@
 use crate::check::CheckReport;
-use crate::model::{BreakingChange, Reason, RefKind, Tier, Violation, reachable_axis_valid, tier};
+use crate::intern::Sym;
+use crate::model::{
+    ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC, BreakingChange, Reason, RefKind, Tier, Violation,
+    reachable_axis_valid, tier,
+};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-/// How a member is held, as the STATIC CHANGED lines name it. Printing the raw booleans
-/// left the reader to work out which side of the flag "true" was.
+/// Width of the tag column every `diff` line opens with. Padding to one width here is
+/// what keeps the names starting at the same column: the tags used to be padded by hand
+/// and had drifted into three columns (17, 23 and 24) inside a single listing. The tags
+/// are one word per side so the column stays narrow, because everything it takes comes
+/// off the name, which is the long part of the line.
+const TAG_WIDTH: usize = 15;
+
+/// How a member is held, as the STATIC tag's parenthetical names it. Printing the raw
+/// booleans left the reader to work out which side of the flag "true" was.
 fn static_word(is_static: bool) -> &'static str {
     if is_static { "static" } else { "instance" }
+}
+
+/// Visibility as the NARROWED tag's parenthetical names it. The tag says what changed,
+/// this says what it changed to, which the tag alone used to leave out.
+fn visibility_word(access: u16) -> &'static str {
+    // Mutually exclusive per JVMS 4.1. The order only matters for a malformed class file.
+    if access & ACC_PUBLIC != 0 {
+        "public"
+    } else if access & ACC_PROTECTED != 0 {
+        "protected"
+    } else if access & ACC_PRIVATE != 0 {
+        "private"
+    } else {
+        "package-private"
+    }
+}
+
+/// The `(descriptor changed? now: ...)` hint, as a continuation line indented to the name
+/// column. The indent is derived from TAG_WIDTH, never spelled out, so it cannot drift.
+fn replacement_hint(replacements: &[Sym]) -> String {
+    if replacements.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\n{:TAG_WIDTH$} (descriptor changed? now: {})",
+        "",
+        replacements
+            .iter()
+            .map(|d| d.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 pub fn diff_text(changes: &[BreakingChange]) -> String {
     let mut out = String::new();
     let (mut classes, mut methods, mut fields) = (0usize, 0usize, 0usize);
     for c in changes {
-        match c {
+        // One tag and one subject per change, printed through a single writeln below, so
+        // no arm can invent its own column.
+        let (tag, subject) = match c {
             BreakingChange::ClassRemoved { class } => {
                 classes += 1;
-                writeln!(out, "CLASS REMOVED   {class}").unwrap();
+                ("CLASS REMOVED", format!("{class}"))
             }
             BreakingChange::MethodRemoved {
                 class,
@@ -27,19 +72,13 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 replacement_descriptors,
             } => {
                 methods += 1;
-                writeln!(out, "METHOD REMOVED  {class}.{name} {descriptor}").unwrap();
-                if !replacement_descriptors.is_empty() {
-                    writeln!(
-                        out,
-                        "                (descriptor changed? now: {})",
-                        replacement_descriptors
-                            .iter()
-                            .map(|d| d.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                    .unwrap();
-                }
+                (
+                    "METHOD REMOVED",
+                    format!(
+                        "{class}.{name} {descriptor}{}",
+                        replacement_hint(replacement_descriptors)
+                    ),
+                )
             }
             BreakingChange::FieldRemoved {
                 class,
@@ -48,43 +87,48 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 replacement_descriptors,
             } => {
                 fields += 1;
-                writeln!(out, "FIELD REMOVED   {class}.{name} {descriptor}").unwrap();
-                if !replacement_descriptors.is_empty() {
-                    writeln!(
-                        out,
-                        "                (descriptor changed? now: {})",
-                        replacement_descriptors
-                            .iter()
-                            .map(|d| d.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                    .unwrap();
-                }
+                (
+                    "FIELD REMOVED",
+                    format!(
+                        "{class}.{name} {descriptor}{}",
+                        replacement_hint(replacement_descriptors)
+                    ),
+                )
             }
-            BreakingChange::ClassAccessNarrowed { class, .. } => {
+            BreakingChange::ClassAccessNarrowed {
+                class,
+                old_access,
+                new_access,
+            } => {
                 classes += 1;
-                writeln!(out, "CLASS ACCESS NARROWED {class}").unwrap();
+                (
+                    "CLASS NARROWED",
+                    format!(
+                        "{class} ({} -> {})",
+                        visibility_word(*old_access),
+                        visibility_word(*new_access)
+                    ),
+                )
             }
             BreakingChange::ClassBecameFinal { class } => {
                 classes += 1;
-                writeln!(out, "CLASS BECAME FINAL    {class}").unwrap();
+                ("CLASS FINAL", format!("{class}"))
             }
             BreakingChange::ClassBecameAbstract { class } => {
                 classes += 1;
-                writeln!(out, "CLASS BECAME ABSTRACT {class}").unwrap();
+                ("CLASS ABSTRACT", format!("{class}"))
             }
             BreakingChange::ClassKindChanged {
                 class,
                 old_interface,
             } => {
                 classes += 1;
-                let flip = if *old_interface {
-                    "INTERFACE BECAME CLASS"
+                let (old, new) = if *old_interface {
+                    ("interface", "class")
                 } else {
-                    "CLASS BECAME INTERFACE"
+                    ("class", "interface")
                 };
-                writeln!(out, "{flip} {class}").unwrap();
+                ("CLASS KIND", format!("{class} ({old} -> {new})"))
             }
             BreakingChange::MethodBecameAbstract {
                 class,
@@ -92,25 +136,41 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 descriptor,
             } => {
                 methods += 1;
-                writeln!(out, "METHOD BECAME ABSTRACT {class}.{name} {descriptor}").unwrap();
+                ("METHOD ABSTRACT", format!("{class}.{name} {descriptor}"))
             }
             BreakingChange::MethodAccessNarrowed {
                 class,
                 name,
                 descriptor,
-                ..
+                old_access,
+                new_access,
             } => {
                 methods += 1;
-                writeln!(out, "METHOD ACCESS NARROWED {class}.{name} {descriptor}").unwrap();
+                (
+                    "METHOD NARROWED",
+                    format!(
+                        "{class}.{name} {descriptor} ({} -> {})",
+                        visibility_word(*old_access),
+                        visibility_word(*new_access)
+                    ),
+                )
             }
             BreakingChange::FieldAccessNarrowed {
                 class,
                 name,
                 descriptor,
-                ..
+                old_access,
+                new_access,
             } => {
                 fields += 1;
-                writeln!(out, "FIELD ACCESS NARROWED  {class}.{name} {descriptor}").unwrap();
+                (
+                    "FIELD NARROWED",
+                    format!(
+                        "{class}.{name} {descriptor} ({} -> {})",
+                        visibility_word(*old_access),
+                        visibility_word(*new_access)
+                    ),
+                )
             }
             BreakingChange::MethodStaticChanged {
                 class,
@@ -120,13 +180,14 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 new_static,
             } => {
                 methods += 1;
-                writeln!(
-                    out,
-                    "METHOD STATIC CHANGED  {class}.{name} {descriptor} ({} -> {})",
-                    static_word(*old_static),
-                    static_word(*new_static)
+                (
+                    "METHOD STATIC",
+                    format!(
+                        "{class}.{name} {descriptor} ({} -> {})",
+                        static_word(*old_static),
+                        static_word(*new_static)
+                    ),
                 )
-                .unwrap();
             }
             BreakingChange::FieldStaticChanged {
                 class,
@@ -136,13 +197,14 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 new_static,
             } => {
                 fields += 1;
-                writeln!(
-                    out,
-                    "FIELD STATIC CHANGED   {class}.{name} {descriptor} ({} -> {})",
-                    static_word(*old_static),
-                    static_word(*new_static)
+                (
+                    "FIELD STATIC",
+                    format!(
+                        "{class}.{name} {descriptor} ({} -> {})",
+                        static_word(*old_static),
+                        static_word(*new_static)
+                    ),
                 )
-                .unwrap();
             }
             BreakingChange::FieldBecameFinal {
                 class,
@@ -150,7 +212,7 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 descriptor,
             } => {
                 fields += 1;
-                writeln!(out, "FIELD BECAME FINAL    {class}.{name} {descriptor}").unwrap();
+                ("FIELD FINAL", format!("{class}.{name} {descriptor}"))
             }
             BreakingChange::MethodBecameFinal {
                 class,
@@ -158,9 +220,10 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 descriptor,
             } => {
                 methods += 1;
-                writeln!(out, "METHOD BECAME FINAL   {class}.{name} {descriptor}").unwrap();
+                ("METHOD FINAL", format!("{class}.{name} {descriptor}"))
             }
-        }
+        };
+        writeln!(out, "{tag:<TAG_WIDTH$} {subject}").unwrap();
     }
     writeln!(
         out,
@@ -1520,44 +1583,121 @@ mod tests {
         assert_eq!(parse_type(&"[".repeat(300)), None);
     }
 
-    /// `diff` names both sides of a static/instance flip in words, and counts a
-    /// newly-final method as a method: with a bucket for "other" it read as miscellaneous,
-    /// which put every method of a Kotlin library (final by default) in the wrong column.
-    #[test]
-    fn diff_text_names_static_sides_and_counts_final_methods_as_methods() {
-        let out = diff_text(&[
+    /// One change of every kind, so the listing below is the whole vocabulary of `diff`.
+    fn one_of_every_change() -> Vec<BreakingChange> {
+        let (class, method, field, desc) = (intern("x/C"), intern("m"), intern("F"), intern("()V"));
+        vec![
+            BreakingChange::ClassRemoved { class },
+            BreakingChange::MethodRemoved {
+                class,
+                name: method,
+                descriptor: desc,
+                replacement_descriptors: vec![intern("(I)V")],
+            },
+            BreakingChange::FieldRemoved {
+                class,
+                name: field,
+                descriptor: intern("I"),
+                replacement_descriptors: Vec::new(),
+            },
+            BreakingChange::ClassAccessNarrowed {
+                class,
+                old_access: ACC_PUBLIC,
+                new_access: 0,
+            },
+            BreakingChange::ClassBecameFinal { class },
+            BreakingChange::ClassBecameAbstract { class },
+            BreakingChange::ClassKindChanged {
+                class,
+                old_interface: true,
+            },
+            BreakingChange::MethodBecameAbstract {
+                class,
+                name: method,
+                descriptor: desc,
+            },
+            BreakingChange::MethodAccessNarrowed {
+                class,
+                name: method,
+                descriptor: desc,
+                old_access: ACC_PUBLIC,
+                new_access: ACC_PROTECTED,
+            },
+            BreakingChange::FieldAccessNarrowed {
+                class,
+                name: field,
+                descriptor: intern("I"),
+                old_access: ACC_PROTECTED,
+                new_access: ACC_PRIVATE,
+            },
             BreakingChange::MethodStaticChanged {
-                class: intern("x/C"),
-                name: intern("m"),
-                descriptor: intern("()V"),
+                class,
+                name: method,
+                descriptor: desc,
                 old_static: true,
                 new_static: false,
             },
             BreakingChange::FieldStaticChanged {
-                class: intern("x/C"),
-                name: intern("F"),
+                class,
+                name: field,
                 descriptor: intern("I"),
                 old_static: false,
                 new_static: true,
             },
-            BreakingChange::MethodBecameFinal {
-                class: intern("x/C"),
-                name: intern("n"),
-                descriptor: intern("()V"),
+            BreakingChange::FieldBecameFinal {
+                class,
+                name: field,
+                descriptor: intern("I"),
             },
-        ]);
-        assert!(
-            out.contains("METHOD STATIC CHANGED  x/C.m ()V (static -> instance)"),
-            "\n{out}"
-        );
-        assert!(
-            out.contains("FIELD STATIC CHANGED   x/C.F I (instance -> static)"),
-            "\n{out}"
-        );
-        assert!(
-            out.contains("breaking changes: 3 (classes: 0, methods: 2, fields: 1)"),
-            "\n{out}"
-        );
+            BreakingChange::MethodBecameFinal {
+                class,
+                name: method,
+                descriptor: desc,
+            },
+        ]
+    }
+
+    /// Every `diff` line starts the name at the same column, continuation lines included.
+    /// The tags used to be padded by hand and had drifted into three columns at once, so
+    /// this asserts the property rather than the individual spellings.
+    #[test]
+    fn diff_text_starts_every_name_at_one_column() {
+        let out = diff_text(&one_of_every_change());
+        let body = out.lines().take_while(|l| !l.is_empty());
+        for line in body {
+            let name_at = line.find("x/C").or_else(|| line.find('(')).unwrap();
+            assert_eq!(name_at, TAG_WIDTH + 1, "misaligned: {line:?}\n{out}");
+            assert!(
+                line.as_bytes()[TAG_WIDTH] == b' ',
+                "tag {line:?} fills the separator column\n{out}"
+            );
+        }
+    }
+
+    /// The parentheticals carry what the one-word tags leave out, and a newly-final method
+    /// counts as a method: under a bucket for "other" it read as miscellaneous, which put
+    /// every method of a Kotlin library (final by default) in the wrong column.
+    #[test]
+    fn diff_text_names_both_sides_of_a_change() {
+        let out = diff_text(&one_of_every_change());
+        for expected in [
+            "CLASS REMOVED   x/C",
+            "METHOD REMOVED  x/C.m ()V",
+            "                (descriptor changed? now: (I)V)",
+            "CLASS NARROWED  x/C (public -> package-private)",
+            "CLASS FINAL     x/C",
+            "CLASS ABSTRACT  x/C",
+            "CLASS KIND      x/C (interface -> class)",
+            "METHOD ABSTRACT x/C.m ()V",
+            "METHOD NARROWED x/C.m ()V (public -> protected)",
+            "FIELD NARROWED  x/C.F I (protected -> private)",
+            "METHOD STATIC   x/C.m ()V (static -> instance)",
+            "FIELD STATIC    x/C.F I (instance -> static)",
+            "METHOD FINAL    x/C.m ()V",
+            "breaking changes: 14 (classes: 5, methods: 5, fields: 4)",
+        ] {
+            assert!(out.contains(expected), "missing {expected:?}\n{out}");
+        }
     }
 
     /// The summary line notes suppressed violations only when the count is nonzero.
