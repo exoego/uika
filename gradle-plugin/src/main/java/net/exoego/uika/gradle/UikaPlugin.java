@@ -167,6 +167,12 @@ public class UikaPlugin implements Plugin<Project> {
                                 root.getProviders().provider(() -> defaultJdkRelease(root)));
                     }
                     task.getInstallDir().convention(root.getLayout().getBuildDirectory().dir("uika/cli"));
+                    // The root tasks carry no data dependencies on each other, but a single
+                    // invocation (dump + resolve + check) must run the check last so it
+                    // reads the files the others just wrote. Soft ordering only: standalone
+                    // invocations are unaffected, and the referenced tasks are not pulled
+                    // into the graph.
+                    task.mustRunAfter(merge, resolve);
                 });
         // The CLI ZIP's detached configuration is created after evaluation, when the version
         // (convention, -PuikaCliVersion, or a build-script override) is final. Absent version

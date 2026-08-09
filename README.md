@@ -101,12 +101,13 @@ build's repositories and credentials.
 
 After bumping `libs.versions.toml`, verify with resolution only, no
 compilation. Classes already built on disk still anchor the reachability
-ranking:
+ranking, and the check orders itself after the dump so both fit one
+invocation:
 
 ```console
 $ git stash && ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json -PuikaBuildOutputs=false && git stash pop
-$ ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json -PuikaBuildOutputs=false
-$ ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
+$ ./gradlew uikaDumpClasspath uikaUpgradeCheck -PuikaOutput=/tmp/after.json -PuikaBuildOutputs=false \
+      -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
 ```
 
 ### Ad-hoc investigation
@@ -558,12 +559,13 @@ For Maven:
 
 After bumping `libs.versions.toml`, verify with resolution only, no
 compilation. Classes already built on disk still anchor the reachability
-ranking:
+ranking, and the check orders itself after the dump so both fit one
+invocation:
 
 ```console
 $ git stash && ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json -PuikaBuildOutputs=false && git stash pop
-$ ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json -PuikaBuildOutputs=false
-$ ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
+$ ./gradlew uikaDumpClasspath uikaUpgradeCheck -PuikaOutput=/tmp/after.json -PuikaBuildOutputs=false \
+      -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
 ```
 
 ### Ad-hoc investigation
