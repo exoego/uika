@@ -12,7 +12,7 @@ use uika::check::check;
 use uika::diff::diff;
 use uika::index::ApiIndex;
 use uika::input::load;
-use uika::model::{Binding, BreakingChange, Reason, RefKind};
+use uika::model::{BreakingChange, Reason, RefKind};
 
 #[test]
 fn detects_ktor_io_break_against_coroutines_1_11() {
@@ -287,12 +287,10 @@ fn detects_okhttp_digest_static_to_instance_change() {
     assert!(
         changes.iter().any(|c| matches!(
             c,
-            BreakingChange::MethodStaticChanged {
+            BreakingChange::MethodBecameInstance {
                 class,
                 name,
                 descriptor,
-                from: Binding::Static,
-                to: Binding::Instance,
             } if class.as_str() == "okhttp3/internal/http/RequestLine"
                 && name.as_str() == "requestPath"
                 && descriptor.as_str() == "(Lokhttp3/HttpUrl;)Ljava/lang/String;"

@@ -1,28 +1,23 @@
 use crate::check::CheckReport;
 use crate::intern::Sym;
-use crate::model::{
-    Binding, BreakingChange, ClassKind, Reason, RefKind, Tier, Violation, reachable_axis_valid,
-    tier,
-};
+use crate::model::{BreakingChange, Reason, RefKind, Tier, Violation, reachable_axis_valid, tier};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-/// Width of the tag column every `diff` line opens with. Padding to one width here is
-/// what keeps the names starting at the same column: the tags used to be padded by hand
-/// and had drifted into three columns (17, 23 and 24) inside a single listing. The tags
-/// are kept short, because everything the column takes comes off the name, which is the
-/// long part of the line. The widest is BECAME INTERFACE.
-const TAG_WIDTH: usize = 16;
+/// Width of the tag column every `diff` line opens with. Padding to one width here is what
+/// keeps the names starting at the same column: the tags used to be padded by hand and had
+/// drifted into three columns (17, 23 and 24) inside a single listing. The widest tags are
+/// METHOD BECAME ABSTRACT and METHOD ACCESS NARROWED, which
+/// `tag_column_fits_every_kind` pins.
+const TAG_WIDTH: usize = 22;
 
-/// A state a member flipped to. Both static tags name the side landed on rather than the
-/// move, like the other BECAME tags, and a two-state flip loses nothing by it.
-fn static_tag(to: Binding) -> &'static str {
-    match to {
-        Binding::Static => "BECAME STATIC",
-        Binding::Instance => "BECAME INSTANCE",
-    }
+/// The tag a change opens its line with: its JSON `kind`, uppercased. Derived rather than
+/// spelled out per arm, so the listing and `--json` cannot come to disagree, and so a new
+/// kind cannot arrive without a tag.
+fn tag(change: &BreakingChange) -> String {
+    change.kind().replace('_', " ").to_uppercase()
 }
 
 /// The `(descriptor changed? now: ...)` hint, as a continuation line indented to the name
@@ -46,12 +41,20 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
     let mut out = String::new();
     let (mut classes, mut methods, mut fields) = (0usize, 0usize, 0usize);
     for c in changes {
-        // One tag and one subject per change, printed through a single writeln below, so
-        // no arm can invent its own column.
-        let (tag, subject) = match c {
-            BreakingChange::ClassRemoved { class } => {
+        // Only the subject varies per arm. The tag comes from the kind, and one writeln
+        // below owns the column, so no arm can invent its own.
+        let subject = match c {
+            BreakingChange::ClassRemoved { class }
+            | BreakingChange::ClassBecameFinal { class }
+            | BreakingChange::ClassBecameAbstract { class }
+            | BreakingChange::ClassBecameInterface { class }
+            | BreakingChange::InterfaceBecameClass { class } => {
                 classes += 1;
-                ("CLASS REMOVED", format!("{class}"))
+                format!("{class}")
+            }
+            BreakingChange::ClassAccessNarrowed { class, from, to } => {
+                classes += 1;
+                format!("{class} ({} -> {})", from.as_str(), to.as_str())
             }
             BreakingChange::MethodRemoved {
                 class,
@@ -60,12 +63,9 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 replacement_descriptors,
             } => {
                 methods += 1;
-                (
-                    "METHOD REMOVED",
-                    format!(
-                        "{class}.{name} {descriptor}{}",
-                        replacement_hint(replacement_descriptors)
-                    ),
+                format!(
+                    "{class}.{name} {descriptor}{}",
+                    replacement_hint(replacement_descriptors)
                 )
             }
             BreakingChange::FieldRemoved {
@@ -75,44 +75,10 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 replacement_descriptors,
             } => {
                 fields += 1;
-                (
-                    "FIELD REMOVED",
-                    format!(
-                        "{class}.{name} {descriptor}{}",
-                        replacement_hint(replacement_descriptors)
-                    ),
+                format!(
+                    "{class}.{name} {descriptor}{}",
+                    replacement_hint(replacement_descriptors)
                 )
-            }
-            BreakingChange::ClassAccessNarrowed { class, from, to } => {
-                classes += 1;
-                (
-                    "CLASS NARROWED",
-                    format!("{class} ({} -> {})", from.as_str(), to.as_str()),
-                )
-            }
-            BreakingChange::ClassBecameFinal { class } => {
-                classes += 1;
-                ("BECAME FINAL", format!("{class}"))
-            }
-            BreakingChange::ClassBecameAbstract { class } => {
-                classes += 1;
-                ("BECAME ABSTRACT", format!("{class}"))
-            }
-            BreakingChange::ClassKindChanged { class, to, .. } => {
-                classes += 1;
-                let tag = match to {
-                    ClassKind::Interface => "BECAME INTERFACE",
-                    ClassKind::Class => "BECAME CLASS",
-                };
-                (tag, format!("{class}"))
-            }
-            BreakingChange::MethodBecameAbstract {
-                class,
-                name,
-                descriptor,
-            } => {
-                methods += 1;
-                ("BECAME ABSTRACT", format!("{class}.{name} {descriptor}"))
             }
             BreakingChange::MethodAccessNarrowed {
                 class,
@@ -122,13 +88,10 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 to,
             } => {
                 methods += 1;
-                (
-                    "METHOD NARROWED",
-                    format!(
-                        "{class}.{name} {descriptor} ({} -> {})",
-                        from.as_str(),
-                        to.as_str()
-                    ),
+                format!(
+                    "{class}.{name} {descriptor} ({} -> {})",
+                    from.as_str(),
+                    to.as_str()
                 )
             }
             BreakingChange::FieldAccessNarrowed {
@@ -139,53 +102,55 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 to,
             } => {
                 fields += 1;
-                (
-                    "FIELD NARROWED",
-                    format!(
-                        "{class}.{name} {descriptor} ({} -> {})",
-                        from.as_str(),
-                        to.as_str()
-                    ),
+                format!(
+                    "{class}.{name} {descriptor} ({} -> {})",
+                    from.as_str(),
+                    to.as_str()
                 )
             }
-            BreakingChange::MethodStaticChanged {
+            BreakingChange::MethodBecameAbstract {
                 class,
                 name,
                 descriptor,
-                to,
-                ..
-            } => {
-                methods += 1;
-                (static_tag(*to), format!("{class}.{name} {descriptor}"))
             }
-            BreakingChange::FieldStaticChanged {
+            | BreakingChange::MethodBecameStatic {
                 class,
                 name,
                 descriptor,
-                to,
-                ..
-            } => {
-                fields += 1;
-                (static_tag(*to), format!("{class}.{name} {descriptor}"))
             }
-            BreakingChange::FieldBecameFinal {
+            | BreakingChange::MethodBecameInstance {
                 class,
                 name,
                 descriptor,
-            } => {
-                fields += 1;
-                ("BECAME FINAL", format!("{class}.{name} {descriptor}"))
             }
-            BreakingChange::MethodBecameFinal {
+            | BreakingChange::MethodBecameFinal {
                 class,
                 name,
                 descriptor,
             } => {
                 methods += 1;
-                ("BECAME FINAL", format!("{class}.{name} {descriptor}"))
+                format!("{class}.{name} {descriptor}")
+            }
+            BreakingChange::FieldBecameStatic {
+                class,
+                name,
+                descriptor,
+            }
+            | BreakingChange::FieldBecameInstance {
+                class,
+                name,
+                descriptor,
+            }
+            | BreakingChange::FieldBecameFinal {
+                class,
+                name,
+                descriptor,
+            } => {
+                fields += 1;
+                format!("{class}.{name} {descriptor}")
             }
         };
-        writeln!(out, "{tag:<TAG_WIDTH$} {subject}").unwrap();
+        writeln!(out, "{:<TAG_WIDTH$} {subject}", tag(c)).unwrap();
     }
     writeln!(
         out,
@@ -1569,16 +1534,8 @@ mod tests {
             },
             BreakingChange::ClassBecameFinal { class },
             BreakingChange::ClassBecameAbstract { class },
-            BreakingChange::ClassKindChanged {
-                class,
-                from: ClassKind::Interface,
-                to: ClassKind::Class,
-            },
-            BreakingChange::ClassKindChanged {
-                class,
-                from: ClassKind::Class,
-                to: ClassKind::Interface,
-            },
+            BreakingChange::InterfaceBecameClass { class },
+            BreakingChange::ClassBecameInterface { class },
             BreakingChange::MethodBecameAbstract {
                 class,
                 name: method,
@@ -1598,19 +1555,15 @@ mod tests {
                 from: Visibility::Protected,
                 to: Visibility::Private,
             },
-            BreakingChange::MethodStaticChanged {
+            BreakingChange::MethodBecameInstance {
                 class,
                 name: method,
                 descriptor: desc,
-                from: Binding::Static,
-                to: Binding::Instance,
             },
-            BreakingChange::FieldStaticChanged {
+            BreakingChange::FieldBecameStatic {
                 class,
                 name: field,
                 descriptor: intern("I"),
-                from: Binding::Instance,
-                to: Binding::Static,
             },
             BreakingChange::FieldBecameFinal {
                 class,
@@ -1649,22 +1602,20 @@ mod tests {
     fn diff_text_names_both_sides_of_a_change() {
         let out = diff_text(&one_of_every_change());
         for expected in [
-            "CLASS REMOVED    x/C",
-            "METHOD REMOVED   x/C.m ()V",
-            "                 (descriptor changed? now: (I)V)",
-            "CLASS NARROWED   x/C (public -> package-private)",
-            // A state change names the state landed on, and the symbol it applies to is
-            // right there on the line, so the tag does not repeat its kind.
-            "BECAME FINAL     x/C",
-            "BECAME ABSTRACT  x/C",
-            "BECAME CLASS     x/C",
-            "BECAME INTERFACE x/C",
-            "BECAME ABSTRACT  x/C.m ()V",
-            "METHOD NARROWED  x/C.m ()V (public -> protected)",
-            "FIELD NARROWED   x/C.F I (protected -> private)",
-            "BECAME INSTANCE  x/C.m ()V",
-            "BECAME STATIC    x/C.F I",
-            "BECAME FINAL     x/C.m ()V",
+            "CLASS REMOVED          x/C",
+            "METHOD REMOVED         x/C.m ()V",
+            "                       (descriptor changed? now: (I)V)",
+            "CLASS ACCESS NARROWED  x/C (public -> package-private)",
+            "CLASS BECAME FINAL     x/C",
+            "CLASS BECAME ABSTRACT  x/C",
+            "INTERFACE BECAME CLASS x/C",
+            "CLASS BECAME INTERFACE x/C",
+            "METHOD BECAME ABSTRACT x/C.m ()V",
+            "METHOD ACCESS NARROWED x/C.m ()V (public -> protected)",
+            "FIELD ACCESS NARROWED  x/C.F I (protected -> private)",
+            "METHOD BECAME INSTANCE x/C.m ()V",
+            "FIELD BECAME STATIC    x/C.F I",
+            "METHOD BECAME FINAL    x/C.m ()V",
             "breaking changes: 15 (classes: 6, methods: 5, fields: 4)",
         ] {
             assert!(out.contains(expected), "missing {expected:?}\n{out}");
@@ -1682,10 +1633,8 @@ mod tests {
             r#""to": "package-private""#,
             r#""from": "protected""#,
             r#""to": "private""#,
-            r#""from": "interface""#,
-            r#""to": "interface""#,
-            r#""from": "static""#,
-            r#""to": "instance""#,
+            r#""kind": "method_became_instance""#,
+            r#""kind": "interface_became_class""#,
         ] {
             assert!(out.contains(expected), "missing {expected}\n{out}");
         }
@@ -1693,6 +1642,33 @@ mod tests {
         for gone in ["old_access", "new_access", "old_static", "old_interface"] {
             assert!(!out.contains(gone), "{gone} still in\n{out}");
         }
+    }
+
+    /// The text tag is the JSON `kind` uppercased, so `jq 'select(.kind == "...")'` and the
+    /// listing pick out the same changes. Both sides come from `kind()`, so this checks the
+    /// one thing that could still drift: that `kind()` is what serde actually writes.
+    #[test]
+    fn kind_matches_the_serialized_tag() {
+        for change in one_of_every_change() {
+            let json: serde_json::Value =
+                serde_json::from_str(&diff_json(std::slice::from_ref(&change)).unwrap()).unwrap();
+            let serialized = json["breaking_changes"][0]["kind"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            assert_eq!(change.kind(), serialized, "{change:?}");
+        }
+    }
+
+    /// No kind outgrows the column it has to print in.
+    #[test]
+    fn tag_column_fits_every_kind() {
+        let widest = one_of_every_change()
+            .iter()
+            .map(|c| tag(c).len())
+            .max()
+            .unwrap();
+        assert_eq!(widest, TAG_WIDTH, "TAG_WIDTH should be the longest tag");
     }
 
     /// The summary line notes suppressed violations only when the count is nonzero.

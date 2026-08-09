@@ -71,10 +71,10 @@ impl ClassApi {
     }
 }
 
-/// Both sides of a directional change carry the word `diff` prints for them, so the text
-/// listing and `--json` say the same thing. They used to be raw JVM data (an access flag
-/// word, a bool), which left every reader to decode `"old_access": 1` for themselves.
-/// The variant names which axis moved, so the fields are just `from` and `to`.
+/// Access narrowing has four possible levels a side, so both sides travel with the change,
+/// spelled the way `diff` prints them in text and in JSON alike. They used to be raw JVM
+/// access flag words, leaving every reader to decode `"old_access": 1` for themselves.
+/// A two-state flip needs no such pair: its variant name states the direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Visibility {
@@ -104,56 +104,6 @@ impl Visibility {
             Visibility::Protected => "protected",
             Visibility::PackagePrivate => "package-private",
             Visibility::Private => "private",
-        }
-    }
-}
-
-/// Whether a member is held by the class or by an instance of it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Binding {
-    Static,
-    Instance,
-}
-
-impl Binding {
-    pub fn of(access: u16) -> Self {
-        if access & ACC_STATIC != 0 {
-            Binding::Static
-        } else {
-            Binding::Instance
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Binding::Static => "static",
-            Binding::Instance => "instance",
-        }
-    }
-}
-
-/// Which side of the class/interface divide a type is on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ClassKind {
-    Class,
-    Interface,
-}
-
-impl ClassKind {
-    pub fn of(access: u16) -> Self {
-        if access & ACC_INTERFACE != 0 {
-            ClassKind::Interface
-        } else {
-            ClassKind::Class
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ClassKind::Class => "class",
-            ClassKind::Interface => "interface",
         }
     }
 }
@@ -192,10 +142,11 @@ pub enum BreakingChange {
     },
     /// class <-> interface flip: references and hierarchy edges compiled against
     /// the old kind fail with IncompatibleClassChangeError.
-    ClassKindChanged {
+    ClassBecameInterface {
         class: ClassName,
-        from: ClassKind,
-        to: ClassKind,
+    },
+    InterfaceBecameClass {
+        class: ClassName,
     },
     /// A concrete method became abstract: a subclass compiled without an
     /// override inherits nothing to call (AbstractMethodError).
@@ -218,19 +169,25 @@ pub enum BreakingChange {
         from: Visibility,
         to: Visibility,
     },
-    MethodStaticChanged {
+    MethodBecameStatic {
         class: ClassName,
         name: Sym,
         descriptor: Sym,
-        from: Binding,
-        to: Binding,
     },
-    FieldStaticChanged {
+    MethodBecameInstance {
         class: ClassName,
         name: Sym,
         descriptor: Sym,
-        from: Binding,
-        to: Binding,
+    },
+    FieldBecameStatic {
+        class: ClassName,
+        name: Sym,
+        descriptor: Sym,
+    },
+    FieldBecameInstance {
+        class: ClassName,
+        name: Sym,
+        descriptor: Sym,
     },
     FieldBecameFinal {
         class: ClassName,
@@ -242,6 +199,37 @@ pub enum BreakingChange {
         name: Sym,
         descriptor: Sym,
     },
+}
+
+impl BreakingChange {
+    /// The `kind` JSON tags the change with, which is also the word the text listing prints
+    /// (uppercased, underscores as spaces). One vocabulary for both, so
+    /// `jq 'select(.kind == "method_became_final")'` selects exactly the entries the
+    /// listing labels METHOD BECAME FINAL. Every direction is its own kind for that reason:
+    /// a tag that read METHOD STATIC CHANGED could not tell a reader which way it went, and
+    /// splitting it in the text alone would have left the two out of step.
+    /// `kind_matches_the_serialized_tag` pins this against the serde tag.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            BreakingChange::ClassRemoved { .. } => "class_removed",
+            BreakingChange::MethodRemoved { .. } => "method_removed",
+            BreakingChange::FieldRemoved { .. } => "field_removed",
+            BreakingChange::ClassAccessNarrowed { .. } => "class_access_narrowed",
+            BreakingChange::ClassBecameFinal { .. } => "class_became_final",
+            BreakingChange::ClassBecameAbstract { .. } => "class_became_abstract",
+            BreakingChange::ClassBecameInterface { .. } => "class_became_interface",
+            BreakingChange::InterfaceBecameClass { .. } => "interface_became_class",
+            BreakingChange::MethodBecameAbstract { .. } => "method_became_abstract",
+            BreakingChange::MethodAccessNarrowed { .. } => "method_access_narrowed",
+            BreakingChange::FieldAccessNarrowed { .. } => "field_access_narrowed",
+            BreakingChange::MethodBecameStatic { .. } => "method_became_static",
+            BreakingChange::MethodBecameInstance { .. } => "method_became_instance",
+            BreakingChange::FieldBecameStatic { .. } => "field_became_static",
+            BreakingChange::FieldBecameInstance { .. } => "field_became_instance",
+            BreakingChange::FieldBecameFinal { .. } => "field_became_final",
+            BreakingChange::MethodBecameFinal { .. } => "method_became_final",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
