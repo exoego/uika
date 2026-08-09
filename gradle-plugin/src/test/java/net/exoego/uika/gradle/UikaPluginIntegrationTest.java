@@ -100,31 +100,7 @@ final class UikaPluginIntegrationTest {
     @Test
     void secondRunPicksUpDependencyChanges() throws Exception {
         Path output = projectDir.resolve("classpath.json");
-        write(projectDir.resolve("settings.gradle.kts"), """
-                rootProject.name = "dummy-uika-consumer"
-                include("app")
-                """);
-        write(projectDir.resolve("build.gradle.kts"), """
-                plugins {
-                    id("net.exoego.uika")
-                }
-                """);
-        Path appDir = projectDir.resolve("app");
-        write(appDir.resolve("build.gradle.kts"), """
-                plugins {
-                    java
-                }
-
-                dependencies {
-                    implementation(files("libs/first.jar"))
-                    if (providers.gradleProperty("uikaTestExtraJar").isPresent) {
-                        implementation(files("libs/second.jar"))
-                    }
-                }
-                """);
-        Files.createDirectories(appDir.resolve("libs"));
-        Files.write(appDir.resolve("libs/first.jar"), new byte[0]);
-        Files.write(appDir.resolve("libs/second.jar"), new byte[0]);
+        writeToggleJarProject();
 
         BuildResult first = runDump(output);
         assertTaskSuccess(first, ":app:uikaDumpModuleClasspath");
@@ -151,7 +127,121 @@ final class UikaPluginIntegrationTest {
         assertTaskSuccess(result, ":lib:jar");
         assertTaskSuccess(result, ":app:compileJava");
         assertTaskSuccess(result, ":app:uikaDumpModuleClasspath");
+        assertAppAttributesLib(output);
+    }
 
+    /// -PuikaBuildOutputs=false keeps the old resolution-only dump: nothing is compiled,
+    /// and the unbuilt project-dependency jar still appears in the dump with its project
+    /// attribution, so the CLI can warn about (or substitute) the missing file instead of
+    /// silently losing the module from the classpath.
+    @Test
+    void buildOutputsOptOutSkipsCompilation() throws Exception {
+        Path output = projectDir.resolve("classpath.json");
+        writeMultiModuleProject();
+
+        BuildResult result = runDump(output, "-PuikaBuildOutputs=false");
+        assertTrue(result.task(":lib:jar") == null,
+                ":lib:jar must not run with uikaBuildOutputs=false");
+        assertTrue(result.task(":app:compileJava") == null,
+                ":app:compileJava must not run with uikaBuildOutputs=false");
+        assertTaskSuccess(result, ":app:uikaDumpModuleClasspath");
+        assertUnbuiltLibAttributed(output);
+    }
+
+    /// The dump invocation is configuration-cache compatible: the first run stores an
+    /// entry, the second reuses it and still re-resolves (the dump is rewritten), and a
+    /// dependency toggled through a gradle property invalidates the entry, so a reused
+    /// cache can never pin a stale classpath.
+    @Test
+    void configurationCacheReusesDumpAndStaysCorrect() throws Exception {
+        Path output = projectDir.resolve("classpath.json");
+        writeToggleJarProject();
+
+        BuildResult first = runDump(output, "--configuration-cache");
+        assertTaskSuccess(first, ":app:uikaDumpModuleClasspath");
+        assertTrue(first.getOutput().contains("Configuration cache entry stored"),
+                () -> "no configuration cache entry was stored:\n" + first.getOutput());
+        assertTrue(artifactPaths(output).stream().anyMatch(p -> p.endsWith("first.jar")),
+                "first.jar is missing from the initial dump");
+
+        Files.delete(output);
+        BuildResult second = runDump(output, "--configuration-cache");
+        assertTaskSuccess(second, ":app:uikaDumpModuleClasspath");
+        assertTrue(second.getOutput().contains("Configuration cache entry reused"),
+                () -> "the configuration cache entry was not reused:\n" + second.getOutput());
+        assertTrue(artifactPaths(output).stream().anyMatch(p -> p.endsWith("first.jar")),
+                "first.jar is missing from the cache-reuse dump");
+
+        BuildResult third = runDump(output, "--configuration-cache", "-PuikaTestExtraJar=true");
+        assertTaskSuccess(third, ":app:uikaDumpModuleClasspath");
+        assertTrue(artifactPaths(output).stream().anyMatch(p -> p.endsWith("second.jar")),
+                "dump does not reflect the dependency added after the cached run");
+    }
+
+    /// Project attribution and the buildOutputs dependsOn wiring survive the configuration
+    /// cache: a reused entry still builds the dependency jar and dumps the attribution.
+    @Test
+    void configurationCacheReusesMultiModuleDump() throws Exception {
+        Path output = projectDir.resolve("classpath.json");
+        writeMultiModuleProject();
+
+        BuildResult first = runDump(output, "--configuration-cache");
+        assertTrue(first.getOutput().contains("Configuration cache entry stored"),
+                () -> "no configuration cache entry was stored:\n" + first.getOutput());
+        assertTaskSuccess(first, ":lib:jar");
+        assertTaskSuccess(first, ":app:uikaDumpModuleClasspath");
+        assertAppAttributesLib(output);
+
+        Files.delete(output);
+        BuildResult second = runDump(output, "--configuration-cache");
+        assertTrue(second.getOutput().contains("Configuration cache entry reused"),
+                () -> "the configuration cache entry was not reused:\n" + second.getOutput());
+        assertTaskSuccess(second, ":app:uikaDumpModuleClasspath");
+        assertAppAttributesLib(output);
+    }
+
+    /// The resolution-only dump is configuration-cache compatible too. Its entries are
+    /// resolved eagerly at configuration time (the resolution provider refuses any query
+    /// while a producer task has not run), so the unbuilt project jar keeps its
+    /// attribution on both the store and the reuse run, and still nothing is compiled.
+    @Test
+    void configurationCacheReusesResolutionOnlyDump() throws Exception {
+        Path output = projectDir.resolve("classpath.json");
+        writeMultiModuleProject();
+
+        BuildResult first = runDump(output, "--configuration-cache", "-PuikaBuildOutputs=false");
+        assertTrue(first.getOutput().contains("Configuration cache entry stored"),
+                () -> "no configuration cache entry was stored:\n" + first.getOutput());
+        assertTrue(first.task(":lib:jar") == null,
+                ":lib:jar must not run with uikaBuildOutputs=false");
+        assertTaskSuccess(first, ":app:uikaDumpModuleClasspath");
+        assertUnbuiltLibAttributed(output);
+
+        Files.delete(output);
+        BuildResult second = runDump(output, "--configuration-cache", "-PuikaBuildOutputs=false");
+        assertTrue(second.getOutput().contains("Configuration cache entry reused"),
+                () -> "the configuration cache entry was not reused:\n" + second.getOutput());
+        assertTrue(second.task(":lib:jar") == null,
+                ":lib:jar must not run on the cache-reuse run");
+        assertTaskSuccess(second, ":app:uikaDumpModuleClasspath");
+        assertUnbuiltLibAttributed(output);
+    }
+
+    /** The unbuilt :lib jar is listed with its project attribution (the file need not exist). */
+    @SuppressWarnings("unchecked")
+    private static void assertUnbuiltLibAttributed(Path output) {
+        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        List<Map<String, Object>> artifacts = (List<Map<String, Object>>) doc.get("artifacts");
+        Map<String, Object> libArtifact = artifacts.stream()
+                .filter(a -> Objects.equals(":lib", a.get("project")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "unbuilt :lib jar missing from the resolution-only dump: " + artifacts));
+        assertTrue(rootedPath(doc, libArtifact).endsWith("lib.jar"));
+    }
+
+    /** The :app module's dump attributes the :lib project-dependency jar and lists built classesDirs. */
+    private static void assertAppAttributesLib(Path output) throws IOException {
         @SuppressWarnings("unchecked")
         Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
         @SuppressWarnings("unchecked")
@@ -174,39 +264,39 @@ final class UikaPluginIntegrationTest {
         assertTrue(libPath.endsWith("lib.jar"), libPath);
         assertTrue(Files.isRegularFile(Path.of(libPath)),
                 "the dependsOn wiring must have built " + libPath);
-        // The module's own classes were compiled and dumped as classesDirs.
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> classesDirs =
                 (List<Map<String, Object>>) appModule.get("classesDirs");
         assertFalse(classesDirs.isEmpty(), ":app classesDirs is empty: " + appModule);
     }
 
-    /// -PuikaBuildOutputs=false keeps the old resolution-only dump: nothing is compiled,
-    /// and the unbuilt project-dependency jar still appears in the dump with its project
-    /// attribution, so the CLI can warn about (or substitute) the missing file instead of
-    /// silently losing the module from the classpath.
-    @Test
-    void buildOutputsOptOutSkipsCompilation() throws Exception {
-        Path output = projectDir.resolve("classpath.json");
-        writeMultiModuleProject();
+    /** Single app module with a second file dependency toggled by -PuikaTestExtraJar. */
+    private void writeToggleJarProject() throws IOException {
+        write(projectDir.resolve("settings.gradle.kts"), """
+                rootProject.name = "dummy-uika-consumer"
+                include("app")
+                """);
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    id("net.exoego.uika")
+                }
+                """);
+        Path appDir = projectDir.resolve("app");
+        write(appDir.resolve("build.gradle.kts"), """
+                plugins {
+                    java
+                }
 
-        BuildResult result = runDump(output, "-PuikaBuildOutputs=false");
-        assertTrue(result.task(":lib:jar") == null,
-                ":lib:jar must not run with uikaBuildOutputs=false");
-        assertTrue(result.task(":app:compileJava") == null,
-                ":app:compileJava must not run with uikaBuildOutputs=false");
-        assertTaskSuccess(result, ":app:uikaDumpModuleClasspath");
-
-        @SuppressWarnings("unchecked")
-        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> artifacts = (List<Map<String, Object>>) doc.get("artifacts");
-        Map<String, Object> libArtifact = artifacts.stream()
-                .filter(a -> Objects.equals(":lib", a.get("project")))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError(
-                        "unbuilt :lib jar missing from the resolution-only dump: " + artifacts));
-        assertTrue(rootedPath(doc, libArtifact).endsWith("lib.jar"));
+                dependencies {
+                    implementation(files("libs/first.jar"))
+                    if (providers.gradleProperty("uikaTestExtraJar").isPresent) {
+                        implementation(files("libs/second.jar"))
+                    }
+                }
+                """);
+        Files.createDirectories(appDir.resolve("libs"));
+        Files.write(appDir.resolve("libs/first.jar"), new byte[0]);
+        Files.write(appDir.resolve("libs/second.jar"), new byte[0]);
     }
 
     private void writeMultiModuleProject() throws IOException {

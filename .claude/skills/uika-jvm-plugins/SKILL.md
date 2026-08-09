@@ -18,6 +18,34 @@ description: Invariants for the uika Gradle, sbt, and Maven build-tool plugins a
   notation: multiple versions of a module in one configuration would be
   conflict-resolved down to the highest. Classifiers are reconstructed from the
   original file name.
+- All Gradle tasks are configuration-cache compatible; keep them that way. Task
+  actions never touch `getProject()`: UikaPlugin wires project state in as task
+  properties once configuration settles (`projectsEvaluated` +
+  `TaskProvider.configure` for the per-module dump so dependency projects'
+  variants exist; `afterEvaluate` for resolve/upgrade-check root wiring, after
+  user build-script config). Artifact lists flow through
+  `ArtifactCollection.getResolvedArtifacts().map(static method ref)` into
+  serializable record entries — mapper lambdas must capture nothing or the
+  cache cannot serialize the provider.
+- The resolution provider refuses ANY query (configuration or execution time)
+  while a producer task has not run ("Querying the mapped value ... before task
+  ':lib:jar' has completed"). The default dump is safe because the
+  uikaBuildOutputs dependsOn builds the producers first; the
+  `-PuikaBuildOutputs=false` resolution-only dump instead iterates
+  `ArtifactCollection.getArtifacts()` directly at configuration time (plain
+  eager resolution has no producer guard) and stores the extracted entries.
+  Do not "simplify" the two paths into one provider.
+- Rehydration's missing notations come from the input dump's content, so the
+  detached configurations are created at configuration time and the input file
+  must exist before the build starts. The content is read through
+  `providers.fileContents` so it is a tracked configuration input (a cached
+  entry is never reused for a changed dump). If the file appears mid-build, the
+  task fails with an explicit message (`getWiredAtConfiguration()`), never
+  silently skips fetching. The CLI-zip detached configuration is wired in
+  `afterEvaluate` from the final `cliVersion` (register action would miss
+  `configureEach` overrides); `platformClassifier()` is guarded there because
+  wiring runs on any task realization (IDE sync, `gradle tasks`) and an
+  unsupported platform must only fail the task action.
 - `DumpFormat` changes propagate to all three plugins via source inclusion from
   `jvm-plugin-core/` — no core artifact to publish.
 - The upgrade-check tasks (`uikaUpgradeCheck`, Maven `uika:upgrade-check`)
