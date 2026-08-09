@@ -1,8 +1,7 @@
 use crate::check::CheckReport;
 use crate::intern::Sym;
 use crate::model::{
-    ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC, BreakingChange, Reason, RefKind, Tier, Violation,
-    reachable_axis_valid, tier,
+    BreakingChange, ClassKind, Reason, RefKind, Tier, Violation, reachable_axis_valid, tier,
 };
 use anyhow::Result;
 use serde::Serialize;
@@ -12,30 +11,9 @@ use std::fmt::Write;
 /// Width of the tag column every `diff` line opens with. Padding to one width here is
 /// what keeps the names starting at the same column: the tags used to be padded by hand
 /// and had drifted into three columns (17, 23 and 24) inside a single listing. The tags
-/// are one word per side so the column stays narrow, because everything it takes comes
-/// off the name, which is the long part of the line.
-const TAG_WIDTH: usize = 15;
-
-/// How a member is held, as the STATIC tag's parenthetical names it. Printing the raw
-/// booleans left the reader to work out which side of the flag "true" was.
-fn static_word(is_static: bool) -> &'static str {
-    if is_static { "static" } else { "instance" }
-}
-
-/// Visibility as the NARROWED tag's parenthetical names it. The tag says what changed,
-/// this says what it changed to, which the tag alone used to leave out.
-fn visibility_word(access: u16) -> &'static str {
-    // Mutually exclusive per JVMS 4.1. The order only matters for a malformed class file.
-    if access & ACC_PUBLIC != 0 {
-        "public"
-    } else if access & ACC_PROTECTED != 0 {
-        "protected"
-    } else if access & ACC_PRIVATE != 0 {
-        "private"
-    } else {
-        "package-private"
-    }
-}
+/// are kept short, because everything the column takes comes off the name, which is the
+/// long part of the line. The widest is BECAME INTERFACE.
+const TAG_WIDTH: usize = 16;
 
 /// The `(descriptor changed? now: ...)` hint, as a continuation line indented to the name
 /// column. The indent is derived from TAG_WIDTH, never spelled out, so it cannot drift.
@@ -95,19 +73,11 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                     ),
                 )
             }
-            BreakingChange::ClassAccessNarrowed {
-                class,
-                old_access,
-                new_access,
-            } => {
+            BreakingChange::ClassAccessNarrowed { class, from, to } => {
                 classes += 1;
                 (
                     "CLASS NARROWED",
-                    format!(
-                        "{class} ({} -> {})",
-                        visibility_word(*old_access),
-                        visibility_word(*new_access)
-                    ),
+                    format!("{class} ({} -> {})", from.as_str(), to.as_str()),
                 )
             }
             BreakingChange::ClassBecameFinal { class } => {
@@ -118,17 +88,15 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 classes += 1;
                 ("CLASS ABSTRACT", format!("{class}"))
             }
-            BreakingChange::ClassKindChanged {
-                class,
-                old_interface,
-            } => {
+            BreakingChange::ClassKindChanged { class, to, .. } => {
                 classes += 1;
-                let (old, new) = if *old_interface {
-                    ("interface", "class")
-                } else {
-                    ("class", "interface")
+                // The tag carries the direction, since the class it names is right there:
+                // "BECAME INTERFACE io/ktor/utils/io/ByteChannel".
+                let tag = match to {
+                    ClassKind::Interface => "BECAME INTERFACE",
+                    ClassKind::Class => "BECAME CLASS",
                 };
-                ("CLASS KIND", format!("{class} ({old} -> {new})"))
+                (tag, format!("{class}"))
             }
             BreakingChange::MethodBecameAbstract {
                 class,
@@ -142,16 +110,16 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 class,
                 name,
                 descriptor,
-                old_access,
-                new_access,
+                from,
+                to,
             } => {
                 methods += 1;
                 (
                     "METHOD NARROWED",
                     format!(
                         "{class}.{name} {descriptor} ({} -> {})",
-                        visibility_word(*old_access),
-                        visibility_word(*new_access)
+                        from.as_str(),
+                        to.as_str()
                     ),
                 )
             }
@@ -159,16 +127,16 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 class,
                 name,
                 descriptor,
-                old_access,
-                new_access,
+                from,
+                to,
             } => {
                 fields += 1;
                 (
                     "FIELD NARROWED",
                     format!(
                         "{class}.{name} {descriptor} ({} -> {})",
-                        visibility_word(*old_access),
-                        visibility_word(*new_access)
+                        from.as_str(),
+                        to.as_str()
                     ),
                 )
             }
@@ -176,16 +144,16 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 class,
                 name,
                 descriptor,
-                old_static,
-                new_static,
+                from,
+                to,
             } => {
                 methods += 1;
                 (
                     "METHOD STATIC",
                     format!(
                         "{class}.{name} {descriptor} ({} -> {})",
-                        static_word(*old_static),
-                        static_word(*new_static)
+                        from.as_str(),
+                        to.as_str()
                     ),
                 )
             }
@@ -193,16 +161,16 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 class,
                 name,
                 descriptor,
-                old_static,
-                new_static,
+                from,
+                to,
             } => {
                 fields += 1;
                 (
                     "FIELD STATIC",
                     format!(
                         "{class}.{name} {descriptor} ({} -> {})",
-                        static_word(*old_static),
-                        static_word(*new_static)
+                        from.as_str(),
+                        to.as_str()
                     ),
                 )
             }
@@ -1046,7 +1014,7 @@ pub fn check_json(report: &CheckReport) -> Result<String> {
 mod tests {
     use super::*;
     use crate::intern::intern;
-    use crate::model::{MemberKey, Suggestion, SymbolRef};
+    use crate::model::{Binding, MemberKey, Suggestion, SymbolRef, Visibility};
 
     fn class_violation(
         source_class: &str,
@@ -1602,14 +1570,20 @@ mod tests {
             },
             BreakingChange::ClassAccessNarrowed {
                 class,
-                old_access: ACC_PUBLIC,
-                new_access: 0,
+                from: Visibility::Public,
+                to: Visibility::PackagePrivate,
             },
             BreakingChange::ClassBecameFinal { class },
             BreakingChange::ClassBecameAbstract { class },
             BreakingChange::ClassKindChanged {
                 class,
-                old_interface: true,
+                from: ClassKind::Interface,
+                to: ClassKind::Class,
+            },
+            BreakingChange::ClassKindChanged {
+                class,
+                from: ClassKind::Class,
+                to: ClassKind::Interface,
             },
             BreakingChange::MethodBecameAbstract {
                 class,
@@ -1620,29 +1594,29 @@ mod tests {
                 class,
                 name: method,
                 descriptor: desc,
-                old_access: ACC_PUBLIC,
-                new_access: ACC_PROTECTED,
+                from: Visibility::Public,
+                to: Visibility::Protected,
             },
             BreakingChange::FieldAccessNarrowed {
                 class,
                 name: field,
                 descriptor: intern("I"),
-                old_access: ACC_PROTECTED,
-                new_access: ACC_PRIVATE,
+                from: Visibility::Protected,
+                to: Visibility::Private,
             },
             BreakingChange::MethodStaticChanged {
                 class,
                 name: method,
                 descriptor: desc,
-                old_static: true,
-                new_static: false,
+                from: Binding::Static,
+                to: Binding::Instance,
             },
             BreakingChange::FieldStaticChanged {
                 class,
                 name: field,
                 descriptor: intern("I"),
-                old_static: false,
-                new_static: true,
+                from: Binding::Instance,
+                to: Binding::Static,
             },
             BreakingChange::FieldBecameFinal {
                 class,
@@ -1674,29 +1648,56 @@ mod tests {
         }
     }
 
-    /// The parentheticals carry what the one-word tags leave out, and a newly-final method
+    /// The parentheticals carry what the short tags leave out, and a newly-final method
     /// counts as a method: under a bucket for "other" it read as miscellaneous, which put
     /// every method of a Kotlin library (final by default) in the wrong column.
     #[test]
     fn diff_text_names_both_sides_of_a_change() {
         let out = diff_text(&one_of_every_change());
         for expected in [
-            "CLASS REMOVED   x/C",
-            "METHOD REMOVED  x/C.m ()V",
-            "                (descriptor changed? now: (I)V)",
-            "CLASS NARROWED  x/C (public -> package-private)",
-            "CLASS FINAL     x/C",
-            "CLASS ABSTRACT  x/C",
-            "CLASS KIND      x/C (interface -> class)",
-            "METHOD ABSTRACT x/C.m ()V",
-            "METHOD NARROWED x/C.m ()V (public -> protected)",
-            "FIELD NARROWED  x/C.F I (protected -> private)",
-            "METHOD STATIC   x/C.m ()V (static -> instance)",
-            "FIELD STATIC    x/C.F I (instance -> static)",
-            "METHOD FINAL    x/C.m ()V",
-            "breaking changes: 14 (classes: 5, methods: 5, fields: 4)",
+            "CLASS REMOVED    x/C",
+            "METHOD REMOVED   x/C.m ()V",
+            "                 (descriptor changed? now: (I)V)",
+            "CLASS NARROWED   x/C (public -> package-private)",
+            "CLASS FINAL      x/C",
+            "CLASS ABSTRACT   x/C",
+            // The kind flip puts its direction in the tag, since the class it names is
+            // right there on the line.
+            "BECAME CLASS     x/C",
+            "BECAME INTERFACE x/C",
+            "METHOD ABSTRACT  x/C.m ()V",
+            "METHOD NARROWED  x/C.m ()V (public -> protected)",
+            "FIELD NARROWED   x/C.F I (protected -> private)",
+            "METHOD STATIC    x/C.m ()V (static -> instance)",
+            "FIELD STATIC     x/C.F I (instance -> static)",
+            "METHOD FINAL     x/C.m ()V",
+            "breaking changes: 15 (classes: 6, methods: 5, fields: 4)",
         ] {
             assert!(out.contains(expected), "missing {expected:?}\n{out}");
+        }
+    }
+
+    /// `--json` says what the text says. It used to hand out the raw JVM data the text was
+    /// built from, so a reader had to know that access flag 1 means public.
+    #[test]
+    fn diff_json_speaks_the_same_words_as_the_text() {
+        let out = diff_json(&one_of_every_change()).unwrap();
+        for expected in [
+            r#""kind": "class_access_narrowed""#,
+            r#""from": "public""#,
+            r#""to": "package-private""#,
+            r#""from": "protected""#,
+            r#""to": "private""#,
+            r#""from": "interface""#,
+            r#""to": "interface""#,
+            r#""from": "static""#,
+            r#""to": "instance""#,
+        ] {
+            assert!(out.contains(expected), "missing {expected}\n{out}");
+        }
+        // No raw flag words or bools left to decode.
+        for gone in ["old_access", "new_access", "old_static", "old_interface"] {
+            assert!(!out.contains(gone), "{gone} still in\n{out}");
         }
     }
 

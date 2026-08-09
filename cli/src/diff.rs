@@ -1,8 +1,8 @@
 use crate::index::{ApiIndex, MemberKind, Resolution};
 use crate::intern::Sym;
 use crate::model::{
-    ACC_ABSTRACT, ACC_FINAL, ACC_INTERFACE, ACC_PRIVATE, ACC_STATIC, BreakingChange, ClassName,
-    MemberKey,
+    ACC_ABSTRACT, ACC_FINAL, ACC_PRIVATE, ACC_STATIC, Binding, BreakingChange, ClassKind,
+    ClassName, MemberKey, Visibility,
 };
 
 /// List APIs that existed in old but can no longer be resolved in new, plus incompatibility
@@ -29,21 +29,22 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
         if access_narrowed(entry.access, new_entry.access) {
             changes.push(BreakingChange::ClassAccessNarrowed {
                 class: name,
-                old_access: entry.access,
-                new_access: new_entry.access,
+                from: Visibility::of(entry.access),
+                to: Visibility::of(new_entry.access),
             });
         }
         if entry.access & ACC_FINAL == 0 && new_entry.access & ACC_FINAL != 0 {
             changes.push(BreakingChange::ClassBecameFinal { class: name });
         }
-        let old_interface = entry.access & ACC_INTERFACE != 0;
-        let new_interface = new_entry.access & ACC_INTERFACE != 0;
-        if old_interface != new_interface {
+        let old_kind = ClassKind::of(entry.access);
+        let new_kind = ClassKind::of(new_entry.access);
+        if old_kind != new_kind {
             // The kind flip subsumes becoming abstract (an interface is always
             // abstract), so report only the flip.
             changes.push(BreakingChange::ClassKindChanged {
                 class: name,
-                old_interface,
+                from: old_kind,
+                to: new_kind,
             });
         } else if entry.access & ACC_ABSTRACT == 0 && new_entry.access & ACC_ABSTRACT != 0 {
             changes.push(BreakingChange::ClassBecameAbstract { class: name });
@@ -56,8 +57,8 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
                         class: name,
                         name: key.name,
                         descriptor: key.descriptor,
-                        old_access,
-                        new_access,
+                        from: Visibility::of(old_access),
+                        to: Visibility::of(new_access),
                     });
                 }
                 if old_access & ACC_ABSTRACT == 0 && new_access & ACC_ABSTRACT != 0 {
@@ -72,8 +73,8 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
                         class: name,
                         name: key.name,
                         descriptor: key.descriptor,
-                        old_static: old_access & ACC_STATIC != 0,
-                        new_static: new_access & ACC_STATIC != 0,
+                        from: Binding::of(old_access),
+                        to: Binding::of(new_access),
                     });
                 }
                 if old_access & ACC_FINAL == 0 && new_access & ACC_FINAL != 0 {
@@ -99,8 +100,8 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
                         class: name,
                         name: key.name,
                         descriptor: key.descriptor,
-                        old_access,
-                        new_access,
+                        from: Visibility::of(old_access),
+                        to: Visibility::of(new_access),
                     });
                 }
                 if old_access & ACC_STATIC != new_access & ACC_STATIC {
@@ -108,8 +109,8 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
                         class: name,
                         name: key.name,
                         descriptor: key.descriptor,
-                        old_static: old_access & ACC_STATIC != 0,
-                        new_static: new_access & ACC_STATIC != 0,
+                        from: Binding::of(old_access),
+                        to: Binding::of(new_access),
                     });
                 }
                 if old_access & ACC_FINAL == 0 && new_access & ACC_FINAL != 0 {

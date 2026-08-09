@@ -71,6 +71,93 @@ impl ClassApi {
     }
 }
 
+/// Both sides of a directional change carry the word `diff` prints for them, so the text
+/// listing and `--json` say the same thing. They used to be raw JVM data (an access flag
+/// word, a bool), which left every reader to decode `"old_access": 1` for themselves.
+/// The variant names which axis moved, so the fields are just `from` and `to`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Visibility {
+    Public,
+    Protected,
+    PackagePrivate,
+    Private,
+}
+
+impl Visibility {
+    /// Mutually exclusive per JVMS 4.1. The order only matters for a malformed class file.
+    pub fn of(access: u16) -> Self {
+        if access & ACC_PUBLIC != 0 {
+            Visibility::Public
+        } else if access & ACC_PROTECTED != 0 {
+            Visibility::Protected
+        } else if access & ACC_PRIVATE != 0 {
+            Visibility::Private
+        } else {
+            Visibility::PackagePrivate
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Visibility::Public => "public",
+            Visibility::Protected => "protected",
+            Visibility::PackagePrivate => "package-private",
+            Visibility::Private => "private",
+        }
+    }
+}
+
+/// Whether a member is held by the class or by an instance of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Binding {
+    Static,
+    Instance,
+}
+
+impl Binding {
+    pub fn of(access: u16) -> Self {
+        if access & ACC_STATIC != 0 {
+            Binding::Static
+        } else {
+            Binding::Instance
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Binding::Static => "static",
+            Binding::Instance => "instance",
+        }
+    }
+}
+
+/// Which side of the class/interface divide a type is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClassKind {
+    Class,
+    Interface,
+}
+
+impl ClassKind {
+    pub fn of(access: u16) -> Self {
+        if access & ACC_INTERFACE != 0 {
+            ClassKind::Interface
+        } else {
+            ClassKind::Class
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ClassKind::Class => "class",
+            ClassKind::Interface => "interface",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BreakingChange {
@@ -92,8 +179,8 @@ pub enum BreakingChange {
     },
     ClassAccessNarrowed {
         class: ClassName,
-        old_access: u16,
-        new_access: u16,
+        from: Visibility,
+        to: Visibility,
     },
     ClassBecameFinal {
         class: ClassName,
@@ -107,8 +194,8 @@ pub enum BreakingChange {
     /// the old kind fail with IncompatibleClassChangeError.
     ClassKindChanged {
         class: ClassName,
-        /// True when the old side was the interface (interface -> class).
-        old_interface: bool,
+        from: ClassKind,
+        to: ClassKind,
     },
     /// A concrete method became abstract: a subclass compiled without an
     /// override inherits nothing to call (AbstractMethodError).
@@ -121,29 +208,29 @@ pub enum BreakingChange {
         class: ClassName,
         name: Sym,
         descriptor: Sym,
-        old_access: u16,
-        new_access: u16,
+        from: Visibility,
+        to: Visibility,
     },
     FieldAccessNarrowed {
         class: ClassName,
         name: Sym,
         descriptor: Sym,
-        old_access: u16,
-        new_access: u16,
+        from: Visibility,
+        to: Visibility,
     },
     MethodStaticChanged {
         class: ClassName,
         name: Sym,
         descriptor: Sym,
-        old_static: bool,
-        new_static: bool,
+        from: Binding,
+        to: Binding,
     },
     FieldStaticChanged {
         class: ClassName,
         name: Sym,
         descriptor: Sym,
-        old_static: bool,
-        new_static: bool,
+        from: Binding,
+        to: Binding,
     },
     FieldBecameFinal {
         class: ClassName,
