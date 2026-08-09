@@ -65,9 +65,16 @@ pub fn class_name_of(rc: &RawClass) -> Result<Sym> {
     Ok(intern(&rc.class_name(rc.this_class)?))
 }
 
+/// The edges one class contributes to the hierarchy graph.
+pub struct Hierarchy {
+    pub super_name: Option<Sym>,
+    pub interfaces: Vec<Sym>,
+    pub nest_host: Option<Sym>,
+}
+
 /// For pass 1: extract only the information needed for the hierarchy graph.
 /// The point is to avoid touching (and interning) member names and descriptors.
-pub fn extract_hierarchy(rc: &RawClass) -> Result<(Sym, Option<Sym>, Vec<Sym>, Option<Sym>)> {
+pub fn extract_hierarchy(rc: &RawClass) -> Result<(Sym, Hierarchy)> {
     let name = intern(&rc.class_name(rc.this_class)?);
     let super_name = if rc.super_class == 0 {
         None
@@ -79,7 +86,14 @@ pub fn extract_hierarchy(rc: &RawClass) -> Result<(Sym, Option<Sym>, Vec<Sym>, O
         .iter()
         .map(|&i| Ok(intern(&rc.class_name(i)?)))
         .collect::<Result<Vec<_>>>()?;
-    Ok((name, super_name, interfaces, nest_host_of(rc)?))
+    Ok((
+        name,
+        Hierarchy {
+            super_name,
+            interfaces,
+            nest_host: nest_host_of(rc)?,
+        },
+    ))
 }
 
 /// Constant-pool index is referenced by an invoke/get/put opcode (so it is handled with

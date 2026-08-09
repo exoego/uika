@@ -2,6 +2,10 @@
 resolver = "3"
 members = ["cli"]
 
+# priority keeps the group below individual lint overrides.
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+
 # Tuned for published size. The four native ZIPs are the heaviest thing the
 # shared net.exoego namespace ships to Maven Central, and that quota is per
 # organization, so bytes saved here free budget for every other project under

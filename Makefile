@@ -1,5 +1,5 @@
 .PHONY: help build check test fmt fmt-check clean probe \
-	cargo-build cargo-release cargo-test cargo-fmt cargo-fmt-check \
+	cargo-build cargo-release cargo-test cargo-clippy cargo-fmt cargo-fmt-check \
 	gradle-build gradle-check gradle-test gradle-clean \
 	sbt-compile sbt-scripted sbt-clean \
 	maven-verify maven-clean \
@@ -27,7 +27,7 @@ help:
 		'Targets:' \
 		'  make build        Build Rust CLI and JVM build-tool plugins' \
 		'  make test         Run Rust tests and JVM build-tool plugin tests' \
-		'  make check        Run formatting checks and all plugin checks' \
+		'  make check        Run formatting and lint checks and all plugin checks' \
 		'  make fmt          Format Rust sources' \
 		'  make clean        Remove Rust and JVM plugin build outputs' \
 		'' \
@@ -42,7 +42,7 @@ help:
 
 build: cargo-build gradle-build sbt-compile maven-verify
 
-check: cargo-fmt-check cargo-test gradle-check sbt-scripted maven-verify
+check: cargo-fmt-check cargo-clippy cargo-test gradle-check sbt-scripted maven-verify
 
 test: cargo-test gradle-test sbt-scripted maven-verify
 
@@ -61,6 +61,9 @@ cargo-release:
 
 cargo-test:
 	$(CARGO) test
+
+cargo-clippy:
+	$(CARGO) clippy --all-targets --all-features
 
 cargo-fmt:
 	$(CARGO) fmt

@@ -14,7 +14,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 /// Positioned-read abstraction (tests use byte slices).
 pub trait ReadAt {
     fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize>;
-    fn len(&self) -> u64;
+    fn size(&self) -> u64;
 }
 
 impl ReadAt for std::fs::File {
@@ -28,7 +28,7 @@ impl ReadAt for std::fs::File {
         std::os::windows::fs::FileExt::seek_read(self, buf, offset)
     }
 
-    fn len(&self) -> u64 {
+    fn size(&self) -> u64 {
         self.metadata().map(|m| m.len()).unwrap_or(0)
     }
 }
@@ -45,7 +45,7 @@ impl ReadAt for &[u8] {
         Ok(n)
     }
 
-    fn len(&self) -> u64 {
+    fn size(&self) -> u64 {
         let slice: &[u8] = self;
         slice.len() as u64
     }
@@ -75,7 +75,7 @@ pub struct WindowedReader<S> {
 
 impl<S: ReadAt> WindowedReader<S> {
     pub fn new(source: S, window_size: usize) -> Self {
-        let source_len = source.len();
+        let source_len = source.size();
         Self {
             source,
             source_len,

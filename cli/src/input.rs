@@ -352,7 +352,7 @@ fn batch_jar_zip(
 /// Return None for zip64 or unexpected structures so the caller uses the zip crate path.
 fn parse_central_directory(file: &File) -> Option<(Vec<CdEntry>, u64)> {
     use crate::window::ReadAt;
-    let len = ReadAt::len(file);
+    let len = file.size();
     // Search for EOCD (PK\x05\x06) from the end. Read enough for max comment length + record length.
     let tail_len = len.min(66_000);
     let mut tail = vec![0u8; tail_len as usize];
@@ -593,7 +593,7 @@ mod tests {
     fn representative_offsets_skips_directories() {
         let dir = std::env::temp_dir().join(format!("uika_dedup_dir_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let (keeps, skipped) = representative_offsets(&[dir.clone()]);
+        let (keeps, skipped) = representative_offsets(std::slice::from_ref(&dir));
         assert!(keeps[0].is_none());
         assert_eq!(skipped, 0);
         std::fs::remove_dir_all(&dir).ok();
