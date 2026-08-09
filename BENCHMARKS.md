@@ -50,7 +50,7 @@ scanned 8164 classes: ❌ 2 broken
 
 Plain `uika check`, given bare JAR paths instead of a resolved dump, groups the
 same violation under the broken symbol with the runtime error it causes
-(`method removed -> NoSuchMethodError at first call`), without the 💡 fix
+(`method removed, throws NoSuchMethodError at first call`), without the 💡 fix
 block (it has file paths, not coordinates).
 
 uika `diff` (library only) lists every bytecode-level removal, the real one

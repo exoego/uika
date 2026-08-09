@@ -355,7 +355,7 @@ fn structural_lines(v: &Violation) -> (String, String) {
     use Reason::*;
     let owner = dotted(v.reference.owner.as_str());
     let loads = format!(
-        "-> VerifyError when {} loads",
+        "throws VerifyError when {} loads",
         simple(v.source_class.as_str())
     );
     match (v.reason, v.reference.member) {
@@ -366,10 +366,10 @@ fn structural_lines(v: &Violation) -> (String, String) {
             ),
             match v.invocation_found {
                 Some(false) => format!(
-                    "-> AbstractMethodError only when {} is first called (no invocation found in scanned bytecode)",
+                    "throws AbstractMethodError only when {} is first called (no invocation found in scanned bytecode)",
                     m.name
                 ),
-                _ => format!("-> AbstractMethodError when {} is called", m.name),
+                _ => format!("throws AbstractMethodError when {} is called", m.name),
             },
         ),
         (MethodBecameFinal, Some(_)) => (
@@ -384,7 +384,7 @@ fn structural_lines(v: &Violation) -> (String, String) {
         (ClassKindChanged, _) => (
             format!("extends or implements {owner} whose kind changed (class <-> interface)"),
             format!(
-                "-> IncompatibleClassChangeError when {} loads",
+                "throws IncompatibleClassChangeError when {} loads",
                 simple(v.source_class.as_str())
             ),
         ),
@@ -614,7 +614,7 @@ fn reference_blocks(violations: &[&Violation]) -> Vec<String> {
             let mut out = String::new();
             writeln!(out, "❌ {target}").unwrap();
             match runtime_error(vs[0]) {
-                Some(err) => writeln!(out, "    {} -> {err}", display_reason(vs[0])).unwrap(),
+                Some(err) => writeln!(out, "    {}, throws {err}", display_reason(vs[0])).unwrap(),
                 None => writeln!(out, "    {}", display_reason(vs[0])).unwrap(),
             }
             let users: std::collections::BTreeSet<(String, String, String)> = vs
@@ -1217,7 +1217,7 @@ mod tests {
         // One block for the one removed symbol, both users under it.
         assert_eq!(out.matches("❌ x.Gone").count(), 1, "\n{out}");
         assert!(
-            out.contains("    class removed -> NoClassDefFoundError at first use"),
+            out.contains("    class removed, throws NoClassDefFoundError at first use"),
             "\n{out}"
         );
         assert!(out.contains("    used by 2 classes:"), "\n{out}");
@@ -1263,7 +1263,7 @@ mod tests {
             "\n{out}"
         );
         assert!(
-            out.contains("    method removed -> NoSuchMethodError at first call"),
+            out.contains("    method removed, throws NoSuchMethodError at first call"),
             "\n{out}"
         );
         assert!(
@@ -1271,12 +1271,14 @@ mod tests {
             "\n{out}"
         );
         assert!(
-            out.contains("    constructor access narrowed -> IllegalAccessError at first `new`"),
+            out.contains(
+                "    constructor access narrowed, throws IllegalAccessError at first `new`"
+            ),
             "\n{out}"
         );
         assert!(out.contains("❌ x.Fields.COUNTS: int[]"), "\n{out}");
         assert!(
-            out.contains("    field removed -> NoSuchFieldError at first access"),
+            out.contains("    field removed, throws NoSuchFieldError at first access"),
             "\n{out}"
         );
     }
@@ -1319,7 +1321,7 @@ mod tests {
             "\n{out}"
         );
         assert!(
-            out.contains("        -> AbstractMethodError when display is called"),
+            out.contains("        throws AbstractMethodError when display is called"),
             "\n{out}"
         );
         assert!(
@@ -1329,7 +1331,7 @@ mod tests {
             "\n{out}"
         );
         assert!(
-            out.contains("        -> VerifyError when SLF4JLogger loads"),
+            out.contains("        throws VerifyError when SLF4JLogger loads"),
             "\n{out}"
         );
     }
