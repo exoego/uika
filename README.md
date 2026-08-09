@@ -145,7 +145,7 @@ checked kotlinx-coroutines-core-jvm-1.7.1.jar -> kotlinx-coroutines-core-jvm-1.1
     used by 1 class:
         io.ktor.utils.io.jvm.javaio.BlockingAdapter  (ktor-io-jvm-2.3.13.jar)
 
-scanned 372 classes: ❌ 1 broken (of which 💥 1 reachable, ⚠️ 0 not proven reachable), ❓ 5 unverified references (hierarchy escapes scope)
+scanned 372 classes: ❌ 1 broken (of which 💥 1 reachable, ⚠️ 0 not proven reachable), ❓ 5 unverified references (hierarchy escapes the analyzed scope)
 
 # Detect broken references caused by every artifact whose version changed.
 # When application roots are known (build outputs in the dump, or --app), violations
@@ -154,7 +154,7 @@ $ uika upgrade-check --before /tmp/before.json --after /tmp/after.json
 dependency changes: 1
     CHANGED io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
 
-per-module check: 2 of 41 modules changed resolution (39 unchanged)
+per-module check: 2 of 41 modules changed their resolved versions (39 unchanged)
     :app  scanned 84013 classes, ❌ 42 broken, ❓ 118 unverified
     :worker  scanned 61200 classes, ✅ 0 broken, ❓ 87 unverified
 
@@ -175,7 +175,7 @@ per-module check: 2 of 41 modules changed resolution (39 unchanged)
 💡 suggestion: ...
     why: ...
 
-scanned 145213 classes: ❌ 42 broken (of which 💥 25 reachable, ⚠️ 17 not proven reachable), ❓ 205 unverified references (hierarchy escapes scope)
+scanned 145213 classes: ❌ 42 broken (of which 💥 25 reachable, ⚠️ 17 not proven reachable), ❓ 205 unverified references (hierarchy escapes the analyzed scope)
 
 # Debugging aid: dump the extracted API surface of a JAR
 $ uika dump some.jar
@@ -661,7 +661,7 @@ to run.
 $ uika check --old guava-22.0.jar --new guava-23.0-rc1.jar \
              --classpath selenium-remote-driver-3.4.0.jar
 ...
-scanned 205 classes: ❌ 2 broken, ❓ 16 unverified references (hierarchy escapes scope)
+scanned 205 classes: ❌ 2 broken, ❓ 16 unverified references (hierarchy escapes the analyzed scope)
 
 $ uika check --old guava-22.0.jar --new guava-23.0-rc1.jar \
              --classpath selenium-remote-driver-3.4.0.jar --jdk-release 17

@@ -125,7 +125,7 @@ fn build(change: &DependencyChange, referenced_by: Option<String>) -> Suggestion
     let advice = if change.after.is_empty() {
         // Coordinate dropped entirely by the upgrade: pinning a version back is meaningless.
         format!(
-            "{owner} was removed by the upgrade but {referencer} still needs it; \
+            "{owner} was removed by the upgrade, but {referencer} still needs it; \
              upgrade {referencer} to a release that no longer requires {owner}, or restore {owner}"
         )
     } else {
@@ -296,7 +296,7 @@ mod tests {
         );
         assert_eq!(
             s.advice,
-            "io.opentelemetry.instrumentation:opentelemetry-ktor-common was removed by the upgrade \
+            "io.opentelemetry.instrumentation:opentelemetry-ktor-common was removed by the upgrade, \
              but com.example:app:1.0 still needs it; upgrade com.example:app:1.0 to a release that \
              no longer requires io.opentelemetry.instrumentation:opentelemetry-ktor-common, or \
              restore io.opentelemetry.instrumentation:opentelemetry-ktor-common"
@@ -318,7 +318,7 @@ mod tests {
         );
         assert_eq!(
             s.advice,
-            "io.opentelemetry.instrumentation:opentelemetry-ktor-common was removed by the upgrade \
+            "io.opentelemetry.instrumentation:opentelemetry-ktor-common was removed by the upgrade, \
              but the referencing artifact still needs it; upgrade the referencing artifact to a \
              release that no longer requires io.opentelemetry.instrumentation:opentelemetry-ktor-common, \
              or restore io.opentelemetry.instrumentation:opentelemetry-ktor-common"

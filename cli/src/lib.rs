@@ -408,7 +408,7 @@ fn cmd_upgrade_check(
     }
     if !merged {
         eprintln!(
-            "warning: dump carries no per-module classpaths; checking the merged universe \
+            "warning: the dump carries no per-module classpaths; checking the merged universe \
              (regenerate the dumps with a current uika plugin for per-module checking)"
         );
     }
@@ -510,7 +510,7 @@ fn plan_module_runs(before: &gradle::Universe, after: &gradle::Universe) -> Modu
             Some(before_module) => {
                 let before_versions = before_module.versions();
                 // A module that lost its ENTIRE resolution is missing data (partial build,
-                // failed resolution), not a upgrade that removed every dependency; diffing
+                // failed resolution), not an upgrade that removed every dependency; diffing
                 // it would report each of its references as broken.
                 if module_versions.is_empty() && !before_versions.is_empty() {
                     eprintln!(
