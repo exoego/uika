@@ -127,7 +127,7 @@ $ uika check --old old.jar --new new.jar --classpath ~/.gradle/caches/.../suspec
 # (removals, access narrowing, static/instance changes, newly-final/abstract classes/members, class<->interface flips)
 # Every line is a tag, the affected symbol, and the direction where a change has one.
 $ uika diff guava-22.0.jar guava-23.0-rc1.jar [--json]
-CLASS FINAL      com/google/common/collect/BoundType
+BECAME FINAL     com/google/common/collect/BoundType
 FIELD REMOVED    com/google/common/graph/GraphConstants.EDGE_CONNECTING_NOT_IN_GRAPH Ljava/lang/String;
 METHOD NARROWED  com/google/common/collect/Iterators$ConcatenatedIterator.<init> (Ljava/util/Iterator;)V (public -> package-private)
 

@@ -1,7 +1,8 @@
 use crate::check::CheckReport;
 use crate::intern::Sym;
 use crate::model::{
-    BreakingChange, ClassKind, Reason, RefKind, Tier, Violation, reachable_axis_valid, tier,
+    Binding, BreakingChange, ClassKind, Reason, RefKind, Tier, Violation, reachable_axis_valid,
+    tier,
 };
 use anyhow::Result;
 use serde::Serialize;
@@ -14,6 +15,15 @@ use std::fmt::Write;
 /// are kept short, because everything the column takes comes off the name, which is the
 /// long part of the line. The widest is BECAME INTERFACE.
 const TAG_WIDTH: usize = 16;
+
+/// A state a member flipped to. Both static tags name the side landed on rather than the
+/// move, like the other BECAME tags, and a two-state flip loses nothing by it.
+fn static_tag(to: Binding) -> &'static str {
+    match to {
+        Binding::Static => "BECAME STATIC",
+        Binding::Instance => "BECAME INSTANCE",
+    }
+}
 
 /// The `(descriptor changed? now: ...)` hint, as a continuation line indented to the name
 /// column. The indent is derived from TAG_WIDTH, never spelled out, so it cannot drift.
@@ -82,16 +92,14 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
             }
             BreakingChange::ClassBecameFinal { class } => {
                 classes += 1;
-                ("CLASS FINAL", format!("{class}"))
+                ("BECAME FINAL", format!("{class}"))
             }
             BreakingChange::ClassBecameAbstract { class } => {
                 classes += 1;
-                ("CLASS ABSTRACT", format!("{class}"))
+                ("BECAME ABSTRACT", format!("{class}"))
             }
             BreakingChange::ClassKindChanged { class, to, .. } => {
                 classes += 1;
-                // The tag carries the direction, since the class it names is right there:
-                // "BECAME INTERFACE io/ktor/utils/io/ByteChannel".
                 let tag = match to {
                     ClassKind::Interface => "BECAME INTERFACE",
                     ClassKind::Class => "BECAME CLASS",
@@ -104,7 +112,7 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 descriptor,
             } => {
                 methods += 1;
-                ("METHOD ABSTRACT", format!("{class}.{name} {descriptor}"))
+                ("BECAME ABSTRACT", format!("{class}.{name} {descriptor}"))
             }
             BreakingChange::MethodAccessNarrowed {
                 class,
@@ -144,35 +152,21 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 class,
                 name,
                 descriptor,
-                from,
                 to,
+                ..
             } => {
                 methods += 1;
-                (
-                    "METHOD STATIC",
-                    format!(
-                        "{class}.{name} {descriptor} ({} -> {})",
-                        from.as_str(),
-                        to.as_str()
-                    ),
-                )
+                (static_tag(*to), format!("{class}.{name} {descriptor}"))
             }
             BreakingChange::FieldStaticChanged {
                 class,
                 name,
                 descriptor,
-                from,
                 to,
+                ..
             } => {
                 fields += 1;
-                (
-                    "FIELD STATIC",
-                    format!(
-                        "{class}.{name} {descriptor} ({} -> {})",
-                        from.as_str(),
-                        to.as_str()
-                    ),
-                )
+                (static_tag(*to), format!("{class}.{name} {descriptor}"))
             }
             BreakingChange::FieldBecameFinal {
                 class,
@@ -180,7 +174,7 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 descriptor,
             } => {
                 fields += 1;
-                ("FIELD FINAL", format!("{class}.{name} {descriptor}"))
+                ("BECAME FINAL", format!("{class}.{name} {descriptor}"))
             }
             BreakingChange::MethodBecameFinal {
                 class,
@@ -188,7 +182,7 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 descriptor,
             } => {
                 methods += 1;
-                ("METHOD FINAL", format!("{class}.{name} {descriptor}"))
+                ("BECAME FINAL", format!("{class}.{name} {descriptor}"))
             }
         };
         writeln!(out, "{tag:<TAG_WIDTH$} {subject}").unwrap();
@@ -1014,7 +1008,7 @@ pub fn check_json(report: &CheckReport) -> Result<String> {
 mod tests {
     use super::*;
     use crate::intern::intern;
-    use crate::model::{Binding, MemberKey, Suggestion, SymbolRef, Visibility};
+    use crate::model::{MemberKey, Suggestion, SymbolRef, Visibility};
 
     fn class_violation(
         source_class: &str,
@@ -1659,18 +1653,18 @@ mod tests {
             "METHOD REMOVED   x/C.m ()V",
             "                 (descriptor changed? now: (I)V)",
             "CLASS NARROWED   x/C (public -> package-private)",
-            "CLASS FINAL      x/C",
-            "CLASS ABSTRACT   x/C",
-            // The kind flip puts its direction in the tag, since the class it names is
-            // right there on the line.
+            // A state change names the state landed on, and the symbol it applies to is
+            // right there on the line, so the tag does not repeat its kind.
+            "BECAME FINAL     x/C",
+            "BECAME ABSTRACT  x/C",
             "BECAME CLASS     x/C",
             "BECAME INTERFACE x/C",
-            "METHOD ABSTRACT  x/C.m ()V",
+            "BECAME ABSTRACT  x/C.m ()V",
             "METHOD NARROWED  x/C.m ()V (public -> protected)",
             "FIELD NARROWED   x/C.F I (protected -> private)",
-            "METHOD STATIC    x/C.m ()V (static -> instance)",
-            "FIELD STATIC     x/C.F I (instance -> static)",
-            "METHOD FINAL     x/C.m ()V",
+            "BECAME INSTANCE  x/C.m ()V",
+            "BECAME STATIC    x/C.F I",
+            "BECAME FINAL     x/C.m ()V",
             "breaking changes: 15 (classes: 6, methods: 5, fields: 4)",
         ] {
             assert!(out.contains(expected), "missing {expected:?}\n{out}");
