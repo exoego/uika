@@ -86,8 +86,6 @@ pub struct ExcludeRule {
     /// Violation kinds the rule is pinned to. Empty matches every kind. More than one only
     /// from a spelling that named a category before it was split, e.g. "class_kind_changed".
     kinds: Vec<Reason>,
-    /// The kind as the rule described it, for the unused-rule warning.
-    kind_label: Option<String>,
     reason: String,
 }
 
@@ -101,14 +99,12 @@ impl ExcludeRule {
                 (None, _) => format!("{owner}"),
             });
         }
-        if let Some(label) = &self.kind_label {
-            // Canonical spelling when the rule names exactly one kind, so a rule written in
-            // the spaced form is echoed in the form the docs use.
-            let shown = match self.kinds.as_slice() {
-                [one] => one.config_str(),
-                _ => label.clone(),
-            };
-            parts.push(format!("kind \"{shown}\""));
+        if !self.kinds.is_empty() {
+            // Named in the canonical spelling rather than as the rule wrote it, so a rule
+            // written in the spaced form, or in a spelling since split, is echoed in the
+            // form the docs use.
+            let shown: Vec<String> = self.kinds.iter().map(|k| k.config_str()).collect();
+            parts.push(format!("kind \"{}\"", shown.join(", ")));
         }
         format!("{} ({})", parts.join(" "), self.reason)
     }
@@ -184,7 +180,6 @@ fn compile(entry: RawEntry) -> Result<ExcludeRule> {
         member: entry.member,
         descriptor: entry.descriptor,
         kinds,
-        kind_label: entry.kind,
         reason: entry.reason,
     })
 }
@@ -767,6 +762,20 @@ mod tests {
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].reason, Reason::MethodBecameStatic);
         assert!(stats.unused.is_empty());
+
+        // Unused, it reports the kinds it stands for now, not the spelling it was written
+        // in: the rule has to be rewritten in those terms to be narrowed.
+        let mut nothing_to_match = vec![kind_violation("lib/A", Reason::ClassRemoved)];
+        let stats = filter(&mut nothing_to_match, &rules);
+        assert_eq!(stats.unused.len(), 2);
+        assert!(
+            stats
+                .unused
+                .iter()
+                .any(|u| u.contains("kind \"class_became_interface, interface_became_class\"")),
+            "{:?}",
+            stats.unused
+        );
     }
 
     #[test]
