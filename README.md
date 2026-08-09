@@ -141,7 +141,7 @@ checked kotlinx-coroutines-core-jvm-1.7.1.jar -> kotlinx-coroutines-core-jvm-1.1
 --------------------------------------------------------------------------------
 
 ❌ kotlinx.coroutines.EventLoopKt.processNextEventInCurrentThread()
-    method removed -> NoSuchMethodError at first call
+    method removed, throws NoSuchMethodError at first call
     used by 1 class:
         io.ktor.utils.io.jvm.javaio.BlockingAdapter  (ktor-io-jvm-2.3.13.jar)
 
@@ -226,7 +226,7 @@ subtype). When none exists the violation gets its own 💤 section between 💥 
 
 ❌ app.B  (build/classes/java/main)
     inherits abstract lib.A.heap() without implementing it
-        -> AbstractMethodError only when heap is first called (no invocation found in scanned bytecode)
+        throws AbstractMethodError only when heap is first called (no invocation found in scanned bytecode)
 ```
 
 Like ⚠️, this is a confidence tier and not a proof: a call through reflection or
