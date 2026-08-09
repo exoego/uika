@@ -1,4 +1,4 @@
-use crate::extract::{class_name_of, extract_hierarchy, extract_refs};
+use crate::extract::{Hierarchy, class_name_of, extract_hierarchy, extract_refs};
 use crate::index::{
     ApiIndex, ClassGraph, MemberKind, MemberResolution, Resolution, Scope, is_object_method,
     object_sym,
@@ -42,9 +42,8 @@ pub struct CheckReport {
 pub struct ParsedTarget {
     pub source: Sym,
     pub class_name: Sym,
-    /// (super, interfaces, nest host).
     /// None for same-name classes already in the graph (duplicate from another version).
-    pub hierarchy: Option<(Option<Sym>, Vec<Sym>, Option<Sym>)>,
+    pub hierarchy: Option<Hierarchy>,
     /// Only set when the entry name differs from "{class_name}.class" (directory outputs, etc.). Used for pass-2 rereads.
     pub entry_override: Option<String>,
     /// Only references whose owner exists in the old index (= automatically scoped to the checked library).
@@ -112,8 +111,7 @@ pub fn parse_targets(
                     invocations,
                 ));
             }
-            let (_, super_name, interfaces, nest_host) =
-                extract_hierarchy(&rc).map_err(with_ctx)?;
+            let (_, hierarchy) = extract_hierarchy(&rc).map_err(with_ctx)?;
             let entry_override =
                 if lc.entry_name.strip_suffix(".class") == Some(class_name.as_str()) {
                     None
@@ -138,7 +136,7 @@ pub fn parse_targets(
                 ParsedTarget {
                     source: lc.source,
                     class_name,
-                    hierarchy: Some((super_name, interfaces, nest_host)),
+                    hierarchy: Some(hierarchy),
                     entry_override,
                     refs,
                     edges,
@@ -210,12 +208,12 @@ impl ScanResult {
             // (e.g. a copy whose same-named class has a different superclass),
             // which produced false positives.
             let won = match t.hierarchy {
-                Some((super_name, interfaces, nest_host)) => self.graph.insert_if_absent(
+                Some(h) => self.graph.insert_if_absent(
                     t.class_name,
-                    super_name,
-                    &interfaces,
+                    h.super_name,
+                    &h.interfaces,
                     &t.edges,
-                    nest_host,
+                    h.nest_host,
                     t.source,
                 ),
                 // Parse-time skip: the class name was already in the graph before this chunk.
@@ -2648,7 +2646,11 @@ mod tests {
             targets: vec![ParsedTarget {
                 source: intern("app.jar"),
                 class_name: intern("app/Use"),
-                hierarchy: Some((Some(object_sym()), vec![], None)),
+                hierarchy: Some(Hierarchy {
+                    super_name: Some(object_sym()),
+                    interfaces: vec![],
+                    nest_host: None,
+                }),
                 entry_override: None,
                 refs: vec![class_ref("javax/xml/Gone")],
                 edges: vec![],
@@ -2669,7 +2671,11 @@ mod tests {
         let target = |source: &str, super_name: &str| ParsedTarget {
             source: intern(source),
             class_name,
-            hierarchy: Some((Some(intern(super_name)), vec![], None)),
+            hierarchy: Some(Hierarchy {
+                super_name: Some(intern(super_name)),
+                interfaces: vec![],
+                nest_host: None,
+            }),
             entry_override: None,
             refs: vec![method_ref("lib/A", "m", "()V")],
             edges: vec![],
@@ -2950,7 +2956,11 @@ mod tests {
         let winner = ParsedTarget {
             source: intern("first.jar"),
             class_name,
-            hierarchy: Some((Some(intern("lib/Base")), vec![], None)),
+            hierarchy: Some(Hierarchy {
+                super_name: Some(intern("lib/Base")),
+                interfaces: vec![],
+                nest_host: None,
+            }),
             entry_override: None,
             refs: vec![],
             edges: vec![],
@@ -2980,7 +2990,11 @@ mod tests {
             targets: vec![ParsedTarget {
                 source: intern("first.jar"),
                 class_name,
-                hierarchy: Some((Some(intern("lib/Base")), vec![], None)),
+                hierarchy: Some(Hierarchy {
+                    super_name: Some(intern("lib/Base")),
+                    interfaces: vec![],
+                    nest_host: None,
+                }),
                 entry_override: None,
                 refs: vec![],
                 edges: vec![],

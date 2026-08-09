@@ -6,6 +6,9 @@ name = "uika"
 version = "0.0.0-dev"
 edition = "2024"
 
+[lints]
+workspace = true
+
 [features]
 # Memory breakdown investigation (counting allocator + per-phase reporting).
 memstats = []

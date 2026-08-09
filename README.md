@@ -681,7 +681,7 @@ scanned 205 classes: ❌ 2 broken
 ## Development
 
 ```console
-$ make check   # cargo fmt --check + cargo test + Gradle/sbt/Maven plugin checks
+$ make check   # cargo fmt --check + cargo clippy + cargo test + Gradle/sbt/Maven plugin checks
 $ make test    # cargo test + Gradle/sbt/Maven plugin tests
 $ make build   # cargo build + Gradle/sbt/Maven plugin builds
 
