@@ -126,7 +126,7 @@ $ uika check --old old.jar --new new.jar --classpath ~/.gradle/caches/.../suspec
 # List breaking changes between old/new versions of a library
 # (removals, access narrowing, static/instance changes, newly-final/abstract classes/members, class<->interface flips)
 # Each line opens with the change kind, which is also what --json puts in its "kind" field:
-# jq 'select(.kind == "class_became_final")' selects the CLASS BECAME FINAL lines.
+# jq '.breaking_changes[] | select(.kind == "class_became_final")' selects those lines.
 $ uika diff guava-22.0.jar guava-23.0-rc1.jar [--json]
 CLASS BECAME FINAL     com/google/common/collect/BoundType
 FIELD REMOVED          com/google/common/graph/GraphConstants.EDGE_CONNECTING_NOT_IN_GRAPH Ljava/lang/String;

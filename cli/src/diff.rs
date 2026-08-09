@@ -146,19 +146,7 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
 }
 
 fn access_narrowed(old_access: u16, new_access: u16) -> bool {
-    access_rank(new_access) < access_rank(old_access)
-}
-
-fn access_rank(access: u16) -> u8 {
-    if access & crate::model::ACC_PUBLIC != 0 {
-        3
-    } else if access & crate::model::ACC_PROTECTED != 0 {
-        2
-    } else if access & ACC_PRIVATE == 0 {
-        1
-    } else {
-        0
-    }
+    Visibility::of(new_access) < Visibility::of(old_access)
 }
 
 /// Members excluding private ones, sorted by string value for display.

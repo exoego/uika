@@ -7,7 +7,7 @@ use crate::input::LoadedClass;
 use crate::intern::Sym;
 use crate::model::{
     ACC_ABSTRACT, ACC_BRIDGE, ACC_FINAL, ACC_INTERFACE, ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC,
-    ACC_STATIC, ACC_SYNTHETIC, MemberKey, Reason, RefKind, SymbolRef, Violation,
+    ACC_STATIC, ACC_SYNTHETIC, MemberKey, Reason, RefKind, SymbolRef, Violation, Visibility,
 };
 use anyhow::Result;
 use rayon::prelude::*;
@@ -808,7 +808,7 @@ fn verdict(
                 // is_accessible against old because the subclass walk only sees scanned
                 // classes and would demote real narrowing.
                 return match old.class_access(r.owner) {
-                    Some(old_access) if access_level(access) < access_level(old_access) => {
+                    Some(old_access) if Visibility::of(access) < Visibility::of(old_access) => {
                         RefVerdict::Broken(r, Reason::ClassAccessNarrowed)
                     }
                     Some(_) => RefVerdict::Ok,
@@ -884,7 +884,7 @@ fn verdict(
                     // Same old-relative gate as the class-access case above.
                     return match old.resolve_member(r.owner, member, kind) {
                         MemberResolution::Found(old_found)
-                            if access_level(found.access) < access_level(old_found.access) =>
+                            if Visibility::of(found.access) < Visibility::of(old_found.access) =>
                         {
                             RefVerdict::Broken(
                                 r,
@@ -1563,30 +1563,6 @@ fn first_ancestor_with_final_methods(
             .or_else(|| new.classes.get(&class).and_then(|entry| entry.super_name));
     }
     None
-}
-
-/// JVMS visibility for the narrowing comparison. The derived Ord follows
-/// variant declaration order, so it encodes the access lattice.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum AccessLevel {
-    Private,
-    PackagePrivate,
-    Protected,
-    Public,
-}
-
-fn access_level(access: u16) -> AccessLevel {
-    // The flag bits are mutually exclusive per JVMS 4.1; precedence below only
-    // matters for malformed class files.
-    if access & ACC_PUBLIC != 0 {
-        AccessLevel::Public
-    } else if access & ACC_PROTECTED != 0 {
-        AccessLevel::Protected
-    } else if access & ACC_PRIVATE != 0 {
-        AccessLevel::Private
-    } else {
-        AccessLevel::PackagePrivate
-    }
 }
 
 /// Three-valued accessibility. Unknown only arises from the protected-subclass
@@ -2424,6 +2400,67 @@ mod tests {
             &ClassGraph::new(),
         );
         assert!(matches!(v, RefVerdict::Ok));
+    }
+
+    /// The reason names the member kind and the direction the member moved, and all four
+    /// combinations come off one match, so each one is pinned. Getting a direction backwards
+    /// would still report the break, with the wrong sentence and the wrong exclude kind.
+    #[test]
+    fn static_flip_reason_names_the_member_kind_and_direction() {
+        fn flip(from: u16, to: u16, reference: SymbolRef) -> Reason {
+            let old = ApiIndex::build([class_with_method_access("lib/C", &[("m", "()V", from)])]);
+            let new = ApiIndex::build([class_with_method_access("lib/C", &[("m", "()V", to)])]);
+            let old_f = ApiIndex::build([class_with_fields("lib/C", &[("x", "I", from)])]);
+            let new_f = ApiIndex::build([class_with_fields("lib/C", &[("x", "I", to)])]);
+            let (old, new) = if reference.kind == RefKind::Field {
+                (old_f, new_f)
+            } else {
+                (old, new)
+            };
+            let v = verdict(
+                reference,
+                intern("app/Use"),
+                &Scope::new(vec![&old]),
+                &Scope::new(vec![&new]),
+                &ClassGraph::new(),
+            );
+            broken(v).unwrap().1
+        }
+        let (stat, inst) = (ACC_PUBLIC | ACC_STATIC, ACC_PUBLIC);
+        assert_eq!(
+            flip(stat, inst, static_method_ref("lib/C", "m", "()V")),
+            Reason::MethodBecameInstance
+        );
+        assert_eq!(
+            flip(
+                inst,
+                stat,
+                method_ref_expecting_instance("lib/C", "m", "()V")
+            ),
+            Reason::MethodBecameStatic
+        );
+        assert_eq!(
+            flip(stat, inst, static_field_ref("lib/C", "x", "I")),
+            Reason::FieldBecameInstance
+        );
+        assert_eq!(
+            flip(inst, stat, field_write_ref("lib/C", "x", "I")),
+            Reason::FieldBecameStatic
+        );
+    }
+
+    fn method_ref_expecting_instance(owner: &str, name: &str, desc: &str) -> SymbolRef {
+        SymbolRef {
+            expected_static: Some(false),
+            ..method_ref(owner, name, desc)
+        }
+    }
+
+    fn static_field_ref(owner: &str, name: &str, desc: &str) -> SymbolRef {
+        SymbolRef {
+            expected_static: Some(true),
+            ..field_write_ref(owner, name, desc)
+        }
     }
 
     #[test]

@@ -7,10 +7,12 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 
 /// Width of the tag column every `diff` line opens with. Padding to one width here is what
-/// keeps the names starting at the same column: the tags used to be padded by hand and had
-/// drifted into three columns (17, 23 and 24) inside a single listing. The widest tags are
-/// METHOD BECAME ABSTRACT and METHOD ACCESS NARROWED, which
-/// `tag_column_fits_every_kind` pins.
+/// keeps the names starting at the same column. The tags used to be padded by hand and had
+/// drifted into three columns (17, 23 and 24) inside a single listing. Five kinds tie at
+/// this width, so it is not one tag's length to chase: CLASS BECAME INTERFACE, INTERFACE
+/// BECAME CLASS, METHOD BECAME ABSTRACT, METHOD ACCESS NARROWED and METHOD BECAME INSTANCE.
+/// `tag_column_fits_every_kind` pins the width against every kind. A longer kind does not
+/// truncate, it just pushes its own line's name out of the column.
 const TAG_WIDTH: usize = 22;
 
 /// The tag a change opens its line with: its JSON `kind`, uppercased. Derived rather than
@@ -355,10 +357,12 @@ fn structural_lines(v: &Violation) -> (String, String) {
         "throws VerifyError when {} loads",
         simple(v.source_class.as_str())
     );
-    let kind_flip_error = format!(
-        "throws IncompatibleClassChangeError when {} loads",
-        simple(v.source_class.as_str())
-    );
+    let kind_flip_error = || {
+        format!(
+            "throws IncompatibleClassChangeError when {} loads",
+            simple(v.source_class.as_str())
+        )
+    };
     match (v.reason, v.reference.member) {
         (MethodBecameAbstract, Some(m)) => (
             format!(
@@ -382,16 +386,17 @@ fn structural_lines(v: &Violation) -> (String, String) {
             format!("extends {owner}, which is final on the runtime classpath"),
             loads,
         ),
-        // The walk only reaches these two through the edge the flip breaks: an extends of
-        // a class that is now an interface, an implements of an interface that is now a
-        // class. So the reason names the edge.
+        // A class that became an interface can only have been reached over the superclass
+        // edge, so that one names the edge. The other side cannot: an interface's
+        // superinterfaces sit in the same interfaces array a class's implements does, and
+        // the graph keeps no access flags to tell an extends from an implements.
         (ClassBecameInterface, _) => (
             format!("extends {owner}, which became an interface"),
-            kind_flip_error,
+            kind_flip_error(),
         ),
         (InterfaceBecameClass, _) => (
-            format!("implements {owner}, which became a class"),
-            kind_flip_error,
+            format!("extends or implements {owner}, which became a class"),
+            kind_flip_error(),
         ),
         // The graph walks always attach the member to these two reasons (check.rs); a
         // member-less one would be malformed, so degrade readably rather than panic.
@@ -568,7 +573,7 @@ fn suggestion_line(v: &Violation, target: &str) -> String {
             format!("{owner} became a class, but {class} was compiled against it as an interface")
         }
         InterfaceBecameClass => {
-            format!("{class} implements {owner}, which became a class")
+            format!("{class} extends or implements {owner}, which became a class")
         }
         MethodBecameInstance | FieldBecameInstance => format!(
             "{target} became an instance member, but {class} still {access_verb} it as a static member"
@@ -1375,7 +1380,7 @@ mod tests {
             "\n{out}"
         );
         assert!(
-            out.contains("    implements lib.Iface, which became a class"),
+            out.contains("    extends or implements lib.Iface, which became a class"),
             "\n{out}"
         );
     }
@@ -1555,6 +1560,11 @@ mod tests {
     }
 
     /// One change of every kind, so the listing below is the whole vocabulary of `diff`.
+    /// EVERY variant has to be here, not just an interesting sample. Three tests pin
+    /// TAG_WIDTH, the tag-to-`kind` mapping and the column against this list alone, so a
+    /// variant left out is a kind whose tag could outgrow the column, or whose `kind()`
+    /// could disagree with serde, with all three still green.
+    /// `every_breaking_change_kind_is_covered` fails when one goes missing.
     fn one_of_every_change() -> Vec<BreakingChange> {
         let (class, method, field, desc) = (intern("x/C"), intern("m"), intern("F"), intern("()V"));
         vec![
@@ -1604,7 +1614,17 @@ mod tests {
                 name: method,
                 descriptor: desc,
             },
+            BreakingChange::MethodBecameStatic {
+                class,
+                name: method,
+                descriptor: desc,
+            },
             BreakingChange::FieldBecameStatic {
+                class,
+                name: field,
+                descriptor: intern("I"),
+            },
+            BreakingChange::FieldBecameInstance {
                 class,
                 name: field,
                 descriptor: intern("I"),
@@ -1620,6 +1640,57 @@ mod tests {
                 descriptor: desc,
             },
         ]
+    }
+
+    /// `one_of_every_change` really is one of EVERY change. Three tests below read nothing
+    /// but that helper, so a variant missing from it is a kind whose tag never meets
+    /// TAG_WIDTH and whose `kind()` never meets serde, with all three still passing. The
+    /// match is exhaustive, so a new variant cannot compile without an arm here. The arm
+    /// then needs a slot, and an unlisted slot fails this assertion.
+    #[test]
+    fn every_breaking_change_kind_is_covered() {
+        fn slot(c: &BreakingChange) -> usize {
+            use BreakingChange::*;
+            match c {
+                ClassRemoved { .. } => 0,
+                MethodRemoved { .. } => 1,
+                FieldRemoved { .. } => 2,
+                ClassAccessNarrowed { .. } => 3,
+                ClassBecameFinal { .. } => 4,
+                ClassBecameAbstract { .. } => 5,
+                ClassBecameInterface { .. } => 6,
+                InterfaceBecameClass { .. } => 7,
+                MethodBecameAbstract { .. } => 8,
+                MethodAccessNarrowed { .. } => 9,
+                FieldAccessNarrowed { .. } => 10,
+                MethodBecameStatic { .. } => 11,
+                MethodBecameInstance { .. } => 12,
+                FieldBecameStatic { .. } => 13,
+                FieldBecameInstance { .. } => 14,
+                FieldBecameFinal { .. } => 15,
+                MethodBecameFinal { .. } => 16,
+            }
+        }
+        const VARIANTS: usize = 17;
+        let changes = one_of_every_change();
+        let mut seen = [false; VARIANTS];
+        for c in &changes {
+            let s = slot(c);
+            assert!(
+                s < VARIANTS,
+                "slot {s} is past VARIANTS; bump it when adding a variant"
+            );
+            seen[s] = true;
+        }
+        assert!(
+            seen.iter().all(|&s| s),
+            "one_of_every_change is missing a variant (slots covered: {seen:?})"
+        );
+        assert_eq!(
+            changes.len(),
+            VARIANTS,
+            "one change per kind, no duplicates"
+        );
     }
 
     /// Every `diff` line starts the name at the same column, continuation lines included.
@@ -1658,9 +1729,11 @@ mod tests {
             "METHOD ACCESS NARROWED x/C.m ()V (public -> protected)",
             "FIELD ACCESS NARROWED  x/C.F I (protected -> private)",
             "METHOD BECAME INSTANCE x/C.m ()V",
+            "METHOD BECAME STATIC   x/C.m ()V",
             "FIELD BECAME STATIC    x/C.F I",
+            "FIELD BECAME INSTANCE  x/C.F I",
             "METHOD BECAME FINAL    x/C.m ()V",
-            "breaking changes: 15 (classes: 6, methods: 5, fields: 4)",
+            "breaking changes: 17 (classes: 6, methods: 6, fields: 5)",
         ] {
             assert!(out.contains(expected), "missing {expected:?}\n{out}");
         }
@@ -1688,7 +1761,7 @@ mod tests {
         }
     }
 
-    /// The text tag is the JSON `kind` uppercased, so `jq 'select(.kind == "...")'` and the
+    /// The text tag is the JSON `kind` uppercased, so a jq filter on `kind` and the
     /// listing pick out the same changes. Both sides come from `kind()`, so this checks the
     /// one thing that could still drift: that `kind()` is what serde actually writes.
     #[test]

@@ -7,8 +7,9 @@
 //! a required reason, a suppressed count in the report, and a warning for entries that matched
 //! nothing (so the list does not silently rot as the checked libraries change).
 //!
-//! Rules scope by `owner` (class or trailing-`*` package prefix), by `kind` (one violation
-//! kind, a `Reason::config_str` string), or by both. A kind-only rule is the policy knob "this
+//! Rules scope by `owner` (class or trailing-`*` package prefix), by `kind` (a
+//! `Reason::config_str` string, or a spelling from before that reason was split, which then
+//! names every reason it became), or by both. A kind-only rule is the policy knob "this
 //! category is acceptable for us everywhere"; owner+kind pins one category on one library.
 //! Kind matching lives here rather than in `--fail-on` so the gate stays a pure tier
 //! threshold that always matches the displayed grouping (model::tier).
@@ -41,8 +42,9 @@ struct RawEntry {
     member: Option<String>,
     descriptor: Option<String>,
     /// Violation kind, in the snake_case config spelling (e.g. "method_became_abstract").
-    /// `Reason::parse` also accepts the spaced form the report and `--json` print.
-    /// Combines with `owner`: both present means both must match.
+    /// `Reason::parse_kinds` also accepts the spaced form the report and `--json` print, and
+    /// a spelling from before its reason was split. Combines with `owner`, where both
+    /// present means both must match.
     kind: Option<String>,
     reason: String,
 }
@@ -100,11 +102,16 @@ impl ExcludeRule {
             });
         }
         if !self.kinds.is_empty() {
-            // Named in the canonical spelling rather than as the rule wrote it, so a rule
+            // Canonical spelling rather than the one the rule was written in, so a rule
             // written in the spaced form, or in a spelling since split, is echoed in the
-            // form the docs use.
-            let shown: Vec<String> = self.kinds.iter().map(|k| k.config_str()).collect();
-            parts.push(format!("kind \"{}\"", shown.join(", ")));
+            // form the docs use. Each kind is quoted on its own, because a rule names one
+            // kind and a joined list would not load if it were pasted back.
+            let shown: Vec<String> = self
+                .kinds
+                .iter()
+                .map(|k| format!("\"{}\"", k.config_str()))
+                .collect();
+            parts.push(format!("kind {}", shown.join(" or ")));
         }
         format!("{} ({})", parts.join(" "), self.reason)
     }
@@ -763,16 +770,16 @@ mod tests {
         assert_eq!(violations[0].reason, Reason::MethodBecameStatic);
         assert!(stats.unused.is_empty());
 
-        // Unused, it reports the kinds it stands for now, not the spelling it was written
-        // in: the rule has to be rewritten in those terms to be narrowed.
+        // Unused, it reports the kinds it stands for now rather than the spelling it was
+        // written in. Each is quoted on its own, since narrowing the rule means writing one
+        // of those values, and a joined list would not load.
         let mut nothing_to_match = vec![kind_violation("lib/A", Reason::ClassRemoved)];
         let stats = filter(&mut nothing_to_match, &rules);
         assert_eq!(stats.unused.len(), 2);
         assert!(
-            stats
-                .unused
-                .iter()
-                .any(|u| u.contains("kind \"class_became_interface, interface_became_class\"")),
+            stats.unused.iter().any(
+                |u| u.contains("kind \"class_became_interface\" or \"interface_became_class\"")
+            ),
             "{:?}",
             stats.unused
         );

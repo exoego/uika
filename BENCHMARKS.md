@@ -57,9 +57,9 @@ uika `diff` (library only) lists every bytecode-level removal, the real one
 among them:
 
 ```text
-METHOD REMOVED  kotlinx/coroutines/AbstractTimeSourceKt.getTimeSource ()Lkotlinx/coroutines/AbstractTimeSource;
-METHOD REMOVED  kotlinx/coroutines/AwaitAll.access$getNotCompletedCount$FU$p ()Ljava/util/concurrent/atomic/AtomicIntegerFieldUpdater;
-METHOD REMOVED  kotlinx/coroutines/EventLoopKt.processNextEventInCurrentThread ()J
+METHOD REMOVED         kotlinx/coroutines/AbstractTimeSourceKt.getTimeSource ()Lkotlinx/coroutines/AbstractTimeSource;
+METHOD REMOVED         kotlinx/coroutines/AwaitAll.access$getNotCompletedCount$FU$p ()Ljava/util/concurrent/atomic/AtomicIntegerFieldUpdater;
+METHOD REMOVED         kotlinx/coroutines/EventLoopKt.processNextEventInCurrentThread ()J
 ... (218 entries)
 ```
 

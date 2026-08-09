@@ -74,14 +74,20 @@ impl ClassApi {
 /// Access narrowing has four possible levels a side, so both sides travel with the change,
 /// spelled the way `diff` prints them in text and in JSON alike. They used to be raw JVM
 /// access flag words, leaving every reader to decode `"old_access": 1` for themselves.
-/// A two-state flip needs no such pair: its variant name states the direction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// A two-state flip needs no such pair, since its variant name states the direction.
+///
+/// This is also the one access lattice. The derived `Ord` follows declaration order, so
+/// `Visibility::of(new) < Visibility::of(old)` IS narrowing. Both the `diff` listing and
+/// `check`'s old-relative narrowing gate compare through it, so the words a report prints
+/// and the comparison that decided to print them can never disagree. Declaration order is
+/// therefore load-bearing. Reordering the variants inverts every narrowing test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Visibility {
-    Public,
-    Protected,
-    PackagePrivate,
     Private,
+    PackagePrivate,
+    Protected,
+    Public,
 }
 
 impl Visibility {
@@ -204,7 +210,7 @@ pub enum BreakingChange {
 impl BreakingChange {
     /// The `kind` JSON tags the change with, which is also the word the text listing prints
     /// (uppercased, underscores as spaces). One vocabulary for both, so
-    /// `jq 'select(.kind == "method_became_final")'` selects exactly the entries the
+    /// `jq '.breaking_changes[] | select(.kind == "method_became_final")'` selects exactly
     /// listing labels METHOD BECAME FINAL. Every direction is its own kind for that reason:
     /// a tag that read METHOD STATIC CHANGED could not tell a reader which way it went, and
     /// splitting it in the text alone would have left the two out of step.
@@ -336,11 +342,16 @@ impl Reason {
     /// The reasons an exclude rule's `kind` names. One for a current spelling; several for
     /// a spelling that named a category before it was split by direction and member kind,
     /// so a rule file written against an older uika keeps waiving what it used to.
+    ///
+    /// SPLITTING A VARIANT MEANS ADDING ITS OLD SPELLING HERE. The compiler cannot check
+    /// this either, since the old name simply stops existing. Every string below was a
+    /// released `as_str()` value. Drop one and an exclude file that names it fails the
+    /// build with `unknown kind` on nothing but a uika upgrade.
     pub fn parse_kinds(s: &str) -> Option<Vec<Reason>> {
         if let Some(one) = Reason::parse(s) {
             return Some(vec![one]);
         }
-        let group = match s.replace('_', " ").as_str() {
+        Some(match s.replace('_', " ").as_str() {
             "class kind changed" => {
                 vec![Reason::ClassBecameInterface, Reason::InterfaceBecameClass]
             }
@@ -351,8 +362,7 @@ impl Reason {
                 vec![Reason::MethodBecameStatic, Reason::FieldBecameStatic]
             }
             _ => return None,
-        };
-        Some(group)
+        })
     }
 }
 

@@ -900,7 +900,7 @@ fn detects_ktor_interface_became_class_under_module_skew() {
                 && v.reference.owner.as_str() == "io/ktor/utils/io/ByteChannel"
                 && v.reason == Reason::InterfaceBecameClass
         }),
-        "expected a class-kind-changed break on ByteChannel: {:?}",
+        "expected an interface-became-class break on ByteChannel: {:?}",
         report
             .violations
             .iter()
