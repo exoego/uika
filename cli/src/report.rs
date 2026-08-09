@@ -5,9 +5,15 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
+/// How a member is held, as the STATIC CHANGED lines name it. Printing the raw booleans
+/// left the reader to work out which side of the flag "true" was.
+fn static_word(is_static: bool) -> &'static str {
+    if is_static { "static" } else { "instance" }
+}
+
 pub fn diff_text(changes: &[BreakingChange]) -> String {
     let mut out = String::new();
-    let (mut classes, mut methods, mut fields, mut other) = (0usize, 0usize, 0usize, 0usize);
+    let (mut classes, mut methods, mut fields) = (0usize, 0usize, 0usize);
     for c in changes {
         match c {
             BreakingChange::ClassRemoved { class } => {
@@ -116,7 +122,9 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 methods += 1;
                 writeln!(
                     out,
-                    "METHOD STATIC CHANGED  {class}.{name} {descriptor} ({old_static} -> {new_static})"
+                    "METHOD STATIC CHANGED  {class}.{name} {descriptor} ({} -> {})",
+                    static_word(*old_static),
+                    static_word(*new_static)
                 )
                 .unwrap();
             }
@@ -130,7 +138,9 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 fields += 1;
                 writeln!(
                     out,
-                    "FIELD STATIC CHANGED   {class}.{name} {descriptor} ({old_static} -> {new_static})"
+                    "FIELD STATIC CHANGED   {class}.{name} {descriptor} ({} -> {})",
+                    static_word(*old_static),
+                    static_word(*new_static)
                 )
                 .unwrap();
             }
@@ -147,14 +157,14 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
                 name,
                 descriptor,
             } => {
-                other += 1;
+                methods += 1;
                 writeln!(out, "METHOD BECAME FINAL   {class}.{name} {descriptor}").unwrap();
             }
         }
     }
     writeln!(
         out,
-        "\nbreaking changes: {} (classes: {classes}, methods: {methods}, fields: {fields}, other: {other})",
+        "\nbreaking changes: {} (classes: {classes}, methods: {methods}, fields: {fields})",
         changes.len()
     )
     .unwrap();
@@ -373,16 +383,16 @@ fn structural_lines(v: &Violation) -> (String, String) {
             },
         ),
         (MethodBecameFinal, Some(_)) => (
-            format!("overrides {} which became final", pretty_target(v)),
+            format!("overrides {}, which became final", pretty_target(v)),
             loads,
         ),
-        (ClassBecameFinal, _) => (format!("extends {owner} which became final"), loads),
+        (ClassBecameFinal, _) => (format!("extends {owner}, which became final"), loads),
         (ExtendsFinalClass, _) => (
-            format!("extends {owner} which is final on the runtime classpath"),
+            format!("extends {owner}, which is final on the runtime classpath"),
             loads,
         ),
         (ClassKindChanged, _) => (
-            format!("extends or implements {owner} whose kind changed (class <-> interface)"),
+            format!("extends or implements {owner}, whose kind changed (class <-> interface)"),
             format!(
                 "throws IncompatibleClassChangeError when {} loads",
                 simple(v.source_class.as_str())
@@ -563,7 +573,7 @@ fn suggestion_line(v: &Violation, target: &str) -> String {
             }
         }
         StaticToInstance => format!(
-            "{target} changed from static to instance, but {class} still {access_verb} it as static"
+            "{target} changed from static to instance, but {class} still {access_verb} it as a static member"
         ),
         InstanceToStatic => format!(
             "{target} changed from instance to static, but {class} still {access_verb} it as an instance member"
@@ -695,7 +705,7 @@ fn summary_line(report: &CheckReport, reachable: usize, latent: usize, unproven:
     if report.unknown_refs > 0 {
         write!(
             line,
-            ", ❓ {} unverified reference{} (hierarchy escapes scope)",
+            ", ❓ {} unverified reference{} (hierarchy escapes the analyzed scope)",
             report.unknown_refs,
             if report.unknown_refs == 1 { "" } else { "s" }
         )
@@ -888,7 +898,7 @@ pub fn upgrade_text(
         }
         writeln!(
             out,
-            "per-module check: {checked} of {} modules changed resolution ({})",
+            "per-module check: {checked} of {} modules changed their resolved versions ({})",
             m.total_modules,
             notes.join(", ")
         )
@@ -1326,7 +1336,7 @@ mod tests {
         );
         assert!(
             out.contains(
-                "    overrides org.koin.core.logger.Logger.log(Level, String) which became final"
+                "    overrides org.koin.core.logger.Logger.log(Level, String), which became final"
             ),
             "\n{out}"
         );
@@ -1344,7 +1354,7 @@ mod tests {
         let out = check_text(&r);
         assert_eq!(
             out,
-            "✅ scanned 100 classes: 0 broken, ❓ 16 unverified references (hierarchy escapes scope)\n"
+            "✅ scanned 100 classes: 0 broken, ❓ 16 unverified references (hierarchy escapes the analyzed scope)\n"
         );
     }
 
@@ -1508,6 +1518,46 @@ mod tests {
         // Legal depths still decode.
         assert_eq!(parse_type("[[I"), Some(("int[][]".to_string(), 3)));
         assert_eq!(parse_type(&"[".repeat(300)), None);
+    }
+
+    /// `diff` names both sides of a static/instance flip in words, and counts a
+    /// newly-final method as a method: with a bucket for "other" it read as miscellaneous,
+    /// which put every method of a Kotlin library (final by default) in the wrong column.
+    #[test]
+    fn diff_text_names_static_sides_and_counts_final_methods_as_methods() {
+        let out = diff_text(&[
+            BreakingChange::MethodStaticChanged {
+                class: intern("x/C"),
+                name: intern("m"),
+                descriptor: intern("()V"),
+                old_static: true,
+                new_static: false,
+            },
+            BreakingChange::FieldStaticChanged {
+                class: intern("x/C"),
+                name: intern("F"),
+                descriptor: intern("I"),
+                old_static: false,
+                new_static: true,
+            },
+            BreakingChange::MethodBecameFinal {
+                class: intern("x/C"),
+                name: intern("n"),
+                descriptor: intern("()V"),
+            },
+        ]);
+        assert!(
+            out.contains("METHOD STATIC CHANGED  x/C.m ()V (static -> instance)"),
+            "\n{out}"
+        );
+        assert!(
+            out.contains("FIELD STATIC CHANGED   x/C.F I (instance -> static)"),
+            "\n{out}"
+        );
+        assert!(
+            out.contains("breaking changes: 3 (classes: 0, methods: 2, fields: 1)"),
+            "\n{out}"
+        );
     }
 
     /// The summary line notes suppressed violations only when the count is nonzero.
