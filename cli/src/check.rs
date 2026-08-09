@@ -837,7 +837,16 @@ fn verdict(
         if (new_access & ACC_INTERFACE != 0) != ref_expects_interface {
             match old.class_access(r.owner) {
                 Some(old_access) if (old_access & ACC_INTERFACE != 0) == ref_expects_interface => {
-                    return RefVerdict::Broken(r, Reason::ClassKindChanged);
+                    // The ref matched the old owner kind, so the old kind is the ref's:
+                    // an InterfaceMethodref means the owner used to be the interface.
+                    return RefVerdict::Broken(
+                        r,
+                        if ref_expects_interface {
+                            Reason::InterfaceBecameClass
+                        } else {
+                            Reason::ClassBecameInterface
+                        },
+                    );
                 }
                 None => return RefVerdict::Unknown,
                 _ => {}
@@ -855,10 +864,11 @@ fn verdict(
                     {
                         return RefVerdict::Broken(
                             r,
-                            if expected_static {
-                                Reason::StaticToInstance
-                            } else {
-                                Reason::InstanceToStatic
+                            match (kind, expected_static) {
+                                (MemberKind::Method, true) => Reason::MethodBecameInstance,
+                                (MemberKind::Method, false) => Reason::MethodBecameStatic,
+                                (MemberKind::Field, true) => Reason::FieldBecameInstance,
+                                (MemberKind::Field, false) => Reason::FieldBecameStatic,
                             },
                         );
                     }
@@ -1105,7 +1115,7 @@ fn add_kind_flip_violations(
     if flipped.is_empty() {
         return;
     }
-    let mut report = |owner: Sym, class_name: Sym, node: &crate::index::GraphNode| {
+    let mut report = |owner: Sym, class_name: Sym, node: &crate::index::GraphNode, reason| {
         let reference = SymbolRef {
             kind: RefKind::Class,
             owner,
@@ -1114,24 +1124,17 @@ fn add_kind_flip_violations(
             field_write: None,
             instantiated: None,
         };
-        push_violation(
-            violations,
-            seen,
-            node.source,
-            class_name,
-            reference,
-            Reason::ClassKindChanged,
-        );
+        push_violation(violations, seen, node.source, class_name, reference, reason);
     };
     for (class_name, node) in graph.iter() {
         if let Some(super_name) = node.super_name
             && flipped.get(&super_name) == Some(&true)
         {
-            report(super_name, class_name, node);
+            report(super_name, class_name, node, Reason::ClassBecameInterface);
         }
         for &iface in graph.interfaces_of(node) {
             if flipped.get(&iface) == Some(&false) {
-                report(iface, class_name, node);
+                report(iface, class_name, node, Reason::InterfaceBecameClass);
             }
         }
     }
@@ -2041,7 +2044,7 @@ mod tests {
             &Scope::new(vec![&new]),
             &ClassGraph::new(),
         );
-        assert_eq!(broken(v).unwrap().1, Reason::ClassKindChanged);
+        assert_eq!(broken(v).unwrap().1, Reason::ClassBecameInterface);
     }
 
     #[test]
@@ -2055,7 +2058,7 @@ mod tests {
             &Scope::new(vec![&new]),
             &ClassGraph::new(),
         );
-        assert_eq!(broken(v).unwrap().1, Reason::ClassKindChanged);
+        assert_eq!(broken(v).unwrap().1, Reason::InterfaceBecameClass);
     }
 
     #[test]
@@ -2090,7 +2093,7 @@ mod tests {
         let mut seen = FxHashSet::default();
         add_kind_flip_violations(&old, &new, &graph, &mut violations, &mut seen);
         assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].reason, Reason::ClassKindChanged);
+        assert_eq!(violations[0].reason, Reason::ClassBecameInterface);
         assert_eq!(violations[0].reference.owner.as_str(), "lib/Base");
         assert_eq!(violations[0].source_class.as_str(), "app/Sub");
     }
@@ -2112,7 +2115,7 @@ mod tests {
         let mut seen = FxHashSet::default();
         add_kind_flip_violations(&old, &new, &graph, &mut violations, &mut seen);
         assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].reason, Reason::ClassKindChanged);
+        assert_eq!(violations[0].reason, Reason::InterfaceBecameClass);
         assert_eq!(violations[0].reference.owner.as_str(), "lib/I");
     }
 
@@ -2403,7 +2406,7 @@ mod tests {
             &Scope::new(vec![&new]),
             &ClassGraph::new(),
         );
-        assert_eq!(broken(v).unwrap().1, Reason::StaticToInstance);
+        assert_eq!(broken(v).unwrap().1, Reason::MethodBecameInstance);
 
         let old_already_mismatched = ApiIndex::build([class_with_method_access(
             "lib/C",

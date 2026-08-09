@@ -198,7 +198,7 @@ against the tools that can see them:
 
 | Break | uika `check` | japicmp (library diff) | Linkage Checker (classpath) |
 |-------|--------------|------------------------|-----------------------------|
-| interface→class flip | `class kind changed`, 17 refs | `MODIFIED CLASS (<- INTERFACE)` | per-method `has changed incompatibly` — caught |
+| interface→class flip | `interface became class`, 17 refs | `MODIFIED CLASS (<- INTERFACE)` | per-method `has changed incompatibly` — caught |
 | `new` on now-abstract | `class became abstract`, 3 refs | `ABSTRACT (<- NON_ABSTRACT)` + `REMOVED CONSTRUCTOR` | **not reported** |
 
 The library-diff tools flag both as binary-incompatible changes — expected, since

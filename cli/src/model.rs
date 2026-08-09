@@ -253,39 +253,45 @@ pub enum Reason {
     ClassAccessNarrowed,
     ClassBecameAbstract,
     ClassBecameFinal,
-    ClassKindChanged,
+    ClassBecameInterface,
+    InterfaceBecameClass,
     ExtendsFinalClass,
     MethodRemoved,
     MethodAccessNarrowed,
     MethodBecameAbstract,
     MethodBecameFinal,
+    MethodBecameStatic,
+    MethodBecameInstance,
     FieldRemoved,
     FieldAccessNarrowed,
     FieldBecameFinal,
-    StaticToInstance,
-    InstanceToStatic,
+    FieldBecameStatic,
+    FieldBecameInstance,
 }
 
 impl Reason {
     /// ADD NEW VARIANTS HERE TOO — the compiler cannot check this, since an exhaustive
     /// `match` forces a new arm and never a new array entry. A variant missing here loses
     /// its exclude-rule `kind` string, so a legitimate rule fails with `unknown kind`.
-    pub const ALL: [Reason; 15] = [
+    pub const ALL: [Reason; 18] = [
         Reason::ClassRemoved,
         Reason::ClassAccessNarrowed,
         Reason::ClassBecameAbstract,
         Reason::ClassBecameFinal,
-        Reason::ClassKindChanged,
+        Reason::ClassBecameInterface,
+        Reason::InterfaceBecameClass,
         Reason::ExtendsFinalClass,
         Reason::MethodRemoved,
         Reason::MethodAccessNarrowed,
         Reason::MethodBecameAbstract,
         Reason::MethodBecameFinal,
+        Reason::MethodBecameStatic,
+        Reason::MethodBecameInstance,
         Reason::FieldRemoved,
         Reason::FieldAccessNarrowed,
         Reason::FieldBecameFinal,
-        Reason::StaticToInstance,
-        Reason::InstanceToStatic,
+        Reason::FieldBecameStatic,
+        Reason::FieldBecameInstance,
     ];
 
     /// The stable wire/report string. Everything user-visible (JSON, verdicts stream,
@@ -296,7 +302,8 @@ impl Reason {
             Reason::ClassAccessNarrowed => "class access narrowed",
             Reason::ClassBecameAbstract => "class became abstract",
             Reason::ClassBecameFinal => "class became final",
-            Reason::ClassKindChanged => "class kind changed",
+            Reason::ClassBecameInterface => "class became interface",
+            Reason::InterfaceBecameClass => "interface became class",
             Reason::ExtendsFinalClass => "extends final class",
             Reason::MethodRemoved => "method removed",
             Reason::MethodAccessNarrowed => "method access narrowed",
@@ -304,9 +311,11 @@ impl Reason {
             Reason::MethodBecameFinal => "method became final",
             Reason::FieldRemoved => "field removed",
             Reason::FieldAccessNarrowed => "field access narrowed",
+            Reason::MethodBecameStatic => "method became static",
+            Reason::MethodBecameInstance => "method became instance",
             Reason::FieldBecameFinal => "field became final",
-            Reason::StaticToInstance => "member changed from static to instance",
-            Reason::InstanceToStatic => "member changed from instance to static",
+            Reason::FieldBecameStatic => "field became static",
+            Reason::FieldBecameInstance => "field became instance",
         }
     }
 
@@ -322,6 +331,28 @@ impl Reason {
     pub fn parse(s: &str) -> Option<Reason> {
         let spaced = s.replace('_', " ");
         Reason::ALL.iter().copied().find(|r| r.as_str() == spaced)
+    }
+
+    /// The reasons an exclude rule's `kind` names. One for a current spelling; several for
+    /// a spelling that named a category before it was split by direction and member kind,
+    /// so a rule file written against an older uika keeps waiving what it used to.
+    pub fn parse_kinds(s: &str) -> Option<Vec<Reason>> {
+        if let Some(one) = Reason::parse(s) {
+            return Some(vec![one]);
+        }
+        let group = match s.replace('_', " ").as_str() {
+            "class kind changed" => {
+                vec![Reason::ClassBecameInterface, Reason::InterfaceBecameClass]
+            }
+            "member changed from static to instance" => {
+                vec![Reason::MethodBecameInstance, Reason::FieldBecameInstance]
+            }
+            "member changed from instance to static" => {
+                vec![Reason::MethodBecameStatic, Reason::FieldBecameStatic]
+            }
+            _ => return None,
+        };
+        Some(group)
     }
 }
 

@@ -304,7 +304,7 @@ fn runtime_error(v: &Violation) -> Option<&'static str> {
         ClassRemoved => "NoClassDefFoundError at first use",
         ClassAccessNarrowed => "IllegalAccessError at first use",
         ClassBecameAbstract => "InstantiationError at first `new`",
-        ClassKindChanged => "IncompatibleClassChangeError at first call",
+        ClassBecameInterface | InterfaceBecameClass => "IncompatibleClassChangeError at first call",
         MethodRemoved if ctor => "NoSuchMethodError at first `new`",
         MethodRemoved => "NoSuchMethodError at first call",
         FieldRemoved => "NoSuchFieldError at first access",
@@ -312,13 +312,8 @@ fn runtime_error(v: &Violation) -> Option<&'static str> {
         MethodAccessNarrowed => "IllegalAccessError at first call",
         FieldAccessNarrowed => "IllegalAccessError at first access",
         FieldBecameFinal => "IllegalAccessError at first write",
-        StaticToInstance | InstanceToStatic => {
-            if v.reference.kind == RefKind::Field {
-                "IncompatibleClassChangeError at first access"
-            } else {
-                "IncompatibleClassChangeError at first call"
-            }
-        }
+        MethodBecameStatic | MethodBecameInstance => "IncompatibleClassChangeError at first call",
+        FieldBecameStatic | FieldBecameInstance => "IncompatibleClassChangeError at first access",
         ClassBecameFinal | MethodBecameFinal | ExtendsFinalClass | MethodBecameAbstract => {
             return None;
         }
@@ -337,16 +332,18 @@ fn source_display(source: &str) -> &str {
 
 /// Graph-walk violations: the broken thing is the scanned class itself (its hierarchy no
 /// longer loads or selects), so they read consumer-first, unlike reference violations
-/// which group by the symbol that changed. Exhaustive over `Reason`: ClassKindChanged
-/// exists in both worlds, and the graph-walk variant is the member-less Class edge.
+/// which group by the symbol that changed. Exhaustive over `Reason`: the two kind flips
+/// exist in both worlds, and the graph-walk variant is the member-less Class edge.
 fn is_structural(v: &Violation) -> bool {
     use Reason::*;
     match v.reason {
         ClassBecameFinal | MethodBecameFinal | ExtendsFinalClass | MethodBecameAbstract => true,
-        ClassKindChanged => v.reference.member.is_none(),
+        ClassBecameInterface | InterfaceBecameClass => v.reference.member.is_none(),
         ClassRemoved | ClassAccessNarrowed | ClassBecameAbstract | MethodRemoved
         | MethodAccessNarrowed | FieldRemoved | FieldAccessNarrowed | FieldBecameFinal
-        | StaticToInstance | InstanceToStatic => false,
+        | MethodBecameStatic | MethodBecameInstance | FieldBecameStatic | FieldBecameInstance => {
+            false
+        }
     }
 }
 
@@ -356,6 +353,10 @@ fn structural_lines(v: &Violation) -> (String, String) {
     let owner = dotted(v.reference.owner.as_str());
     let loads = format!(
         "throws VerifyError when {} loads",
+        simple(v.source_class.as_str())
+    );
+    let kind_flip_error = format!(
+        "throws IncompatibleClassChangeError when {} loads",
         simple(v.source_class.as_str())
     );
     match (v.reason, v.reference.member) {
@@ -381,12 +382,16 @@ fn structural_lines(v: &Violation) -> (String, String) {
             format!("extends {owner}, which is final on the runtime classpath"),
             loads,
         ),
-        (ClassKindChanged, _) => (
-            format!("extends or implements {owner}, whose kind changed (class <-> interface)"),
-            format!(
-                "throws IncompatibleClassChangeError when {} loads",
-                simple(v.source_class.as_str())
-            ),
+        // The walk only reaches these two through the edge the flip breaks: an extends of
+        // a class that is now an interface, an implements of an interface that is now a
+        // class. So the reason names the edge.
+        (ClassBecameInterface, _) => (
+            format!("extends {owner}, which became an interface"),
+            kind_flip_error,
+        ),
+        (InterfaceBecameClass, _) => (
+            format!("implements {owner}, which became a class"),
+            kind_flip_error,
         ),
         // The graph walks always attach the member to these two reasons (check.rs); a
         // member-less one would be malformed, so degrade readably rather than panic.
@@ -399,7 +404,7 @@ fn structural_lines(v: &Violation) -> (String, String) {
         (
             ClassRemoved | ClassAccessNarrowed | ClassBecameAbstract | MethodRemoved
             | MethodAccessNarrowed | FieldRemoved | FieldAccessNarrowed | FieldBecameFinal
-            | StaticToInstance | InstanceToStatic,
+            | MethodBecameStatic | MethodBecameInstance | FieldBecameStatic | FieldBecameInstance,
             _,
         ) => (format!("{}: {owner}", v.reason.as_str()), loads),
     }
@@ -551,22 +556,25 @@ fn suggestion_line(v: &Violation, target: &str) -> String {
         ClassBecameAbstract => {
             format!("{target} became abstract, but {class} still instantiates it")
         }
-        ClassKindChanged => {
-            if v.reference.member.is_some() {
-                format!(
-                    "{owner} changed kind (class <-> interface), but {class} was compiled against the old kind"
-                )
-            } else {
-                format!(
-                    "{class} extends or implements {owner}, whose kind changed (class <-> interface)"
-                )
-            }
+        // With a member the break is at a call site compiled against the old kind; without
+        // one it is the hierarchy edge itself, which the reason names.
+        ClassBecameInterface if v.reference.member.is_some() => {
+            format!("{owner} became an interface, but {class} was compiled against it as a class")
         }
-        StaticToInstance => format!(
-            "{target} changed from static to instance, but {class} still {access_verb} it as a static member"
+        ClassBecameInterface => {
+            format!("{class} extends {owner}, which became an interface")
+        }
+        InterfaceBecameClass if v.reference.member.is_some() => {
+            format!("{owner} became a class, but {class} was compiled against it as an interface")
+        }
+        InterfaceBecameClass => {
+            format!("{class} implements {owner}, which became a class")
+        }
+        MethodBecameInstance | FieldBecameInstance => format!(
+            "{target} became an instance member, but {class} still {access_verb} it as a static member"
         ),
-        InstanceToStatic => format!(
-            "{target} changed from instance to static, but {class} still {access_verb} it as an instance member"
+        MethodBecameStatic | FieldBecameStatic => format!(
+            "{target} became static, but {class} still {access_verb} it as an instance member"
         ),
         ClassBecameFinal => format!("{owner} became final, but {class} still extends it"),
         MethodBecameFinal => format!("{target} became final, but {class} still overrides it"),
@@ -1332,6 +1340,42 @@ mod tests {
         );
         assert!(
             out.contains("        throws VerifyError when SLF4JLogger loads"),
+            "\n{out}"
+        );
+    }
+
+    /// A kind flip on a hierarchy edge names the edge it breaks. The walk only reaches it
+    /// through that edge, so the reason is enough to say extends or implements.
+    #[test]
+    fn kind_flip_blocks_name_the_broken_edge() {
+        let mut r = report(vec![
+            class_violation(
+                "app/Sub",
+                "lib/Base",
+                Reason::ClassBecameInterface,
+                None,
+                None,
+            ),
+            class_violation(
+                "app/Impl",
+                "lib/Iface",
+                Reason::InterfaceBecameClass,
+                None,
+                None,
+            ),
+        ]);
+        r.reachability_computed = false;
+        let out = check_text(&r);
+        assert!(
+            out.contains("    extends lib.Base, which became an interface"),
+            "\n{out}"
+        );
+        assert!(
+            out.contains("        throws IncompatibleClassChangeError when Sub loads"),
+            "\n{out}"
+        );
+        assert!(
+            out.contains("    implements lib.Iface, which became a class"),
             "\n{out}"
         );
     }

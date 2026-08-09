@@ -83,8 +83,11 @@ pub struct ExcludeRule {
     /// which over-suppresses when only one overload is a known false positive: pinning the
     /// descriptor keeps a real break on a sibling overload reported.
     descriptor: Option<String>,
-    /// Violation kind the rule is pinned to. None matches every kind.
-    kind: Option<Reason>,
+    /// Violation kinds the rule is pinned to. Empty matches every kind. More than one only
+    /// from a spelling that named a category before it was split, e.g. "class_kind_changed".
+    kinds: Vec<Reason>,
+    /// The kind as the rule described it, for the unused-rule warning.
+    kind_label: Option<String>,
     reason: String,
 }
 
@@ -98,8 +101,14 @@ impl ExcludeRule {
                 (None, _) => format!("{owner}"),
             });
         }
-        if let Some(kind) = self.kind {
-            parts.push(format!("kind \"{}\"", kind.config_str()));
+        if let Some(label) = &self.kind_label {
+            // Canonical spelling when the rule names exactly one kind, so a rule written in
+            // the spaced form is echoed in the form the docs use.
+            let shown = match self.kinds.as_slice() {
+                [one] => one.config_str(),
+                _ => label.clone(),
+            };
+            parts.push(format!("kind \"{shown}\""));
         }
         format!("{} ({})", parts.join(" "), self.reason)
     }
@@ -138,11 +147,11 @@ fn compile(entry: RawEntry) -> Result<ExcludeRule> {
             "exclude rule \"{label}\": descriptor requires a member (a descriptor pins one overload of a named member)"
         );
     }
-    let kind = entry
+    let kinds = entry
         .kind
         .as_deref()
         .map(|k| {
-            Reason::parse(k).ok_or_else(|| {
+            Reason::parse_kinds(k).ok_or_else(|| {
                 anyhow::anyhow!(
                     "exclude rule \"{label}\": unknown kind \"{k}\"; valid kinds: {}",
                     Reason::ALL
@@ -153,7 +162,8 @@ fn compile(entry: RawEntry) -> Result<ExcludeRule> {
                 )
             })
         })
-        .transpose()?;
+        .transpose()?
+        .unwrap_or_default();
     let owner = entry
         .owner
         .map(|o| {
@@ -173,7 +183,8 @@ fn compile(entry: RawEntry) -> Result<ExcludeRule> {
         owner,
         member: entry.member,
         descriptor: entry.descriptor,
-        kind,
+        kinds,
+        kind_label: entry.kind,
         reason: entry.reason,
     })
 }
@@ -220,9 +231,7 @@ pub fn filter(violations: &mut Vec<Violation>, rules: &[ExcludeRule]) -> Exclude
             {
                 continue;
             }
-            if let Some(kind) = rule.kind
-                && v.reason != kind
-            {
+            if !rule.kinds.is_empty() && !rule.kinds.contains(&v.reason) {
                 continue;
             }
             let member_matches = match &rule.member {
@@ -723,9 +732,41 @@ mod tests {
         }
         // A half-converted spelling still resolves to the same reason.
         assert_eq!(
-            Reason::parse("member_changed from_static to_instance"),
-            Some(Reason::StaticToInstance)
+            Reason::parse("method_became abstract"),
+            Some(Reason::MethodBecameAbstract)
         );
+    }
+
+    /// A rule file written before a category was split by direction and member kind keeps
+    /// waiving what it used to, so an upgrade of uika does not fail the build on a
+    /// `kind` that no longer exists.
+    #[test]
+    fn a_kind_that_has_since_been_split_still_matches_its_parts() {
+        let rules = parse(
+            r#"
+            [[exclude]]
+            kind = "member_changed_from_static_to_instance"
+            reason = "the call sites are all reflective"
+
+            [[exclude]]
+            kind = "class_kind_changed"
+            reason = "the flip is intentional and handled"
+            "#,
+        )
+        .unwrap();
+        let mut violations = vec![
+            kind_violation("lib/A", Reason::MethodBecameInstance),
+            kind_violation("lib/B", Reason::FieldBecameInstance),
+            kind_violation("lib/C", Reason::ClassBecameInterface),
+            kind_violation("lib/D", Reason::InterfaceBecameClass),
+            // The other direction was a different kind before the split too.
+            kind_violation("lib/E", Reason::MethodBecameStatic),
+        ];
+        let stats = filter(&mut violations, &rules);
+        assert_eq!(stats.suppressed, 4);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, Reason::MethodBecameStatic);
+        assert!(stats.unused.is_empty());
     }
 
     #[test]

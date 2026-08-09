@@ -369,7 +369,9 @@ violation kind in snake_case, for example `class_removed`, `method_removed`,
 `method_became_abstract`, or `extends_final_class`; an unknown value is
 rejected at load with the valid list. The spaced form that `--json` and the
 text report print under `reason` is accepted too, so a value pasted straight
-out of a report works. A rule needs an `owner`, a `kind`, or both. The text report
+out of a report works, as is a kind from before it was split by direction and
+member kind (`class_kind_changed` still waives both of the flips that replaced
+it). A rule needs an `owner`, a `kind`, or both. The text report
 prints Java-ish dotted signatures, so copy entries from the `--json` output
 (each violation's `reference` carries the raw `owner`, `member.name`, and
 `member.descriptor`). The summary line reports how many violations were
