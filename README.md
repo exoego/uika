@@ -5,7 +5,7 @@
 Ultra-fast and low-memory LinkageError checker for JVM.
 Catches `NoSuchMethodError` and friends statically, before you ship.
 
-## The problem
+## The problem to fix
 
 When dependency resolution picks conflicting versions, an API that a library
 was compiled against can vanish from the runtime classpath and fail at runtime
@@ -14,8 +14,8 @@ with `NoSuchMethodError` / `NoClassDefFoundError`.
 With modern practice of using Dependabot, Renovate, or Scala Steward bumping
 versions constantly, auditing transitive dependencies by hand does not scale.
 
-Uika catches this at PR time by analyzing every class/method reference recorded
-in the referencing binary's constant pool.
+Uika catches such `LinkageError`s at PR time by analyzing every class/method
+reference recorded in the referencing binary's constant pool.
 
 ## Prior art
 
@@ -57,16 +57,18 @@ Uika narrows the same analysis to the breakage the upgrade itself introduces.
 Uika does both halves in one step: diff the changed library old vs new, then
 resolve each real reference on your classpath the way the JVM links. Only
 breakage introduced by the upgrade is reported, which keeps a PR gate on
-Renovate/Dependabot/Scala Steward bumps quiet with no exclusion list. Gradle,
-sbt, and Maven plugins produce the classpath dumps (neither validator supports sbt),
-and detection covers visibility narrowing, static <-> instance mismatches,
-newly-final classes/members, removals, `new` on a class that became abstract or
-an interface, class<->interface flips, subclasses left out of a newly sealed
-type's `permits` clause, and a signature inherited as a default from two
-unrelated interfaces at once. Version lag is covered too: an
-upgraded artifact subclassing a class that a lagging dependency still declares
-final is reported. It is also a
-dependency-free static binary: no JVM.
+Renovate/Dependabot/Scala Steward bumps quiet with no exclusion list.
+
+Detection covers:
+- Class/Method removals
+- Visibility narrowing (public -> protected -> private)
+- Static <-> instance mismatches
+- Newly-final classes/members
+- Methods that became abstract
+- `new` on a class that became abstract or an interface
+- Class <-> interface flips
+- Subclasses left out of a newly sealed type's `permits` clause
+- Conflict of default methods from two unrelated interfaces at once 
 
 [BENCHMARKS.md](BENCHMARKS.md) has measured head-to-head runs against these
 tools on the same inputs: wall time, peak memory, and what each one reports,
@@ -75,58 +77,102 @@ snapshot linkage check also surfaces pre-existing, unrelated errors.
 
 ## Usage
 
-### CI gate on dependency-update PRs (the main use case)
+Every recipe below drives the Gradle, sbt, or Maven plugin, so declare it in
+your build first: see [Build-tool plugins](#build-tool-plugins).
 
-Store a baseline (the resolved-classpath dump of develop) as a build artifact
-on every push. The PR job only resolves its own side.
+### PR gate on GitHub Actions (the main use case)
 
-```console
-# --- On push to develop (baseline generation) ---
-# Resolution only. The baseline feeds the version diff, so it needs no build outputs.
-$ ./gradlew uikaDumpClasspath -PuikaOutput=classpath.json -PuikaBuildOutputs=false   # store as artifact keyed by SHA
+For Gradle:
 
-# --- On the PR job (after the normal build, so build outputs exist and
-#     anchor the reachability ranking) ---
-$ ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
-$ fetch-artifact <merge-base SHA> classpath.json > /tmp/before.json   # CI-specific retrieval
-$ ./gradlew uikaResolveClasspath \
-      -PuikaInput=/tmp/before.json -PuikaResolveOutput=/tmp/before-local.json
-$ ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before-local.json -PuikaAfter=/tmp/after.json
-# a violation fails the task and blocks the merge. Post the output as a PR comment
+```yaml
+name: dependency binary incompatibility check
+on: pull_request
+
+jobs:
+  upgrade-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # ... You may need to setup Java/Gradle/Maven/Sbt here ....
+
+      - name: Dump baseline classpath (base branch)
+        id: baseline
+        continue-on-error: true
+        run: |
+          git checkout ${{ github.event.pull_request.base.sha }}
+          if ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json -PuikaBuildOutputs=false; then
+            status=0
+          else
+            status=1
+          fi
+          git checkout -
+          exit $status
+
+      - name: Dump PR classpath
+        run: ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
+
+      - name: Check broken references
+        if: steps.baseline.outcome == 'success'
+        run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
 ```
 
-`uikaResolveClasspath` rewrites a baseline recorded on another machine to local
-paths, and has Gradle itself fetch any missing old-version JARs using this
-build's repositories and credentials.
+For sbt:
 
-### Local check before pushing
+```yaml
+      - name: Dump baseline classpath (base branch)
+        id: baseline
+        continue-on-error: true
+        run: |
+          git checkout ${{ github.event.pull_request.base.sha }}
+          if sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/before.json; then
+            status=0
+          else
+            status=1
+          fi
+          git checkout -
+          exit $status
 
-After bumping `libs.versions.toml`, verify with resolution only, no
-compilation. Classes already built on disk still anchor the reachability
-ranking, and the check orders itself after the dump so both fit one
-invocation:
+      - name: Dump PR classpath
+        run: sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json
 
-```console
-$ git stash && ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json -PuikaBuildOutputs=false && git stash pop
-$ ./gradlew uikaDumpClasspath uikaUpgradeCheck -PuikaOutput=/tmp/after.json -PuikaBuildOutputs=false \
-      -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
+      - name: Check broken references
+        if: steps.baseline.outcome == 'success'
+        run: sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"
 ```
 
-### Ad-hoc investigation
+For Maven:
 
-"What breaks between these two versions, and who dies?" needs only the JAR
-files. Uika is a static binary and does not need a JVM:
+```yaml
+      - name: Dump baseline classpath (base branch)
+        id: baseline
+        continue-on-error: true
+        run: |
+          git checkout ${{ github.event.pull_request.base.sha }}
+          if mvn -q uika:dump-classpath -Duika.output=/tmp/before.json; then
+            status=0
+          else
+            status=1
+          fi
+          git checkout -
+          exit $status
 
-```console
-$ uika diff old.jar new.jar
-$ uika check --old old.jar --new new.jar --classpath ~/.gradle/caches/.../suspect.jar
+      - name: Dump PR classpath
+        run: mvn -q compile uika:dump-classpath -Duika.output=/tmp/after.json
+
+      - name: Check broken references
+        if: steps.baseline.outcome == 'success'
+        run: mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json
 ```
+
+To keep the base-branch resolution off the PR's critical path, dump the
+baseline once per push instead and cache it as an artifact keyed by SHA:
+[BASELINE-CACHING.md](BASELINE-CACHING.md).
 
 ## Command reference
 
 ```console
-# List breaking changes between old/new versions of a library
-# (removals, access narrowing, static/instance changes, newly-final/abstract classes/members, class<->interface flips)
+# List breaking changes between old/new versions of a library.
 # Each line opens with the change kind, which is also what --json puts in its "kind" field:
 # jq '.breaking_changes[] | select(.kind == "class_became_final")' selects those lines.
 $ uika diff guava-22.0.jar guava-23.0-rc1.jar [--json]
@@ -190,43 +236,51 @@ scanned 145213 classes: ❌ 42 broken (of which 💥 25 reachable, ⚠️ 17 not
 $ uika dump some.jar
 ```
 
-### Reachability ranking
+### Violation tiers and `--fail-on`
 
-A changed library often drags in transitive JARs the application never touches,
-so a run can report violations in code that is present on the classpath but
-never loaded. When application roots are available (the module `classesDirs` in
-a dump, or `--app` build outputs), uika walks the class-load graph from them and
-splits the report by tier: reachable violations (💥, likely to break) first,
-then [latent](#latent-breaks-) ones (💤), then the ones it could not prove
-reachable (⚠️). Edges are constant-pool class references, superclass/interface
-links, class-name-shaped string constants (an over-approximation of
-`Class.forName`), and `META-INF/services` providers.
+A changed library drags in transitive JARs your application never touches, so
+not every violation is worth the same attention. Each one lands in a tier, and
+the report prints them in this order:
 
-It never hides a violation: reachability is an over-approximation, so ⚠️ means
-"no static path from the application reaches this class" (reflection driven
-purely by external configuration stays invisible), a signal to deprioritize
-rather than a guarantee. With no application roots (a bare
-`check --classpath ...`) there is nothing to rank from, so the 💥 and ⚠️ split
-disappears. 💤 does not: invocation evidence comes from the scanned bytecode,
-so latent findings keep their own section and their own count. The rest stays a
-single flat list.
+| Tier | Meaning |
+| --- | --- |
+| 💥 breaks | reachable from your application, or not provably unreachable |
+| 💤 latent | class is reachable, but no scanned code invokes the affected member |
+| ⚠️ unproven | no static path from your application reaches the class |
 
-### Latent breaks (💤)
+`check` and `upgrade-check` always print the full report; `--fail-on` only
+decides the exit code, as a threshold over exactly that split:
 
-Most breaks fire when a class loads or links, so "is the class reachable" is
-the right question to ask about them. `AbstractMethodError` is the exception: a
-concrete class that inherits an unimplemented abstract method loads, verifies,
-and instantiates without complaint, and throws only when the missing method is
-actually called. Ranking such a break by class reachability alone flags it as
-likely to break even when nothing in the scanned bytecode ever calls the member
-(https://github.com/exoego/uika/issues/81).
+- `any` (default, strictest): exit 1 on any violation.
+- `reachable`: exit 1 only on 💥.
+- `never`: always exit 0, reporting violations as warnings only.
 
-So for `method became abstract` uika also asks whether anything invokes the
-member. It sweeps every scanned class, plus the new version of the checked
-library, for method references to the affected member, keeping those whose
-owner can dispatch onto the broken class (the class itself, a supertype, or a
-subtype). When none exists the violation gets its own 💤 section between 💥 and
-⚠️, and `--fail-on reachable` treats it as a warning:
+So what fails CI is exactly what the report shows above the warning sections.
+Errors always exit 2 regardless of `--fail-on`.
+
+**Reachability (💥 vs ⚠️).** When application roots are available (the module
+`classesDirs` in a dump, or `--app` build outputs), uika walks the class-load
+graph from them over constant-pool class references, superclass/interface
+links, class-name-shaped string constants (a `Class.forName`
+over-approximation), and `META-INF/services` providers. It never hides a
+violation: the walk is an over-approximation, so ⚠️ is a signal to deprioritize
+rather than a guarantee, and reflection driven purely by external configuration
+stays invisible. Anything not provably unreachable therefore stays 💥 — which
+is also what happens in the two degraded cases, so `reachable` behaves like
+`any` there. Those cases are a bare `check --classpath ...` (no roots, nothing
+to walk) and roots that matched no scanned class (build outputs not compiled,
+so the ⚠️ labels would have no basis); the second prints a warning naming the
+cause.
+
+**Invocation evidence (💤).** Most breaks fire when a class loads, so "is the
+class reachable" is the right question for them. `AbstractMethodError` is the
+exception: a concrete class that inherits an unimplemented abstract method
+loads, verifies, and instantiates without complaint, and throws only when the
+missing method is actually called. So for `method became abstract`,  uika
+also sweeps every scanned class, plus the new version of the checked library,
+for references to the affected member, keeping those whose owner can dispatch
+onto the broken class (the class itself, a supertype, or a subtype).
+When none exists the violation is latent:
 
 ```text
 --------------------------------------------------------------------------------
@@ -238,82 +292,37 @@ subtype). When none exists the violation gets its own 💤 section between 💥 
         throws AbstractMethodError only when heap is first called (no invocation found in scanned bytecode)
 ```
 
-Like ⚠️, this is a confidence tier and not a proof: a call through reflection or
-JNI, or from code outside the scan, stays invisible. It separates "this breaks
-in production now" from "this is latent until something starts calling the
-method". `--fail-on any` still fails on 💤, and
-[`--exclude-file`](#excluding-known-false-positives---exclude-file) can drop the
-whole category with `kind = "method_became_abstract"`.
+That evidence comes from scanned bytecode rather than from application roots,
+so 💤 survives both degraded cases above and keeps its own section and count
+even in a bare `check --classpath` run. Like ⚠️ it is a confidence tier and not
+a proof: a call through reflection or JNI, or from code outside the scan, stays
+invisible. It separates "this breaks in production now" from "this is latent
+until something starts calling the method".
+[`--exclude-file`](#excluding-known-false-positives---exclude-file) can drop
+the whole category with `kind = "method_became_abstract"`.
 
-The tier errs toward 💥. When a class's hierarchy leaves the scanned scope the
-unseen types could relate an otherwise unrelated caller, so the break stays 💥
-rather than being downgraded. The one exception is an escape into `java.*`,
-which the JVM reserves: those types are always platform classes, so they cannot
-hide a library class, and the downgrade still applies. Without that a class
-implementing `Serializable` would never be reported latent.
+Both downgrades err toward 💥. When a class's hierarchy leaves the scanned
+scope the unseen types could relate an otherwise unrelated caller, so the break
+stays 💥 rather than being downgraded. The one exception is an escape into
+`java.*`, which the JVM reserves: those types are always platform classes, so
+they cannot hide a library class. Without that carve-out a class implementing
+`Serializable` would never be reported latent.
 
 ### Per-module checking (`upgrade-check`)
 
-In a multi-module build, each module's resolved classpath is its own JVM
-classpath: two modules can legitimately resolve different versions of the same
-coordinate (one service on netty 4.1, a newer one on 4.2), and no process ever
-mixes them. `upgrade-check` therefore checks each module against its own
-resolution, using the per-module classpaths the build-tool dumps already carry.
-Only modules whose own resolution lost a version are checked (an unchanged
-module cannot break from the upgrade), modules with identical inputs share one
-run, and each violation is attributed to the modules whose classpaths exhibit
-it (`modules:` in the text report, a `modules` array in JSON). A module that
-was renamed or added between the two dumps is checked against the union's
-before versions instead of being skipped, and a module whose after-side
-artifact list vanished (a partial build) is skipped with a warning rather
-than read as "every dependency removed".
-
-This has two correctness effects over checking the flattened union. It removes
-a false-positive class: a jar used by one module was judged against the newer
-version another module resolves, so its self-consistent internal references
-looked broken. And it removes a false-negative class: an upgrade in one module
-was invisible to the flat diff whenever a sibling module still resolves the
-old version, because the old version never left the union.
-
-A project-dependency artifact that was never built (its jar path is in the
-dump but missing on disk) falls back to the producing module's `classesDirs`
-from the same dump instead of being skipped. `--merged` restores the flat
-union check, which is also the automatic fallback (with a warning) for dumps
-written by plugins too old to carry per-module artifact lists.
-
-### Exit code policy (`--fail-on`)
-
-`check` and `upgrade-check` always print the full report; `--fail-on` only
-controls whether the run exits non-zero (so CI fails). It has three values:
-
-- `any` (default, strictest): exit 1 if any violation is found.
-- `reachable`: exit 1 only for violations in the 💥 tier. Violations that are
-  not proven reachable (⚠️) or [latent](#latent-breaks-) (💤) do not fail the
-  run.
-- `never`: always exit 0, reporting violations as warnings only.
-
-The threshold is the report's section split, so what fails CI is exactly what
-the report shows above the warning sections. The gate and the sections are the
-same call on the same inputs, and that holds in the degraded cases below too.
-
-Because reachability is an over-approximation (reflection driven purely by
-external configuration is invisible), `reachable` treats a violation whose
-reachability could not be determined as reachable, consistent with the
-report's 💥 grouping. Two cases feed into that: with no application roots
-nothing is walked, so `reachable` behaves like `any`; and when application
-roots are supplied but none matched a scanned class (the build outputs were
-not compiled, so the ⚠️ labels have no basis), the reachable axis is dropped
-rather than passing every violation off as unreachable, so non-latent
-violations print as 💥 and fail the run, with a warning naming the cause. The
-latent tier survives both cases, because its evidence comes from the scanned
-bytecode rather than from application roots, so a 💤 finding stays a warning
-and does not fail `reachable`. Errors always exit 2 regardless of `--fail-on`.
+Each module gets its own JVM classpath at runtime, and two modules may
+legitimately resolve different versions of one coordinate (e.g. one service 
+on netty 4.1, a newer one on 4.2). So each module is checked against what it 
+actually resolves, not against a flattened union: modules whose versions did 
+not move are skipped, and every violation names the modules that exhibit it
+(`modules:` in the text report, a `modules` array in JSON). `--merged`
+restores the flat union check.
 
 ### Excluding known false positives (`--exclude-file`)
 
 Some violations are real breaks in the referenced API but never actually
 matter at runtime, because the only reference resolves through reflection
-the tool cannot see (see [Reachability ranking](#reachability-ranking)).
+the tool cannot see (see [Violation tiers](#violation-tiers-and---fail-on)).
 commons-logging's `LogFactoryImpl` is the recurring example: it reflectively
 scans a `String[]` of class names at init, so a field like
 `classesToDiscover` shows up as removed even though no bytecode reference to
@@ -363,90 +372,55 @@ reason = "we ship a shaded copy of the lagging artifact, so version-lag finals n
 ```
 
 `owner`/`member`/`descriptor` use raw JVM internal forms (`/`-separated owner
-names, `$` for nested classes, `<init>` for constructors, undecoded
-descriptors like `(Ljava/util/Date;)V`). `member` and `descriptor` are matched
-exactly; `owner` is matched exactly too unless it ends in a single `*`, which
-makes it a prefix match over the package or class. `kind` is the
-violation kind in snake_case, for example `class_removed`, `method_removed`,
-`method_became_abstract`, or `extends_final_class`; an unknown value is
-rejected at load with the valid list. The spaced form that `--json` and the
-text report print under `reason` is accepted too, so a value pasted straight
-out of a report works, as is a kind from before it was split by direction and
-member kind (`class_kind_changed` still waives both of the flips that replaced
-it). A rule needs an `owner`, a `kind`, or both. The text report
-prints Java-ish dotted signatures, so copy entries from the `--json` output
-(each violation's `reference` carries the raw `owner`, `member.name`, and
-`member.descriptor`). The summary line reports how many violations were
-suppressed (`N suppressed by --exclude-file`), and a rule that matched
-nothing prints a warning, so stale entries do not go unnoticed as the
+names, `$` for nested classes, `<init>` for constructors, undecoded descriptors
+like `(Ljava/util/Date;)V`), so copy entries from the `--json` output rather
+than from the text report's dotted signatures (each violation's `reference`
+carries the raw `owner`, `member.name`, and `member.descriptor`).
+
+`kind` is the violation kind in snake_case, for example `class_removed` or
+`method_became_abstract`; an unknown value is rejected at load with the valid
+list, while the spaced form the reports print under `reason` is accepted, as is
+a kind from before it was split by direction and member kind
+(`class_kind_changed` still waives both of the flips that replaced it).
+
+A rule needs an `owner`, a `kind`, or both. The summary line reports how many
+violations were suppressed (`N suppressed by --exclude-file`), and a rule that
+matched nothing prints a warning, so stale entries do not go unnoticed as the
 checked libraries change.
 
 This is for false positives you have actually investigated, not a shortcut
 around triaging `⚠️  not proven reachable` violations wholesale; use
 `--fail-on reachable` for that instead.
 
-### Actionable suggestions
+## Build-tool plugins (Gradle, sbt, and Maven)
 
-`upgrade-check` also attributes each break to the two artifacts involved and
-proposes a fix. Because one version bump usually breaks many references the same
-way, the report is suggestion-first: each distinct fix (💡) is printed once,
-followed by a `why:` sentence naming the version change as the cause and the
-artifact it breaks, then one sentence per reference the fix covers. When the
-referencing artifact and the removed one share a group (a
-version skew inside one library family, like OpenTelemetry core vs its
-incubator), the advice leads with aligning the whole group via its BOM;
-otherwise it suggests upgrading the referencer or pinning the removed coordinate
-back. Grouping happens within each reachability section, so a fix that covers
-both reachable and not-proven-reachable references appears once under 💥 and once
-under ⚠️. This needs coordinates, so it appears only for `upgrade-check` (the
-dumps carry them), not for a bare `check --classpath`.
+All three plugins write the same dump format: every module's resolved runtime
+classpath as coordinate-annotated JSON, kept per module so `upgrade-check` can
+[check each against its own resolution](#per-module-checking-upgrade-check).
+Feed two dumps to `uika upgrade-check`, or one to `uika check
+--classpath-file` (more accurate than a hand-assembled classpath, and reduces
+unverified references).
 
-## Build-tool plugins
+A dump also refers to build outputs, so the Gradle task builds them by default
+(`-PuikaBuildOutputs=false` for a resolution-only dump); sbt compiles as a side
+effect of the dump task, and Maven needs a `compile` phase in the same
+invocation.
 
-The Gradle, sbt, and Maven plugins all write the same dump format: every
-module's resolved runtime classpath as coordinate-annotated JSON. Feed two
-dumps to `uika upgrade-check`, or one to `uika check --classpath-file` (more
-accurate than a hand-assembled classpath, and reduces unverified references).
+The upgrade-check task fetches the CLI itself as
+`net.exoego.uika:uika-cli:<version>:<platform>@zip` through the build's own
+dependency resolution, reusing its repositories, credentials, and cache, so
+there is no separate install step. The version defaults to the plugin's own, so
+one coordinate bump updates both.
 
-The dumps carry each module's classpath separately, which is what lets
-`upgrade-check` [check every module against its own resolution](#per-module-checking-upgrade-check).
-Project dependencies are attributed to their producing module (`"project"` in
-the dump), so the CLI can fall back to that module's `classesDirs` when a
-project jar was never built. The Gradle dump task also builds what the dump
-refers to by default (project-dependency jars and each module's own classes);
-opt out with `-PuikaBuildOutputs=false` for a resolution-only dump. sbt
-compiles as a side effect of evaluating the dump task; Maven needs a `compile`
-phase in the same invocation for module classes to exist.
-
-Each plugin also provides an upgrade-check task that fetches the uika CLI
-binary itself, as `net.exoego.uika:uika-cli:<version>:<platform>@zip` through the
-build's own dependency resolution: repositories, credentials, and cache are
-reused, and no separate install step is needed. The CLI version defaults to
-the plugin's own version, so a single coordinate in the build (which Renovate,
-Dependabot, or Scala Steward bumps) updates both.
-
-The upgrade-check task fails the build on any violation by default. This maps
-to the CLI's [`--fail-on`](#exit-code-policy---fail-on) policy
-(`never` / `reachable` / `any`, default `any`): use `reachable` to gate only on
-violations reachable from your own build outputs, or `never` to report without
-ever failing the build. Set it in the build file (shown per tool below), or on
-the command line when it is not fixed there (`-PuikaFailOn=`, `set uikaFailOn :=`,
-`-Duika.failOn=`).
-
-Known false positives can be suppressed the same way via
-[`--exclude-file`](#excluding-known-false-positives---exclude-file):
-`excludeFiles` (Gradle task DSL, or `-PuikaExcludeFile=` for a single file),
-`uikaExcludeFiles` (sbt), or `<excludeFiles>` (Maven).
-
-The plugins also enable the CLI's `--jdk-release` JDK API layer by default:
-the build runs on a JVM, so a usable `ct.sym` is at hand and the target
-release is derivable. Gradle derives it from the root project's Java toolchain
-or target compatibility, Maven from `maven.compiler.release` or
-`maven.compiler.target`, sbt from the build JVM, and every tool clamps the
-value to what the build JVM's `ct.sym` can serve (its own release is not in
-it; clamping down errs toward not reporting). Override with `jdkRelease`
-(Gradle task DSL, or `-PuikaJdkRelease=`), `uikaJdkRelease` (sbt), or
-`<jdkRelease>` / `-Duika.jdkRelease=` (Maven); 0 disables the layer.
+The settings shown per tool below also have command-line forms:
+[`failOn`](#violation-tiers-and---fail-on) (`-PuikaFailOn=`, `set uikaFailOn
+:=`, `-Duika.failOn=`) and
+[`excludeFiles`](#excluding-known-false-positives---exclude-file)
+(`-PuikaExcludeFile=` for a single file). `--jdk-release` needs no setting at
+all: the build runs on a JVM, so the release is derived from the Gradle
+toolchain, `maven.compiler.release`/`target`, or the sbt build JVM, clamped to
+what that JVM's `ct.sym` serves. Override with `jdkRelease` / `uikaJdkRelease`
+/ `<jdkRelease>` (`-PuikaJdkRelease=`, `-Duika.jdkRelease=`); 0 disables it.
 
 ### Gradle (`gradle-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-gradle-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-gradle-plugin)
 
@@ -470,8 +444,7 @@ plugins {
     id("net.exoego.uika") version "VERSION_PLACEHOLDER"
 }
 
-// Optional: fail only on reachable violations instead of the default `any`, and
-// suppress known false positives.
+// Optional: gate only on reachable violations, and suppress known false positives.
 tasks.withType<UpgradeCheckTask>().configureEach {
     failOn.set("reachable")
     excludeFiles.from("uika-exclude.toml")
@@ -492,8 +465,7 @@ addSbtPlugin("net.exoego.uika" % "sbt-uika" % "VERSION_PLACEHOLDER")
 ```
 
 ```scala
-// build.sbt — optional: fail only on reachable violations instead of the default `any`,
-// and suppress known false positives.
+// build.sbt — optional: gate only on reachable violations, and suppress known false positives.
 ThisBuild / uikaFailOn := "reachable"
 ThisBuild / uikaExcludeFiles := Seq(baseDirectory.value / "uika-exclude.toml")
 ```
@@ -512,8 +484,7 @@ $ sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"   # uikaCliVersion set
       <groupId>net.exoego.uika</groupId>
       <artifactId>uika-maven-plugin</artifactId>
       <version>VERSION_PLACEHOLDER</version>
-      <!-- Optional: fail only on reachable violations instead of the default `any`, and
-           suppress known false positives. -->
+      <!-- Optional: gate only on reachable violations, and suppress known false positives. -->
       <configuration>
         <failOn>reachable</failOn>
         <excludeFiles>
@@ -531,113 +502,6 @@ $ mvn uika:upgrade-check \
       -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json   # -Duika.cliVersion to override
 ```
 
-## PR gate on GitHub Actions
-
-A typical setup involves:
-
-1. Dump the base branch and run `uikaResolveClasspath` to output the resolved dependency.
-2. Dump the PR branch, compile and run `uikaResolveClasspath`.
-3. Compare the two dumps.
-
-The job checks out the base commit to dump it, so the plugin must already be
-declared there too, except on the PR that introduces this workflow, whose
-base branch has no plugin yet. That baseline step is expected to fail there,
-so it's marked `continue-on-error` and the final check step is skipped
-instead of failing the PR.
-
-For Gradle:
-
-```yaml
-name: dependency binary incompatibility check
-on: pull_request
-
-jobs:
-  upgrade-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      # ... You may need to setup Java/Gradle/Maven/Sbt here ....
-
-      - name: Dump baseline classpath (base branch)
-        id: baseline
-        continue-on-error: true
-        # Resolution only. The baseline feeds the version diff, so skip
-        # compiling the base branch (-PuikaBuildOutputs=false).
-        run: |
-          git checkout ${{ github.event.pull_request.base.sha }}
-          if ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json -PuikaBuildOutputs=false; then
-            status=0
-          else
-            status=1
-          fi
-          git checkout -
-          exit $status
-
-      - name: Dump PR classpath
-        # The dump builds project jars and module classes by default
-        # (-PuikaBuildOutputs=false for a resolution-only dump); the built
-        # outputs anchor reachability ranking and per-module checking.
-        run: ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
-
-      - name: Check broken references
-        if: steps.baseline.outcome == 'success'
-        run: >
-          ./gradlew uikaUpgradeCheck
-          -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
-        # a violation fails the job and blocks the merge
-```
-
-For sbt:
-
-```yaml
-      - name: Dump baseline classpath (base branch)
-        id: baseline
-        continue-on-error: true
-        run: |
-          git checkout ${{ github.event.pull_request.base.sha }}
-          if sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/before.json; then
-            status=0
-          else
-            status=1
-          fi
-          git checkout -
-          exit $status
-
-      - name: Dump PR classpath
-        # compile first so the build outputs anchor reachability ranking
-        run: sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json
-
-      - name: Check broken references
-        if: steps.baseline.outcome == 'success'
-        run: sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"
-```
-
-For Maven:
-
-```yaml
-      - name: Dump baseline classpath (base branch)
-        id: baseline
-        continue-on-error: true
-        run: |
-          git checkout ${{ github.event.pull_request.base.sha }}
-          if mvn -q uika:dump-classpath -Duika.output=/tmp/before.json; then
-            status=0
-          else
-            status=1
-          fi
-          git checkout -
-          exit $status
-
-      - name: Dump PR classpath
-        # compile first so the build outputs anchor reachability ranking
-        run: mvn -q compile uika:dump-classpath -Duika.output=/tmp/after.json
-
-      - name: Check broken references
-        if: steps.baseline.outcome == 'success'
-        run: mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json
-```
-
 ## How it works
 
 1. Parse the old/new JARs into full API indexes with class hierarchy.
@@ -648,9 +512,7 @@ For Maven:
    (typically under 0.1% of the total) to obtain their member tables.
 4. Resolve each reference against "new JARs + re-read classes", walking the
    inheritance hierarchy, and report references that resolved under old but
-   break under new: removals, visibility narrowing, static<->instance changes,
-   writes to newly-final fields, and subclassing/overriding of newly-final
-   classes/methods.
+   break under new.
 
 Linkage is checked the way the JVM links: against the flattened runtime
 classpath. Members moved to a superclass, classes relocated to another
@@ -734,28 +596,23 @@ $ cargo build --release                       # for benchmarks
 $ cargo build --release --features memstats   # memory breakdown (counting allocator, slower)
 ```
 
-The integration tests replay five real incidents (ktor-io/coroutines,
-OpenTelemetry, Selenium/Guava, okhttp-digest/OkHttp, Koin) against unmodified
-JARs from Maven Central, vendored under `cli/tests/fixtures/` (see its README
-for coordinates, checksums, and licensing).
-
-Golden tests pin the full check JSON for those fixture scenarios
-(`cli/tests/golden/`), so any detection shift fails `cargo test` before it
-ships. After verifying a diff is an intended semantic change, re-bless with
+The integration tests replay real incidents against unmodified JARs from Maven
+Central, vendored under `cli/tests/fixtures/` (see its README for coordinates,
+checksums, and licensing). Golden tests pin the full check JSON for those
+scenarios (`cli/tests/golden/`), so any detection shift fails `cargo test`
+before it ships. After verifying a diff is an intended semantic change, re-bless with
 `UIKA_BLESS=1 cargo test --test golden`. The scenario table is single-sourced
-in `cli/tests/scenarios.tsv`, shared with the probe harness below.
+in `cli/tests/scenarios.tsv`, shared with the probe harness.
 
-`make probe` answer-checks the same scenarios against a real JVM.
-`check --verdicts-json <path>` (also available on upgrade-check) streams every
-reference verdict (ok/unknown/broken) as JSON Lines, and
-`tools/jvm-probe/Probe.java` resolves each reference with
-`MethodHandles.Lookup` on the new-side and old-side classpaths. A verdict uika
-calls broken that the JVM links fine fails the run as a false positive;
-ok/unknown verdicts that fail on the new side but linked on the old side are
-listed as false-negative candidates for triage. Graph-walk violations (newly
-final classes/methods and version-lag extends-final, as in the koin and pact
-scenarios) never enter the verdict stream, so those breaks are covered by the integration tests rather
-than the probe.
+`make probe` answer-checks the same scenarios against a real JVM:
+`check --verdicts-json <path>` streams every reference verdict
+(ok/unknown/broken) as JSON Lines, and `tools/jvm-probe/Probe.java` resolves
+each one with `MethodHandles.Lookup` on the old-side and new-side classpaths. A
+broken verdict the JVM links fine fails the run as a false positive; an
+ok/unknown verdict that fails on the new side but linked on the old side is
+listed as a false-negative candidate for triage. Violations found by walking
+the class graph rather than by resolving a reference never enter the verdict
+stream, so those are covered by the integration tests instead.
 
 ## Publishing
 
