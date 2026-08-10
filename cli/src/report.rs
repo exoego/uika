@@ -792,6 +792,12 @@ pub fn check_header(
     )
 }
 
+/// Header for a JDK-pair check, where the compared sides are releases rather than JARs.
+pub fn check_header_jdk(old: u32, new: u32, targets: usize) -> String {
+    let plural = if targets == 1 { "" } else { "s" };
+    format!("checked JDK {old} -> JDK {new} against {targets} scan target{plural}\n\n")
+}
+
 /// A reachability-tier title sandwiched in 80-column rules, so the section boundary
 /// stands out when scrolling a long report.
 fn section_heading(title: &str) -> String {

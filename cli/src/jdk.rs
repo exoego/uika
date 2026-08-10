@@ -1,4 +1,11 @@
-//! JDK API model from ct.sym (opt-in via `--jdk-release`).
+//! JDK API model, serving two opt-in features.
+//!
+//! `--jdk-release N` layers one release under both resolution scopes so hierarchy
+//! escapes into JDK types conclude instead of ending Unknown. `--jdk-release-old N
+//! --jdk-release-new M` instead makes the JDK upgrade itself the compared pair, so a
+//! JDK API the scan still references but release M dropped is reported like any library
+//! removal. The pair path needs a whole release rather than an escape closure, and it
+//! needs the running JDK's own release, which ct.sym never carries; see `release_index`.
 //!
 //! Hierarchy traversal that escapes the analyzed scope into JDK types normally
 //! ends as Unknown (conservative OK). With a JDK API index layered at the bottom
@@ -112,12 +119,36 @@ pub fn ct_sym_in(home: impl AsRef<Path>) -> Option<PathBuf> {
 /// error instead of silently analyzing against a different JDK's data.
 /// JAVA_HOME is the fallback.
 pub fn find_ct_sym() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("UIKA_JDK")
-        && !p.is_empty()
-    {
-        return ct_sym_in(&p);
+    find_home().as_deref().and_then(ct_sym_in)
+}
+
+/// The JDK home behind UIKA_JDK / JAVA_HOME, same precedence as `find_ct_sym`.
+/// UIKA_JDK may point straight at a ct.sym file, which has no home around it.
+fn find_home() -> Option<PathBuf> {
+    for var in ["UIKA_JDK", "JAVA_HOME"] {
+        if let Ok(p) = std::env::var(var)
+            && !p.is_empty()
+        {
+            return Some(PathBuf::from(p));
+        }
     }
-    std::env::var("JAVA_HOME").ok().and_then(ct_sym_in)
+    None
+}
+
+/// The feature version of the JDK at `home`, read from its `release` file
+/// (`JAVA_VERSION="21.0.11"`). A plain properties file, so no JVM is started.
+fn installed_feature(home: &Path) -> Option<u32> {
+    let text = std::fs::read_to_string(home.join("release")).ok()?;
+    let value = text
+        .lines()
+        .find_map(|l| l.strip_prefix("JAVA_VERSION="))?
+        .trim_matches('"');
+    // 1.8.0_x for 8, otherwise the leading component is the feature version.
+    let first = value.split(['.', '_', '-']).next()?;
+    match first.parse().ok()? {
+        1u32 => value.split('.').nth(1)?.parse().ok(),
+        n => Some(n),
+    }
 }
 
 /// Locate and open the indexer for `--jdk-release`. Lives here so the lookup
@@ -138,6 +169,108 @@ pub fn indexer_for(release: Option<u32>) -> Result<Option<JdkIndexer>> {
         bail!("--jdk-release {release} needs a JDK: {hint}");
     };
     Ok(Some(JdkIndexer::open(&ct_sym, release)?))
+}
+
+/// The whole API of one JDK release as an `ApiIndex`, for using a JDK upgrade as the
+/// checked old/new pair. Two sources, because ct.sym stops one release short of the JDK
+/// shipping it (javac serves its own release from the runtime image):
+/// - older than the running JDK: every stub of that release in ct.sym, the documented API.
+/// - the running JDK's own release: `jmods/*.jmod`, which are zips of class files under
+///   `classes/`. That is a SUPERSET of ct.sym, since it also holds unexported internals.
+///
+/// The superset only errs toward silence while it is the NEW side, where an extra class
+/// can only cancel a removal. As the OLD side against a ct.sym new side it would invent
+/// removals for every unexported class, so that combination warns.
+pub fn release_index(release: u32) -> Result<(ApiIndex, Vec<String>)> {
+    let Some(home) = find_home() else {
+        bail!(
+            "--jdk-release-old/--jdk-release-new need a JDK: set UIKA_JDK to a JDK home \
+             (checked first) or JAVA_HOME"
+        );
+    };
+    if installed_feature(&home) == Some(release) {
+        return jmods_index(&home, release);
+    }
+    let Some(ct_sym) = ct_sym_in(&home) else {
+        bail!(
+            "no lib/ct.sym under {} and its release is not {release}",
+            home.display()
+        );
+    };
+    let mut indexer = JdkIndexer::open(&ct_sym, release)?;
+    Ok(indexer.fetch_all())
+}
+
+/// Whether `release` will be served from jmods, i.e. is the running JDK's own release.
+pub fn is_installed_release(release: u32) -> bool {
+    find_home().is_some_and(|home| installed_feature(&home) == Some(release))
+}
+
+/// Every class under `classes/` in the JDK's jmods. `module-info` is skipped, matching
+/// `input::is_scannable`, since a module descriptor is not a class for resolution.
+fn jmods_index(home: &Path, release: u32) -> Result<(ApiIndex, Vec<String>)> {
+    let dir = home.join("jmods");
+    let entries = std::fs::read_dir(&dir).with_context(|| {
+        format!(
+            "release {release} is this JDK's own, which ct.sym never carries, so it must \
+             come from {} (absent in a JRE or a jlink'd runtime)",
+            dir.display()
+        )
+    })?;
+    let mut jmods: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "jmod"))
+        .collect();
+    jmods.sort(); // Deterministic first-wins across modules, and deterministic warnings.
+    let mut index = ApiIndex::new();
+    let mut warnings = Vec::new();
+    for path in &jmods {
+        let file = File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
+        let mut archive = ZipArchive::new(WindowedReader::new(file, 256 * 1024))
+            .with_context(|| format!("not a zip: {}", path.display()))?;
+        let names: Vec<String> = archive
+            .file_names()
+            .filter(|n| {
+                n.starts_with("classes/")
+                    && n.ends_with(".class")
+                    && !n.ends_with("module-info.class")
+            })
+            .map(str::to_owned)
+            .collect();
+        for name in names {
+            let mut bytes = Vec::new();
+            match archive.by_name(&name).and_then(|mut e| {
+                e.read_to_end(&mut bytes)?;
+                Ok(())
+            }) {
+                Ok(()) => {}
+                Err(e) => {
+                    warnings.push(format!("{}!{name}: {e}", path.display()));
+                    continue;
+                }
+            }
+            match crate::classfile::RawClass::parse(&bytes)
+                .and_then(|rc| crate::extract::extract_api(&rc))
+            {
+                Ok(mut api) => {
+                    level_to_ct_sym_fidelity(&mut api);
+                    index.insert_if_absent(api);
+                }
+                Err(e) => warnings.push(format!("{}!{name}: {e}", path.display())),
+            }
+        }
+    }
+    index.shrink_to_fit();
+    Ok((index, warnings))
+}
+
+/// Drop what a jmods class file carries and a ct.sym stub does not, so the two sources can
+/// face each other. ct.sym strips PermittedSubclasses: `java.lang.constant.ConstantDesc` has
+/// been sealed since 12 and its stub has none. Keeping it would report every sealed JDK class
+/// as newly sealed against a ct.sym old side. Sealing is therefore invisible to a JDK-pair
+/// check, which is the same direction as Unknown. NestHost IS kept in stubs, so it stays.
+fn level_to_ct_sym_fidelity(api: &mut ClassApi) {
+    api.permitted = None;
 }
 
 /// Lazily fetching view of one release inside ct.sym. The archive stays open:
@@ -200,6 +333,17 @@ impl JdkIndexer {
             );
         }
         Ok(Self { archive, entries })
+    }
+
+    /// Every stub of the opened release, for JDK-pair mode. `fetch_closure` is the
+    /// lazy counterpart the escape layer uses; here the whole release IS the library.
+    pub fn fetch_all(&mut self) -> (ApiIndex, Vec<String>) {
+        let names: Vec<Sym> = self
+            .entries
+            .keys()
+            .map(|k| crate::intern::intern(k))
+            .collect();
+        self.fetch_closure(names)
     }
 
     /// Build an ApiIndex holding the transitive super/interface closure of
@@ -277,6 +421,45 @@ impl JdkIndexer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jmods_classes_are_levelled_to_stub_fidelity() {
+        let mut api = ClassApi {
+            name: crate::intern::intern("java/awt/event/InputEvent"),
+            access: 0,
+            super_name: None,
+            interfaces: vec![],
+            methods: crate::model::build_members([]),
+            fields: crate::model::build_members([]),
+            nest_host: Some(crate::intern::intern("java/awt/event/Host")),
+            permitted: Some(vec![crate::intern::intern("java/awt/event/MouseEvent")]),
+        };
+        level_to_ct_sym_fidelity(&mut api);
+        assert!(
+            api.permitted.is_none(),
+            "sealing must not survive into a pair"
+        );
+        assert!(api.nest_host.is_some(), "stubs keep NestHost, so it stays");
+    }
+
+    #[test]
+    fn feature_version_parses_both_naming_schemes() {
+        let dir = std::env::temp_dir().join("uika-jdk-release-test");
+        let write = |v: &str| {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("release"),
+                format!("JAVA_VERSION=\"{v}\"\nOTHER=1\n"),
+            )
+            .unwrap();
+            installed_feature(&dir)
+        };
+        assert_eq!(write("21.0.11"), Some(21));
+        assert_eq!(write("25"), Some(25));
+        assert_eq!(write("1.8.0_402"), Some(8));
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(installed_feature(&dir), None);
+    }
 
     #[test]
     fn release_codes_follow_ct_sym_base36_convention() {

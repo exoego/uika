@@ -47,11 +47,13 @@ pub enum Command {
     /// Detect uses of breaking changes from classpath or application classes
     /// (exit codes: 0=clean, 1=violations found per --fail-on, 2=error)
     Check {
-        /// Old-version JARs (the ones bound at compile time). May be specified multiple times
-        #[arg(long, required = true)]
+        /// Old-version JARs (the ones bound at compile time). May be specified multiple times.
+        /// Optional when the checked pair is a JDK upgrade (--jdk-release-old/--jdk-release-new)
+        #[arg(long, required_unless_present = "jdk_release_old")]
         old: Vec<PathBuf>,
-        /// New-version JARs (the ones resolved on the runtime classpath). May be specified multiple times
-        #[arg(long, required = true)]
+        /// New-version JARs (the ones resolved on the runtime classpath). May be specified multiple times.
+        /// Optional when the checked pair is a JDK upgrade
+        #[arg(long, required_unless_present = "jdk_release_new")]
         new: Vec<PathBuf>,
         /// Transitive dependency JARs (':'-separated, may be specified multiple times)
         #[arg(long, value_delimiter = ':')]
@@ -79,6 +81,15 @@ pub enum Command {
         /// $UIKA_JDK if set (a JDK home or a ct.sym file), else $JAVA_HOME
         #[arg(long, value_parser = clap::value_parser!(u32).range(8..=35))]
         jdk_release: Option<u32>,
+        /// Check a JDK upgrade itself: resolve against this release as the old side.
+        /// Requires --jdk-release-new. The JDK API becomes the compared pair, so --old
+        /// and --new are optional. Reads ct.sym for releases below the running JDK and
+        /// jmods for its own release
+        #[arg(long, requires = "jdk_release_new", value_parser = clap::value_parser!(u32).range(8..=35))]
+        jdk_release_old: Option<u32>,
+        /// The new side of a JDK upgrade check. Requires --jdk-release-old
+        #[arg(long, requires = "jdk_release_old", value_parser = clap::value_parser!(u32).range(8..=35))]
+        jdk_release_new: Option<u32>,
         /// Evaluation: stream every reference verdict (ok/unknown/broken) as JSON Lines
         /// to this file, for answer-checking against a real JVM (tools/jvm-probe)
         #[arg(long)]

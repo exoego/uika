@@ -87,6 +87,25 @@ not be relearned by experiment.
   kotlin/* and spring/* escapes correctly stay Unknown. On the stress workload
   unverified went 294→0 and 106 real removals surfaced (owners whose hierarchy
   escapes into java.util.concurrent).
+- `--jdk-release-old N --jdk-release-new M` (check) makes the JDK upgrade the
+  compared pair instead of layering one release under both sides, so `--old`/
+  `--new` become optional and `run_check_with_indexes` gets two JDK indexes with
+  empty path lists (nothing to exclude as stale, nothing to sweep for invocation
+  evidence). Sources differ by release: ct.sym for anything below the running
+  JDK, `jmods/*.jmod` (zips of class files under `classes/`) for its own release,
+  which ct.sym never carries. The running JDK's feature version is read from its
+  `release` file, not from a JVM. jmods is a SUPERSET of ct.sym (unexported
+  internals included), which only cancels removals while it is the new side; as
+  the old side against a ct.sym new side it would invent them, so that
+  combination warns. `level_to_ct_sym_fidelity` drops PermittedSubclasses from
+  jmods classes because stubs strip it (java.lang.constant.ConstantDesc has been
+  sealed since 12 and its stub carries none); without that, every sealed JDK
+  class reads as newly sealed. Sealing is therefore invisible to a JDK pair.
+  NestHost IS in stubs, so it stays. Evidence: an app calling
+  java.rmi.activation.ActivationGroup reports `class removed` on 11 -> 17, while
+  a subclass of java.awt.event.ComponentAdapter reports nothing despite the 98
+  public -> protected constructor narrowings in that pair (the subclass-aware
+  access check absorbs them).
 - Tuning knobs: `UIKA_CHUNK` (paths processed concurrently in pass 1; default =
   rayon threads), `UIKA_WINDOW` (fallback zip-reader window size; default
   1 MiB, two windows).

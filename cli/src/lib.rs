@@ -37,6 +37,8 @@ pub fn run(cli: Cli) -> Result<i32> {
             json,
             fail_on,
             jdk_release,
+            jdk_release_old,
+            jdk_release_new,
             verdicts_json,
         } => {
             let mut targets: Vec<PathBuf> = classpath;
@@ -56,6 +58,7 @@ pub fn run(cli: Cli) -> Result<i32> {
                 json,
                 fail_on,
                 jdk_release,
+                jdk_release_old.zip(jdk_release_new),
                 verdicts_json.as_deref(),
             )
         }
@@ -125,6 +128,7 @@ fn cmd_check(
     json: bool,
     fail_on: FailOn,
     jdk_release: Option<u32>,
+    jdk_pair: Option<(u32, u32)>,
     verdicts_json: Option<&Path>,
 ) -> Result<i32> {
     let exclude_rules = exclude::load(exclude_file)?;
@@ -132,25 +136,63 @@ fn cmd_check(
     let mut verdict_writer = verdicts_json
         .map(verdicts::VerdictWriter::create)
         .transpose()?;
-    let result = run_check(
-        old,
-        new,
-        targets,
-        app_roots,
-        &exclude_rules,
-        jdk_indexer.as_mut(),
-        verdict_writer.as_mut(),
-    );
+    let jdk_pair_indexes = jdk_pair.map(jdk_release_pair).transpose()?;
+    let result = match &jdk_pair_indexes {
+        // The JDK upgrade IS the pair. No jar to exclude as stale and none to sweep for
+        // invocation evidence, so both path lists stay empty; --old/--new jars, when also
+        // given, are layered under each side so a library reference into them still resolves.
+        Some((old_index, new_index)) => run_check_with_indexes(
+            old_index,
+            new_index,
+            &[],
+            &[],
+            targets,
+            app_roots,
+            &exclude_rules,
+            jdk_indexer.as_mut(),
+            verdict_writer.as_mut(),
+        ),
+        None => run_check(
+            old,
+            new,
+            targets,
+            app_roots,
+            &exclude_rules,
+            jdk_indexer.as_mut(),
+            verdict_writer.as_mut(),
+        ),
+    };
     let result = finish_verdicts(verdict_writer, result)?;
     if json {
         println!("{}", report::check_json(&result)?);
     } else {
         // scan_targets, not targets.len(): the header must agree with what was actually
         // scanned after missing-path skips, stale-old-version exclusion, and dedup.
-        print!("{}", report::check_header(old, new, result.scan_targets));
+        match jdk_pair {
+            Some((o, n)) => print!("{}", report::check_header_jdk(o, n, result.scan_targets)),
+            None => print!("{}", report::check_header(old, new, result.scan_targets)),
+        }
         print!("{}", report::check_text(&result));
     }
     Ok(exit_code(&result, fail_on))
+}
+
+/// Build both sides of a JDK-pair check. Warns when the old side comes from jmods while
+/// the new side comes from ct.sym: jmods also holds unexported internals, so as the older
+/// side it would report every one of them as removed.
+fn jdk_release_pair((old, new): (u32, u32)) -> Result<(ApiIndex, ApiIndex)> {
+    if jdk::is_installed_release(old) && !jdk::is_installed_release(new) {
+        eprintln!(
+            "warning: --jdk-release-old {old} is this JDK's own release, read from jmods, \
+             which also holds unexported internals; against a ct.sym new side those look removed"
+        );
+    }
+    let (old_index, old_warnings) = jdk::release_index(old)?;
+    let (new_index, new_warnings) = jdk::release_index(new)?;
+    for w in old_warnings.iter().chain(&new_warnings) {
+        eprintln!("warning: {w}");
+    }
+    Ok((old_index, new_index))
 }
 
 /// Close the verdict stream and surface a stream failure. Always runs `finish` (so the
