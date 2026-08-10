@@ -2,8 +2,9 @@
 
 Mostly unmodified third-party JARs vendored from Maven Central, used by the
 integration tests (`tests/integration.rs`) and golden tests (`tests/golden.rs`)
-as real-world ground truth. One small synthetic triple
-(`synthetic-abstract-added-*`) is authored here rather than downloaded; see
+as real-world ground truth. Two small synthetic triples
+(`synthetic-abstract-added-*`, `synthetic-sealed-*`) are authored here rather than
+downloaded; see
 [Synthetic fixtures](#synthetic-fixtures) below. Several real GitHub reports are
 reproduced from the third-party binaries:
 
@@ -140,6 +141,56 @@ EOF
 
 javac --release 11 -cp o2 -d oc caller/fixture/caller/MethodRefCaller.java
 (cd oc && jar cf ../synthetic-abstract-added-methodref-caller.jar fixture)
+```
+
+`synthetic-sealed-*` is authored here too, because no real pair seals a type that
+outside code extends. `Square` is compiled against the unsealed 1.0 and a real JVM
+confirms it then fails to load against 2.0 with
+`IncompatibleClassChangeError: class fixture.app.Square cannot implement sealed
+interface fixture.lib.Shape`; `Marker` implements the untouched `Tagged` and is the
+not-reported control. `--release 17` is the floor for `sealed`.
+
+```
+mkdir -p v1/fixture/lib v2/fixture/lib app/fixture/app
+
+cat > v1/fixture/lib/Shape.java <<'EOF'
+package fixture.lib;
+public interface Shape { }
+EOF
+
+cat > v1/fixture/lib/Tagged.java <<'EOF'
+package fixture.lib;
+public interface Tagged { }
+EOF
+
+cat > v2/fixture/lib/Shape.java <<'EOF'
+package fixture.lib;
+public sealed interface Shape permits Circle { }
+EOF
+
+cat > v2/fixture/lib/Circle.java <<'EOF'
+package fixture.lib;
+public final class Circle implements Shape { }
+EOF
+
+cp v1/fixture/lib/Tagged.java v2/fixture/lib/Tagged.java
+
+cat > app/fixture/app/Square.java <<'EOF'
+package fixture.app;
+public class Square implements fixture.lib.Shape { }
+EOF
+
+cat > app/fixture/app/Marker.java <<'EOF'
+package fixture.app;
+public class Marker implements fixture.lib.Tagged { }
+EOF
+
+javac --release 17 -d o1 v1/fixture/lib/*.java
+javac --release 17 -d o2 v2/fixture/lib/*.java
+javac --release 17 -cp o1 -d oa app/fixture/app/*.java
+(cd o1 && jar cf ../synthetic-sealed-1.0.jar fixture)
+(cd o2 && jar cf ../synthetic-sealed-2.0.jar fixture)
+(cd oa && jar cf ../synthetic-sealed-consumer.jar fixture)
 ```
 
 ## Contents

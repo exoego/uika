@@ -61,7 +61,8 @@ Renovate/Dependabot/Scala Steward bumps quiet with no exclusion list. Gradle,
 sbt, and Maven plugins produce the classpath dumps (neither validator supports sbt),
 and detection covers visibility narrowing, static <-> instance mismatches,
 newly-final classes/members, removals, `new` on a class that became abstract or
-an interface, and class<->interface flips. Version lag is covered too: an
+an interface, class<->interface flips, and subclasses left out of a newly sealed
+type's `permits` clause. Version lag is covered too: an
 upgraded artifact subclassing a class that a lagging dependency still declares
 final is reported. It is also a
 dependency-free static binary: no JVM.

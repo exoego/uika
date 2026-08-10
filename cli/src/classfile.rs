@@ -68,6 +68,15 @@ pub struct RawClass<'a> {
     pub methods: Vec<RawMember>,
     /// Class index of the NestHost attribute target; 0 when absent.
     pub nest_host: u16,
+    /// PermittedSubclasses targets. `None` = attribute absent = unsealed; `Some(empty)` is
+    /// a sealed class permitting nothing (legal per JVMS 4.7.31) and must not collapse into it.
+    pub permitted_subclasses: Option<Vec<u16>>,
+}
+
+#[derive(Default)]
+struct ClassAttrs {
+    nest_host: u16,
+    permitted_subclasses: Option<Vec<u16>>,
 }
 
 impl<'a> RawClass<'a> {
@@ -147,10 +156,11 @@ impl<'a> RawClass<'a> {
 
         let fields = r.members(&cp)?;
         let methods = r.members(&cp)?;
-        // Of the class attributes only NestHost is read (nestmate private access);
-        // the rest are skipped by length. Best effort: a truncated attribute table
-        // yields "no nest host" instead of a parse error.
-        let nest_host = r.nest_host_attr(&cp).unwrap_or(0);
+        // Of the class attributes only NestHost (nestmate private access) and
+        // PermittedSubclasses (sealing) are read; the rest are skipped by length. Best
+        // effort: a truncated attribute table yields "no nest host, not sealed" instead
+        // of a parse error, which is the conservative direction for both.
+        let attrs = r.class_attributes(&cp).unwrap_or_default();
 
         Ok(Self {
             cp,
@@ -160,7 +170,8 @@ impl<'a> RawClass<'a> {
             interfaces,
             fields,
             methods,
-            nest_host,
+            nest_host: attrs.nest_host,
+            permitted_subclasses: attrs.permitted_subclasses,
         })
     }
 
@@ -265,18 +276,24 @@ impl<'a> Reader<'a> {
         Ok(members)
     }
 
-    fn nest_host_attr(&mut self, cp: &[CpEntry<'a>]) -> Result<u16> {
+    fn class_attributes(&mut self, cp: &[CpEntry<'a>]) -> Result<ClassAttrs> {
         let count = self.u16()?;
-        let mut host = 0u16;
+        let mut attrs = ClassAttrs::default();
         for _ in 0..count {
             let name_index = self.u16()?;
             let len = self.u32()? as usize;
             let body = self.take(len)?;
-            if cp_utf8(cp, name_index) == Some(b"NestHost") && body.len() == 2 {
-                host = u16::from_be_bytes([body[0], body[1]]);
+            match cp_utf8(cp, name_index) {
+                Some(b"NestHost") if body.len() == 2 => {
+                    attrs.nest_host = u16::from_be_bytes([body[0], body[1]]);
+                }
+                Some(b"PermittedSubclasses") => {
+                    attrs.permitted_subclasses = parse_class_index_list(body);
+                }
+                _ => {}
             }
         }
-        Ok(host)
+        Ok(attrs)
     }
 
     fn member_attributes(&mut self, cp: &[CpEntry<'a>]) -> Result<Vec<RawCodeRef>> {
@@ -292,6 +309,21 @@ impl<'a> Reader<'a> {
         }
         Ok(code_refs)
     }
+}
+
+/// `u2 count` then `count` class indexes. A malformed body yields `None` (unsealed), so an
+/// unreadable attribute reports nothing rather than a truncated permits list.
+fn parse_class_index_list(body: &[u8]) -> Option<Vec<u16>> {
+    let (head, rest) = body.split_at_checked(2)?;
+    let count = u16::from_be_bytes([head[0], head[1]]) as usize;
+    if rest.len() != count * 2 {
+        return None;
+    }
+    Some(
+        rest.chunks_exact(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect(),
+    )
 }
 
 fn cp_utf8<'a>(cp: &[CpEntry<'a>], index: u16) -> Option<&'a [u8]> {
@@ -492,6 +524,56 @@ mod tests {
         let rc = RawClass::parse(&b).unwrap();
         assert_eq!(rc.class_name(rc.this_class).unwrap(), "a/B$C");
         assert_eq!(rc.class_name(rc.nest_host).unwrap(), "a/B");
+        assert!(rc.permitted_subclasses.is_none());
+    }
+
+    /// PermittedSubclasses on a minimal class: interface a/S permits a/P.
+    #[test]
+    fn parses_permitted_subclasses_attribute() {
+        let mut b: Vec<u8> = Vec::new();
+        b.extend(0xCAFE_BABEu32.to_be_bytes());
+        b.extend([0, 0, 0, 61]); // major 61 (Java 17)
+        b.extend(8u16.to_be_bytes()); // cp_count (entries 1..7)
+        let utf8 = |b: &mut Vec<u8>, s: &str| {
+            b.push(1);
+            b.extend((s.len() as u16).to_be_bytes());
+            b.extend(s.as_bytes());
+        };
+        utf8(&mut b, "a/S"); // #1
+        utf8(&mut b, "java/lang/Object"); // #2
+        utf8(&mut b, "a/P"); // #3
+        b.push(7); // #4 Class -> #1
+        b.extend(1u16.to_be_bytes());
+        b.push(7); // #5 Class -> #2
+        b.extend(2u16.to_be_bytes());
+        b.push(7); // #6 Class -> #3 (permitted)
+        b.extend(3u16.to_be_bytes());
+        utf8(&mut b, "PermittedSubclasses"); // #7
+        b.extend(0x0600u16.to_be_bytes()); // access: interface abstract
+        b.extend(4u16.to_be_bytes()); // this_class
+        b.extend(5u16.to_be_bytes()); // super_class
+        b.extend(0u16.to_be_bytes()); // interfaces
+        b.extend(0u16.to_be_bytes()); // fields
+        b.extend(0u16.to_be_bytes()); // methods
+        b.extend(1u16.to_be_bytes()); // class attrs: 1
+        b.extend(7u16.to_be_bytes()); // name -> #7
+        b.extend(4u32.to_be_bytes()); // len 4
+        b.extend(1u16.to_be_bytes()); // number_of_classes
+        b.extend(6u16.to_be_bytes()); // classes[0] -> #6
+
+        let rc = RawClass::parse(&b).unwrap();
+        let permitted = rc.permitted_subclasses.as_ref().unwrap();
+        assert_eq!(permitted.len(), 1);
+        assert_eq!(rc.class_name(permitted[0]).unwrap(), "a/P");
+    }
+
+    #[test]
+    fn a_sealed_class_permitting_nothing_stays_distinct_from_unsealed() {
+        assert_eq!(parse_class_index_list(&[0, 0]), Some(vec![]));
+        assert_eq!(parse_class_index_list(&[0, 1, 0, 6]), Some(vec![6]));
+        // Count disagrees with the body length.
+        assert_eq!(parse_class_index_list(&[0, 2, 0, 6]), None);
+        assert_eq!(parse_class_index_list(&[0]), None);
     }
 
     /// A class file truncated right after the method table (no class-attribute

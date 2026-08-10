@@ -210,6 +210,21 @@ pass-2 classes are typically below 0.1% of the scan.
     ktor-io ByteChannel interface -> class (a Methodref-side flip), coroutines
     CancelHandler abstract-class -> interface (an extends-side flip on the
     stress workload).
+- Sealing: a scanned class extends or implements a type that is now sealed without
+  naming it in `permits`, so it fails to load (JVMS 5.3.5). `check.rs::add_sealed_violations`
+  is another direct-edge graph walk, direct because that is the edge the JVM checks.
+  Old-relative over the permits lists, which covers both shapes: the type gained a
+  PermittedSubclasses attribute, or kept one and dropped a name. Adding names only
+  widens (JLS 13.4.2). Enums and final classes are excluded as SUBJECTS: javac has
+  sealed enums with constant-specific bodies since JDK 17
+  (https://issues.apache.org/jira/browse/GROOVY-10194), so without the guard a bare
+  recompile reports a break, and a final super is already `extends final class`.
+  Reason `class became sealed`. No version-lag variant exists: `permits` targets must
+  resolve when the sealed type compiles, so a sealed type and its permitted
+  subclasses ship in one artifact and cannot skew apart. Sealing's same-module
+  condition is not modeled, which can only lose a violation. Not probeable
+  (a class-load break), so coverage is check.rs unit tests plus the
+  JVM-confirmed `synthetic-sealed-*` fixture.
 - AbstractMethodError: a concrete scanned class ends up inheriting an abstract
   method with no concrete implementation, so invoking it throws. Two upgrade
   shapes cause it, both handled by `check.rs::add_abstract_method_violations`

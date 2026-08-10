@@ -42,6 +42,9 @@ pub struct ClassEntry {
     pub super_name: Option<ClassName>,
     pub nest_host: Option<ClassName>,
     interfaces: (u32, u16),
+    /// Shares the interfaces arena. `None` = unsealed; a zero-length range is a sealed
+    /// class permitting nothing.
+    permitted: Option<(u32, u16)>,
     methods: (u32, u16),
     fields: (u32, u16),
 }
@@ -80,6 +83,10 @@ impl ApiIndex {
             super_name: api.super_name,
             nest_host: api.nest_host,
             interfaces: append_range_sym(&mut self.interfaces, &api.interfaces),
+            permitted: api
+                .permitted
+                .as_deref()
+                .map(|p| append_range_sym(&mut self.interfaces, p)),
             methods: append_range(&mut self.members, &api.methods),
             fields: append_range(&mut self.members, &api.fields),
         };
@@ -96,6 +103,11 @@ impl ApiIndex {
 
     pub fn interfaces_of(&self, entry: &ClassEntry) -> &[Sym] {
         range(&self.interfaces, entry.interfaces)
+    }
+
+    /// The class's permitted subclasses, or None when it is not sealed.
+    pub fn permitted_of(&self, entry: &ClassEntry) -> Option<&[Sym]> {
+        entry.permitted.map(|r| range(&self.interfaces, r))
     }
 
     /// Total member-table entries (methods + fields).
@@ -578,6 +590,7 @@ mod tests {
             ),
             fields: build_members([]),
             nest_host: None,
+            permitted: None,
         }
     }
 
@@ -736,6 +749,7 @@ mod tests {
             methods: build_members([]),
             fields: build_members(fields.iter().map(|(n, d, a)| (MemberKey::new(n, d), *a))),
             nest_host: None,
+            permitted: None,
         }
     }
 
