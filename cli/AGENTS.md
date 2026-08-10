@@ -215,10 +215,15 @@ pass-2 classes are typically below 0.1% of the scan.
   is another direct-edge graph walk, direct because that is the edge the JVM checks.
   Old-relative over the permits lists, which covers both shapes: the type gained a
   PermittedSubclasses attribute, or kept one and dropped a name. Adding names only
-  widens (JLS 13.4.2). Enums and final classes are excluded as SUBJECTS: javac has
-  sealed enums with constant-specific bodies since JDK 17
+  widens (JLS 13.4.2). Enums and final classes are excluded as SUBJECTS on BOTH sides:
+  javac has sealed enums with constant-specific bodies since JDK 17
   (https://issues.apache.org/jira/browse/GROOVY-10194), so without the guard a bare
-  recompile reports a break, and a final super is already `extends final class`.
+  recompile reports a break; a final super is already `extends final class` on the new
+  side; and an old-final super had no subclasses to strand, so a scanned one was broken
+  before this upgrade. Sealing that could not be READ (truncated attribute table,
+  malformed attribute) sets `sealing_unknown` and is skipped rather than read as
+  unsealed, which is the direction that would turn a corrupt old class file into a
+  violation.
   Reason `class became sealed`. No version-lag variant exists: `permits` targets must
   resolve when the sealed type compiles, so a sealed type and its permitted
   subclasses ship in one artifact and cannot skew apart. Sealing's same-module

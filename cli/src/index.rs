@@ -45,6 +45,8 @@ pub struct ClassEntry {
     /// Shares the interfaces arena. `None` = unsealed; a zero-length range is a sealed
     /// class permitting nothing.
     permitted: Option<(u32, u16)>,
+    /// Sealing was unreadable, so this class is neither provably sealed nor provably not.
+    pub sealing_unknown: bool,
     methods: (u32, u16),
     fields: (u32, u16),
 }
@@ -87,6 +89,7 @@ impl ApiIndex {
                 .permitted
                 .as_deref()
                 .map(|p| append_range_sym(&mut self.interfaces, p)),
+            sealing_unknown: api.sealing_unknown,
             methods: append_range(&mut self.members, &api.methods),
             fields: append_range(&mut self.members, &api.fields),
         };
@@ -591,6 +594,7 @@ mod tests {
             fields: build_members([]),
             nest_host: None,
             permitted: None,
+            sealing_unknown: false,
         }
     }
 
@@ -750,6 +754,7 @@ mod tests {
             fields: build_members(fields.iter().map(|(n, d, a)| (MemberKey::new(n, d), *a))),
             nest_host: None,
             permitted: None,
+            sealing_unknown: false,
         }
     }
 

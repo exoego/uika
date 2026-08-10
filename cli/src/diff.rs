@@ -36,7 +36,9 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
         if entry.access & ACC_FINAL == 0 && new_entry.access & ACC_FINAL != 0 {
             changes.push(BreakingChange::ClassBecameFinal { class: name });
         }
-        if extendable(new_entry.access)
+        if extendable(entry.access | new_entry.access)
+            && !entry.sealing_unknown
+            && !new_entry.sealing_unknown
             && sealing_tightened(old.permitted_of(entry), new.permitted_of(new_entry))
         {
             changes.push(BreakingChange::ClassBecameSealed { class: name });
@@ -152,8 +154,9 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
 
 /// javac has sealed enums with constant-specific bodies since JDK 17
 /// (https://issues.apache.org/jira/browse/GROOVY-10194), so a bare recompile would
-/// otherwise report a breaking change on every such enum. final -> sealed is compatible
-/// per JLS 13.4.2 (no subclasses existed).
+/// otherwise report a breaking change on every such enum. Callers pass the OR of both
+/// sides' flags: final -> sealed is compatible per JLS 13.4.2 because the old class had
+/// no subclasses to strand, so the old side has to be tested too.
 fn extendable(access: u16) -> bool {
     access & (ACC_ENUM | ACC_FINAL) == 0
 }
@@ -224,6 +227,7 @@ mod tests {
             fields: build_members([]),
             nest_host: None,
             permitted: None,
+            sealing_unknown: false,
         }
     }
 
@@ -241,6 +245,7 @@ mod tests {
             ),
             nest_host: None,
             permitted: None,
+            sealing_unknown: false,
         }
     }
 

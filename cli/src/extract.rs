@@ -51,6 +51,7 @@ pub fn extract_api(rc: &RawClass) -> Result<ClassApi> {
         fields,
         nest_host: nest_host_of(rc)?,
         permitted: permitted_of(rc)?,
+        sealing_unknown: rc.sealing_unknown,
     })
 }
 

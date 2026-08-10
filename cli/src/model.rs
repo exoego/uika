@@ -59,6 +59,9 @@ pub struct ClassApi {
     /// PermittedSubclasses targets, i.e. the class is sealed. None when the attribute is
     /// absent (unsealed). `Some(empty)` is a sealed class permitting nothing.
     pub permitted: Option<Vec<ClassName>>,
+    /// Sealing could not be read (truncated attribute table, malformed attribute), so
+    /// neither side may claim this class is unsealed.
+    pub sealing_unknown: bool,
 }
 
 impl ClassApi {
