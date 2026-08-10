@@ -88,10 +88,12 @@ not be relearned by experiment.
   unverified went 294→0 and 106 real removals surfaced (owners whose hierarchy
   escapes into java.util.concurrent).
 - `--jdk-release-old N --jdk-release-new M` (check) makes the JDK upgrade the
-  compared pair instead of layering one release under both sides, so `--old`/
-  `--new` become optional and `run_check_with_indexes` gets two JDK indexes with
-  empty path lists (nothing to exclude as stale, nothing to sweep for invocation
-  evidence). Sources differ by release: ct.sym for anything below the running
+  compared pair instead of layering one release under both sides. clap REJECTS
+  `--old`/`--new` alongside it rather than accepting and ignoring them: only one
+  pair reaches `run_check_with_indexes`, and checking a library pair and a JDK
+  pair at once is two runs, which is what upgrade-check does from the dumps. The
+  JDK indexes therefore go in with empty path lists (nothing to exclude as stale,
+  nothing to sweep for invocation evidence). Sources differ by release: ct.sym for anything below the running
   JDK, `jmods/*.jmod` (zips of class files under `classes/`) for its own release,
   which ct.sym never carries. The running JDK's feature version is read from its
   `release` file, not from a JVM. jmods is a SUPERSET of ct.sym (unexported

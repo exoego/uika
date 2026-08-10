@@ -138,9 +138,10 @@ fn cmd_check(
         .transpose()?;
     let jdk_pair_indexes = jdk_pair.map(jdk_release_pair).transpose()?;
     let result = match &jdk_pair_indexes {
-        // The JDK upgrade IS the pair. No jar to exclude as stale and none to sweep for
-        // invocation evidence, so both path lists stay empty; --old/--new jars, when also
-        // given, are layered under each side so a library reference into them still resolves.
+        // The JDK upgrade IS the pair, and clap rejects --old/--new alongside it, so there
+        // is no jar to exclude as stale and none to sweep for invocation evidence. Checking
+        // a library pair and a JDK pair at once would be two runs, which is what
+        // upgrade-check does from the dumps.
         Some((old_index, new_index)) => run_check_with_indexes(
             old_index,
             new_index,

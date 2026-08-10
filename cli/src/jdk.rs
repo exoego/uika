@@ -228,27 +228,32 @@ fn jmods_index(home: &Path, release: u32) -> Result<(ApiIndex, Vec<String>)> {
         let file = File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
         let mut archive = ZipArchive::new(WindowedReader::new(file, 256 * 1024))
             .with_context(|| format!("not a zip: {}", path.display()))?;
-        let names: Vec<String> = archive
-            .file_names()
-            .filter(|n| {
-                n.starts_with("classes/")
-                    && n.ends_with(".class")
-                    && !n.ends_with("module-info.class")
-            })
-            .map(str::to_owned)
-            .collect();
-        for name in names {
-            let mut bytes = Vec::new();
-            match archive.by_name(&name).and_then(|mut e| {
-                e.read_to_end(&mut bytes)?;
-                Ok(())
-            }) {
-                Ok(()) => {}
+        // By index, not by name: `by_name` would need the whole entry list owned up front,
+        // one String per class. Entry order is stable within an archive, so first-wins stays
+        // deterministic.
+        let mut bytes = Vec::new();
+        for i in 0..archive.len() {
+            let mut entry = match archive.by_index(i) {
+                Ok(entry) => entry,
                 Err(e) => {
-                    warnings.push(format!("{}!{name}: {e}", path.display()));
+                    warnings.push(format!("{}#{i}: {e}", path.display()));
                     continue;
                 }
+            };
+            let name = entry.name();
+            if !name.starts_with("classes/")
+                || !name.ends_with(".class")
+                || name.ends_with("module-info.class")
+            {
+                continue;
             }
+            let name = name.to_owned();
+            bytes.clear();
+            if let Err(e) = entry.read_to_end(&mut bytes) {
+                warnings.push(format!("{}!{name}: {e}", path.display()));
+                continue;
+            }
+            drop(entry);
             match crate::classfile::RawClass::parse(&bytes)
                 .and_then(|rc| crate::extract::extract_api(&rc))
             {
