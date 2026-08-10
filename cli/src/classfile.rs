@@ -71,12 +71,17 @@ pub struct RawClass<'a> {
     /// PermittedSubclasses targets. `None` = attribute absent = unsealed; `Some(empty)` is
     /// a sealed class permitting nothing (legal per JVMS 4.7.31) and must not collapse into it.
     pub permitted_subclasses: Option<Vec<u16>>,
+    /// The class-attribute table could not be read to the end, or a PermittedSubclasses
+    /// attribute was there but malformed. Sealing is then unknown rather than absent:
+    /// reading it as unsealed on the OLD side would manufacture a `class became sealed`.
+    pub sealing_unknown: bool,
 }
 
 #[derive(Default)]
 struct ClassAttrs {
     nest_host: u16,
     permitted_subclasses: Option<Vec<u16>>,
+    sealing_unknown: bool,
 }
 
 impl<'a> RawClass<'a> {
@@ -157,10 +162,15 @@ impl<'a> RawClass<'a> {
         let fields = r.members(&cp)?;
         let methods = r.members(&cp)?;
         // Of the class attributes only NestHost (nestmate private access) and
-        // PermittedSubclasses (sealing) are read; the rest are skipped by length. Best
-        // effort: a truncated attribute table yields "no nest host, not sealed" instead
-        // of a parse error, which is the conservative direction for both.
-        let attrs = r.class_attributes(&cp).unwrap_or_default();
+        // PermittedSubclasses (sealing) are read; the rest are skipped by length. A
+        // truncated table yields "no nest host" rather than a parse error, as before, but
+        // sealing cannot degrade to "unsealed" the same way — that is the direction that
+        // invents a violation — so it degrades to unknown.
+        let attrs = r.class_attributes(&cp).unwrap_or(ClassAttrs {
+            nest_host: 0,
+            permitted_subclasses: None,
+            sealing_unknown: true,
+        });
 
         Ok(Self {
             cp,
@@ -172,6 +182,7 @@ impl<'a> RawClass<'a> {
             methods,
             nest_host: attrs.nest_host,
             permitted_subclasses: attrs.permitted_subclasses,
+            sealing_unknown: attrs.sealing_unknown,
         })
     }
 
@@ -287,9 +298,10 @@ impl<'a> Reader<'a> {
                 Some(b"NestHost") if body.len() == 2 => {
                     attrs.nest_host = u16::from_be_bytes([body[0], body[1]]);
                 }
-                Some(b"PermittedSubclasses") => {
-                    attrs.permitted_subclasses = parse_class_index_list(body);
-                }
+                Some(b"PermittedSubclasses") => match parse_class_index_list(body) {
+                    Some(permitted) => attrs.permitted_subclasses = Some(permitted),
+                    None => attrs.sealing_unknown = true,
+                },
                 _ => {}
             }
         }
@@ -574,6 +586,60 @@ mod tests {
         // Count disagrees with the body length.
         assert_eq!(parse_class_index_list(&[0, 2, 0, 6]), None);
         assert_eq!(parse_class_index_list(&[0]), None);
+    }
+
+    /// A truncated attribute table must not read as "not sealed": that is the direction
+    /// that turns a corrupt old class file into a `class became sealed` violation.
+    #[test]
+    fn unreadable_class_attributes_leave_sealing_unknown() {
+        let mut b: Vec<u8> = Vec::new();
+        b.extend(0xCAFE_BABEu32.to_be_bytes());
+        b.extend([0, 0, 0, 61]);
+        b.extend(2u16.to_be_bytes()); // cp_count: entry 1 only
+        b.push(1); // #1 Utf8 "a/S"
+        b.extend(3u16.to_be_bytes());
+        b.extend(b"a/S");
+        b.extend(0x0021u16.to_be_bytes()); // access
+        b.extend(1u16.to_be_bytes()); // this_class (index 1; class_name is not read here)
+        b.extend(0u16.to_be_bytes()); // super_class
+        b.extend(0u16.to_be_bytes()); // interfaces
+        b.extend(0u16.to_be_bytes()); // fields
+        b.extend(0u16.to_be_bytes()); // methods
+        b.extend(1u16.to_be_bytes()); // class attrs: 1 announced...
+        // ...and the table is cut off mid-header.
+        b.extend(7u16.to_be_bytes());
+
+        let rc = RawClass::parse(&b).unwrap();
+        assert!(rc.permitted_subclasses.is_none());
+        assert!(rc.sealing_unknown, "a cut-off table cannot prove unsealed");
+    }
+
+    /// The attribute is there but its body does not parse: sealed with an unknown permits
+    /// list, which is still not "unsealed".
+    #[test]
+    fn a_malformed_permitted_subclasses_body_leaves_sealing_unknown() {
+        let mut b: Vec<u8> = Vec::new();
+        b.extend(0xCAFE_BABEu32.to_be_bytes());
+        b.extend([0, 0, 0, 61]);
+        b.extend(2u16.to_be_bytes());
+        b.push(1);
+        b.extend(19u16.to_be_bytes());
+        b.extend(b"PermittedSubclasses");
+        b.extend(0x0600u16.to_be_bytes());
+        b.extend(1u16.to_be_bytes());
+        b.extend(0u16.to_be_bytes());
+        b.extend(0u16.to_be_bytes());
+        b.extend(0u16.to_be_bytes());
+        b.extend(0u16.to_be_bytes());
+        b.extend(1u16.to_be_bytes()); // class attrs: 1
+        b.extend(1u16.to_be_bytes()); // name -> #1
+        b.extend(4u32.to_be_bytes()); // len 4
+        b.extend(2u16.to_be_bytes()); // claims 2 classes...
+        b.extend(6u16.to_be_bytes()); // ...but carries 1
+
+        let rc = RawClass::parse(&b).unwrap();
+        assert!(rc.permitted_subclasses.is_none());
+        assert!(rc.sealing_unknown);
     }
 
     /// A class file truncated right after the method table (no class-attribute

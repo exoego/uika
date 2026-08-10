@@ -1161,15 +1161,22 @@ fn add_sealed_violations(
         .classes
         .iter()
         .filter_map(|(&name, new_entry)| {
-            // javac has sealed enums with constant-specific bodies since JDK 17
-            // (https://issues.apache.org/jira/browse/GROOVY-10194), so a bare recompile
-            // gains the attribute; nothing outside the enum extends it anyway. A final
-            // super is already reported as `extends final class`.
-            if new_entry.access & (ACC_ENUM | ACC_FINAL) != 0 {
-                return None;
-            }
             let new_permits = new.permitted_of(new_entry)?;
             let old_entry = old.classes.get(&name)?;
+            // javac has sealed enums with constant-specific bodies since JDK 17
+            // (https://issues.apache.org/jira/browse/GROOVY-10194), so a bare recompile
+            // gains the attribute; nothing outside the enum extends it anyway. Both sides
+            // are tested: a final super is already `extends final class` on the new side,
+            // and on the old side it had no subclasses at all, so a scanned one was broken
+            // before this upgrade (JLS 13.4.2 calls final -> sealed compatible).
+            if (new_entry.access | old_entry.access) & (ACC_ENUM | ACC_FINAL) != 0 {
+                return None;
+            }
+            // An unreadable attribute leaves sealing unknown on that side, and reading it
+            // as unsealed is what would invent a violation out of a corrupt old class file.
+            if old_entry.sealing_unknown || new_entry.sealing_unknown {
+                return None;
+            }
             Some((name, (new_permits, old.permitted_of(old_entry))))
         })
         .collect();
@@ -1833,6 +1840,7 @@ mod tests {
             fields: build_members([]),
             nest_host: None,
             permitted: None,
+            sealing_unknown: false,
         }
     }
 
@@ -1850,6 +1858,7 @@ mod tests {
             fields: build_members([]),
             nest_host: None,
             permitted: None,
+            sealing_unknown: false,
         }
     }
 
@@ -1867,6 +1876,7 @@ mod tests {
             ),
             nest_host: None,
             permitted: None,
+            sealing_unknown: false,
         }
     }
 
@@ -2350,6 +2360,31 @@ mod tests {
             c
         }]);
         assert!(sealed_violations(&old, &new, "lib/E$2", "lib/E", true).is_empty());
+    }
+
+    #[test]
+    fn an_unreadable_old_sealing_attribute_reports_nothing() {
+        // A corrupt old class file must not read as "unsealed" and so manufacture a break.
+        let old = ApiIndex::build([{
+            let mut c = interface("lib/I");
+            c.sealing_unknown = true;
+            c
+        }]);
+        let new = ApiIndex::build([sealed_interface("lib/I", &["lib/Known"])]);
+        assert!(sealed_violations(&old, &new, "app/Impl", "lib/I", false).is_empty());
+    }
+
+    #[test]
+    fn sealing_a_class_that_used_to_be_final_is_pre_existing() {
+        // final -> sealed is compatible (JLS 13.4.2): a final class had no subclasses, so a
+        // scanned one was already broken before the upgrade and `extends final class` owns it.
+        let old = ApiIndex::build([final_class("lib/C")]);
+        let new = ApiIndex::build([{
+            let mut c = class("lib/C", &[]);
+            c.permitted = Some(vec![intern("lib/Known")]);
+            c
+        }]);
+        assert!(sealed_violations(&old, &new, "app/Sub", "lib/C", true).is_empty());
     }
 
     #[test]
@@ -3566,6 +3601,7 @@ mod tests {
             fields: build_members([]),
             nest_host: None,
             permitted: None,
+            sealing_unknown: false,
         }
     }
 

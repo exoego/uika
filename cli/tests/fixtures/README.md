@@ -77,7 +77,7 @@ while `GoodTranslator.end()` does not.
 
 Regenerate the three jars from source (JDK 11+):
 
-```
+```bash
 mkdir -p v1/fixture/lib v2/fixture/lib app/fixture/app
 
 cat > v1/fixture/lib/EventListener.java <<'EOF'
@@ -150,7 +150,7 @@ confirms it then fails to load against 2.0 with
 interface fixture.lib.Shape`; `Marker` implements the untouched `Tagged` and is the
 not-reported control. `--release 17` is the floor for `sealed`.
 
-```
+```bash
 mkdir -p v1/fixture/lib v2/fixture/lib app/fixture/app
 
 cat > v1/fixture/lib/Shape.java <<'EOF'
@@ -199,7 +199,7 @@ consumer that already implements another interface declaring the same signature,
 vendorable pair does both halves. A real JVM confirms the error, and that which error you
 get depends on the call site:
 
-```
+```text
 invokevirtual Conflicted.n() -> IncompatibleClassChangeError: Conflicting default methods: fixture/lib/A.n fixture/lib/B.n
 invokeinterface A.n()        -> AbstractMethodError: Receiver class fixture.app.Conflicted does not define or inherit an implementation
 ```
@@ -208,7 +208,7 @@ invokeinterface A.n()        -> AbstractMethodError: Receiver class fixture.app.
 `A.n()`, which dispatches onto `Conflicted`, so the golden pins `invocation_found: true`
 — the counterpart to `synthetic-abstract-added`, which pins the latent `false`.
 
-```
+```bash
 mkdir -p v1/fixture/lib v2/fixture/lib app/fixture/app
 
 cat > v1/fixture/lib/A.java <<'EOF'

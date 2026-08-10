@@ -438,6 +438,7 @@ mod tests {
             fields: crate::model::build_members([]),
             nest_host: Some(crate::intern::intern("java/awt/event/Host")),
             permitted: Some(vec![crate::intern::intern("java/awt/event/MouseEvent")]),
+            sealing_unknown: false,
         };
         level_to_ct_sym_fidelity(&mut api);
         assert!(
