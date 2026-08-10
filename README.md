@@ -680,6 +680,49 @@ $ uika check --old guava-22.0.jar --new guava-23.0-rc1.jar \
 scanned 205 classes: ❌ 2 broken
 ```
 
+### Checking a JDK upgrade
+
+`--jdk-release-old N --jdk-release-new M` makes the JDK upgrade itself the compared
+pair, so `--old` and `--new` become optional. A JDK API your classpath still
+references and release M dropped is then reported like any other removal.
+
+```console
+$ uika check --jdk-release-old 11 --jdk-release-new 17 --classpath app.jar
+checked JDK 11 -> JDK 17 against 1 scan target
+
+❌ java.rmi.activation.ActivationGroup
+    class removed, throws NoClassDefFoundError at first use
+    used by 1 class:
+        UsesRemoved  (app.jar)
+```
+
+Releases below the installed JDK come from its `ct.sym`; the installed JDK's own
+release comes from its `jmods/`, which `ct.sym` never carries. Checking an upgrade
+*to* the JDK you now run therefore needs only that one JDK. Sealing changes are
+invisible here, because `ct.sym` stubs do not carry `PermittedSubclasses`, and
+reporting them from the `jmods` side alone would be a false positive.
+
+From the build-tool plugins this needs no flag. The classpath dump records the
+release of the JVM that wrote it, so bumping your toolchain and re-running the
+dump is enough — `upgrade-check` sees the two dumps disagree and checks the JDK
+move alongside the dependency moves, in one report.
+
+```console
+$ uika upgrade-check --before before.json --after after.json
+dependency changes: none
+
+per-module check: 0 of 1 modules changed their resolved versions (1 unchanged)
+    JDK 11 -> 17  scanned 2 classes, ❌ 1 broken, 0 unverified
+
+❌ java.rmi.activation.ActivationGroup
+    class removed, throws NoClassDefFoundError at first use
+    used by 1 class:
+        UsesRemoved  (app.jar) [JDK 11 -> 17]
+```
+
+Dumps written before the plugins recorded the release carry no value, and a
+missing value on either side is never read as a JDK move.
+
 ## Development
 
 ```console

@@ -77,6 +77,10 @@ final class UikaPluginIntegrationTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
         assertEquals(2, ((Number) doc.get("version")).intValue());
+        // upgrade-check compares this across the before/after dumps to check the JDK move too.
+        assertEquals(Runtime.version().feature(),
+                ((Number) doc.get("jdkRelease")).intValue(),
+                "dump must record the build JVM's release");
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> modules = (List<Map<String, Object>>) doc.get("modules");

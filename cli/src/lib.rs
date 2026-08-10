@@ -37,6 +37,8 @@ pub fn run(cli: Cli) -> Result<i32> {
             json,
             fail_on,
             jdk_release,
+            jdk_release_old,
+            jdk_release_new,
             verdicts_json,
         } => {
             let mut targets: Vec<PathBuf> = classpath;
@@ -56,6 +58,7 @@ pub fn run(cli: Cli) -> Result<i32> {
                 json,
                 fail_on,
                 jdk_release,
+                jdk_release_old.zip(jdk_release_new),
                 verdicts_json.as_deref(),
             )
         }
@@ -125,6 +128,7 @@ fn cmd_check(
     json: bool,
     fail_on: FailOn,
     jdk_release: Option<u32>,
+    jdk_pair: Option<(u32, u32)>,
     verdicts_json: Option<&Path>,
 ) -> Result<i32> {
     let exclude_rules = exclude::load(exclude_file)?;
@@ -132,25 +136,64 @@ fn cmd_check(
     let mut verdict_writer = verdicts_json
         .map(verdicts::VerdictWriter::create)
         .transpose()?;
-    let result = run_check(
-        old,
-        new,
-        targets,
-        app_roots,
-        &exclude_rules,
-        jdk_indexer.as_mut(),
-        verdict_writer.as_mut(),
-    );
+    let jdk_pair_indexes = jdk_pair.map(jdk_release_pair).transpose()?;
+    let result = match &jdk_pair_indexes {
+        // The JDK upgrade IS the pair, and clap rejects --old/--new alongside it, so there
+        // is no jar to exclude as stale and none to sweep for invocation evidence. Checking
+        // a library pair and a JDK pair at once would be two runs, which is what
+        // upgrade-check does from the dumps.
+        Some((old_index, new_index)) => run_check_with_indexes(
+            old_index,
+            new_index,
+            &[],
+            &[],
+            targets,
+            app_roots,
+            &exclude_rules,
+            jdk_indexer.as_mut(),
+            verdict_writer.as_mut(),
+        ),
+        None => run_check(
+            old,
+            new,
+            targets,
+            app_roots,
+            &exclude_rules,
+            jdk_indexer.as_mut(),
+            verdict_writer.as_mut(),
+        ),
+    };
     let result = finish_verdicts(verdict_writer, result)?;
     if json {
         println!("{}", report::check_json(&result)?);
     } else {
         // scan_targets, not targets.len(): the header must agree with what was actually
         // scanned after missing-path skips, stale-old-version exclusion, and dedup.
-        print!("{}", report::check_header(old, new, result.scan_targets));
+        match jdk_pair {
+            Some((o, n)) => print!("{}", report::check_header_jdk(o, n, result.scan_targets)),
+            None => print!("{}", report::check_header(old, new, result.scan_targets)),
+        }
         print!("{}", report::check_text(&result));
     }
     Ok(exit_code(&result, fail_on))
+}
+
+/// Build both sides of a JDK-pair check. Warns when the old side comes from jmods while
+/// the new side comes from ct.sym: jmods also holds unexported internals, so as the older
+/// side it would report every one of them as removed.
+fn jdk_release_pair((old, new): (u32, u32)) -> Result<(ApiIndex, ApiIndex)> {
+    if jdk::is_installed_release(old) && !jdk::is_installed_release(new) {
+        eprintln!(
+            "warning: --jdk-release-old {old} is this JDK's own release, read from jmods, \
+             which also holds unexported internals; against a ct.sym new side those look removed"
+        );
+    }
+    let (old_index, old_warnings) = jdk::release_index(old)?;
+    let (new_index, new_warnings) = jdk::release_index(new)?;
+    for w in old_warnings.iter().chain(&new_warnings) {
+        eprintln!("warning: {w}");
+    }
+    Ok((old_index, new_index))
 }
 
 /// Close the verdict stream and surface a stream failure. Always runs `finish` (so the
@@ -413,7 +456,8 @@ fn cmd_upgrade_check(
         );
     }
 
-    if changes.old_jars.is_empty() {
+    let jdk_pair = jdk_change(&before_universe, &after_universe);
+    if changes.old_jars.is_empty() && jdk_pair.is_none() {
         print_upgrade(json, &changes.changes, None, None)?;
         return Ok(0);
     }
@@ -434,6 +478,27 @@ fn cmd_upgrade_check(
         verdict_writer.as_mut(),
     );
     let mut result = finish_verdicts(verdict_writer, result)?;
+    // The JDK moved too (or only the JDK did), so its removals are checked over the same
+    // universe and folded in. Excludes were already applied to the dependency half, so this
+    // half gets them here rather than a second time over the whole set.
+    if let Some(pair) = jdk_pair {
+        let (old_index, new_index) = jdk_release_pair(pair)?;
+        let mut jdk_result = run_check_with_indexes(
+            &old_index,
+            &new_index,
+            &[],
+            &[],
+            &after_universe.scan_targets,
+            &after_universe.app_roots,
+            &exclude_rules,
+            None,
+            None,
+        )?;
+        result.violations.append(&mut jdk_result.violations);
+        result.warnings.append(&mut jdk_result.warnings);
+        result.suppressed += jdk_result.suppressed;
+        result.unknown_refs += jdk_result.unknown_refs;
+    }
     // Attribute each break to the artifacts involved and propose a fix (coordinates only exist
     // for upgrade-check, so this lives here rather than in the shared run_check).
     suggest::annotate(
@@ -466,6 +531,10 @@ struct ModuleRunPlan {
     new_jars: Vec<PathBuf>,
     targets: Vec<PathBuf>,
     app_roots: Vec<PathBuf>,
+    /// This run compares JDK releases rather than JARs, so its indexes come from
+    /// `jdk::release_index` and its jar lists stay empty. One such run covers every module:
+    /// the JDK is the same for all of them, unlike their resolved dependency versions.
+    jdk_pair: Option<(u32, u32)>,
 }
 
 struct ModulePlan {
@@ -485,6 +554,32 @@ struct ModulePlan {
 /// unchanged module cannot break from the upgrade and is skipped, which also keeps the cost
 /// proportional to the change, not the repository.
 fn plan_module_runs(before: &gradle::Universe, after: &gradle::Universe) -> ModulePlan {
+    let mut plan = plan_dependency_runs(before, after);
+    // One run for the whole universe rather than one per module: every module runs on the
+    // same JVM, so a per-module split would rescan the same classpath for the same answer.
+    if let Some((old, new)) = jdk_change(before, after) {
+        plan.runs.push(ModuleRunPlan {
+            names: vec![format!("JDK {old} -> {new}")],
+            changes: Vec::new(),
+            old_jars: Vec::new(),
+            new_jars: Vec::new(),
+            targets: after.scan_targets.clone(),
+            app_roots: after.app_roots.clone(),
+            jdk_pair: Some((old, new)),
+        });
+    }
+    plan
+}
+
+/// The JDK releases to compare, when both dumps recorded one and they differ. A dump
+/// written before the plugins recorded it reads `None`, which is why an old before-dump
+/// never manufactures a JDK change against a fresh after-dump.
+fn jdk_change(before: &gradle::Universe, after: &gradle::Universe) -> Option<(u32, u32)> {
+    let (b, a) = (before.jdk_release?, after.jdk_release?);
+    (b != a).then_some((b, a))
+}
+
+fn plan_dependency_runs(before: &gradle::Universe, after: &gradle::Universe) -> ModulePlan {
     let project_coords = gradle::project_coords_union(before, after);
     let mut runs: Vec<ModuleRunPlan> = Vec::new();
     let mut seen_names = std::collections::BTreeSet::new();
@@ -595,6 +690,7 @@ fn plan_module_runs(before: &gradle::Universe, after: &gradle::Universe) -> Modu
                 new_jars: module_changes.new_jars,
                 targets,
                 app_roots: module.classes_dirs.clone(),
+                jdk_pair: None,
             }),
         }
     }
@@ -637,6 +733,7 @@ fn reachable_rank(reachable: Option<bool>) -> u8 {
 /// Per-run bookkeeping the aggregate report and the exit decision need after merging.
 struct RunOutcome {
     names: Vec<String>,
+    jdk: bool,
     scanned_classes: usize,
     unknown_refs: usize,
     app_roots_matched: Option<bool>,
@@ -735,8 +832,19 @@ fn upgrade_check_per_module(
             if let Some(w) = verdict_writer.as_mut() {
                 w.set_module(Some(run.names.join(",")));
             }
-            let old_index = cached_index(&mut old_indexes, &run.old_jars)?;
-            let new_index = cached_index(&mut new_indexes, &run.new_jars)?;
+            // A JDK run's pair comes from ct.sym/jmods, not from jars, and is built once
+            // here rather than per run because the plan holds at most one.
+            let jdk_indexes = match run.jdk_pair {
+                Some(pair) => Some(jdk_release_pair(pair)?),
+                None => None,
+            };
+            let (old_index, new_index) = match &jdk_indexes {
+                Some((o, n)) => (o, n),
+                None => (
+                    cached_index(&mut old_indexes, &run.old_jars)?,
+                    cached_index(&mut new_indexes, &run.new_jars)?,
+                ),
+            };
             // Exclude rules are deliberately NOT applied per run: they filter the merged,
             // deduplicated set below, so counts and unused-rule warnings appear once.
             let mut result = run_check_with_indexes(
@@ -755,6 +863,7 @@ fn upgrade_check_per_module(
             merged.reachability_computed |= result.reachability_computed;
             run_outcomes.push(RunOutcome {
                 names: run.names.clone(),
+                jdk: run.jdk_pair.is_some(),
                 scanned_classes: result.scanned_classes,
                 unknown_refs: result.unknown_refs,
                 app_roots_matched: result.app_roots_matched,
@@ -834,6 +943,7 @@ fn module_outcomes(
         .iter()
         .map(|outcome| report::ModuleOutcome {
             modules: outcome.names.clone(),
+            jdk: outcome.jdk,
             scanned_classes: outcome.scanned_classes,
             broken: run_violations(merged, &outcome.names).count(),
             unknown_refs: outcome.unknown_refs,
@@ -934,9 +1044,35 @@ fn flags_str(access: u16) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{FailOn, should_fail};
+    use super::{FailOn, jdk_change, should_fail};
     use crate::intern::intern;
     use crate::model::{Reason, RefKind, SymbolRef, Violation};
+
+    fn universe(jdk_release: Option<u32>) -> crate::gradle::Universe {
+        crate::gradle::Universe {
+            scan_targets: Vec::new(),
+            app_roots: Vec::new(),
+            versions: Default::default(),
+            project_coords: Default::default(),
+            modules: Vec::new(),
+            jdk_release,
+        }
+    }
+
+    /// A dump written before the plugins recorded the release reads None, and one missing
+    /// side must never look like a JDK move: an old before-dump would then check every
+    /// upgrade against a JDK pair the user never changed.
+    #[test]
+    fn a_jdk_pair_needs_both_dumps_to_name_a_different_release() {
+        assert_eq!(
+            jdk_change(&universe(Some(17)), &universe(Some(21))),
+            Some((17, 21))
+        );
+        assert_eq!(jdk_change(&universe(Some(17)), &universe(Some(17))), None);
+        assert_eq!(jdk_change(&universe(None), &universe(Some(21))), None);
+        assert_eq!(jdk_change(&universe(Some(17)), &universe(None)), None);
+        assert_eq!(jdk_change(&universe(None), &universe(None)), None);
+    }
 
     fn violation(reachable: Option<bool>, invocation_found: Option<bool>) -> Violation {
         Violation {

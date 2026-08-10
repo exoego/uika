@@ -47,11 +47,21 @@ pub enum Command {
     /// Detect uses of breaking changes from classpath or application classes
     /// (exit codes: 0=clean, 1=violations found per --fail-on, 2=error)
     Check {
-        /// Old-version JARs (the ones bound at compile time). May be specified multiple times
-        #[arg(long, required = true)]
+        /// Old-version JARs (the ones bound at compile time). May be specified multiple times.
+        /// Mutually exclusive with a JDK-upgrade pair, which supplies both sides itself
+        #[arg(
+            long,
+            required_unless_present = "jdk_release_old",
+            conflicts_with = "jdk_release_old"
+        )]
         old: Vec<PathBuf>,
-        /// New-version JARs (the ones resolved on the runtime classpath). May be specified multiple times
-        #[arg(long, required = true)]
+        /// New-version JARs (the ones resolved on the runtime classpath). May be specified multiple times.
+        /// Mutually exclusive with a JDK-upgrade pair
+        #[arg(
+            long,
+            required_unless_present = "jdk_release_new",
+            conflicts_with = "jdk_release_new"
+        )]
         new: Vec<PathBuf>,
         /// Transitive dependency JARs (':'-separated, may be specified multiple times)
         #[arg(long, value_delimiter = ':')]
@@ -79,6 +89,15 @@ pub enum Command {
         /// $UIKA_JDK if set (a JDK home or a ct.sym file), else $JAVA_HOME
         #[arg(long, value_parser = clap::value_parser!(u32).range(8..=35))]
         jdk_release: Option<u32>,
+        /// Check a JDK upgrade itself: resolve against this release as the old side.
+        /// Requires --jdk-release-new. The JDK API becomes the compared pair, so --old
+        /// and --new must be omitted. Reads ct.sym for releases below the running JDK and
+        /// jmods for its own release
+        #[arg(long, requires = "jdk_release_new", value_parser = clap::value_parser!(u32).range(8..=35))]
+        jdk_release_old: Option<u32>,
+        /// The new side of a JDK upgrade check. Requires --jdk-release-old
+        #[arg(long, requires = "jdk_release_old", value_parser = clap::value_parser!(u32).range(8..=35))]
+        jdk_release_new: Option<u32>,
         /// Evaluation: stream every reference verdict (ok/unknown/broken) as JSON Lines
         /// to this file, for answer-checking against a real JVM (tools/jvm-probe)
         #[arg(long)]
@@ -121,4 +140,59 @@ pub enum Command {
     },
     /// Debugging: dump the API surface extracted from a JAR or directory
     Dump { path: PathBuf },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Command};
+    use clap::Parser;
+
+    fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(std::iter::once("uika").chain(args.iter().copied()))
+    }
+
+    /// A JDK pair supplies both compared sides itself. Accepting --old/--new next to it
+    /// would silently ignore them, since only one pair reaches run_check_with_indexes.
+    #[test]
+    fn a_jdk_pair_and_a_jar_pair_cannot_be_asked_for_at_once() {
+        let jdk = parse(&[
+            "check",
+            "--jdk-release-old",
+            "11",
+            "--jdk-release-new",
+            "17",
+            "--classpath",
+            "app.jar",
+        ])
+        .expect("a JDK pair alone is valid");
+        match jdk.command {
+            Command::Check { old, new, .. } => {
+                assert!(old.is_empty() && new.is_empty());
+            }
+            _ => panic!("expected check"),
+        }
+        assert!(
+            parse(&[
+                "check",
+                "--old",
+                "a.jar",
+                "--new",
+                "b.jar",
+                "--jdk-release-old",
+                "11",
+                "--jdk-release-new",
+                "17",
+            ])
+            .is_err(),
+            "--old/--new must be rejected alongside a JDK pair, not ignored"
+        );
+        assert!(
+            parse(&["check", "--classpath", "app.jar"]).is_err(),
+            "without a JDK pair, --old/--new stay required"
+        );
+        assert!(
+            parse(&["check", "--jdk-release-old", "11", "--classpath", "app.jar"]).is_err(),
+            "half a JDK pair is not a pair"
+        );
+    }
 }
