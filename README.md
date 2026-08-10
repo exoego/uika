@@ -17,48 +17,6 @@ versions constantly, auditing transitive dependencies by hand does not scale.
 Uika catches such `LinkageError`s at PR time by analyzing every class/method
 reference recorded in the referencing binary's constant pool.
 
-## Prior art
-
-### API diff tools
-
-There are many tools to inspect binary incompatibility. These diff two versions
-of one library and report the API changes between them, and they are excellent
-at that job.
-
-Each brings its own strengths: [Revapi](https://revapi.org/) models the API use-chain and
-extends beyond Java to XML and other configuration. [japicmp](https://github.com/siom79/japicmp) also advises
-which semantic-versioning part to bump. [roseau](https://github.com/alien-tools/roseau) builds its API model from
-either source or bytecode with a strong focus on speed and accuracy. 
-And [MiMa](https://github.com/scala-garden/mima) supports Scala-specific features.
-
-`uika diff` covers the same ground more narrowly, and any of these is a good
-choice a consumer can run against the two versions of a dependency to see
-what changed. By design they answer "what changed in this library", not
-"which of those changes break **my** app": they report every API change
-whether your code, or another artifact on a flattened classpath, actually
-depends on it. That second question is the one Uika takes up, and it is 
-complementary to these tools rather than a replacement.
-
-### Classpath validators
-
-Other tools scan a fully resolved classpath for references that will not link,
-which is exactly what you want for auditing a whole dependency tree at a point in
-time. Both are solid at that: Google's [Linkage Checker](https://github.com/GoogleCloudPlatform/cloud-opensource-java), and Spotify's [missinglink](https://github.com/spotify/missinglink).
-
-Because they analyze a single snapshot rather than an upgrade, every run
-surfaces all pre-existing inconsistencies, including references in code
-paths that never execute, so using one as a per-PR upgrade gate tends to
-need a curated exclusion list. 
-
-Uika narrows the same analysis to the breakage the upgrade itself introduces.
-
-### Where Uika fits
-
-Uika does both halves in one step: diff the changed library old vs new, then
-resolve each real reference on your classpath the way the JVM links. Only
-breakage introduced by the upgrade is reported, which keeps a PR gate on
-Renovate/Dependabot/Scala Steward bumps quiet with no exclusion list.
-
 Detection covers:
 - Class/Method removals
 - Visibility narrowing (public -> protected -> private)
@@ -68,12 +26,28 @@ Detection covers:
 - `new` on a class that became abstract or an interface
 - Class <-> interface flips
 - Subclasses left out of a newly sealed type's `permits` clause
-- Conflict of default methods from two unrelated interfaces at once 
+- Conflict of default methods from two unrelated interfaces at once
+
+## Prior art
+
+API diff tools ([Revapi](https://revapi.org/), [japicmp](https://github.com/siom79/japicmp),
+[roseau](https://github.com/alien-tools/roseau), [MiMa](https://github.com/scala-garden/mima))
+report every API change between two versions of one library. They answer "what
+changed in this library", not "which of those changes break **my** app".
+
+Classpath validators (Google's [Linkage Checker](https://github.com/GoogleCloudPlatform/cloud-opensource-java),
+Spotify's [missinglink](https://github.com/spotify/missinglink)) scan one fully
+resolved snapshot. Every run therefore also surfaces pre-existing
+inconsistencies, so a per-PR upgrade gate built on one tends to need a curated
+exclusion list.
+
+Uika does both halves in one step. It diffs the changed library old vs new,
+then resolves each real reference on your classpath the way the JVM links, and
+reports only breakage the upgrade itself introduced. That keeps a PR gate on
+Renovate/Dependabot/Scala Steward bumps quiet with no exclusion list.
 
 [BENCHMARKS.md](BENCHMARKS.md) has measured head-to-head runs against these
-tools on the same inputs: wall time, peak memory, and what each one reports,
-including how uika narrows to the references an upgrade actually broke while a
-snapshot linkage check also surfaces pre-existing, unrelated errors.
+tools on the same inputs (wall time, peak memory, and what each one reports).
 
 ## Usage
 
@@ -117,53 +91,13 @@ jobs:
         run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
 ```
 
-For sbt:
+sbt and Maven use the same three steps with different commands.
 
-```yaml
-      - name: Dump baseline classpath (base branch)
-        id: baseline
-        continue-on-error: true
-        run: |
-          git checkout ${{ github.event.pull_request.base.sha }}
-          if sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/before.json; then
-            status=0
-          else
-            status=1
-          fi
-          git checkout -
-          exit $status
-
-      - name: Dump PR classpath
-        run: sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json
-
-      - name: Check broken references
-        if: steps.baseline.outcome == 'success'
-        run: sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"
-```
-
-For Maven:
-
-```yaml
-      - name: Dump baseline classpath (base branch)
-        id: baseline
-        continue-on-error: true
-        run: |
-          git checkout ${{ github.event.pull_request.base.sha }}
-          if mvn -q uika:dump-classpath -Duika.output=/tmp/before.json; then
-            status=0
-          else
-            status=1
-          fi
-          git checkout -
-          exit $status
-
-      - name: Dump PR classpath
-        run: mvn -q compile uika:dump-classpath -Duika.output=/tmp/after.json
-
-      - name: Check broken references
-        if: steps.baseline.outcome == 'success'
-        run: mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json
-```
+| Step | sbt | Maven |
+| --- | --- | --- |
+| Baseline dump | `sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/before.json` | `mvn -q uika:dump-classpath -Duika.output=/tmp/before.json` |
+| PR dump | `sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json` | `mvn -q compile uika:dump-classpath -Duika.output=/tmp/after.json` |
+| Check | `sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"` | `mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json` |
 
 To keep the base-branch resolution off the PR's critical path, dump the
 baseline once per push instead and cache it as an artifact keyed by SHA:
@@ -260,53 +194,27 @@ Errors always exit 2 regardless of `--fail-on`.
 
 **Reachability (💥 vs ⚠️).** When application roots are available (the module
 `classesDirs` in a dump, or `--app` build outputs), uika walks the class-load
-graph from them over constant-pool class references, superclass/interface
-links, class-name-shaped string constants (a `Class.forName`
-over-approximation), and `META-INF/services` providers. It never hides a
-violation: the walk is an over-approximation, so ⚠️ is a signal to deprioritize
-rather than a guarantee, and reflection driven purely by external configuration
-stays invisible. Anything not provably unreachable therefore stays 💥 — which
-is also what happens in the two degraded cases, so `reachable` behaves like
-`any` there. Those cases are a bare `check --classpath ...` (no roots, nothing
-to walk) and roots that matched no scanned class (build outputs not compiled,
-so the ⚠️ labels would have no basis); the second prints a warning naming the
-cause.
+graph from them and labels what it never reaches ⚠️. The walk is a deliberate
+over-approximation, so ⚠️ is a signal to deprioritize rather than a guarantee,
+and reflection driven purely by external configuration stays invisible.
+Anything not provably unreachable stays 💥.
 
-**Invocation evidence (💤).** Most breaks fire when a class loads, so "is the
-class reachable" is the right question for them. `AbstractMethodError` is the
-exception: a concrete class that inherits an unimplemented abstract method
-loads, verifies, and instantiates without complaint, and throws only when the
-missing method is actually called. So for `method became abstract`,  uika
-also sweeps every scanned class, plus the new version of the checked library,
-for references to the affected member, keeping those whose owner can dispatch
-onto the broken class (the class itself, a supertype, or a subtype).
-When none exists the violation is latent:
+Without usable roots every violation stays 💥, so `reachable` behaves like
+`any`. That covers a bare `check --classpath ...` (nothing to walk from) and
+roots that matched no scanned class (build outputs not compiled, which prints a
+warning naming the cause).
 
-```text
---------------------------------------------------------------------------------
-💤 latent (class reachable, but no scanned code invokes the affected member)
---------------------------------------------------------------------------------
-
-❌ app.B  (build/classes/java/main)
-    inherits abstract lib.A.heap() without implementing it
-        throws AbstractMethodError only when heap is first called (no invocation found in scanned bytecode)
-```
-
-That evidence comes from scanned bytecode rather than from application roots,
-so 💤 survives both degraded cases above and keeps its own section and count
-even in a bare `check --classpath` run. Like ⚠️ it is a confidence tier and not
-a proof: a call through reflection or JNI, or from code outside the scan, stays
-invisible. It separates "this breaks in production now" from "this is latent
-until something starts calling the method".
+**Invocation evidence (💤).** `AbstractMethodError` is the one break that does
+not fire when the class loads. A concrete class inheriting an unimplemented
+abstract method loads, verifies, and instantiates without complaint, and throws
+only when the missing method is actually called. So for `method became
+abstract` uika looks for an invocation of the affected member in the scanned
+bytecode, and calls the violation latent when there is none. That evidence
+comes from bytecode rather than from application roots, so 💤 survives both
+degraded cases above. Like ⚠️ it is a confidence tier and not a proof, since a
+call through reflection or JNI, or from code outside the scan, stays invisible.
 [`--exclude-file`](#excluding-known-false-positives---exclude-file) can drop
 the whole category with `kind = "method_became_abstract"`.
-
-Both downgrades err toward 💥. When a class's hierarchy leaves the scanned
-scope the unseen types could relate an otherwise unrelated caller, so the break
-stays 💥 rather than being downgraded. The one exception is an escape into
-`java.*`, which the JVM reserves: those types are always platform classes, so
-they cannot hide a library class. Without that carve-out a class implementing
-`Serializable` would never be reported latent.
 
 ### Per-module checking (`upgrade-check`)
 
@@ -392,9 +300,9 @@ This is for false positives you have actually investigated, not a shortcut
 around triaging `⚠️  not proven reachable` violations wholesale; use
 `--fail-on reachable` for that instead.
 
-## Build-tool plugins (Gradle, sbt, and Maven)
+## Build-tool plugins
 
-All three plugins write the same dump format: every module's resolved runtime
+The Gradle, sbt, and Maven plugins write the same dump format: every module's resolved runtime
 classpath as coordinate-annotated JSON, kept per module so `upgrade-check` can
 [check each against its own resolution](#per-module-checking-upgrade-check).
 Feed two dumps to `uika upgrade-check`, or one to `uika check
@@ -416,11 +324,14 @@ The settings shown per tool below also have command-line forms:
 [`failOn`](#violation-tiers-and---fail-on) (`-PuikaFailOn=`, `set uikaFailOn
 :=`, `-Duika.failOn=`) and
 [`excludeFiles`](#excluding-known-false-positives---exclude-file)
-(`-PuikaExcludeFile=` for a single file). `--jdk-release` needs no setting at
-all: the build runs on a JVM, so the release is derived from the Gradle
-toolchain, `maven.compiler.release`/`target`, or the sbt build JVM, clamped to
-what that JVM's `ct.sym` serves. Override with `jdkRelease` / `uikaJdkRelease`
-/ `<jdkRelease>` (`-PuikaJdkRelease=`, `-Duika.jdkRelease=`); 0 disables it.
+(`-PuikaExcludeFile=` for a single file).
+
+[`--jdk-release`](#how-it-works) needs no setting at all. The build runs on a
+JVM, so the release is derived from the Gradle toolchain,
+`maven.compiler.release`/`target`, or the sbt build JVM, clamped to what that
+JVM's `ct.sym` serves. Override with `jdkRelease` / `uikaJdkRelease` /
+`<jdkRelease>` (`-PuikaJdkRelease=`, `-Duika.jdkRelease=`), or set 0 to disable
+it.
 
 ### Gradle (`gradle-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-gradle-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-gradle-plugin)
 
@@ -505,16 +416,15 @@ $ mvn uika:upgrade-check \
 ## How it works
 
 1. Parse the old/new JARs into full API indexes with class hierarchy.
-2. Pass 1: stream the consumer classpath, keeping only a class-hierarchy graph
-   (a few dozen bytes per class) and the references whose owner exists in the
-   old index.
-3. Pass 2: re-read just the classes that resolution could actually visit
-   (typically under 0.1% of the total) to obtain their member tables.
+2. Pass 1 streams the consumer classpath, keeping only a class-hierarchy graph
+   and the references whose owner exists in the old index.
+3. Pass 2 re-reads just the classes resolution could actually visit (typically
+   under 0.1% of the total) for their member tables.
 4. Resolve each reference against "new JARs + re-read classes", walking the
-   inheritance hierarchy, and report references that resolved under old but
-   break under new.
+   inheritance hierarchy, and report the ones that resolved under old but break
+   under new.
 
-Linkage is checked the way the JVM links: against the flattened runtime
+Linkage is checked the way the JVM links, against the flattened runtime
 classpath. Members moved to a superclass, classes relocated to another
 artifact, and copies bundled inside fat JARs are not false positives.
 References that escape into unanalyzed classes are counted as "unverified"
@@ -575,10 +485,7 @@ dependency changes: none
 
 per-module check: 0 of 1 modules changed their resolved versions (1 unchanged)
     JDK 11 -> 17  scanned 2 classes, ❌ 1 broken, 0 unverified
-
-❌ java.rmi.activation.ActivationGroup
-    class removed, throws NoClassDefFoundError at first use
-    used by 1 class:
+...
         UsesRemoved  (app.jar) [JDK 11 -> 17]
 ```
 
@@ -587,36 +494,10 @@ missing value on either side is never read as a JDK move.
 
 ## Development
 
-```console
-$ make check   # cargo fmt --check + cargo clippy + cargo test + Gradle/sbt/Maven plugin checks
-$ make test    # cargo test + Gradle/sbt/Maven plugin tests
-$ make build   # cargo build + Gradle/sbt/Maven plugin builds
-
-$ cargo build --release                       # for benchmarks
-$ cargo build --release --features memstats   # memory breakdown (counting allocator, slower)
-```
-
-The integration tests replay real incidents against unmodified JARs from Maven
-Central, vendored under `cli/tests/fixtures/` (see its README for coordinates,
-checksums, and licensing). Golden tests pin the full check JSON for those
-scenarios (`cli/tests/golden/`), so any detection shift fails `cargo test`
-before it ships. After verifying a diff is an intended semantic change, re-bless with
-`UIKA_BLESS=1 cargo test --test golden`. The scenario table is single-sourced
-in `cli/tests/scenarios.tsv`, shared with the probe harness.
-
-`make probe` answer-checks the same scenarios against a real JVM:
-`check --verdicts-json <path>` streams every reference verdict
-(ok/unknown/broken) as JSON Lines, and `tools/jvm-probe/Probe.java` resolves
-each one with `MethodHandles.Lookup` on the old-side and new-side classpaths. A
-broken verdict the JVM links fine fails the run as a false positive; an
-ok/unknown verdict that fails on the new side but linked on the old side is
-listed as a false-negative candidate for triage. Violations found by walking
-the class graph rather than by resolving a reference never enter the verdict
-stream, so those are covered by the integration tests instead.
-
-## Publishing
-
-Refer [PUBLISHING.md](PUBLISHING.md).
+`make check` runs fmt, clippy, and the Rust and plugin test suites.
+[CONTRIBUTING.md](CONTRIBUTING.md) covers the rest, including the vendored
+real-incident fixtures, the golden-bless workflow, and the JVM probe harness.
+Releases are described in [PUBLISHING.md](PUBLISHING.md).
 
 ## Known limitations (PoC)
 

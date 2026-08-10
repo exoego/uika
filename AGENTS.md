@@ -13,7 +13,8 @@ not be relearned by experiment.
 - Regression-test parser and ordering changes by diffing `uika dump <jar>`
   output before/after. Dump order follows physical entry offsets, so sort both
   sides first if the change can affect read order.
-- Golden regression (`cli/tests/golden.rs`; the bless workflow is in README):
+- Golden regression (`cli/tests/golden.rs`; the bless workflow is in
+  CONTRIBUTING.md):
   golden inputs use crate-relative fixture paths
   (`cli/tests/common/mod.rs::fixture`) so the JSON stays machine-independent;
   keep it that way. `check_scanned` sorts violations by string value before
