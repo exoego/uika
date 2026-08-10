@@ -106,6 +106,16 @@ not be relearned by experiment.
   a subclass of java.awt.event.ComponentAdapter reports nothing despite the 98
   public -> protected constructor narrowings in that pair (the subclass-aware
   access check absorbs them).
+- The dump records the writing JVM's feature version (`jdkRelease`, additive, from
+  `DumpFormat.buildJvmRelease()` in the one shared v2 writer, so all three plugins
+  get it at once). `upgrade-check` turns a before/after disagreement into ONE extra
+  run over the whole after universe — not one per module, since every module runs on
+  the same JVM — appended by `plan_module_runs` with `jdk_pair` set and both jar
+  lists empty. `jdk_change` requires BOTH sides to name a release, so a dump
+  predating the field never manufactures a JDK move. The run is excluded from the
+  "N of M modules changed" count (`ModuleOutcome.jdk`); it is not one of the dump's
+  modules. Gradle rehydration carries the input dump's value forward instead of
+  stamping the rehydrating JVM.
 - Tuning knobs: `UIKA_CHUNK` (paths processed concurrently in pass 1; default =
   rayon threads), `UIKA_WINDOW` (fallback zip-reader window size; default
   1 MiB, two windows).

@@ -50,7 +50,11 @@ public abstract class MergeClasspathTask extends DefaultTask {
             }
             modules.add(DumpFormat.fromV1Module((Map<String, Object>) slurper.parseText(text)));
         }
-        String json = DumpFormat.writeV2(modules, List.of(getRootDirPath().get()));
+        String json =
+                DumpFormat.writeV2(
+                        modules,
+                        List.of(getRootDirPath().get()),
+                        DumpFormat.buildJvmRelease());
         File out = getOutputFile().get().getAsFile();
         File parent = out.getParentFile();
         if (parent != null) {

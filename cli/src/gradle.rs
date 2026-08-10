@@ -14,8 +14,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ClasspathDump {
     modules: Vec<ModuleDump>,
+    /// Feature version of the JVM that wrote the dump; absent in dumps predating the field.
+    #[serde(default)]
+    jdk_release: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -61,6 +65,10 @@ pub struct Universe {
     /// Also emptied when any v2 module lacks a name: pairing unnamed modules positionally
     /// would diff unrelated classpaths against each other.
     pub modules: Vec<ModuleUniverse>,
+    /// Feature version of the JVM the dump was taken on. `None` for dumps written before
+    /// the plugins recorded it, which is what keeps an old before-dump from claiming a
+    /// JDK change against a fresh after-dump.
+    pub jdk_release: Option<u32>,
 }
 
 /// One build module's resolved runtime classpath as dumped by the build-tool plugin.
@@ -142,8 +150,11 @@ fn artifact_entry(
 
 /// v2: deduplication + root table for path prefixes (paired with DumpFormat in jvm-plugin-core).
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct DumpV2 {
     roots: Vec<String>,
+    #[serde(default)]
+    jdk_release: Option<u32>,
     artifacts: Vec<ArtifactV2>,
     #[serde(default)]
     modules: Vec<ModuleV2>,
@@ -230,6 +241,7 @@ fn from_v1(dump: ClasspathDump) -> Universe {
         });
     }
     Universe {
+        jdk_release: dump.jdk_release,
         scan_targets,
         app_roots,
         versions,
@@ -305,6 +317,7 @@ fn from_v2(dump: DumpV2) -> Result<Universe> {
         modules.clear();
     }
     Ok(Universe {
+        jdk_release: dump.jdk_release,
         scan_targets,
         app_roots,
         versions,
@@ -655,6 +668,7 @@ mod tests {
             scan_targets.push(PathBuf::from(file));
         }
         Universe {
+            jdk_release: None,
             scan_targets,
             app_roots: Vec::new(),
             versions,

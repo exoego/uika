@@ -880,6 +880,10 @@ pub fn check_text(report: &CheckReport) -> String {
 #[derive(Serialize)]
 pub struct ModuleOutcome {
     pub modules: Vec<String>,
+    /// The run compared JDK releases, not this module's jars, so it is not one of the
+    /// dump's modules and must not be counted as a changed one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub jdk: bool,
     pub scanned_classes: usize,
     /// Post-exclusion violations attributed to any module of this run.
     pub broken: usize,
@@ -940,7 +944,12 @@ pub fn upgrade_text(
     }
     if let Some(m) = modules {
         writeln!(out).unwrap();
-        let checked: usize = m.outcomes.iter().map(|o| o.modules.len()).sum();
+        let checked: usize = m
+            .outcomes
+            .iter()
+            .filter(|o| !o.jdk)
+            .map(|o| o.modules.len())
+            .sum();
         let mut notes = vec![format!("{} unchanged", m.unchanged_modules)];
         if m.new_modules > 0 {
             notes.push(format!("{} new", m.new_modules));

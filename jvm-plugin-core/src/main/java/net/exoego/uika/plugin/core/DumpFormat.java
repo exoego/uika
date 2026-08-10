@@ -89,8 +89,22 @@ public final class DumpFormat {
         return result;
     }
 
+    /** The feature version of the JVM writing this dump, for a fresh dump. */
+    public static int buildJvmRelease() {
+        return Runtime.version().feature();
+    }
+
+    /**
+     * The {@code jdkRelease} a dump was written with, or null when it predates the field.
+     * Rehydration must carry the original value forward rather than stamping its own JVM,
+     * or a before dump rehydrated elsewhere would claim the rehydrating JVM's release.
+     */
+    public static Integer jdkReleaseOf(Map<String, Object> doc) {
+        return doc.get("jdkRelease") instanceof Number n ? n.intValue() : null;
+    }
+
     /** Write as v2. roots are built dynamically from known prefixes plus generic markers. */
-    public static String writeV2(List<Module> modules, List<String> preferredRoots) {
+    public static String writeV2(List<Module> modules, List<String> preferredRoots, Integer jdkRelease) {
         RootTable roots = new RootTable(preferredRoots);
 
         Map<String, Integer> artifactIndex = new LinkedHashMap<>();
@@ -158,7 +172,11 @@ public final class DumpFormat {
         }
 
         StringBuilder json = new StringBuilder();
-        json.append("{\"version\":2,\"roots\":[");
+        json.append("{\"version\":2");
+        if (jdkRelease != null) {
+            json.append(",\"jdkRelease\":").append(jdkRelease.intValue());
+        }
+        json.append(",\"roots\":[");
         List<String> built = roots.all();
         for (int i = 0; i < built.size(); i++) {
             if (i > 0) {

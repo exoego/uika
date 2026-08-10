@@ -48,7 +48,7 @@ public final class DumpClasspathMojo extends AbstractMojo {
         }
 
         String root = session.getExecutionRootDirectory();
-        String json = DumpFormat.writeV2(modules, List.of(root));
+        String json = DumpFormat.writeV2(modules, List.of(root), DumpFormat.buildJvmRelease());
         File parent = outputFile.getParentFile();
         if (parent != null) {
             parent.mkdirs();

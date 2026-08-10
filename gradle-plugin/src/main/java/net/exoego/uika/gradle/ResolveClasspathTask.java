@@ -102,6 +102,12 @@ public abstract class ResolveClasspathTask extends DefaultTask {
         return DumpFormat.normalize(doc);
     }
 
+    @SuppressWarnings("unchecked")
+    static Integer parseJdkRelease(String json) {
+        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parseText(json);
+        return DumpFormat.jdkReleaseOf(doc);
+    }
+
     /** Notations (g:n:v[:classifier]) of coordinate-carrying artifacts whose file is absent here. */
     static Set<String> wantedNotations(List<Module> modules) {
         Set<String> wanted = new LinkedHashSet<>();
@@ -119,8 +125,11 @@ public abstract class ResolveClasspathTask extends DefaultTask {
     @TaskAction
     public void resolve() throws IOException {
         File input = getInputFile().get().getAsFile();
-        List<Module> modules = parseModules(
-                Files.readString(input.toPath(), StandardCharsets.UTF_8));
+        String inputJson = Files.readString(input.toPath(), StandardCharsets.UTF_8);
+        List<Module> modules = parseModules(inputJson);
+        // Rehydration only fetches missing files; the release stays the one that produced
+        // the dump, not the JVM doing the fetching.
+        Integer jdkRelease = parseJdkRelease(inputJson);
 
         Set<String> wanted = wantedNotations(modules);
         if (!wanted.isEmpty() && !getWiredAtConfiguration().getOrElse(false)) {
@@ -162,7 +171,9 @@ public abstract class ResolveClasspathTask extends DefaultTask {
             rewrittenModules.add(new Module(module.path(), module.classesDirs(), artifacts));
         }
 
-        String json = DumpFormat.writeV2(rewrittenModules, List.of(getRootDirPath().get()));
+        String json =
+                DumpFormat.writeV2(
+                        rewrittenModules, List.of(getRootDirPath().get()), jdkRelease);
         File out = getOutputFile().get().getAsFile();
         File parent = out.getParentFile();
         if (parent != null) {

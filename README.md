@@ -702,6 +702,27 @@ release comes from its `jmods/`, which `ct.sym` never carries. Checking an upgra
 invisible here, because `ct.sym` stubs do not carry `PermittedSubclasses`, and
 reporting them from the `jmods` side alone would be a false positive.
 
+From the build-tool plugins this needs no flag. The classpath dump records the
+release of the JVM that wrote it, so bumping your toolchain and re-running the
+dump is enough — `upgrade-check` sees the two dumps disagree and checks the JDK
+move alongside the dependency moves, in one report.
+
+```console
+$ uika upgrade-check --before before.json --after after.json
+dependency changes: none
+
+per-module check: 0 of 1 modules changed their resolved versions (1 unchanged)
+    JDK 11 -> 17  scanned 2 classes, ❌ 1 broken, 0 unverified
+
+❌ java.rmi.activation.ActivationGroup
+    class removed, throws NoClassDefFoundError at first use
+    used by 1 class:
+        UsesRemoved  (app.jar) [JDK 11 -> 17]
+```
+
+Dumps written before the plugins recorded the release carry no value, and a
+missing value on either side is never read as a JDK move.
+
 ## Development
 
 ```console

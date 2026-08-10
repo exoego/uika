@@ -115,7 +115,8 @@ object UikaPlugin extends AutoPlugin {
         out,
         DumpFormat.writeV2(
           modules.asJava,
-          List(baseDirectory.value.getAbsolutePath).asJava
+          List(baseDirectory.value.getAbsolutePath).asJava,
+          DumpFormat.buildJvmRelease()
         )
       )
       streams.value.log.info(s"uika classpath dump: $out")
