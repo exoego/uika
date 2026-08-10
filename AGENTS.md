@@ -13,15 +13,13 @@ not be relearned by experiment.
 - Regression-test parser and ordering changes by diffing `uika dump <jar>`
   output before/after. Dump order follows physical entry offsets, so sort both
   sides first if the change can affect read order.
-- Golden regression: `cli/tests/golden.rs` pins the full check JSON for the
-  fixture scenarios, so any detection shift fails `cargo test` first. Inspect
-  the diff, verify the semantic change is intended, then re-bless with
-  `UIKA_BLESS=1 cargo test --test golden`. Golden inputs use crate-relative
-  fixture paths (`cli/tests/common/mod.rs::fixture`) so the JSON stays
-  machine-independent; keep it that way. `check_scanned` sorts violations by
-  string value before returning, so the JSON report is canonical — without
-  that sort, graph-walk violations surface in FxHashMap order and the goldens
-  would go flaky at two or more became-final violations.
+- Golden regression (`cli/tests/golden.rs`; the bless workflow is in README):
+  golden inputs use crate-relative fixture paths
+  (`cli/tests/common/mod.rs::fixture`) so the JSON stays machine-independent;
+  keep it that way. `check_scanned` sorts violations by string value before
+  returning, so the JSON report is canonical — without that sort, graph-walk
+  violations surface in FxHashMap order and the goldens would go flaky at two
+  or more became-final violations.
 - The scenario table (name, old, new, consumer, probe-only extra classpath) is
   single-sourced in `cli/tests/scenarios.tsv`, read by both `golden.rs` and
   `tools/jvm-probe/run-fixtures.sh`. Add scenarios there, plus a named golden
@@ -38,41 +36,36 @@ not be relearned by experiment.
   scan finish but fails the command afterwards; a truncated stream must never
   pass silently, because the probe would answer-check only a prefix.
 - `make probe` (tools/jvm-probe/run-fixtures.sh, debug binary — verdicts are
-  optimization-independent) answer-checks the fixture scenarios against a real
-  JVM: Probe.java resolves each distinct verdict record via
-  `MethodHandles.privateLookupIn` + findVirtual/findStatic/findGetter... on the
-  new-side classpath and fails on any broken verdict the JVM links (false
-  positive). Broken records that fail on BOTH sides are listed inconclusive,
-  not treated as confirmation (the probe could not reproduce the old-side
-  linkage uika resolved against). ok/unknown records that fail on new are FN
-  candidates only when the old side links them; failing on both sides is
-  pre-existing breakage uika deliberately does not report, and an old-side
-  probe ERROR is surfaced instead of being folded into pre-existing. The
-  koin and pact breaks are graph-walk violations and therefore not probeable;
-  their coverage lives in the integration tests. The class-shape breaks are also
-  not probeable and live in integration tests: `MethodHandles.Lookup` does not
-  model the Methodref/InterfaceMethodref owner-kind requirement or
-  InstantiationError, so it would link a kind-flip or `class became
-  abstract` verdict the JVM actually rejects. The fixture scenarios in
-  scenarios.tsv are chosen so none of them produce a class-shape verdict, so
-  `make probe` never answer-checks one. The probe is evidence, not truth:
-  findVirtual does not model invokespecial, final-field writes are probed as
-  reads when the writer is the declaring class, and an unloadable referencing
-  class downgrades to a caller-context-free public lookup. The
-  Kotlin fixtures need kotlin-stdlib on the probe classpath (vendored in
-  fixtures); the JDK is pinned in `.mise.toml` (probe needs 16+).
-- `--jdk-release N` (check/upgrade-check) layers a JDK API index under both
-  resolution scopes, built lazily from the escape closure inside the JDK's
-  ct.sym (located via UIKA_JDK first — authoritative when set — then
-  JAVA_HOME; stubs are plain class files, parsed by the normal parser).
-  Strictly opt-in: the default run stays byte-identical (goldens) and the
-  no-JVM claim holds. N must be older than the installed JDK (ct.sym does not
-  carry the current release). Because the SAME index sits in the old and new
-  scope, ct.sym gaps resolve NotFound on both sides and the old-relative gate
-  keeps them unreported — for reference verdicts the layer can only conclude
-  Unknowns, never invent violations. The one single-sided consumer is the
-  version-lag extends-final check: a lag super's ACC_FINAL comes from the
-  declared release's stub alone (there is no old-side JDK to compare), so
+  optimization-independent) resolves each distinct verdict record via
+  `MethodHandles.privateLookupIn` + findVirtual/findStatic/findGetter...
+  Broken records that fail on BOTH sides are listed inconclusive, not treated
+  as confirmation (the probe could not reproduce the old-side linkage uika
+  resolved against). ok/unknown records that fail on new are FN candidates only
+  when the old side links them; failing on both sides is pre-existing breakage
+  uika deliberately does not report, and an old-side probe ERROR is surfaced
+  instead of being folded into pre-existing. The koin and pact breaks are
+  graph-walk violations and therefore not probeable; their coverage lives in
+  the integration tests. The class-shape breaks are not probeable either:
+  `MethodHandles.Lookup` models neither the Methodref/InterfaceMethodref
+  owner-kind requirement nor InstantiationError, so it would link a kind-flip
+  or `class became abstract` verdict the JVM actually rejects. scenarios.tsv is
+  chosen so no fixture produces a class-shape verdict, so `make probe` never
+  answer-checks one. The probe is evidence, not truth: findVirtual does not
+  model invokespecial, final-field writes are probed as reads when the writer
+  is the declaring class, and an unloadable referencing class downgrades to a
+  caller-context-free public lookup. The Kotlin fixtures need kotlin-stdlib on
+  the probe classpath (vendored in fixtures); the JDK is pinned in `.mise.toml`
+  (probe needs 16+).
+- `--jdk-release N` (check/upgrade-check; user-facing behaviour in README)
+  layers a JDK API index under both resolution scopes, built lazily from the
+  escape closure inside the JDK's ct.sym (stubs are plain class files, parsed
+  by the normal parser). Strictly opt-in: the default run stays byte-identical
+  (goldens) and the no-JVM claim holds. Because the SAME index sits in the old
+  and new scope, ct.sym gaps resolve NotFound on both sides and the
+  old-relative gate keeps them unreported — for reference verdicts the layer
+  can only conclude Unknowns, never invent violations. The one single-sided
+  consumer is the version-lag extends-final check: a lag super's ACC_FINAL
+  comes from the declared release's stub alone (no old-side JDK to compare), so
   finality that changed between JDK releases (java/awt/PointerInfo became
   final in 19) is judged as of N — correct for the declared release, possibly
   not for the runtime actually deployed. Layer order is (new, fetched, jdk),
@@ -93,21 +86,19 @@ not be relearned by experiment.
   pair reaches `run_check_with_indexes`, and checking a library pair and a JDK
   pair at once is two runs, which is what upgrade-check does from the dumps. The
   JDK indexes therefore go in with empty path lists (nothing to exclude as stale,
-  nothing to sweep for invocation evidence). Sources differ by release: ct.sym for anything below the running
-  JDK, `jmods/*.jmod` (zips of class files under `classes/`) for its own release,
-  which ct.sym never carries. The running JDK's feature version is read from its
+  nothing to sweep for invocation evidence). A `.jmod` is a zip of class files
+  under `classes/`, and the running JDK's feature version is read from its
   `release` file, not from a JVM. jmods is a SUPERSET of ct.sym (unexported
   internals included), which only cancels removals while it is the new side; as
   the old side against a ct.sym new side it would invent them, so that
   combination warns. `level_to_ct_sym_fidelity` drops PermittedSubclasses from
   jmods classes because stubs strip it (java.lang.constant.ConstantDesc has been
   sealed since 12 and its stub carries none); without that, every sealed JDK
-  class reads as newly sealed. Sealing is therefore invisible to a JDK pair.
-  NestHost IS in stubs, so it stays. Evidence: an app calling
-  java.rmi.activation.ActivationGroup reports `class removed` on 11 -> 17, while
-  a subclass of java.awt.event.ComponentAdapter reports nothing despite the 98
-  public -> protected constructor narrowings in that pair (the subclass-aware
-  access check absorbs them).
+  class reads as newly sealed. NestHost IS in stubs, so it stays. Evidence: an
+  app calling java.rmi.activation.ActivationGroup reports `class removed` on
+  11 -> 17, while a subclass of java.awt.event.ComponentAdapter reports nothing
+  despite the 98 public -> protected constructor narrowings in that pair (the
+  subclass-aware access check absorbs them).
 - The dump records the writing JVM's feature version (`jdkRelease`, additive, from
   `DumpFormat.buildJvmRelease()` in the one shared v2 writer, so all three plugins
   get it at once). `upgrade-check` turns a before/after disagreement into ONE extra
@@ -147,18 +138,17 @@ not be relearned by experiment.
 
 ## Where the rest lives
 
-Everything below loads on demand rather than every session. Read the relevant
-one before working in that area. Each is plain markdown, so an agent whose
-harness does not auto-load it can just read the path.
+Read the relevant one before working in that area. Each is plain markdown, so
+an agent whose harness does not auto-load it can just read the path.
 
 - `cli/AGENTS.md` (symlinked as `cli/CLAUDE.md`) — check pipeline, per-module
   upgrade-check, linkage semantics, reachability, suggestions. Claude Code
   loads it automatically when working under `cli/`.
 - `.claude/skills/uika-performance/SKILL.md` — benchmark workloads and expected
-  numbers, optimization history, rejected approaches. Read before profiling or
+  numbers, optimization history, rejected approaches; before profiling or
   touching the hot path.
 - `.claude/skills/uika-jvm-plugins/SKILL.md` — Gradle/sbt/Maven plugin and
-  `jvm-plugin-core` invariants. Read before changing anything under
+  `jvm-plugin-core` invariants; before changing anything under
   `gradle-plugin/`, `sbt-plugin/`, `maven-plugin/`, or `jvm-plugin-core/`.
 
 Module layout is not documented here on purpose: `ls cli/src/` plus the

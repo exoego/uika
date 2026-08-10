@@ -37,13 +37,11 @@ pass-2 classes are typically below 0.1% of the scan.
   resolution lost a version is checked against its own classpath (own
   classesDirs first, then artifacts in resolution order). The merged-universe
   check remains behind `--merged` and as the automatic fallback (with a
-  warning) when a dump has no module with artifacts. Rationale: the union
-  mixes several resolved versions of one coordinate, which produced false
-  brokens (a jar's self-consistent internal references judged against a
-  sibling module's newer version -- the henry-backend netty case) AND false
-  negatives (an upgrade invisible to the flat diff because a sibling still
-  resolves the old version). Both are pinned by
-  `per_module_upgrade_check_gates_on_each_modules_own_resolution`.
+  warning) when a dump has no module with artifacts. Rationale (README states
+  the user-facing version): the union mixes several resolved versions of one
+  coordinate, which produced false brokens (observed on a real multi-module
+  monorepo whose modules resolve two netty lines) AND false negatives. Both are
+  pinned by `per_module_upgrade_check_gates_on_each_modules_own_resolution`.
 - Gating is per-module `old_jars.is_empty()` -- the same old-version-
   disappeared gate as merged mode, over the module's own version maps.
   Unchanged modules are skipped. An after-only module (renamed or added) is
@@ -340,12 +338,9 @@ pass-2 classes are typically below 0.1% of the scan.
 
 ## Reachability
 
-- Ranks violations by whether the referencing class is class-load reachable from
-  the application, without hiding any: `Violation.reachable` is `Some(false)`
-  only when no static path reaches the class. It is an over-approximation, so
-  "not proven reachable" (⚠️) is a deprioritize hint, never grounds to drop a
-  violation (reflection from external config is invisible). Same conservative
-  stance as Unknown.
+- `Violation.reachable` is `Some(false)` only when no static path reaches the
+  referencing class. Over-approximate by design, so ⚠️ is a deprioritize hint,
+  never grounds to drop a violation — the same conservative stance as Unknown.
 - `model::tier(v, reachable_axis_valid)` is the single policy site turning a
   violation's evidence into its report/gating tier (💥 Breaks / 💤 Latent /
   ⚠️ Unproven). `report.rs` sections and `should_fail` make the SAME call with the
@@ -354,11 +349,10 @@ pass-2 classes are typically below 0.1% of the scan.
   that reasons about fields directly instead of about the tier is how the two
   drift apart. Proven-unreachable wins over latent (an unreachable class cannot
   load at all). The reachable axis is dropped when `app_roots_matched ==
-  Some(false)` — roots were given and matched nothing, so `reachable = Some(false)`
-  on every violation means nothing — and those violations then report AND gate as
-  💥, with the "no application root matched a scanned class" warning explaining
-  why. The latent axis survives that, and reachability-off entirely, because its
-  evidence comes from scanned bytecode rather than from app roots. Pinned by
+  Some(false)` — roots were given and matched nothing, so `reachable =
+  Some(false)` on every violation means nothing. The latent axis survives that,
+  and reachability-off entirely, because its evidence comes from scanned
+  bytecode rather than from app roots. Pinned by
   `gate_threshold_matches_the_reported_tier`. Exclude rules, not `--fail-on`, are
   where a kind-level policy lives, so the gate stays a pure tier threshold.
 - On automatically, gated by app roots, not a flag: `run_check` computes
@@ -367,8 +361,8 @@ pass-2 classes are typically below 0.1% of the scan.
   (off, flat list, `reachable = None`). This also keeps the 2M-class
   classpath-only stress run from paying the cost. If roots are supplied but none
   match a scanned class (unbuilt build outputs), `reachable_classes` reports
-  `app_root_matched = false` and `check_scanned` emits a warning instead of
-  silently reporting every violation as not-proven-reachable.
+  `app_root_matched = false` and `check_scanned` emits the warning that goes
+  with the axis-dropping above.
 - Roots are the application: `--app` targets and dump `classesDirs`
   (`Universe.app_roots`). App sources are matched by interning the root path's
   display string, the same string `input.rs` interns as a class's `source`, so a
@@ -393,26 +387,20 @@ pass-2 classes are typically below 0.1% of the scan.
 - `suggest::annotate` fills `Violation.suggestion` after `run_check`, in
   `cmd_upgrade_check` where coordinates exist. Plain `check` has only file paths,
   so its violations stay `suggestion = None` and `report.rs` prints nothing extra.
-- `report.rs` is suggestion-first for attributed violations: it groups them
-  (one 💡 block lists every reference a fix covers) instead of repeating the
-  advice per reference. The group key is the advice PLUS every field the
-  "why:" line quotes (`removed_by`/`before`/`after`/`referenced_by`), never
-  the advice alone: the removed-coordinate advice embeds no versions and the
-  changed-coordinate advice embeds only the moved delta, so per-module runs
-  over different resolved version lists can produce byte-identical advice
-  whose versions differ. Grouping is done inside each reachability section,
-  so a fix spanning both tiers prints once under 💥 and once under ⚠️. Violations with no
-  suggestion (plain `check`, or unattributed upgrade-check leftovers) fall back
-  to the per-symbol / per-class ❌ blocks. The text format itself is not
-  documented here: the README examples show it, and report.rs plus its tests
-  define it.
+- `report.rs` groups attributed violations suggestion-first (README shows the
+  shape). The group key is the advice PLUS every field the "why:" line quotes
+  (`removed_by`/`before`/`after`/`referenced_by`), never the advice alone: the
+  removed-coordinate advice embeds no versions and the changed-coordinate
+  advice embeds only the moved delta, so per-module runs over different
+  resolved version lists can produce byte-identical advice whose versions
+  differ. Violations with no suggestion (plain `check`, or unattributed
+  upgrade-check leftovers) fall back to the per-symbol / per-class ❌ blocks.
+  The text format itself is defined by report.rs plus its tests, not here.
 - `referenced_by` comes from a dump `file-display-string -> "g:n:v"` map (both
   before and after sides). `removed_by` comes from mapping the violation's owner
   class to a changed coordinate by reading the before-side JARs' class names
   (`input::load`, first-wins) — a small, best-effort scan that never blocks the
   report on read failure.
-- Advice: same-group referencer and owner (a skew inside one library family,
-  e.g. otel core vs incubator) leads with "align the group via its BOM";
-  cross-group leads with upgrade-the-referencer-or-pin-the-owner. This mirrors
-  the real fixes found for the OpenTelemetry case (BOM-align the 41 skew breaks;
-  handle the cross-group firestore/grpc one separately).
+- The same-group / cross-group advice split (README describes it) mirrors the
+  real fixes found for the OpenTelemetry case: BOM-align the 41 skew breaks,
+  handle the cross-group firestore/grpc one separately.
