@@ -50,6 +50,7 @@ pub fn extract_api(rc: &RawClass) -> Result<ClassApi> {
         methods,
         fields,
         nest_host: nest_host_of(rc)?,
+        permitted: permitted_of(rc)?,
     })
 }
 
@@ -58,6 +59,18 @@ fn nest_host_of(rc: &RawClass) -> Result<Option<Sym>> {
         return Ok(None);
     }
     Ok(Some(intern(&rc.class_name(rc.nest_host)?)))
+}
+
+fn permitted_of(rc: &RawClass) -> Result<Option<Vec<Sym>>> {
+    rc.permitted_subclasses
+        .as_ref()
+        .map(|indexes| {
+            indexes
+                .iter()
+                .map(|&i| Ok(intern(&rc.class_name(i)?)))
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()
 }
 
 /// Extract the internal name of this_class.

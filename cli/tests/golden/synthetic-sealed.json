@@ -1,0 +1,17 @@
+{
+  "violations": [
+    {
+      "source": "tests/fixtures/synthetic-sealed-consumer.jar",
+      "source_class": "fixture/app/Square",
+      "reference": {
+        "kind": "class",
+        "owner": "fixture/lib/Shape"
+      },
+      "reason": "class became sealed"
+    }
+  ],
+  "scanned_classes": 2,
+  "total": 1,
+  "unknown_refs": 0,
+  "suppressed": 0
+}

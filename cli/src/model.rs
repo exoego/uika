@@ -15,6 +15,7 @@ pub const ACC_INTERFACE: u16 = 0x0200;
 pub const ACC_ABSTRACT: u16 = 0x0400;
 /// Compiler-generated member not present in the source (synthetic).
 pub const ACC_SYNTHETIC: u16 = 0x1000;
+pub const ACC_ENUM: u16 = 0x4000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct MemberKey {
@@ -55,6 +56,9 @@ pub struct ClassApi {
     pub fields: Members,
     /// NestHost attribute target (nestmate private access); None when absent.
     pub nest_host: Option<ClassName>,
+    /// PermittedSubclasses targets, i.e. the class is sealed. None when the attribute is
+    /// absent (unsealed). `Some(empty)` is a sealed class permitting nothing.
+    pub permitted: Option<Vec<ClassName>>,
 }
 
 impl ClassApi {
@@ -141,6 +145,11 @@ pub enum BreakingChange {
     ClassBecameFinal {
         class: ClassName,
     },
+    /// Gained a PermittedSubclasses attribute, or dropped a name from one: an existing
+    /// subclass is now unpermitted and fails to load.
+    ClassBecameSealed {
+        class: ClassName,
+    },
     /// A concrete class became abstract (or an interface): instantiating it now
     /// throws InstantiationError.
     ClassBecameAbstract {
@@ -222,6 +231,7 @@ impl BreakingChange {
             BreakingChange::FieldRemoved { .. } => "field_removed",
             BreakingChange::ClassAccessNarrowed { .. } => "class_access_narrowed",
             BreakingChange::ClassBecameFinal { .. } => "class_became_final",
+            BreakingChange::ClassBecameSealed { .. } => "class_became_sealed",
             BreakingChange::ClassBecameAbstract { .. } => "class_became_abstract",
             BreakingChange::ClassBecameInterface { .. } => "class_became_interface",
             BreakingChange::InterfaceBecameClass { .. } => "interface_became_class",
@@ -259,6 +269,7 @@ pub enum Reason {
     ClassAccessNarrowed,
     ClassBecameAbstract,
     ClassBecameFinal,
+    ClassBecameSealed,
     ClassBecameInterface,
     InterfaceBecameClass,
     ExtendsFinalClass,
@@ -279,11 +290,12 @@ impl Reason {
     /// ADD NEW VARIANTS HERE TOO — the compiler cannot check this, since an exhaustive
     /// `match` forces a new arm and never a new array entry. A variant missing here loses
     /// its exclude-rule `kind` string, so a legitimate rule fails with `unknown kind`.
-    pub const ALL: [Reason; 18] = [
+    pub const ALL: [Reason; 19] = [
         Reason::ClassRemoved,
         Reason::ClassAccessNarrowed,
         Reason::ClassBecameAbstract,
         Reason::ClassBecameFinal,
+        Reason::ClassBecameSealed,
         Reason::ClassBecameInterface,
         Reason::InterfaceBecameClass,
         Reason::ExtendsFinalClass,
@@ -308,6 +320,7 @@ impl Reason {
             Reason::ClassAccessNarrowed => "class access narrowed",
             Reason::ClassBecameAbstract => "class became abstract",
             Reason::ClassBecameFinal => "class became final",
+            Reason::ClassBecameSealed => "class became sealed",
             Reason::ClassBecameInterface => "class became interface",
             Reason::InterfaceBecameClass => "interface became class",
             Reason::ExtendsFinalClass => "extends final class",

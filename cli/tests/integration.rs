@@ -269,6 +269,42 @@ fn method_reference_only_call_site_counts_as_invocation() {
     assert_eq!(found(&[&consumer, &caller]), Some(true));
 }
 
+/// A real JVM confirms the fixture: loading Square against 2.0 throws
+/// `IncompatibleClassChangeError: class fixture.app.Square cannot implement sealed
+/// interface fixture.lib.Shape`, while Marker (implementing the untouched Tagged)
+/// loads. Not probeable, since `MethodHandles.Lookup` models member resolution and
+/// this break happens at class load.
+#[test]
+fn detects_a_consumer_subclass_of_a_newly_sealed_interface() {
+    let old_jar = fixture("synthetic-sealed-1.0.jar");
+    let new_jar = fixture("synthetic-sealed-2.0.jar");
+    let consumer = fixture("synthetic-sealed-consumer.jar");
+
+    let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
+    let new_classes = load(&new_jar).unwrap();
+    let (new_index, _) = ApiIndex::from_classes(&new_classes);
+
+    let report = check(
+        &load(&consumer).unwrap(),
+        &old_index,
+        &new_index,
+        &new_classes,
+    );
+    let sealed: Vec<_> = report
+        .violations
+        .iter()
+        .filter(|v| v.reason == Reason::ClassBecameSealed)
+        .collect();
+    assert_eq!(sealed.len(), 1, "{:?}", report.violations);
+    assert_eq!(sealed[0].source_class.as_str(), "fixture/app/Square");
+    assert_eq!(sealed[0].reference.owner.as_str(), "fixture/lib/Shape");
+
+    assert!(diff(&old_index, &new_index).iter().any(|c| matches!(
+        c,
+        BreakingChange::ClassBecameSealed { class } if class.as_str() == "fixture/lib/Shape"
+    )));
+}
+
 /// https://github.com/rburgst/okhttp-digest/issues/57:
 /// okhttp-digest 1.x calls RequestLine.requestPath as a static OkHttp 3 method.
 /// OkHttp 4.0.x changed RequestLine into a Kotlin object, making requestPath an

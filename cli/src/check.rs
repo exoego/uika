@@ -6,8 +6,9 @@ use crate::index::{
 use crate::input::LoadedClass;
 use crate::intern::Sym;
 use crate::model::{
-    ACC_ABSTRACT, ACC_BRIDGE, ACC_FINAL, ACC_INTERFACE, ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC,
-    ACC_STATIC, ACC_SYNTHETIC, MemberKey, Reason, RefKind, SymbolRef, Violation, Visibility,
+    ACC_ABSTRACT, ACC_BRIDGE, ACC_ENUM, ACC_FINAL, ACC_INTERFACE, ACC_PRIVATE, ACC_PROTECTED,
+    ACC_PUBLIC, ACC_STATIC, ACC_SYNTHETIC, MemberKey, Reason, RefKind, SymbolRef, Violation,
+    Visibility,
 };
 use anyhow::Result;
 use rayon::prelude::*;
@@ -650,6 +651,7 @@ pub fn check_scanned(
     add_final_violations(old, new, &fetched, &graph, &mut violations, &mut seen);
     add_extends_final_violations(&lag_edges, old, &runtime_scope, &mut violations, &mut seen);
     add_kind_flip_violations(old, new, &graph, &mut violations, &mut seen);
+    add_sealed_violations(old, new, &graph, &mut violations, &mut seen);
     add_abstract_method_violations(
         &old_scope,
         &runtime_scope,
@@ -1134,6 +1136,78 @@ fn add_kind_flip_violations(
             if flipped.get(&iface) == Some(&false) {
                 report(iface, class_name, node, Reason::InterfaceBecameClass);
             }
+        }
+    }
+}
+
+/// A scanned class extends or implements a library type that is now sealed without naming
+/// it, so it fails to load (JVMS 5.3.5). A graph walk like the newly-final one: the break
+/// needs no constant-pool reference, and only the DIRECT supertypes are checked because
+/// that is what the JVM checks. Old-relative: a subclass already unpermitted in old never
+/// loaded. The same-module condition sealing also carries is not modeled, which can only
+/// lose a violation.
+fn add_sealed_violations(
+    old: &ApiIndex,
+    new: &ApiIndex,
+    graph: &ClassGraph,
+    violations: &mut Vec<Violation>,
+    seen: &mut FxHashSet<(Sym, Sym, SymbolRef)>,
+) {
+    // owner -> (permits in new, permits in old when old was already sealed). Permits
+    // lists hold a handful of names, so they are searched linearly out of the arena
+    // rather than copied into sets.
+    let sealed: FxHashMap<Sym, (&[Sym], Option<&[Sym]>)> = new
+        .classes
+        .iter()
+        .filter_map(|(&name, new_entry)| {
+            // javac has sealed enums with constant-specific bodies since JDK 17
+            // (https://issues.apache.org/jira/browse/GROOVY-10194), so a bare recompile
+            // gains the attribute; nothing outside the enum extends it anyway. A final
+            // super is already reported as `extends final class`.
+            if new_entry.access & (ACC_ENUM | ACC_FINAL) != 0 {
+                return None;
+            }
+            let new_permits = new.permitted_of(new_entry)?;
+            let old_entry = old.classes.get(&name)?;
+            Some((name, (new_permits, old.permitted_of(old_entry))))
+        })
+        .collect();
+    if sealed.is_empty() {
+        return;
+    }
+    let mut report = |owner: Sym, class_name: Sym, node: &crate::index::GraphNode| {
+        let Some(&(new_permits, old_permits)) = sealed.get(&owner) else {
+            return;
+        };
+        if new_permits.contains(&class_name) {
+            return;
+        }
+        if old_permits.is_some_and(|permits| !permits.contains(&class_name)) {
+            return;
+        }
+        let reference = SymbolRef {
+            kind: RefKind::Class,
+            owner,
+            member: None,
+            expected_static: None,
+            field_write: None,
+            instantiated: None,
+        };
+        push_violation(
+            violations,
+            seen,
+            node.source,
+            class_name,
+            reference,
+            Reason::ClassBecameSealed,
+        );
+    };
+    for (class_name, node) in graph.iter() {
+        if let Some(super_name) = node.super_name {
+            report(super_name, class_name, node);
+        }
+        for &iface in graph.interfaces_of(node) {
+            report(iface, class_name, node);
         }
     }
 }
@@ -1692,6 +1766,7 @@ mod tests {
             ),
             fields: build_members([]),
             nest_host: None,
+            permitted: None,
         }
     }
 
@@ -1708,6 +1783,7 @@ mod tests {
             ),
             fields: build_members([]),
             nest_host: None,
+            permitted: None,
         }
     }
 
@@ -1724,6 +1800,7 @@ mod tests {
                     .map(|(n, d, acc)| (MemberKey::new(n, d), *acc)),
             ),
             nest_host: None,
+            permitted: None,
         }
     }
 
@@ -2110,6 +2187,115 @@ mod tests {
         let mut seen = FxHashSet::default();
         add_kind_flip_violations(&old, &new, &graph, &mut violations, &mut seen);
         assert!(violations.is_empty());
+    }
+
+    // ---- sealing walk (add_sealed_violations) ----
+
+    fn sealed_interface(name: &str, permits: &[&str]) -> ClassApi {
+        let mut c = interface(name);
+        c.permitted = Some(permits.iter().map(|p| intern(p)).collect());
+        c
+    }
+
+    /// One scanned class, reached over the interface edge unless `as_super` names a superclass.
+    fn sealed_violations(
+        old: &ApiIndex,
+        new: &ApiIndex,
+        sub: &str,
+        owner: &str,
+        as_super: bool,
+    ) -> Vec<Violation> {
+        let mut graph = ClassGraph::new();
+        let (super_name, interfaces) = if as_super {
+            (Some(intern(owner)), vec![])
+        } else {
+            (Some(object_sym()), vec![intern(owner)])
+        };
+        graph.insert_if_absent(
+            intern(sub),
+            super_name,
+            &interfaces,
+            &[],
+            None,
+            intern("app.jar"),
+        );
+        let mut violations = Vec::new();
+        let mut seen = FxHashSet::default();
+        add_sealed_violations(old, new, &graph, &mut violations, &mut seen);
+        violations
+    }
+
+    #[test]
+    fn implementing_a_newly_sealed_interface_is_broken() {
+        let old = ApiIndex::build([interface("lib/I")]);
+        let new = ApiIndex::build([sealed_interface("lib/I", &["lib/Known"])]);
+        let violations = sealed_violations(&old, &new, "app/Impl", "lib/I", false);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, Reason::ClassBecameSealed);
+        assert_eq!(violations[0].reference.owner.as_str(), "lib/I");
+        assert_eq!(violations[0].source_class.as_str(), "app/Impl");
+    }
+
+    #[test]
+    fn extending_a_newly_sealed_class_is_broken() {
+        let old = ApiIndex::build([class("lib/Base", &[])]);
+        let new = ApiIndex::build([{
+            let mut c = class("lib/Base", &[]);
+            c.permitted = Some(vec![intern("lib/Known")]);
+            c
+        }]);
+        let violations = sealed_violations(&old, &new, "app/Sub", "lib/Base", true);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, Reason::ClassBecameSealed);
+    }
+
+    #[test]
+    fn a_permitted_subclass_is_not_reported() {
+        let old = ApiIndex::build([interface("lib/I")]);
+        let new = ApiIndex::build([sealed_interface("lib/I", &["app/Impl", "lib/Known"])]);
+        assert!(sealed_violations(&old, &new, "app/Impl", "lib/I", false).is_empty());
+    }
+
+    #[test]
+    fn dropping_a_name_from_permits_is_broken() {
+        let old = ApiIndex::build([sealed_interface("lib/I", &["app/Impl"])]);
+        let new = ApiIndex::build([sealed_interface("lib/I", &["lib/Known"])]);
+        let violations = sealed_violations(&old, &new, "app/Impl", "lib/I", false);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, Reason::ClassBecameSealed);
+    }
+
+    #[test]
+    fn already_unpermitted_in_old_is_pre_existing() {
+        // Never loaded under old either, so the upgrade did not break it.
+        let old = ApiIndex::build([sealed_interface("lib/I", &["lib/Known"])]);
+        let new = ApiIndex::build([sealed_interface("lib/I", &["lib/Known"])]);
+        assert!(sealed_violations(&old, &new, "app/Impl", "lib/I", false).is_empty());
+    }
+
+    #[test]
+    fn a_newly_sealed_enum_is_not_reported() {
+        // javac seals enums with constant-specific bodies, so this fires on a bare recompile.
+        let old = ApiIndex::build([class("lib/E", &[])]);
+        let new = ApiIndex::build([{
+            let mut c = class("lib/E", &[]);
+            c.access = ACC_PUBLIC | ACC_ENUM;
+            c.permitted = Some(vec![intern("lib/E$1")]);
+            c
+        }]);
+        assert!(sealed_violations(&old, &new, "lib/E$2", "lib/E", true).is_empty());
+    }
+
+    #[test]
+    fn a_newly_sealed_final_class_is_not_reported() {
+        // `extends final class` already reports this edge with the reason that explains it.
+        let old = ApiIndex::build([class("lib/C", &[])]);
+        let new = ApiIndex::build([{
+            let mut c = final_class("lib/C");
+            c.permitted = Some(vec![intern("lib/Known")]);
+            c
+        }]);
+        assert!(sealed_violations(&old, &new, "app/Sub", "lib/C", true).is_empty());
     }
 
     #[test]
@@ -3313,6 +3499,7 @@ mod tests {
             methods: build_members(methods.iter().map(|(n, d, a)| (MemberKey::new(n, d), *a))),
             fields: build_members([]),
             nest_host: None,
+            permitted: None,
         }
     }
 

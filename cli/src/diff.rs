@@ -1,8 +1,8 @@
 use crate::index::{ApiIndex, MemberKind, Resolution};
 use crate::intern::Sym;
 use crate::model::{
-    ACC_ABSTRACT, ACC_FINAL, ACC_INTERFACE, ACC_PRIVATE, ACC_STATIC, BreakingChange, ClassName,
-    MemberKey, Visibility,
+    ACC_ABSTRACT, ACC_ENUM, ACC_FINAL, ACC_INTERFACE, ACC_PRIVATE, ACC_STATIC, BreakingChange,
+    ClassName, MemberKey, Visibility,
 };
 
 /// List APIs that existed in old but can no longer be resolved in new, plus incompatibility
@@ -35,6 +35,11 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
         }
         if entry.access & ACC_FINAL == 0 && new_entry.access & ACC_FINAL != 0 {
             changes.push(BreakingChange::ClassBecameFinal { class: name });
+        }
+        if extendable(new_entry.access)
+            && sealing_tightened(old.permitted_of(entry), new.permitted_of(new_entry))
+        {
+            changes.push(BreakingChange::ClassBecameSealed { class: name });
         }
         let old_interface = entry.access & ACC_INTERFACE != 0;
         let new_interface = new_entry.access & ACC_INTERFACE != 0;
@@ -145,6 +150,26 @@ pub fn diff(old: &ApiIndex, new: &ApiIndex) -> Vec<BreakingChange> {
     changes
 }
 
+/// javac has sealed enums with constant-specific bodies since JDK 17
+/// (https://issues.apache.org/jira/browse/GROOVY-10194), so a bare recompile would
+/// otherwise report a breaking change on every such enum. final -> sealed is compatible
+/// per JLS 13.4.2 (no subclasses existed).
+fn extendable(access: u16) -> bool {
+    access & (ACC_ENUM | ACC_FINAL) == 0
+}
+
+/// Gained a PermittedSubclasses attribute, or dropped a name from one. Adding names only
+/// widens (JLS 13.4.2). `None` is "not sealed".
+fn sealing_tightened(old_permitted: Option<&[Sym]>, new_permitted: Option<&[Sym]>) -> bool {
+    let Some(new_permitted) = new_permitted else {
+        return false;
+    };
+    match old_permitted {
+        None => true,
+        Some(old_permitted) => old_permitted.iter().any(|p| !new_permitted.contains(p)),
+    }
+}
+
 fn access_narrowed(old_access: u16, new_access: u16) -> bool {
     Visibility::of(new_access) < Visibility::of(old_access)
 }
@@ -198,6 +223,7 @@ mod tests {
             ),
             fields: build_members([]),
             nest_host: None,
+            permitted: None,
         }
     }
 
@@ -214,6 +240,7 @@ mod tests {
                     .map(|(n, d, acc)| (MemberKey::new(n, d), *acc)),
             ),
             nest_host: None,
+            permitted: None,
         }
     }
 

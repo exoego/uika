@@ -48,6 +48,7 @@ pub fn diff_text(changes: &[BreakingChange]) -> String {
         let subject = match c {
             BreakingChange::ClassRemoved { class }
             | BreakingChange::ClassBecameFinal { class }
+            | BreakingChange::ClassBecameSealed { class }
             | BreakingChange::ClassBecameAbstract { class }
             | BreakingChange::ClassBecameInterface { class }
             | BreakingChange::InterfaceBecameClass { class } => {
@@ -316,7 +317,8 @@ fn runtime_error(v: &Violation) -> Option<&'static str> {
         FieldBecameFinal => "IllegalAccessError at first write",
         MethodBecameStatic | MethodBecameInstance => "IncompatibleClassChangeError at first call",
         FieldBecameStatic | FieldBecameInstance => "IncompatibleClassChangeError at first access",
-        ClassBecameFinal | MethodBecameFinal | ExtendsFinalClass | MethodBecameAbstract => {
+        ClassBecameFinal | ClassBecameSealed | MethodBecameFinal | ExtendsFinalClass
+        | MethodBecameAbstract => {
             return None;
         }
     })
@@ -339,7 +341,8 @@ fn source_display(source: &str) -> &str {
 fn is_structural(v: &Violation) -> bool {
     use Reason::*;
     match v.reason {
-        ClassBecameFinal | MethodBecameFinal | ExtendsFinalClass | MethodBecameAbstract => true,
+        ClassBecameFinal | ClassBecameSealed | MethodBecameFinal | ExtendsFinalClass
+        | MethodBecameAbstract => true,
         ClassBecameInterface | InterfaceBecameClass => v.reference.member.is_none(),
         ClassRemoved | ClassAccessNarrowed | ClassBecameAbstract | MethodRemoved
         | MethodAccessNarrowed | FieldRemoved | FieldAccessNarrowed | FieldBecameFinal
@@ -357,7 +360,7 @@ fn structural_lines(v: &Violation) -> (String, String) {
         "throws VerifyError when {} loads",
         simple(v.source_class.as_str())
     );
-    let kind_flip_error = || {
+    let icce_on_load = || {
         format!(
             "throws IncompatibleClassChangeError when {} loads",
             simple(v.source_class.as_str())
@@ -382,6 +385,11 @@ fn structural_lines(v: &Violation) -> (String, String) {
             loads,
         ),
         (ClassBecameFinal, _) => (format!("extends {owner}, which became final"), loads),
+        // Cannot name the edge, for the same reason InterfaceBecameClass cannot.
+        (ClassBecameSealed, _) => (
+            format!("extends or implements {owner}, which is now sealed without permitting it"),
+            icce_on_load(),
+        ),
         (ExtendsFinalClass, _) => (
             format!("extends {owner}, which is final on the runtime classpath"),
             loads,
@@ -392,11 +400,11 @@ fn structural_lines(v: &Violation) -> (String, String) {
         // the graph keeps no access flags to tell an extends from an implements.
         (ClassBecameInterface, _) => (
             format!("extends {owner}, which became an interface"),
-            kind_flip_error(),
+            icce_on_load(),
         ),
         (InterfaceBecameClass, _) => (
             format!("extends or implements {owner}, which became a class"),
-            kind_flip_error(),
+            icce_on_load(),
         ),
         // The graph walks always attach the member to these two reasons (check.rs); a
         // member-less one would be malformed, so degrade readably rather than panic.
@@ -582,6 +590,11 @@ fn suggestion_line(v: &Violation, target: &str) -> String {
             "{target} became static, but {class} still {access_verb} it as an instance member"
         ),
         ClassBecameFinal => format!("{owner} became final, but {class} still extends it"),
+        ClassBecameSealed => {
+            format!(
+                "{owner} is now sealed and does not permit {class}, which extends or implements it"
+            )
+        }
         MethodBecameFinal => format!("{target} became final, but {class} still overrides it"),
         ExtendsFinalClass => {
             format!("{class} extends {owner}, which is final on the runtime classpath")
@@ -1569,6 +1582,7 @@ mod tests {
         let (class, method, field, desc) = (intern("x/C"), intern("m"), intern("F"), intern("()V"));
         vec![
             BreakingChange::ClassRemoved { class },
+            BreakingChange::ClassBecameSealed { class },
             BreakingChange::MethodRemoved {
                 class,
                 name: method,
@@ -1669,9 +1683,10 @@ mod tests {
                 FieldBecameInstance { .. } => 14,
                 FieldBecameFinal { .. } => 15,
                 MethodBecameFinal { .. } => 16,
+                ClassBecameSealed { .. } => 17,
             }
         }
-        const VARIANTS: usize = 17;
+        const VARIANTS: usize = 18;
         let changes = one_of_every_change();
         let mut seen = [false; VARIANTS];
         for c in &changes {
@@ -1733,7 +1748,7 @@ mod tests {
             "FIELD BECAME STATIC    x/C.F I",
             "FIELD BECAME INSTANCE  x/C.F I",
             "METHOD BECAME FINAL    x/C.m ()V",
-            "breaking changes: 17 (classes: 6, methods: 6, fields: 5)",
+            "breaking changes: 18 (classes: 7, methods: 6, fields: 5)",
         ] {
             assert!(out.contains(expected), "missing {expected:?}\n{out}");
         }

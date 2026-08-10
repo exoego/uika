@@ -138,3 +138,12 @@ fn golden_jetty_util_http_skew() {
 fn golden_synthetic_abstract_added() {
     assert_golden("synthetic-abstract-added");
 }
+
+/// Synthetic sealing break: Shape 2.0 is `sealed permits Circle`, so Square
+/// (compiled against the unsealed 1.0) no longer loads. Marker implements the
+/// untouched Tagged and is the not-reported control. Synthetic because no real
+/// pair seals an extendable type.
+#[test]
+fn golden_synthetic_sealed() {
+    assert_golden("synthetic-sealed");
+}
