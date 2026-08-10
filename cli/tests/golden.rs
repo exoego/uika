@@ -147,3 +147,13 @@ fn golden_synthetic_abstract_added() {
 fn golden_synthetic_sealed() {
     assert_golden("synthetic-sealed");
 }
+
+/// Synthetic default-method conflict: lib/B 2.0 adds a default n() that lib/A already
+/// declares, so Conflicted (implementing both, compiled against 1.0) can no longer select
+/// one. Overriding declares its own n() and is the not-reported control. Synthetic because
+/// adding a default is the sanctioned evolution move, so the collision only shows up in a
+/// consumer that happened to implement both interfaces.
+#[test]
+fn golden_synthetic_default_conflict() {
+    assert_golden("synthetic-default-conflict");
+}

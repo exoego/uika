@@ -317,8 +317,12 @@ fn runtime_error(v: &Violation) -> Option<&'static str> {
         FieldBecameFinal => "IllegalAccessError at first write",
         MethodBecameStatic | MethodBecameInstance => "IncompatibleClassChangeError at first call",
         FieldBecameStatic | FieldBecameInstance => "IncompatibleClassChangeError at first access",
-        ClassBecameFinal | ClassBecameSealed | MethodBecameFinal | ExtendsFinalClass
-        | MethodBecameAbstract => {
+        ClassBecameFinal
+        | ClassBecameSealed
+        | MethodBecameFinal
+        | ExtendsFinalClass
+        | MethodBecameAbstract
+        | ConflictingDefaultMethods => {
             return None;
         }
     })
@@ -341,8 +345,12 @@ fn source_display(source: &str) -> &str {
 fn is_structural(v: &Violation) -> bool {
     use Reason::*;
     match v.reason {
-        ClassBecameFinal | ClassBecameSealed | MethodBecameFinal | ExtendsFinalClass
-        | MethodBecameAbstract => true,
+        ClassBecameFinal
+        | ClassBecameSealed
+        | MethodBecameFinal
+        | ExtendsFinalClass
+        | MethodBecameAbstract
+        | ConflictingDefaultMethods => true,
         ClassBecameInterface | InterfaceBecameClass => v.reference.member.is_none(),
         ClassRemoved | ClassAccessNarrowed | ClassBecameAbstract | MethodRemoved
         | MethodAccessNarrowed | FieldRemoved | FieldAccessNarrowed | FieldBecameFinal
@@ -367,6 +375,25 @@ fn structural_lines(v: &Violation) -> (String, String) {
         )
     };
     match (v.reason, v.reference.member) {
+        // Which error the JVM picks depends on the call site, so both are named:
+        // invokevirtual on the class throws IncompatibleClassChangeError ("Conflicting
+        // default methods"), invokeinterface on either interface throws AbstractMethodError.
+        (ConflictingDefaultMethods, Some(m)) => (
+            format!(
+                "inherits {} as a default from two unrelated interfaces",
+                pretty_target(v)
+            ),
+            match v.invocation_found {
+                Some(false) => format!(
+                    "throws IncompatibleClassChangeError or AbstractMethodError only when {} is first called (no invocation found in scanned bytecode)",
+                    m.name
+                ),
+                _ => format!(
+                    "throws IncompatibleClassChangeError or AbstractMethodError when {} is called",
+                    m.name
+                ),
+            },
+        ),
         (MethodBecameAbstract, Some(m)) => (
             format!(
                 "inherits abstract {} without implementing it",
@@ -408,7 +435,7 @@ fn structural_lines(v: &Violation) -> (String, String) {
         ),
         // The graph walks always attach the member to these two reasons (check.rs); a
         // member-less one would be malformed, so degrade readably rather than panic.
-        (MethodBecameAbstract | MethodBecameFinal, None) => {
+        (MethodBecameAbstract | MethodBecameFinal | ConflictingDefaultMethods, None) => {
             (format!("{}: {owner}", v.reason.as_str()), loads)
         }
         // Non-structural reasons render through reference_blocks (violation_blocks
@@ -601,6 +628,9 @@ fn suggestion_line(v: &Violation, target: &str) -> String {
         }
         MethodBecameAbstract => {
             format!("{target} became abstract, but {class} does not implement it")
+        }
+        ConflictingDefaultMethods => {
+            format!("{target} is now a default that {class} inherits from two unrelated interfaces")
         }
     }
 }

@@ -276,6 +276,7 @@ pub enum Reason {
     MethodRemoved,
     MethodAccessNarrowed,
     MethodBecameAbstract,
+    ConflictingDefaultMethods,
     MethodBecameFinal,
     MethodBecameStatic,
     MethodBecameInstance,
@@ -290,7 +291,7 @@ impl Reason {
     /// ADD NEW VARIANTS HERE TOO — the compiler cannot check this, since an exhaustive
     /// `match` forces a new arm and never a new array entry. A variant missing here loses
     /// its exclude-rule `kind` string, so a legitimate rule fails with `unknown kind`.
-    pub const ALL: [Reason; 19] = [
+    pub const ALL: [Reason; 20] = [
         Reason::ClassRemoved,
         Reason::ClassAccessNarrowed,
         Reason::ClassBecameAbstract,
@@ -302,6 +303,7 @@ impl Reason {
         Reason::MethodRemoved,
         Reason::MethodAccessNarrowed,
         Reason::MethodBecameAbstract,
+        Reason::ConflictingDefaultMethods,
         Reason::MethodBecameFinal,
         Reason::MethodBecameStatic,
         Reason::MethodBecameInstance,
@@ -327,6 +329,7 @@ impl Reason {
             Reason::MethodRemoved => "method removed",
             Reason::MethodAccessNarrowed => "method access narrowed",
             Reason::MethodBecameAbstract => "method became abstract",
+            Reason::ConflictingDefaultMethods => "conflicting default methods",
             Reason::MethodBecameFinal => "method became final",
             Reason::FieldRemoved => "field removed",
             Reason::FieldAccessNarrowed => "field access narrowed",

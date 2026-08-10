@@ -305,6 +305,39 @@ fn detects_a_consumer_subclass_of_a_newly_sealed_interface() {
     )));
 }
 
+/// A real JVM confirms which error the fixture throws, and that it depends on the call
+/// site: `invokevirtual Conflicted.n()` throws `IncompatibleClassChangeError: Conflicting
+/// default methods: fixture/lib/A.n fixture/lib/B.n`, while `invokeinterface A.n()` on the
+/// same receiver throws `AbstractMethodError`. Both are LinkageErrors and the report names
+/// both. Overriding declares its own n() and stays unreported under either form.
+#[test]
+fn detects_a_default_method_conflict_from_a_newly_added_default() {
+    let old_jar = fixture("synthetic-default-conflict-1.0.jar");
+    let new_jar = fixture("synthetic-default-conflict-2.0.jar");
+    let consumer = fixture("synthetic-default-conflict-consumer.jar");
+
+    let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
+    let new_classes = load(&new_jar).unwrap();
+    let (new_index, _) = ApiIndex::from_classes(&new_classes);
+
+    let report = check(
+        &load(&consumer).unwrap(),
+        &old_index,
+        &new_index,
+        &new_classes,
+    );
+    assert_eq!(report.violations.len(), 1, "{:?}", report.violations);
+    let v = &report.violations[0];
+    assert_eq!(v.reason, Reason::ConflictingDefaultMethods);
+    assert_eq!(v.source_class.as_str(), "fixture/app/Conflicted");
+    assert_eq!(v.reference.member.unwrap().name.as_str(), "n");
+    // fixture.app.Caller calls A.n(), which dispatches onto Conflicted.
+    assert_eq!(v.invocation_found, Some(true));
+
+    // Adding a default method is not itself an API break, so the diff stays quiet.
+    assert!(diff(&old_index, &new_index).is_empty());
+}
+
 /// https://github.com/rburgst/okhttp-digest/issues/57:
 /// okhttp-digest 1.x calls RequestLine.requestPath as a static OkHttp 3 method.
 /// OkHttp 4.0.x changed RequestLine into a Kotlin object, making requestPath an
