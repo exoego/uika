@@ -2,9 +2,9 @@
 
 Mostly unmodified third-party JARs vendored from Maven Central, used by the
 integration tests (`tests/integration.rs`) and golden tests (`tests/golden.rs`)
-as real-world ground truth. Two small synthetic triples
-(`synthetic-abstract-added-*`, `synthetic-sealed-*`) are authored here rather than
-downloaded; see
+as real-world ground truth. Three small synthetic triples
+(`synthetic-abstract-added-*`, `synthetic-sealed-*`, `synthetic-default-conflict-*`)
+are authored here rather than downloaded; see
 [Synthetic fixtures](#synthetic-fixtures) below. Several real GitHub reports are
 reproduced from the third-party binaries:
 
@@ -191,6 +191,68 @@ javac --release 17 -cp o1 -d oa app/fixture/app/*.java
 (cd o1 && jar cf ../synthetic-sealed-1.0.jar fixture)
 (cd o2 && jar cf ../synthetic-sealed-2.0.jar fixture)
 (cd oa && jar cf ../synthetic-sealed-consumer.jar fixture)
+```
+
+`synthetic-default-conflict-*` is authored here for the same reason. Adding a default
+method is the sanctioned way to evolve an interface, so the collision only exists in a
+consumer that already implements another interface declaring the same signature, and no
+vendorable pair does both halves. A real JVM confirms the error, and that which error you
+get depends on the call site:
+
+```
+invokevirtual Conflicted.n() -> IncompatibleClassChangeError: Conflicting default methods: fixture/lib/A.n fixture/lib/B.n
+invokeinterface A.n()        -> AbstractMethodError: Receiver class fixture.app.Conflicted does not define or inherit an implementation
+```
+
+`Overriding` declares its own `n()` and is the not-reported control. `Caller` calls
+`A.n()`, which dispatches onto `Conflicted`, so the golden pins `invocation_found: true`
+— the counterpart to `synthetic-abstract-added`, which pins the latent `false`.
+
+```
+mkdir -p v1/fixture/lib v2/fixture/lib app/fixture/app
+
+cat > v1/fixture/lib/A.java <<'EOF'
+package fixture.lib;
+public interface A { default String n() { return "A"; } }
+EOF
+
+cat > v1/fixture/lib/B.java <<'EOF'
+package fixture.lib;
+public interface B { }
+EOF
+
+cp v1/fixture/lib/A.java v2/fixture/lib/A.java
+
+cat > v2/fixture/lib/B.java <<'EOF'
+package fixture.lib;
+public interface B { default String n() { return "B"; } }
+EOF
+
+cat > app/fixture/app/Conflicted.java <<'EOF'
+package fixture.app;
+public class Conflicted implements fixture.lib.A, fixture.lib.B { }
+EOF
+
+cat > app/fixture/app/Overriding.java <<'EOF'
+package fixture.app;
+public class Overriding implements fixture.lib.A, fixture.lib.B {
+    public String n() { return "own"; }
+}
+EOF
+
+cat > app/fixture/app/Caller.java <<'EOF'
+package fixture.app;
+public class Caller {
+    public static String call(fixture.lib.A a) { return a.n(); }
+}
+EOF
+
+javac --release 11 -d o1 v1/fixture/lib/*.java
+javac --release 11 -d o2 v2/fixture/lib/*.java
+javac --release 11 -cp o1 -d oa app/fixture/app/*.java
+(cd o1 && jar cf ../synthetic-default-conflict-1.0.jar fixture)
+(cd o2 && jar cf ../synthetic-default-conflict-2.0.jar fixture)
+(cd oa && jar cf ../synthetic-default-conflict-consumer.jar fixture)
 ```
 
 ## Contents

@@ -227,7 +227,7 @@ pass-2 classes are typically below 0.1% of the scan.
   JVM-confirmed `synthetic-sealed-*` fixture.
 - AbstractMethodError: a concrete scanned class ends up inheriting an abstract
   method with no concrete implementation, so invoking it throws. Two upgrade
-  shapes cause it, both handled by `check.rs::add_abstract_method_violations`
+  shapes cause it, both handled by `check.rs::add_selection_violations`
   (`methods_newly_abstract` = abstract in new, not abstract in old, owner present
   in old): shape 1, a concrete method turned abstract; shape 2, a new abstract
   method added to an interface (or class) the consumer already extends/implements
@@ -258,12 +258,28 @@ pass-2 classes are typically below 0.1% of the scan.
   shapes), and the koin fixture (koin 3.3.0 renamed the abstract `Logger.log` to
   `display`, so `SLF4JLogger` inherits an unimplemented abstract method — a real
   shape-2 break the golden pins alongside the log-became-final one).
-- Invocation evidence (the latent tier) makes `method became abstract` the one
-  violation judged on more than reachability, because AbstractMethodError throws
-  at INVOCATION, not at class load (https://github.com/exoego/uika/issues/81).
+- Conflicting default methods: two unrelated superinterfaces supply a default for the
+  same signature and the concrete class overrides neither, so selection has no winner.
+  Same walk (`add_selection_violations`), driven by `methods_newly_default` alongside
+  `methods_newly_abstract`, and `implementation_status` grew an `ImplStatus::Conflict`
+  for it. Which error the JVM raises depends on the CALL SITE, JVM-confirmed on the
+  fixture: `invokevirtual` on the class throws IncompatibleClassChangeError
+  ("Conflicting default methods"), `invokeinterface` on either interface throws
+  AbstractMethodError. The report names both. Reason `conflicting default methods`.
+  Conflict is decided over maximally-specific declarations only
+  (`maximally_specific_count`, JVMS 5.4.3.3), so a subinterface redeclaring the default
+  shadows its parents and is not a conflict. The abstract/concrete mix still answers
+  Unknown ahead of this, so a conflict alongside an abstract sibling is a deliberate FN
+  rather than a specificity guess. Old-relative: a conflict already present in old is
+  pre-existing, which is also why the old-side `Concrete` arm now excludes it. Adding a
+  default method is not itself an API change, so `diff.rs` gains nothing.
+- Invocation evidence (the latent tier) makes `method became abstract` and
+  `conflicting default methods` the violations judged on more than reachability,
+  because both throw at INVOCATION, not at class load
+  (https://github.com/exoego/uika/issues/81).
   `Violation.invocation_found` is `Some(false)` when no scanned method reference
   can dispatch the affected member onto the broken class.
-  - The probe (`abstract_member_probe`) is NOT empty on a typical upgrade: it
+  - The probe (`selection_member_probe`) is NOT empty on a typical upgrade: it
     covers newly ADDED abstract methods, unlike `diff.rs`'s `MethodBecameAbstract`
     (concrete->abstract only). Do not treat the sweep as rare. ~3% CPU on the
     stress workload, wall time and RSS unchanged. Collecting it inside pass 1's

@@ -74,7 +74,7 @@ pub fn parse_targets(
     old_names: &FxHashSet<&str>,
     known: &ClassGraph,
     collect_edges: bool,
-    abstract_probe: &FxHashMap<(&str, &str), MemberKey>,
+    selection_probe: &FxHashMap<(&str, &str), MemberKey>,
 ) -> ParsedTargets {
     // Evidence rides alongside each result and is folded away below. Collecting it here
     // rather than in a second pass matters: reparsing the batch cost ~21% CPU on the
@@ -95,10 +95,10 @@ pub fn parse_targets(
             // merged, and chunk size defaults to the thread count, so skipping it would
             // make invocation_found vary by core count.
             if known.contains(class_name) {
-                let invocations = if abstract_probe.is_empty() {
+                let invocations = if selection_probe.is_empty() {
                     Vec::new()
                 } else {
-                    crate::extract::extract_invocation_evidence(&rc, abstract_probe)
+                    crate::extract::extract_invocation_evidence(&rc, selection_probe)
                 };
                 return Ok((
                     ParsedTarget {
@@ -128,10 +128,10 @@ pub fn parse_targets(
             // The probe is NOT empty on a typical upgrade — it covers newly ADDED
             // abstract methods, not just concrete->abstract ones — so this sweep is the
             // normal path, not a rare one. ~3% CPU on the stress workload.
-            let invocations = if abstract_probe.is_empty() {
+            let invocations = if selection_probe.is_empty() {
                 Vec::new()
             } else {
-                crate::extract::extract_invocation_evidence(&rc, abstract_probe)
+                crate::extract::extract_invocation_evidence(&rc, selection_probe)
             };
             Ok((
                 ParsedTarget {
@@ -254,7 +254,7 @@ pub fn scan_target_paths(
     let old_names = old.class_name_set();
     // Raw name+descriptor pairs of newly-abstract methods. Empty only when the upgrade
     // made nothing abstract, in which case pass 1 skips evidence collection entirely.
-    let abstract_probe = abstract_member_probe(old, new);
+    let selection_probe = selection_member_probe(old, new);
     // Decide, from central directories alone (no inflate), which entries to inflate: a
     // byte-identical duplicate class bundled in a later JAR is skipped because first-wins
     // would discard it anyway. On large classpaths most scanned classes are such duplicates.
@@ -278,7 +278,7 @@ pub fn scan_target_paths(
                 };
                 crate::input::for_each_batch(p, 512, keep, |batch| {
                     let parsed =
-                        parse_targets(&batch, &old_names, known, collect_edges, &abstract_probe);
+                        parse_targets(&batch, &old_names, known, collect_edges, &selection_probe);
                     acc.targets.extend(parsed.targets);
                     acc.warnings.extend(parsed.warnings);
                     acc.scanned_classes += parsed.scanned_classes;
@@ -409,13 +409,13 @@ fn for_each_supertype(
     }
 }
 
-/// Classes that `add_abstract_method_violations` may need to resolve through: a scanned
-/// class inheriting a newly-abstract method, plus every scanned class on its supertype
-/// closure. They are added to `wanted` so pass 2 fetches their member tables; without the
-/// intermediate chain, `resolve_member` would escape to a graph-only class and answer
-/// Unknown, hiding a real break. Library-side ancestors already carry members in `new`,
-/// so only scanned (graph) classes are collected. Empty and free when nothing became
-/// abstract.
+/// Classes that `add_selection_violations` may need to resolve through: a scanned class
+/// inheriting a newly-abstract or newly-default method, plus every scanned class on its
+/// supertype closure. They are added to `wanted` so pass 2 fetches their member tables;
+/// without the intermediate chain, `resolve_member` would escape to a graph-only class and
+/// answer Unknown, hiding a real break. Library-side ancestors already carry members in
+/// `new`, so only scanned (graph) classes are collected. Empty and free when the upgrade
+/// changed no method's abstractness.
 fn collect_abstract_wanted(
     old: &ApiIndex,
     new: &ApiIndex,
@@ -423,7 +423,8 @@ fn collect_abstract_wanted(
     wanted: &mut FxHashSet<Sym>,
 ) {
     let abstract_methods = methods_newly_abstract(old, new);
-    if abstract_methods.is_empty() {
+    let default_methods = methods_newly_default(old, new);
+    if abstract_methods.is_empty() && default_methods.is_empty() {
         return;
     }
     // One reused buffer, not a fresh Vec per class (the graph spans the whole scan).
@@ -432,7 +433,7 @@ fn collect_abstract_wanted(
         let mut inherits = false;
         scanned_chain.clear();
         for_each_supertype(class_name, new, graph, |anc| {
-            inherits |= abstract_methods.contains_key(&anc);
+            inherits |= abstract_methods.contains_key(&anc) || default_methods.contains_key(&anc);
             if graph.contains(anc) {
                 scanned_chain.push(anc);
             }
@@ -652,7 +653,7 @@ pub fn check_scanned(
     add_extends_final_violations(&lag_edges, old, &runtime_scope, &mut violations, &mut seen);
     add_kind_flip_violations(old, new, &graph, &mut violations, &mut seen);
     add_sealed_violations(old, new, &graph, &mut violations, &mut seen);
-    add_abstract_method_violations(
+    add_selection_violations(
         &old_scope,
         &runtime_scope,
         old,
@@ -736,7 +737,7 @@ pub fn check(
     new: &ApiIndex,
     library_classes: &[LoadedClass],
 ) -> CheckReport {
-    let probe = abstract_member_probe(old, new);
+    let probe = selection_member_probe(old, new);
     let mut scan = ScanResult::new();
     let parsed = parse_targets(targets, &old.class_name_set(), &scan.graph, false, &probe);
     scan.merge(parsed);
@@ -1221,6 +1222,9 @@ enum ImplStatus {
     Concrete,
     /// The method is declared, only abstractly, and the whole closure was in scope.
     AbstractOnly,
+    /// Two or more unrelated superinterfaces supply a default, so selection has no winner
+    /// and the call throws IncompatibleClassChangeError.
+    Conflict,
     /// No declaration at all, and the whole closure was in scope.
     Absent,
     /// The closure escaped scope before a concrete declaration could be ruled out.
@@ -1278,7 +1282,8 @@ fn implementation_status(start: Sym, key: MemberKey, scope: &Scope) -> ImplStatu
     // Phase 2: the superinterface closure.
     let mut queue: VecDeque<Sym> = interface_seed.into();
     let mut iface_seen = FxHashSet::default();
-    let (mut saw_abstract, mut saw_concrete, mut escaped) = (false, false, false);
+    let (mut saw_abstract, mut escaped) = (false, false);
+    let mut concrete_decls: Vec<Sym> = Vec::new();
     while let Some(iface) = queue.pop_front() {
         if iface == object_sym() || !iface_seen.insert(iface) {
             continue;
@@ -1291,22 +1296,51 @@ fn implementation_status(start: Sym, key: MemberKey, scope: &Scope) -> ImplStatu
             && access & (ACC_STATIC | ACC_PRIVATE) == 0
         {
             if access & ACC_ABSTRACT == 0 {
-                saw_concrete = true;
+                concrete_decls.push(iface);
             } else {
                 saw_abstract = true;
             }
         }
         queue.extend(super_ifaces.iter().copied());
     }
-    if escaped || (saw_abstract && saw_concrete) {
+    if escaped || (saw_abstract && !concrete_decls.is_empty()) {
         ImplStatus::Unknown
     } else if saw_abstract {
         ImplStatus::AbstractOnly
-    } else if saw_concrete {
-        ImplStatus::Concrete
-    } else {
+    } else if concrete_decls.is_empty() {
         ImplStatus::Absent
+    } else if maximally_specific_count(&concrete_decls, scope) > 1 {
+        ImplStatus::Conflict
+    } else {
+        ImplStatus::Concrete
     }
+}
+
+/// How many of `decls` are maximally specific (JVMS 5.4.3.3): an interface that another
+/// declaring interface inherits from is overridden by it and does not compete. Two or more
+/// survivors mean selection has no winner. `decls` holds a handful of names, so the
+/// re-walk per declaration is cheaper than threading the relation out of the main loop.
+fn maximally_specific_count(decls: &[Sym], scope: &Scope) -> usize {
+    let mut shadowed: FxHashSet<Sym> = FxHashSet::default();
+    for &start in decls {
+        let mut queue: VecDeque<Sym> = VecDeque::new();
+        let mut seen = FxHashSet::default();
+        if let Some((_, supers)) = scope.super_and_interfaces(start) {
+            queue.extend(supers.iter().copied());
+        }
+        while let Some(iface) = queue.pop_front() {
+            if !seen.insert(iface) {
+                continue;
+            }
+            if decls.contains(&iface) {
+                shadowed.insert(iface);
+            }
+            if let Some((_, supers)) = scope.super_and_interfaces(iface) {
+                queue.extend(supers.iter().copied());
+            }
+        }
+    }
+    decls.iter().filter(|d| !shadowed.contains(d)).count()
 }
 
 /// A concrete scanned class that ends up inheriting an abstract method with no concrete
@@ -1322,7 +1356,7 @@ fn implementation_status(start: Sym, key: MemberKey, scope: &Scope) -> ImplStatu
 /// such method at all (`Absent`); abstract-on-both-sides is pre-existing and any escape
 /// stays Unknown.
 #[allow(clippy::too_many_arguments)]
-fn add_abstract_method_violations(
+fn add_selection_violations(
     old_scope: &Scope,
     runtime: &Scope,
     old: &ApiIndex,
@@ -1334,7 +1368,8 @@ fn add_abstract_method_violations(
     seen: &mut FxHashSet<(Sym, Sym, SymbolRef)>,
 ) {
     let abstract_methods = methods_newly_abstract(old, new);
-    if abstract_methods.is_empty() {
+    let default_methods = methods_newly_default(old, new);
+    if abstract_methods.is_empty() && default_methods.is_empty() {
         return;
     }
     // Index the scan-wide evidence by member. The lookup key is the MemberKey alone, so the
@@ -1369,7 +1404,10 @@ fn add_abstract_method_violations(
             if !new.classes.contains_key(&anc) && !graph.contains(anc) {
                 supertypes_escaped.add(anc);
             }
-            if let Some(keys) = abstract_methods.get(&anc) {
+            for keys in [abstract_methods.get(&anc), default_methods.get(&anc)]
+                .into_iter()
+                .flatten()
+            {
                 for &key in keys {
                     candidates
                         .entry(key)
@@ -1385,13 +1423,15 @@ fn add_abstract_method_violations(
         // Iterated in FxHashMap order; the final string-value sort in check_scanned makes
         // the report deterministic (never sort output by Sym id).
         for (key, owner) in candidates {
-            if implementation_status(class_name, key, runtime) != ImplStatus::AbstractOnly {
-                continue;
-            }
+            let reason = match implementation_status(class_name, key, runtime) {
+                ImplStatus::AbstractOnly => Reason::MethodBecameAbstract,
+                ImplStatus::Conflict => Reason::ConflictingDefaultMethods,
+                ImplStatus::Concrete | ImplStatus::Absent | ImplStatus::Unknown => continue,
+            };
             match implementation_status(class_name, key, old_scope) {
                 ImplStatus::Concrete | ImplStatus::Absent => {}
-                // Abstract on both sides is pre-existing; Unknown is conservative.
-                ImplStatus::AbstractOnly | ImplStatus::Unknown => continue,
+                // Broken the same way in old is pre-existing; Unknown is conservative.
+                ImplStatus::AbstractOnly | ImplStatus::Conflict | ImplStatus::Unknown => continue,
             }
             let reference = SymbolRef {
                 kind: RefKind::Method,
@@ -1401,16 +1441,11 @@ fn add_abstract_method_violations(
                 field_write: None,
                 instantiated: None,
             };
-            if let Some(v) = push_violation(
-                violations,
-                seen,
-                node.source,
-                class_name,
-                reference,
-                Reason::MethodBecameAbstract,
-            ) {
-                // AbstractMethodError throws at invocation, not at class load, so a
-                // violation nothing can call is latent rather than dropped.
+            if let Some(v) =
+                push_violation(violations, seen, node.source, class_name, reference, reason)
+            {
+                // Both errors throw at invocation, not at class load, so a violation
+                // nothing can call is latent rather than dropped.
                 v.invocation_found = Some(invoked_by.get(&key).is_some_and(|owners| {
                     owners.iter().any(|&e_owner| {
                         on_dispatch_chain(
@@ -1560,15 +1595,46 @@ fn methods_newly_abstract(old: &ApiIndex, new: &ApiIndex) -> FxHashMap<Sym, FxHa
     out
 }
 
-/// Raw name+descriptor pairs of every newly-abstract method mapped to their interned
-/// `MemberKey`, for matching un-interned constant-pool references during pass 1 (invocation
-/// evidence for the latent tier). Carrying the key means a hit interns only the owner.
-fn abstract_member_probe(
+/// Interface methods that are a default in new but were not in old (owner -> keys), the
+/// second input to the selection walk. Adding a default method is the sanctioned way to
+/// evolve an interface, which is exactly why it goes unnoticed when an implementor already
+/// inherits the same signature from an unrelated interface.
+fn methods_newly_default(old: &ApiIndex, new: &ApiIndex) -> FxHashMap<Sym, FxHashSet<MemberKey>> {
+    let mut out = FxHashMap::default();
+    for (&class, new_entry) in &new.classes {
+        if new_entry.access & ACC_INTERFACE == 0 || !old.classes.contains_key(&class) {
+            continue;
+        }
+        for (key, new_access) in new.methods_of(new_entry) {
+            if new_access & (ACC_ABSTRACT | ACC_STATIC | ACC_PRIVATE) != 0
+                || is_synthetic_or_bridge(*new_access)
+            {
+                continue;
+            }
+            let newly_default = old
+                .direct_method_access(class, *key)
+                .is_none_or(|a| a & ACC_ABSTRACT != 0);
+            if newly_default {
+                out.entry(class)
+                    .or_insert_with(FxHashSet::default)
+                    .insert(*key);
+            }
+        }
+    }
+    out
+}
+
+/// Raw name+descriptor pairs of every method the selection walk may report, mapped to their
+/// interned `MemberKey`, for matching un-interned constant-pool references during pass 1
+/// (invocation evidence for the latent tier). Carrying the key means a hit interns only the
+/// owner. Both reasons throw at invocation, so both need evidence.
+fn selection_member_probe(
     old: &ApiIndex,
     new: &ApiIndex,
 ) -> FxHashMap<(&'static str, &'static str), MemberKey> {
     methods_newly_abstract(old, new)
         .values()
+        .chain(methods_newly_default(old, new).values())
         .flatten()
         .map(|k| ((k.name.as_str(), k.descriptor.as_str()), *k))
         .collect()
@@ -1587,7 +1653,7 @@ pub fn library_invocation_evidence(
     old: &ApiIndex,
     new: &ApiIndex,
 ) -> Vec<(Sym, MemberKey)> {
-    let probe = abstract_member_probe(old, new);
+    let probe = selection_member_probe(old, new);
     if probe.is_empty() {
         return Vec::new();
     }
@@ -2955,7 +3021,7 @@ mod tests {
         let runtime = Scope::new(vec![new, fetched]);
         let mut violations = Vec::new();
         let mut seen = FxHashSet::default();
-        add_abstract_method_violations(
+        add_selection_violations(
             &old_scope,
             &runtime,
             old,
@@ -3738,6 +3804,150 @@ mod tests {
         )]);
         let fetched = ApiIndex::build([amv_full("app/C", "ext/Base", ACC_PUBLIC, &["lib/I"], &[])]);
         let graph = scanned_graph_full(&[("app/C", "ext/Base", &["lib/I"])]);
+        assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
+    }
+
+    // ---- conflicting default methods (same walk, Conflict status) ----
+
+    const DEFAULT_N: (&str, &str, u16) = ("n", "()V", ACC_PUBLIC);
+    const ABSTRACT_N: (&str, &str, u16) = ("n", "()V", ACC_PUBLIC | ACC_ABSTRACT);
+
+    /// lib/A always has `default n()`; lib/B gains one in new. `b_old` is B's old shape.
+    fn conflict_pair(b_old: &[(&str, &str, u16)]) -> (ApiIndex, ApiIndex) {
+        let a = || amv_full("lib/A", JAVA_LANG_OBJECT, IFACE, &[], &[DEFAULT_N]);
+        (
+            ApiIndex::build([a(), amv_full("lib/B", JAVA_LANG_OBJECT, IFACE, &[], b_old)]),
+            ApiIndex::build([
+                a(),
+                amv_full("lib/B", JAVA_LANG_OBJECT, IFACE, &[], &[DEFAULT_N]),
+            ]),
+        )
+    }
+
+    #[test]
+    fn a_default_added_beside_an_unrelated_default_is_a_conflict() {
+        let (old, new) = conflict_pair(&[]);
+        let fetched = ApiIndex::build([amv_full(
+            "app/C",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &["lib/A", "lib/B"],
+            &[],
+        )]);
+        let graph = scanned_graph_full(&[("app/C", JAVA_LANG_OBJECT, &["lib/A", "lib/B"])]);
+        let v = abstract_violations(&old, &new, &fetched, &graph);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert_eq!(v[0].reason, Reason::ConflictingDefaultMethods);
+        assert_eq!(v[0].source_class.as_str(), "app/C");
+    }
+
+    #[test]
+    fn a_class_declaration_wins_over_both_defaults() {
+        let (old, new) = conflict_pair(&[]);
+        let fetched = ApiIndex::build([amv_full(
+            "app/C",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &["lib/A", "lib/B"],
+            &[DEFAULT_N],
+        )]);
+        let graph = scanned_graph_full(&[("app/C", JAVA_LANG_OBJECT, &["lib/A", "lib/B"])]);
+        assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
+    }
+
+    #[test]
+    fn a_subinterface_default_shadows_both_and_is_not_a_conflict() {
+        // app/C implements lib/AB, which extends both and redeclares n(), so only AB's
+        // declaration is maximally specific.
+        let ab = || {
+            amv_full(
+                "lib/AB",
+                JAVA_LANG_OBJECT,
+                IFACE,
+                &["lib/A", "lib/B"],
+                &[DEFAULT_N],
+            )
+        };
+        let old = ApiIndex::build([
+            amv_full("lib/A", JAVA_LANG_OBJECT, IFACE, &[], &[DEFAULT_N]),
+            amv_full("lib/B", JAVA_LANG_OBJECT, IFACE, &[], &[]),
+            ab(),
+        ]);
+        let new = ApiIndex::build([
+            amv_full("lib/A", JAVA_LANG_OBJECT, IFACE, &[], &[DEFAULT_N]),
+            amv_full("lib/B", JAVA_LANG_OBJECT, IFACE, &[], &[DEFAULT_N]),
+            ab(),
+        ]);
+        let fetched = ApiIndex::build([amv_full(
+            "app/C",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &["lib/AB"],
+            &[],
+        )]);
+        let graph = scanned_graph_full(&[("app/C", JAVA_LANG_OBJECT, &["lib/AB"])]);
+        assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
+    }
+
+    #[test]
+    fn a_conflict_already_present_in_old_is_pre_existing() {
+        let (old, new) = conflict_pair(&[DEFAULT_N]);
+        let fetched = ApiIndex::build([amv_full(
+            "app/C",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &["lib/A", "lib/B"],
+            &[],
+        )]);
+        let graph = scanned_graph_full(&[("app/C", JAVA_LANG_OBJECT, &["lib/A", "lib/B"])]);
+        assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
+    }
+
+    #[test]
+    fn a_default_added_where_nothing_else_declares_it_is_not_reported() {
+        // The common safe evolution: only lib/B declares n(), so selection has a winner.
+        let old = ApiIndex::build([amv_full("lib/B", JAVA_LANG_OBJECT, IFACE, &[], &[])]);
+        let new = ApiIndex::build([amv_full(
+            "lib/B",
+            JAVA_LANG_OBJECT,
+            IFACE,
+            &[],
+            &[DEFAULT_N],
+        )]);
+        let fetched = ApiIndex::build([amv_full(
+            "app/C",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &["lib/B"],
+            &[],
+        )]);
+        let graph = scanned_graph_full(&[("app/C", JAVA_LANG_OBJECT, &["lib/B"])]);
+        assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
+    }
+
+    #[test]
+    fn an_abstract_sibling_keeps_the_conflict_inconclusive() {
+        // lib/D declares n() abstract, so phase 2 sees a mix and stays Unknown rather than
+        // guessing which declaration is more specific.
+        let old = ApiIndex::build([
+            amv_full("lib/A", JAVA_LANG_OBJECT, IFACE, &[], &[DEFAULT_N]),
+            amv_full("lib/B", JAVA_LANG_OBJECT, IFACE, &[], &[]),
+            amv_full("lib/D", JAVA_LANG_OBJECT, IFACE, &[], &[ABSTRACT_N]),
+        ]);
+        let new = ApiIndex::build([
+            amv_full("lib/A", JAVA_LANG_OBJECT, IFACE, &[], &[DEFAULT_N]),
+            amv_full("lib/B", JAVA_LANG_OBJECT, IFACE, &[], &[DEFAULT_N]),
+            amv_full("lib/D", JAVA_LANG_OBJECT, IFACE, &[], &[ABSTRACT_N]),
+        ]);
+        let fetched = ApiIndex::build([amv_full(
+            "app/C",
+            JAVA_LANG_OBJECT,
+            ACC_PUBLIC,
+            &["lib/A", "lib/B", "lib/D"],
+            &[],
+        )]);
+        let graph =
+            scanned_graph_full(&[("app/C", JAVA_LANG_OBJECT, &["lib/A", "lib/B", "lib/D"])]);
         assert!(abstract_violations(&old, &new, &fetched, &graph).is_empty());
     }
 }

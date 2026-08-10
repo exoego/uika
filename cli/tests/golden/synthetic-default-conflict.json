@@ -1,0 +1,23 @@
+{
+  "violations": [
+    {
+      "source": "tests/fixtures/synthetic-default-conflict-consumer.jar",
+      "source_class": "fixture/app/Conflicted",
+      "reference": {
+        "kind": "method",
+        "owner": "fixture/lib/B",
+        "member": {
+          "name": "n",
+          "descriptor": "()Ljava/lang/String;"
+        },
+        "expected_static": false
+      },
+      "reason": "conflicting default methods",
+      "invocation_found": true
+    }
+  ],
+  "scanned_classes": 3,
+  "total": 1,
+  "unknown_refs": 0,
+  "suppressed": 0
+}

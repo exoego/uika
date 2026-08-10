@@ -32,7 +32,7 @@ not be relearned by experiment.
   ref a "class removed" violation reports), is written before --exclude-file
   filtering, and does not include graph-walk violations (class/method became
   final, extends final class, class/interface kind flips, class became sealed,
-  method became abstract). One line per reference record — call-site
+  method became abstract, conflicting default methods). One line per reference record — call-site
   duplicates are not deduped, so line counts exceed violation counts. It streams one line at a
   time, so it adds no RSS proportional to the scan. A write failure lets the
   scan finish but fails the command afterwards; a truncated stream must never

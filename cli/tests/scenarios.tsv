@@ -12,3 +12,4 @@ pact-junit5-version-lag	junit5-4.2.3.jar	junit5-4.2.2.jar	junit5spring-4.2.3.jar
 jetty-util-http-skew	jetty-util-9.3.26.v20190403.jar	jetty-util-10.0.26.jar	jetty-http-9.4.49.v20220914.jar	-
 synthetic-abstract-added	synthetic-abstract-added-1.0.jar	synthetic-abstract-added-2.0.jar	synthetic-abstract-added-consumer.jar	-
 synthetic-sealed	synthetic-sealed-1.0.jar	synthetic-sealed-2.0.jar	synthetic-sealed-consumer.jar	-
+synthetic-default-conflict	synthetic-default-conflict-1.0.jar	synthetic-default-conflict-2.0.jar	synthetic-default-conflict-consumer.jar	-
