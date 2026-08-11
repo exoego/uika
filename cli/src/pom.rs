@@ -183,6 +183,11 @@ fn blank_uninterpreted(pom: &str) -> String {
 
 /// Offset of the next `<tag>` open tag in `text`. Matches `<tag>` and `<tag attr=..>` but not
 /// `<tagFoo>`, and ignores self-closing `<tag/>` (an empty element declares nothing).
+///
+/// The end of the attribute list is the first `>`, and XML permits an unescaped `>` inside an
+/// attribute value (only `<` and `&` are forbidden), so `<dependency a="x>" />` reads as opening
+/// rather than self-closing. Known and left alone: it merges an empty element into the next
+/// block, which needs a contrived POM to reach an `<optional>`.
 fn find_element(text: &str, tag: &str) -> Option<usize> {
     let open = format!("<{tag}");
     let bytes = text.as_bytes();
