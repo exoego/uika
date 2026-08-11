@@ -32,6 +32,10 @@ pub struct Annotator<'a> {
     before: &'a Universe,
     file_coord: FxHashMap<String, String>,
     class_names_by_file: FxHashMap<std::path::PathBuf, Vec<Sym>>,
+    /// (referencing JAR path, removed "group:name") -> does that JAR's POM declare it optional.
+    /// Memoized because the answer costs a directory listing plus a file read, and per-module
+    /// upgrade-check annotates the same artifact once per run it appears on.
+    optional_deps: FxHashMap<(String, String), bool>,
 }
 
 impl<'a> Annotator<'a> {
@@ -40,6 +44,7 @@ impl<'a> Annotator<'a> {
             before,
             file_coord: file_coordinates(before, after),
             class_names_by_file: FxHashMap::default(),
+            optional_deps: FxHashMap::default(),
         }
     }
 
@@ -56,8 +61,38 @@ impl<'a> Annotator<'a> {
             };
             let change = &changes[ci];
             let referenced_by = self.file_coord.get(v.source.as_str()).cloned();
-            v.suggestion = Some(build(change, referenced_by));
+            // Only asked for a coordinate the upgrade dropped entirely; that is the one advice
+            // branch whose claim ("still needs it") an optional declaration contradicts.
+            let owner_optional = change.after.is_empty()
+                && self.declares_optional(
+                    v.source.as_str(),
+                    referenced_by.as_deref(),
+                    &change.coordinate,
+                );
+            v.suggestion = Some(build(change, referenced_by, owner_optional));
         }
+    }
+
+    /// Whether the referencing artifact's own POM declares `owner` optional.
+    fn declares_optional(
+        &mut self,
+        source: &str,
+        referenced_by: Option<&str>,
+        owner: &str,
+    ) -> bool {
+        let Some(referencer) = referenced_by else {
+            return false;
+        };
+        if let Some(&cached) = self
+            .optional_deps
+            .get(&(source.to_string(), owner.to_string()))
+        {
+            return cached;
+        }
+        let answer = read_optional_flag(source, referencer, owner).unwrap_or(false);
+        self.optional_deps
+            .insert((source.to_string(), owner.to_string()), answer);
+        answer
     }
 
     /// owner class -> index into `changes`, by reading the before-side JARs of each changed
@@ -116,7 +151,26 @@ fn class_names(path: &Path) -> Vec<Sym> {
         .collect()
 }
 
-fn build(change: &DependencyChange, referenced_by: Option<String>) -> Suggestion {
+/// Read `{referencer}`'s POM, if it sits beside the JAR the broken class came from, and report
+/// whether it declares `owner` (a "group:name") optional. None when anything is missing.
+fn read_optional_flag(source: &str, referencer: &str, owner: &str) -> Option<bool> {
+    let mut parts = referencer.split(':');
+    let (_, name, version) = (parts.next()?, parts.next()?, parts.next()?);
+    let (owner_group, owner_name) = owner.split_once(':')?;
+    let path = crate::pom::locate(Path::new(source), name, version)?;
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(crate::pom::declares_optional(
+        &text,
+        owner_group,
+        owner_name,
+    ))
+}
+
+fn build(
+    change: &DependencyChange,
+    referenced_by: Option<String>,
+    owner_optional: bool,
+) -> Suggestion {
     let owner = &change.coordinate;
     let referencer = referenced_by
         .as_deref()
@@ -124,10 +178,25 @@ fn build(change: &DependencyChange, referenced_by: Option<String>) -> Suggestion
 
     let advice = if change.after.is_empty() {
         // Coordinate dropped entirely by the upgrade: pinning a version back is meaningless.
-        format!(
-            "{owner} was removed by the upgrade, but {referencer} still needs it; \
-             upgrade {referencer} to a release that no longer requires {owner}, or restore {owner}"
-        )
+        if owner_optional {
+            // An optional dependency was never required transitively, so "still needs it" is
+            // false and "upgrade to a release that no longer requires it" points at a release
+            // that will not exist -- optional integrations are permanent design choices.
+            // https://github.com/exoego/uika/issues/96
+            format!(
+                "{owner} was removed by the upgrade and {referencer} declares it optional, so it \
+                 was never required transitively -- it reached the classpath through some other \
+                 dependency that no longer brings it. These references break only where \
+                 {referencer}'s optional feature is used; restore {owner} to keep that feature \
+                 working"
+            )
+        } else {
+            format!(
+                "{owner} was removed by the upgrade, but {referencer} still needs it; \
+                 upgrade {referencer} to a release that no longer requires {owner}, or restore \
+                 {owner}"
+            )
+        }
     } else {
         // Advise on the versions that actually moved (before minus after / after minus before),
         // not the full resolved lists, so a multi-version coordinate does not read as
@@ -225,6 +294,7 @@ mod tests {
                 &["2.29.0-alpha"],
             ),
             Some("com.google.cloud:google-cloud-firestore:3.42.0".to_string()),
+            false,
         );
         assert_eq!(
             s.advice,
@@ -250,6 +320,7 @@ mod tests {
                 &["1.63.0-alpha"],
             ),
             Some("io.opentelemetry:opentelemetry-sdk-common:1.60.1".to_string()),
+            false,
         );
         assert_eq!(
             s.advice,
@@ -272,6 +343,7 @@ mod tests {
                 &["2.29.0-alpha"],
             ),
             None,
+            false,
         );
         assert_eq!(
             s.advice,
@@ -293,6 +365,7 @@ mod tests {
                 &[],
             ),
             Some("com.example:app:1.0".to_string()),
+            false,
         );
         assert_eq!(
             s.advice,
@@ -302,6 +375,42 @@ mod tests {
              restore io.opentelemetry.instrumentation:opentelemetry-ktor-common"
         );
         assert_eq!((s.before.as_str(), s.after.as_str()), ("2.24.0-alpha", "-"));
+    }
+
+    /// Coordinate removed and the referencing artifact declares it optional: it was never a
+    /// transitive requirement, so neither "still needs it" nor "upgrade to a release that no
+    /// longer requires it" applies. https://github.com/exoego/uika/issues/96
+    #[test]
+    fn advice_removed_optional_coordinate() {
+        let s = build(
+            &change("org.slf4j:slf4j-api", ChangeKind::Removed, &["2.0.13"], &[]),
+            Some("com.google.auth:google-auth-library-oauth2-http:1.50.0".to_string()),
+            true,
+        );
+        assert_eq!(
+            s.advice,
+            "org.slf4j:slf4j-api was removed by the upgrade and \
+             com.google.auth:google-auth-library-oauth2-http:1.50.0 declares it optional, so it \
+             was never required transitively -- it reached the classpath through some other \
+             dependency that no longer brings it. These references break only where \
+             com.google.auth:google-auth-library-oauth2-http:1.50.0's optional feature is used; \
+             restore org.slf4j:slf4j-api to keep that feature working"
+        );
+    }
+
+    /// The optional wording is only for a coordinate that vanished. A version CHANGE leaves the
+    /// artifact on the classpath, so optional-ness says nothing about the break.
+    #[test]
+    fn optional_does_not_reword_a_version_change() {
+        let s = build(
+            &change("g:n", ChangeKind::Changed, &["1.0"], &["2.0"]),
+            Some("h:m:1".to_string()),
+            true,
+        );
+        assert_eq!(
+            s.advice,
+            "upgrade h:m:1 to a release built against g:n 2.0, or pin g:n to 1.0"
+        );
     }
 
     /// Coordinate removed, referencing artifact unknown.
@@ -315,6 +424,7 @@ mod tests {
                 &[],
             ),
             None,
+            false,
         );
         assert_eq!(
             s.advice,
@@ -332,6 +442,7 @@ mod tests {
         let s = build(
             &change("g:n", ChangeKind::Changed, &["1.0", "2.0"], &["1.0", "3.0"]),
             Some("h:m:1".to_string()),
+            false,
         );
         assert_eq!(
             s.advice,

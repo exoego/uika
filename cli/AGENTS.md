@@ -404,3 +404,27 @@ pass-2 classes are typically below 0.1% of the scan.
 - The same-group / cross-group advice split (README describes it) mirrors the
   real fixes found for the OpenTelemetry case: BOM-align the 41 skew breaks,
   handle the cross-group firestore/grpc one separately.
+- The removed-coordinate advice asks `pom.rs` whether the REFERENCING artifact
+  declares the vanished coordinate `<optional>true</optional>`, and if so drops
+  the "still needs it / upgrade to a release that no longer requires it"
+  claim, which is false twice over for an optional dependency
+  (https://github.com/exoego/uika/issues/96). Wording only: the violation, its
+  tier and the exit code are untouched, because an optional integration that IS
+  used still throws — verified on the motivating case, where the only diff
+  against the previous release's JSON output was the ten advice strings.
+- `pom.rs` reads a POM already sitting in the local artifact cache next to the
+  scanned JAR (sibling for Maven/Coursier, one directory over for Gradle's
+  per-artifact checksum dirs), so there is still no resolver, no network and no
+  JVM. Every failure path — no POM, unreadable, unparsable — falls back to the
+  original wording. Plumbing the flag through the dump instead was rejected: it
+  needs a format change plus three plugin implementations, and would not reword
+  anything until both sides are re-dumped.
+- The POM scan is string-based rather than a real XML parse, and deliberately
+  loose: declarations inside `<profile>` count (google-auth declares slf4j-api
+  optional in an `activeByDefault` profile, which is the shape that motivated
+  this) and profile activation is not evaluated. `<dependencyManagement>` is
+  excluded and `<exclusions>` blanked, both load-bearing — an exclusion carries
+  its own groupId/artifactId, and blanking rather than truncating at it is what
+  finds an `<optional>` placed after the exclusions, as netty does. Cross-checked
+  against ElementTree over 4000 cached real POMs: exact agreement on all 672
+  optional declarations, zero false positives.
