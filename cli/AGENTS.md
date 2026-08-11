@@ -428,3 +428,12 @@ pass-2 classes are typically below 0.1% of the scan.
   finds an `<optional>` placed after the exclusions, as netty does. Cross-checked
   against ElementTree over 4000 cached real POMs: exact agreement on all 672
   optional declarations, zero false positives.
+- Comments AND CDATA are blanked before scanning. CDATA is the only legal way a
+  POM can carry text that reads like a declaration it never made (prose wrapping
+  example XML), so skipping it is what keeps the scan from ever inventing an
+  optional flag. The other way to fool a string scan — markup inside an
+  attribute value — is not well-formed XML, so it is not defended against.
+  Namespace-prefixed names (`<m:dependency>`) read as not-optional, which keeps
+  the original advice. `roxmltree` was measured as the alternative and rejected:
+  +21,516 B zipped (+3.0%) against a published-size budget the release profile
+  already trades throughput for, versus +321 B for this file.

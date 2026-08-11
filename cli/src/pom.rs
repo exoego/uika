@@ -26,8 +26,11 @@ use std::path::{Path, PathBuf};
 ///   optional inside an `activeByDefault` profile, which is the shape that motivated this).
 /// - Inherited declarations are not followed. A parent POM declaring the dependency optional
 ///   reads as not-optional here, which keeps the original wording -- the safe direction.
+///
+/// Namespace-PREFIXED element names (`<m:dependency>`) are not matched, so such a POM reads as
+/// not-optional. That is the safe direction, and Maven tooling writes the default namespace.
 pub fn declares_optional(pom: &str, group: &str, name: &str) -> bool {
-    let text = strip_comments(pom);
+    let text = blank_uninterpreted(pom);
     let managed = dependency_management_spans(&text);
 
     let mut cursor = 0;
@@ -78,23 +81,35 @@ pub fn locate(jar: &Path, name: &str, version: &str) -> Option<PathBuf> {
     None
 }
 
-/// Replace every `<!-- ... -->` region with spaces, so commented-out dependency blocks are not
-/// read as declarations. Blanking rather than deleting keeps every offset in the result equal
-/// to the same offset in the input, which is what makes the `<dependencyManagement>` spans
-/// comparable against element offsets found later in the same string.
-fn strip_comments(pom: &str) -> String {
+/// Blank the two regions whose contents are not markup: `<!-- ... -->` and `<![CDATA[ ... ]]>`.
+/// Both can legally contain something that reads like a dependency declaration -- a POM's
+/// `<description>` is free to wrap example XML in CDATA -- and scanning them would be the one
+/// way this file reports optional for a dependency the artifact never declared.
+///
+/// Blanking rather than deleting keeps every offset in the result equal to the same offset in
+/// the input, which is what makes the `<dependencyManagement>` spans comparable against element
+/// offsets found later in the same string.
+fn blank_uninterpreted(pom: &str) -> String {
+    const REGIONS: [(&str, &str); 2] = [("<!--", "-->"), ("<![CDATA[", "]]>")];
+
     let mut out = String::with_capacity(pom.len());
     let mut rest = pom;
-    while let Some(open) = rest.find("<!--") {
+    // Whichever region opens first, so a "<!--" inside CDATA (and vice versa) cannot reopen a
+    // region that is already skipped.
+    while let Some((open, start, end)) = REGIONS
+        .iter()
+        .filter_map(|(s, e)| rest.find(s).map(|at| (at, *s, *e)))
+        .min_by_key(|(at, _, _)| *at)
+    {
         out.push_str(&rest[..open]);
-        let after = &rest[open + 4..];
-        match after.find("-->") {
+        let after = &rest[open + start.len()..];
+        match after.find(end) {
             Some(close) => {
-                out.push_str(&" ".repeat(4 + close + 3));
-                rest = &after[close + 3..];
+                out.push_str(&" ".repeat(start.len() + close + end.len()));
+                rest = &after[close + end.len()..];
             }
             None => {
-                // Unterminated comment: everything from here on is commented out.
+                // Unterminated: everything from here on is inside the region.
                 out.push_str(&" ".repeat(rest.len() - open));
                 rest = "";
             }
@@ -295,6 +310,46 @@ mod tests {
         </project>
         "#;
         assert!(!declares_optional(pom, "org.slf4j", "slf4j-api"));
+    }
+
+    /// A POM's prose is free to carry example XML in CDATA. Scanning it would be the one way
+    /// this file reports optional for a dependency the artifact never declared.
+    #[test]
+    fn cdata_contents_are_not_declarations() {
+        let pom = r#"
+        <project>
+          <description><![CDATA[
+            To enable logging add:
+            <dependency>
+              <groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId>
+              <optional>true</optional>
+            </dependency>
+          ]]></description>
+          <dependencies>
+            <dependency>
+              <groupId>com.example</groupId><artifactId>thing</artifactId>
+              <optional>true</optional>
+            </dependency>
+          </dependencies>
+        </project>
+        "#;
+        assert!(!declares_optional(pom, "org.slf4j", "slf4j-api"));
+        assert!(declares_optional(pom, "com.example", "thing"));
+    }
+
+    /// Namespace-prefixed element names are not matched. Reading as not-optional keeps the
+    /// original advice, which is the safe direction.
+    #[test]
+    fn namespace_prefixed_elements_read_as_not_optional() {
+        let pom = r#"
+        <m:project xmlns:m="http://maven.apache.org/POM/4.0.0"><m:dependencies>
+          <m:dependency>
+            <m:groupId>g</m:groupId><m:artifactId>a</m:artifactId>
+            <m:optional>true</m:optional>
+          </m:dependency>
+        </m:dependencies></m:project>
+        "#;
+        assert!(!declares_optional(pom, "g", "a"));
     }
 
     #[test]
