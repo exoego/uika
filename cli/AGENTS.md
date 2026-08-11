@@ -412,28 +412,67 @@ pass-2 classes are typically below 0.1% of the scan.
   tier and the exit code are untouched, because an optional integration that IS
   used still throws — verified on the motivating case, where the only diff
   against the previous release's JSON output was the ten advice strings.
+- What that advice asserts stops at what the POM states: the referencer never
+  required the coordinate transitively. It deliberately does NOT say the
+  coordinate arrived through some other dependency. The dump models no
+  requested-by edges, so there is no graph to check, and the claim would be
+  wrong outright when the build declared the coordinate directly and this same
+  upgrade dropped that declaration. Asserting an unverified cause is the
+  mistake #96 exists to remove; do not reintroduce it pointed the other way.
 - `pom.rs` reads a POM already sitting in the local artifact cache next to the
   scanned JAR (sibling for Maven/Coursier, one directory over for Gradle's
   per-artifact checksum dirs), so there is still no resolver, no network and no
   JVM. Every failure path — no POM, unreadable, unparsable — falls back to the
   original wording. Plumbing the flag through the dump instead was rejected: it
   needs a format change plus three plugin implementations, and would not reword
-  anything until both sides are re-dumped.
+  anything until both sides are re-dumped. The consequence to keep in mind is
+  that the advice, which is a serialized field AND part of both the report's 💡
+  grouping key and the per-module cross-run merge key, now depends on the
+  checking machine's cache. Identical dumps can produce different JSON on a
+  runner whose cache holds only jars.
+- `pom::locate`'s sibling-directory walk requires the two directories above the
+  jar to spell `<name>/<version>`, so it only fires in the Gradle layout it was
+  written for. Without that check a jar in a flat `lib/` directory answers with
+  a same-named POM from a neighbouring directory belonging to another group —
+  the file name alone does not identify an artifact, and nothing downstream
+  re-checks the POM's own coordinate. The walk takes the lowest matching path
+  rather than the first `read_dir` yields, because the advice it feeds is a
+  grouping key and `read_dir` order is unspecified.
 - The POM scan is string-based rather than a real XML parse, and deliberately
-  loose: declarations inside `<profile>` count (google-auth declares slf4j-api
-  optional in an `activeByDefault` profile, which is the shape that motivated
-  this) and profile activation is not evaluated. `<dependencyManagement>` is
-  excluded and `<exclusions>` blanked, both load-bearing — an exclusion carries
-  its own groupId/artifactId, and blanking rather than truncating at it is what
-  finds an `<optional>` placed after the exclusions, as netty does. Cross-checked
-  against ElementTree over 4000 cached real POMs: exact agreement on all 672
-  optional declarations, zero false positives.
-- Comments AND CDATA are blanked before scanning. CDATA is the only legal way a
-  POM can carry text that reads like a declaration it never made (prose wrapping
-  example XML), so skipping it is what keeps the scan from ever inventing an
-  optional flag. The other way to fool a string scan — markup inside an
-  attribute value — is not well-formed XML, so it is not defended against.
-  Namespace-prefixed names (`<m:dependency>`) read as not-optional, which keeps
-  the original advice. `roxmltree` was measured as the alternative and rejected:
-  +21,516 B zipped (+3.0%) against a published-size budget the release profile
-  already trades throughput for, versus +321 B for this file.
+  loose in the FALSE-NEGATIVE direction only: a declaration inside `<profile>`
+  counts and profile activation is not evaluated (google-auth declares slf4j-api
+  optional in an `activeByDefault` profile, the shape that motivated this), and
+  inherited declarations are not followed. Profile looseness on its own is the
+  false-POSITIVE direction, so an always-active declaration that is not optional
+  overrides every profile-scoped optional one, and a block carrying a
+  `<classifier>` is skipped entirely. Both rules are needed for
+  netty-transport-native-epoll, which requires netty-transport-native-unix-common
+  at top level and separately declares the classifier-ed native variant optional
+  in its OS profiles; without them uika tells the user a hard requirement "was
+  never required transitively".
+- `<dependencyManagement>` entries, a plugin's own `<dependencies>` (`<plugins>`
+  covers `<build>`, `<pluginManagement>` and `<reporting>`) and `<exclusions>`
+  are all removed by BLANKING, never by collecting spans or truncating. Blanking
+  is what makes an unterminated element swallow the remainder, which reads as
+  not-optional; collecting spans made one unbounded `<dependencyManagement>`
+  drop the whole exclusion list and promote its managed entries to real
+  declarations. XML allows whitespace before the `>` of an end tag, so
+  `</dependencyManagement >` alone triggered that on a well-formed POM. Blanking
+  `<exclusions>` rather than truncating at it is also what finds an `<optional>`
+  placed after the exclusions, as netty does.
+- Comments, CDATA and processing instructions are blanked before scanning: each
+  can legally carry text that reads like a declaration the artifact never made
+  (prose wrapping example XML). A DTD internal subset can too, via an unreferenced
+  `<!ENTITY>`, but modern Maven rejects a DOCTYPE outright so it is left alone.
+  Markup inside an attribute value is NOT defended against; a bare `>` there is
+  well-formed XML (only `<` and `&` are forbidden), so this is a known hole rather
+  than an impossible input. Namespace-prefixed names (`<m:dependency>`) read as
+  not-optional, which keeps the original advice. `roxmltree` was measured as the
+  alternative and rejected: +21,516 B zipped (+3.0%) against a published-size
+  budget the release profile already trades throughput for, versus +321 B for
+  this file.
+- Verification standard for edits here: differential-test against the previous
+  implementation over every cached POM. The rules above came out of one such run
+  over 8,740 POMs and 125,938 coordinate probes (0 newly optional, 65 no longer
+  optional, every one of them a classifier-ed or unconditionally-required
+  declaration).

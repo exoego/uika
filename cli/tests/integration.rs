@@ -512,6 +512,95 @@ fn upgrade_check_suggestion_attributes_the_break() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The optional rewording end to end, which is the only thing that exercises
+/// `Annotator::declares_optional` -> `read_optional_deps` -> `pom::locate`: the unit tests
+/// either feed `build()` a literal bool or call `pom.rs` directly. The sender JAR is copied
+/// into a Maven-shaped layout so a POM can sit beside it without polluting tests/fixtures.
+#[test]
+fn upgrade_check_suggestion_reads_optional_from_the_referencers_pom() {
+    let sdk_common = fixture("opentelemetry-sdk-common-1.42.1.jar");
+    let dir = std::env::temp_dir().join(format!("uika-pom-wiring-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let cache = dir.join("io/opentelemetry/opentelemetry-exporter-sender-okhttp/1.42.1");
+    std::fs::create_dir_all(&cache).unwrap();
+    let sender = cache.join("opentelemetry-exporter-sender-okhttp-1.42.1.jar");
+    std::fs::copy(
+        fixture("opentelemetry-exporter-sender-okhttp-1.42.1.jar"),
+        &sender,
+    )
+    .unwrap();
+
+    // The upgrade drops sdk-common entirely, so the removed-coordinate advice applies.
+    let dump = |before: bool| {
+        let sdk = if before {
+            format!(
+                r#"{{"group":"io.opentelemetry","name":"opentelemetry-sdk-common","version":"1.42.1","file":"{}"}},"#,
+                sdk_common.display()
+            )
+        } else {
+            String::new()
+        };
+        format!(
+            r#"{{"modules":[{{"module":":app","classesDirs":[],"artifacts":[{sdk}
+                {{"group":"io.opentelemetry","name":"opentelemetry-exporter-sender-okhttp","version":"1.42.1","file":"{}"}}
+            ]}}]}}"#,
+            sender.display()
+        )
+    };
+    std::fs::write(dir.join("before.json"), dump(true)).unwrap();
+    std::fs::write(dir.join("after.json"), dump(false)).unwrap();
+
+    let advice = |pom: Option<&str>| {
+        let pom_path = cache.join("opentelemetry-exporter-sender-okhttp-1.42.1.pom");
+        match pom {
+            Some(text) => std::fs::write(&pom_path, text).unwrap(),
+            None => {
+                let _ = std::fs::remove_file(&pom_path);
+            }
+        }
+        let before = uika::gradle::load_dump(&dir.join("before.json")).unwrap();
+        let after = uika::gradle::load_dump(&dir.join("after.json")).unwrap();
+        let changes = uika::gradle::diff_dumps(&before, &after);
+        let mut report = uika::run_check(
+            &changes.old_jars,
+            &changes.new_jars,
+            &after.scan_targets,
+            &after.app_roots,
+            &[],
+            None,
+            None,
+        )
+        .unwrap();
+        uika::suggest::annotate(&mut report.violations, &before, &after, &changes.changes);
+        report.violations[0]
+            .suggestion
+            .as_ref()
+            .expect("violation should carry a suggestion")
+            .advice
+            .clone()
+    };
+
+    let optional_pom = r#"<project><dependencies><dependency>
+        <groupId>io.opentelemetry</groupId><artifactId>opentelemetry-sdk-common</artifactId>
+        <version>1.42.1</version><optional>true</optional>
+      </dependency></dependencies></project>"#;
+    assert!(
+        advice(Some(optional_pom)).contains("declares it optional"),
+        "POM declaring it optional should reword the advice"
+    );
+    // Same dumps, POM gone: every failure path falls back to the original wording.
+    assert!(
+        advice(None).contains("still needs it"),
+        "a missing POM must not reword the advice"
+    );
+    let required_pom = optional_pom.replace("<optional>true</optional>", "");
+    assert!(
+        advice(Some(&required_pom)).contains("still needs it"),
+        "a required declaration must not reword the advice"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A coordinate rename (publishing the same library under a dev coordinate): the old
 /// coordinate is REMOVED with no new-side pair, and the identical JAR re-enters as a
 /// plain scan target. Its nest-internal private references (Java 11+ nestmates, e.g.

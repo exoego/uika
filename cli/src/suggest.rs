@@ -32,10 +32,11 @@ pub struct Annotator<'a> {
     before: &'a Universe,
     file_coord: FxHashMap<String, String>,
     class_names_by_file: FxHashMap<std::path::PathBuf, Vec<Sym>>,
-    /// (referencing JAR path, removed "group:name") -> does that JAR's POM declare it optional.
-    /// Memoized because the answer costs a directory listing plus a file read, and per-module
-    /// upgrade-check annotates the same artifact once per run it appears on.
-    optional_deps: FxHashMap<(String, String), bool>,
+    /// referencing JAR path -> the "group:name" that JAR's POM declares optional (empty when
+    /// there is no readable POM). Keyed by the jar alone, so the directory listing, the read
+    /// and the scan happen once however many removed coordinates that jar references, and
+    /// once however many per-module runs it appears on.
+    optional_deps: FxHashMap<String, rustc_hash::FxHashSet<String>>,
 }
 
 impl<'a> Annotator<'a> {
@@ -73,7 +74,8 @@ impl<'a> Annotator<'a> {
         }
     }
 
-    /// Whether the referencing artifact's own POM declares `owner` optional.
+    /// Whether the referencing artifact's own POM declares `owner` optional. `referenced_by`
+    /// must be `self.file_coord[source]`; it is passed in because the caller already cloned it.
     fn declares_optional(
         &mut self,
         source: &str,
@@ -83,16 +85,13 @@ impl<'a> Annotator<'a> {
         let Some(referencer) = referenced_by else {
             return false;
         };
-        if let Some(&cached) = self
-            .optional_deps
-            .get(&(source.to_string(), owner.to_string()))
-        {
-            return cached;
+        if !self.optional_deps.contains_key(source) {
+            let declared = read_optional_deps(source, referencer).unwrap_or_default();
+            self.optional_deps.insert(source.to_string(), declared);
         }
-        let answer = read_optional_flag(source, referencer, owner).unwrap_or(false);
         self.optional_deps
-            .insert((source.to_string(), owner.to_string()), answer);
-        answer
+            .get(source)
+            .is_some_and(|declared| declared.contains(owner))
     }
 
     /// owner class -> index into `changes`, by reading the before-side JARs of each changed
@@ -152,18 +151,17 @@ fn class_names(path: &Path) -> Vec<Sym> {
 }
 
 /// Read `{referencer}`'s POM, if it sits beside the JAR the broken class came from, and report
-/// whether it declares `owner` (a "group:name") optional. None when anything is missing.
-fn read_optional_flag(source: &str, referencer: &str, owner: &str) -> Option<bool> {
+/// the "group:name" it declares optional. None when anything is missing. Decoded lossily
+/// because a POM may declare a non-UTF-8 encoding, and refusing to read it would silently
+/// produce the wording this whole path exists to avoid.
+fn read_optional_deps(source: &str, referencer: &str) -> Option<rustc_hash::FxHashSet<String>> {
     let mut parts = referencer.split(':');
     let (_, name, version) = (parts.next()?, parts.next()?, parts.next()?);
-    let (owner_group, owner_name) = owner.split_once(':')?;
     let path = crate::pom::locate(Path::new(source), name, version)?;
-    let text = std::fs::read_to_string(path).ok()?;
-    Some(crate::pom::declares_optional(
-        &text,
-        owner_group,
-        owner_name,
-    ))
+    let bytes = std::fs::read(path).ok()?;
+    Some(crate::pom::optional_dependencies(&String::from_utf8_lossy(
+        &bytes,
+    )))
 }
 
 fn build(
@@ -183,10 +181,16 @@ fn build(
             // false and "upgrade to a release that no longer requires it" points at a release
             // that will not exist -- optional integrations are permanent design choices.
             // https://github.com/exoego/uika/issues/96
+            //
+            // The claim stops at what the POM states. Saying it "arrived through some other
+            // dependency" would assert a graph the dump does not model (no requested-by edges),
+            // and would be wrong outright when the build declared the coordinate directly and
+            // this upgrade dropped that declaration -- the same assert-an-unverified-cause
+            // mistake #96 exists to remove, pointed the other way.
             format!(
-                "{owner} was removed by the upgrade and {referencer} declares it optional, so it \
-                 was never required transitively -- it reached the classpath through some other \
-                 dependency that no longer brings it. These references break only where \
+                "{owner} was removed by the upgrade and {referencer} declares it optional, so \
+                 {referencer} never required it transitively -- it was on the classpath for some \
+                 other reason that no longer holds. These references break only where \
                  {referencer}'s optional feature is used; restore {owner} to keep that feature \
                  working"
             )
@@ -390,9 +394,10 @@ mod tests {
         assert_eq!(
             s.advice,
             "org.slf4j:slf4j-api was removed by the upgrade and \
-             com.google.auth:google-auth-library-oauth2-http:1.50.0 declares it optional, so it \
-             was never required transitively -- it reached the classpath through some other \
-             dependency that no longer brings it. These references break only where \
+             com.google.auth:google-auth-library-oauth2-http:1.50.0 declares it optional, so \
+             com.google.auth:google-auth-library-oauth2-http:1.50.0 never required it \
+             transitively -- it was on the classpath for some other reason that no longer holds. \
+             These references break only where \
              com.google.auth:google-auth-library-oauth2-http:1.50.0's optional feature is used; \
              restore org.slf4j:slf4j-api to keep that feature working"
         );
