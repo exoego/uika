@@ -11,6 +11,7 @@ pub mod intern;
 pub mod jdk;
 pub mod memstats;
 pub mod model;
+pub mod pom;
 pub mod reach;
 pub mod report;
 pub mod suggest;

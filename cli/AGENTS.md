@@ -404,3 +404,38 @@ pass-2 classes are typically below 0.1% of the scan.
 - The same-group / cross-group advice split (README describes it) mirrors the
   real fixes found for the OpenTelemetry case: BOM-align the 41 skew breaks,
   handle the cross-group firestore/grpc one separately.
+- When the upgrade drops a coordinate the REFERENCING artifact declares
+  `<optional>true</optional>`, the advice drops the "still needs it / upgrade to
+  a release that no longer requires it" claim
+  (https://github.com/exoego/uika/issues/96). Wording only — an optional
+  integration that IS used still throws, so the violation, its tier and the exit
+  code are untouched. What it asserts stops at what the POM states. It must not
+  say the coordinate arrived through some other dependency: the dump has no
+  requested-by edges, and a build that declared it directly and dropped that
+  declaration makes it false. That is #96's own mistake pointed the other way.
+- `pom.rs` reads a POM already sitting beside the scanned JAR in the local
+  artifact cache, so there is still no resolver, network or JVM, and every
+  failure path falls back to the original wording. Plumbing the flag through the
+  dump was rejected: a format change plus three plugin implementations, rewording
+  nothing until both sides are re-dumped. The cost is that advice — a serialized
+  field AND part of the 💡 grouping key and the cross-run merge key — now depends
+  on the checking machine's cache, so identical dumps can differ on a runner
+  holding only jars.
+- Two rules keep profile looseness (activation is not evaluated) from becoming
+  false POSITIVES, and neither is redundant: an always-active non-optional
+  declaration overrides every profile-scoped optional one, and a `<classifier>`
+  block is skipped. netty-transport-native-epoll needs both — it requires
+  unix-common at top level and declares the classifier-ed native variant optional
+  in its OS profiles, so first-match told the user a hard requirement "was never
+  required transitively".
+- Ignored regions (`<dependencyManagement>`, `<plugins>`, `<exclusions>`,
+  comments, CDATA, PIs) are removed by BLANKING, never by collecting spans or
+  truncating. Blanking is what makes an unterminated element swallow the
+  remainder and read as not-optional; spans failed OPEN, and since XML permits
+  `</dependencyManagement >`, one well-formed POM promoted every managed entry to
+  a real declaration.
+- `roxmltree` was measured as the alternative to the string scan and rejected:
+  +21,516 B zipped (+3.0%) against the published-size budget, versus +321 B for
+  this file. The trade is paid for by differential-testing every edit here
+  against the previous implementation over the whole local POM cache; the rules
+  above came out of one such run (8,740 POMs, 125,938 probes).
