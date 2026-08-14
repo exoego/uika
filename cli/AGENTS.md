@@ -400,17 +400,40 @@ pass-2 classes are typically below 0.1% of the scan.
   directly from the old/new library JARs — not the consumer scan targets `ReachInputs` reads,
   which is gated behind reachability. Library JARs are small, so this always runs, the same
   reasoning as "old/new library indexing simple and complete" in the top-level CLAUDE.md.
+- Resolved against the SAME "library + scanned classpath" scopes every other check in this
+  file uses (`old_scope`/`runtime_scope`), not the bare old/new library index: a provider the
+  upgrade moved out of the checked library into a different, unchanged JAR still on the
+  classpath is not a violation ("moves to another artifact... are not violations", same as
+  everywhere else). `collect_spi_wanted` adds such a provider to pass 2's `wanted` set (its
+  hierarchy needs no fetch — `graph` always carries super/interfaces for every scanned class —
+  only its member table does), so it resolves through `fetched` instead of reading as "not in
+  new" and getting misreported as removed.
 - Two reasons, both old-relative and scoped to providers the NEW service file still lists.
-  `ServiceProviderRemoved`: the class named is gone from the new index. `ServiceProviderNotInstantiable`:
-  the class exists but `spi_instantiable` no longer holds (became abstract/interface, lost
-  public visibility, or lost every public no-arg constructor AND every public static zero-arg
-  `provider` method — JEP 238's static factory, matched by name+arity only, since this crate
-  does not parse enough of the descriptor grammar to verify the return type widens to the
-  service interface, and a name+arity match is already a strong enough signal). A provider
-  only OLD listed (the new file dropped the line entirely) is a deliberate library decision,
-  not diffable as "broken" without knowing whether anything actually required that one
-  provider — left unreported (no such "Arm B"). A provider only NEW lists is newly added,
-  nothing to regress against.
+  `ServiceProviderRemoved`: the class is in no scope layer at all. `ServiceProviderNotInstantiable`:
+  the class exists somewhere in scope but `spi_instantiable` says no. A provider only OLD
+  listed (the new file dropped the line entirely) is a deliberate library decision, not
+  diffable as "broken" without knowing whether anything actually required that one provider —
+  left unreported (no such "Arm B"). A provider only NEW lists is newly added, nothing to
+  regress against. The old-relative gate and the new-side verdict are both strict: only a
+  PROVEN old-side Yes gates the check, and only a PROVEN new-side No is reported —
+  `Subclass::Unknown` (an assignability edge escaping analyzed scope) suppresses either way,
+  the same "an unproven relationship must not manufacture a violation" direction as
+  `is_subclass`.
+- `spi_instantiable` matches `java.util.ServiceLoader`'s actual precedence (confirmed against
+  the JDK's own spec, not assumed): a public static zero-arg `provider()` method, when
+  declared, is used EXCLUSIVELY — found or not, the provider class's own shape (abstract, an
+  interface, or unrelated to the service type) stops mattering, only whether the method's
+  return type is assignable to the service interface. The constructor path (public, concrete,
+  assignable to the service type, public no-arg constructor) is tried only when no `provider()`
+  method exists at all. An invalid factory is not rescued by an otherwise-valid constructor on
+  the same class — first version of this check got both wrong (checked the constructor first
+  as an OR with the factory, and did not verify the factory's return type at all), caught in
+  review before merge; `a_broken_factory_is_not_rescued_by_a_valid_constructor`,
+  `a_factory_on_an_abstract_class_is_not_reported`, `a_void_returning_factory_is_broken`, and
+  `a_factory_returning_an_unrelated_type_is_broken` pin the fix. `is_assignable` is `is_subclass`
+  widened to also follow interfaces (assignability allows implementing the service type, not
+  just extending it): graph edges first, then the resolution scope's layers, Unknown on an
+  escape rather than a guess.
 - `source_class` is the provider, `reference.owner` the service interface, `source` the jar
   whose service file still names it — the same shape the sealed/kind-flip walks use (subject
   first, changed supertype as the reference) — so it renders as a structural violation
@@ -426,8 +449,9 @@ pass-2 classes are typically below 0.1% of the scan.
   old/new service files, so this check is covered by
   `detects_a_provider_that_lost_its_public_constructor` in `integration.rs` (calls
   `run_check` directly) plus `check.rs` unit tests for every arm: removed, became
-  abstract/interface, lost constructor, narrowed visibility, the `provider()` factory guard,
-  broken-on-both-sides, newly-added, and the Arm-B skip.
+  abstract/interface, lost constructor, narrowed visibility, no longer assignable to the
+  service interface, moved to an unchanged runtime artifact, the `provider()` precedence and
+  assignability cases above, broken-on-both-sides, newly-added, and the Arm-B skip.
 
 ## Suggestions (upgrade-check only)
 
