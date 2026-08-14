@@ -377,6 +377,15 @@ pub fn run_check_with_indexes(
         new, old_index, new_index,
     ));
     memstats::report("after scan target indexing");
+    // The compared library JARs' own META-INF/services files: a provider ServiceLoader could
+    // construct under old but not under new is a break the reference/graph-walk checks below
+    // cannot see (no constant-pool reference, no class-load edge). Always computed, unlike the
+    // consumer-side collect_services call above: old/new are the small library JAR set, not
+    // the classpath.
+    let (old_services, old_service_warnings) = reach::collect_services(old);
+    let (new_services, new_service_warnings) = reach::collect_services(new);
+    warn_all(&old_service_warnings);
+    warn_all(&new_service_warnings);
     let mut result = check::check_scanned(
         scanned,
         old_index,
@@ -384,6 +393,8 @@ pub fn run_check_with_indexes(
         &upgraded_sources,
         jdk,
         reach,
+        &old_services,
+        &new_services,
         verdicts,
     );
     result.scan_targets = paths.len();

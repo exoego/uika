@@ -338,6 +338,54 @@ fn detects_a_default_method_conflict_from_a_newly_added_default() {
     assert!(diff(&old_index, &new_index).is_empty());
 }
 
+/// A real JVM confirms the fixture: `fixture.lib.Impl` is registered in
+/// `META-INF/services/fixture.lib.Spi` on both sides. Running the consumer's
+/// `ServiceLoader.load(Spi.class)` loop against 1.0 prints normally; against 2.0 (Impl
+/// turned abstract) it throws `java.util.ServiceConfigurationError: fixture.lib.Spi:
+/// Provider fixture.lib.Impl could not be instantiated`, caused by
+/// `InstantiationException`. Not a LinkageError — ServiceLoader discovers the provider via
+/// Class.forName and wraps the checked exception itself — and not reachable through any
+/// other check here: nothing in the consumer's bytecode does `new Impl()` or names a member
+/// on it, only `Spi.class` and `ServiceLoader.load`. Uses `uika::run_check` rather than
+/// `check::check`: only the path-based entry point reads META-INF/services from the old/new
+/// JARs (`check::check` is handed already-loaded classes with no paths to read resources
+/// from). The new JAR is also a scan target, matching a real runtime classpath (it is where
+/// `META-INF/services/fixture.lib.Spi` registering Impl actually lives), which is what
+/// gives `reach.rs` the Spi -> Impl provider edge and makes the violation provably reachable
+/// from the consumer's own `Spi.class` reference, mirroring
+/// `reachability_tiers_violation_by_app_roots`.
+#[test]
+fn detects_a_provider_that_lost_its_public_constructor() {
+    let old_jar = fixture("synthetic-spi-1.0.jar");
+    let new_jar = fixture("synthetic-spi-2.0.jar");
+    let consumer = fixture("synthetic-spi-consumer.jar");
+    let targets = [new_jar.clone(), consumer.clone()];
+
+    let report = uika::run_check(
+        std::slice::from_ref(&old_jar),
+        std::slice::from_ref(&new_jar),
+        &targets,
+        std::slice::from_ref(&consumer),
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(report.violations.len(), 1, "{:?}", report.violations);
+    let v = &report.violations[0];
+    assert_eq!(v.reason, Reason::ServiceProviderNotInstantiable);
+    assert_eq!(v.source_class.as_str(), "fixture/lib/Impl");
+    assert_eq!(v.reference.owner.as_str(), "fixture/lib/Spi");
+    assert!(v.reference.member.is_none());
+    assert_eq!(
+        v.reachable,
+        Some(true),
+        "the consumer's own ServiceLoader.load(Spi.class) call makes Spi (and its \
+         registered provider) reachable"
+    );
+}
+
 /// https://github.com/rburgst/okhttp-digest/issues/57:
 /// okhttp-digest 1.x calls RequestLine.requestPath as a static OkHttp 3 method.
 /// OkHttp 4.0.x changed RequestLine into a Kotlin object, making requestPath an
@@ -962,6 +1010,8 @@ fn jdk_layer_resolves_hierarchy_escapes_without_changing_verdicts() {
         &Default::default(),
         None,
         None,
+        &[],
+        &[],
         None,
     );
     assert!(baseline.unknown_refs > 0, "expected hierarchy escapes");
@@ -984,6 +1034,8 @@ fn jdk_layer_resolves_hierarchy_escapes_without_changing_verdicts() {
         &Default::default(),
         Some(&mut indexer),
         None,
+        &[],
+        &[],
         None,
     );
     assert_eq!(with_jdk.unknown_refs, 0, "all escapes should conclude");

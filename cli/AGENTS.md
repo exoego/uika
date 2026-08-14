@@ -382,6 +382,53 @@ pass-2 classes are typically below 0.1% of the scan.
   depend on parse order (determinism); non-class strings become dead `Sym`s that
   BFS never marks.
 
+## SPI (ServiceLoader) provider breaks
+
+- A class named in `META-INF/services/<iface>` that `ServiceLoader` could construct under
+  old but not under new throws `ServiceConfigurationError` at `ServiceLoader.load()`/
+  iteration time. Deliberately not part of "Linkage Semantics" above:
+  `ServiceConfigurationError` extends `Error` directly, not `LinkageError`. ServiceLoader
+  discovers the provider via `Class.forName` and wraps the checked exception itself
+  (`ClassNotFoundException`, `InstantiationException`, `IllegalAccessException`,
+  `NoSuchMethodException`), so there is no constant-pool reference or class-load edge for the
+  verdict loop or any graph walk above to see — the "reference" is a text line in a resource
+  file. JVM-confirmed on the `synthetic-spi-*` fixture (see `tests/fixtures/README.md`):
+  `Provider fixture.lib.Impl could not be instantiated`, caused by `InstantiationException`,
+  when `Impl` turns abstract between versions; the removed-class shape confirms as `Provider
+  ... not found`.
+- `check.rs::add_spi_violations` is its own walk, fed `ServiceFile`s (`reach.rs`) read
+  directly from the old/new library JARs — not the consumer scan targets `ReachInputs` reads,
+  which is gated behind reachability. Library JARs are small, so this always runs, the same
+  reasoning as "old/new library indexing simple and complete" in the top-level CLAUDE.md.
+- Two reasons, both old-relative and scoped to providers the NEW service file still lists.
+  `ServiceProviderRemoved`: the class named is gone from the new index. `ServiceProviderNotInstantiable`:
+  the class exists but `spi_instantiable` no longer holds (became abstract/interface, lost
+  public visibility, or lost every public no-arg constructor AND every public static zero-arg
+  `provider` method — JEP 238's static factory, matched by name+arity only, since this crate
+  does not parse enough of the descriptor grammar to verify the return type widens to the
+  service interface, and a name+arity match is already a strong enough signal). A provider
+  only OLD listed (the new file dropped the line entirely) is a deliberate library decision,
+  not diffable as "broken" without knowing whether anything actually required that one
+  provider — left unreported (no such "Arm B"). A provider only NEW lists is newly added,
+  nothing to regress against.
+- `source_class` is the provider, `reference.owner` the service interface, `source` the jar
+  whose service file still names it — the same shape the sealed/kind-flip walks use (subject
+  first, changed supertype as the reference) — so it renders as a structural violation
+  (`report.rs::is_structural`/`structural_lines`, no `runtime_error` line of its own) and is
+  ranked by the SAME post-hoc reachability pass as everything else, no new evidence tier: a
+  provider a scanned jar's own `META-INF/services` file registers is already a reachability
+  edge (`reach.rs::reachable_classes`'s `providers` map), so BFS marks it reachable for free
+  whenever the interface is (`service_impls_follow_iface_reachability`), or roots it directly
+  when the interface escapes scope (`service_iface_outside_scope_makes_impls_roots`).
+- No golden coverage: `check::check`, the entry point `golden.rs` and most of
+  `integration.rs` use, is handed already-loaded classes with no JAR paths to read
+  `META-INF/services` from. Only the path-based `run_check`/`run_check_with_indexes` reads
+  old/new service files, so this check is covered by
+  `detects_a_provider_that_lost_its_public_constructor` in `integration.rs` (calls
+  `run_check` directly) plus `check.rs` unit tests for every arm: removed, became
+  abstract/interface, lost constructor, narrowed visibility, the `provider()` factory guard,
+  broken-on-both-sides, newly-added, and the Arm-B skip.
+
 ## Suggestions (upgrade-check only)
 
 - `suggest::annotate` fills `Violation.suggestion` after `run_check`, in

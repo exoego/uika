@@ -27,6 +27,10 @@ Detection covers:
 - Class <-> interface flips
 - Subclasses left out of a newly sealed type's `permits` clause
 - Conflict of default methods from two unrelated interfaces at once
+- `META-INF/services` providers that ServiceLoader can no longer find or
+  instantiate (the one check above that is not a `LinkageError`: ServiceLoader
+  wraps the failure in `ServiceConfigurationError` itself, and the break lives
+  in a resource file rather than a constant-pool reference)
 
 ## Prior art
 

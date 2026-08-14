@@ -322,7 +322,9 @@ fn runtime_error(v: &Violation) -> Option<&'static str> {
         | MethodBecameFinal
         | ExtendsFinalClass
         | MethodBecameAbstract
-        | ConflictingDefaultMethods => {
+        | ConflictingDefaultMethods
+        | ServiceProviderRemoved
+        | ServiceProviderNotInstantiable => {
             return None;
         }
     })
@@ -350,7 +352,9 @@ fn is_structural(v: &Violation) -> bool {
         | MethodBecameFinal
         | ExtendsFinalClass
         | MethodBecameAbstract
-        | ConflictingDefaultMethods => true,
+        | ConflictingDefaultMethods
+        | ServiceProviderRemoved
+        | ServiceProviderNotInstantiable => true,
         ClassBecameInterface | InterfaceBecameClass => v.reference.member.is_none(),
         ClassRemoved | ClassAccessNarrowed | ClassBecameAbstract | MethodRemoved
         | MethodAccessNarrowed | FieldRemoved | FieldAccessNarrowed | FieldBecameFinal
@@ -432,6 +436,23 @@ fn structural_lines(v: &Violation) -> (String, String) {
         (InterfaceBecameClass, _) => (
             format!("extends or implements {owner}, which became a class"),
             icce_on_load(),
+        ),
+        // Not class-load breaks at all — ServiceLoader discovers providers via
+        // Class.forName, catching ClassNotFoundException/ReflectiveOperationException
+        // itself, so neither throws a LinkageError. Rendered here anyway (not
+        // reference_blocks) because there is no constant-pool reference behind it: the
+        // "reference" is a text line in META-INF/services.
+        (ServiceProviderRemoved, _) => (
+            format!("is registered in META-INF/services as a provider for {owner}, but the class is gone"),
+            "throws ServiceConfigurationError (provider not found) when ServiceLoader loads it".to_string(),
+        ),
+        (ServiceProviderNotInstantiable, _) => (
+            format!(
+                "is registered in META-INF/services as a provider for {owner}, but is no longer \
+                 a public concrete class with a public no-arg constructor (or a public static \
+                 `provider()` method)"
+            ),
+            "throws ServiceConfigurationError (provider could not be instantiated) when ServiceLoader loads it".to_string(),
         ),
         // The graph walks always attach the member to these two reasons (check.rs); a
         // member-less one would be malformed, so degrade readably rather than panic.
@@ -632,6 +653,12 @@ fn suggestion_line(v: &Violation, target: &str) -> String {
         ConflictingDefaultMethods => {
             format!("{target} is now a default that {class} inherits from two unrelated interfaces")
         }
+        ServiceProviderRemoved => format!(
+            "{class} was removed, but is still registered as a META-INF/services provider for {owner}"
+        ),
+        ServiceProviderNotInstantiable => format!(
+            "{class} can no longer be instantiated by ServiceLoader, but is still registered as a provider for {owner}"
+        ),
     }
 }
 
