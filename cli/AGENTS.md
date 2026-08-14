@@ -297,7 +297,7 @@ pass-2 classes are typically below 0.1% of the scan.
     weaker than the `collect_edges` gate on reachability edges.
   - Evidence is deliberately NOT filtered by first-wins: the duplicate fast path
     still sweeps. Filtering there would tie `invocation_found` to whether two
-    copies landed in the same chunk, and chunk size defaults to the thread count.
+    copies landed in the same chunk, and chunk size scales with the thread count.
   - `on_dispatch_chain` restricts evidence to the broken class's dispatch chain,
     otherwise one `close ()V` call anywhere suppresses every latent case. Escapes
     force "related", except into `java/*` (`Escapes`) — the JVM reserves that
