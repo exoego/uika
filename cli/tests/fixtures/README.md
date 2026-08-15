@@ -255,18 +255,13 @@ javac --release 11 -cp o1 -d oa app/fixture/app/*.java
 (cd oa && jar cf ../synthetic-default-conflict-consumer.jar fixture)
 ```
 
-`synthetic-spi-*` is authored here for the SPI (ServiceLoader) provider-break check
-(`check.rs::add_spi_violations`), which is not a `LinkageError` at all — no vendorable
-pair reproduces it, since it needs a `META-INF/services` provider that a version bump makes
-non-instantiable, and real-world instances of that shape (slf4j 1.x -> 2.x moving off static
-binding) don't fail this cleanly in a few kilobytes. `Impl` implements `Spi` and is
-registered as its `META-INF/services` provider on both sides; 2.0 makes `Impl` abstract. A
-real JVM confirms: the consumer's `ServiceLoader.load(Spi.class)` loop against 1.0 prints
-normally, against 2.0 it throws `java.util.ServiceConfigurationError: fixture.lib.Spi:
-Provider fixture.lib.Impl could not be instantiated`, caused by `InstantiationException` —
-not a `NoSuchMethodError`/`IllegalAccessError`, because ServiceLoader reflects the
-constructor itself rather than the JVM linker resolving a constant-pool reference. Nothing in
-the consumer's bytecode does `new Impl()`, so no other check here would ever see this break.
+`synthetic-spi-*` is authored here for the SPI provider-break check (see AGENTS.md "SPI
+provider breaks"); no vendorable pair fails this cleanly in a few kilobytes. `Impl` is
+registered in `META-INF/services/fixture.lib.Spi` on both sides; 2.0 makes `Impl`
+abstract. JVM-confirmed: the consumer's `ServiceLoader.load(Spi.class)` loop prints
+against 1.0 and throws `java.util.ServiceConfigurationError: ... Provider
+fixture.lib.Impl could not be instantiated` (caused by `InstantiationException`) against
+2.0. Nothing in the consumer's bytecode names `Impl`, so no other check sees the break.
 
 ```bash
 mkdir -p v1/fixture/lib v2/fixture/lib app/fixture/app o1/META-INF/services o2/META-INF/services
@@ -317,11 +312,8 @@ javac --release 11 -cp o1 -d oa app/fixture/app/*.java
 (cd oa && jar cf ../synthetic-spi-consumer.jar fixture)
 ```
 
-No golden scenario: `check::check` (the entry point `golden.rs`/most of `integration.rs` use)
-takes already-loaded classes with no JAR paths to read `META-INF/services` from, so this
-check only runs through the path-based `uika::run_check`/`run_check_with_indexes` entry
-point. Covered instead by `detects_a_provider_that_lost_its_public_constructor` in
-`integration.rs`, which calls `run_check` directly.
+No golden scenario — only the path-based entry points read `META-INF/services`; AGENTS.md
+"SPI provider breaks" names the coverage.
 
 ## Contents
 

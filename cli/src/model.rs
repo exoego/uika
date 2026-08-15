@@ -288,16 +288,12 @@ pub enum Reason {
     FieldBecameFinal,
     FieldBecameStatic,
     FieldBecameInstance,
-    /// A class named in `META-INF/services/<iface>` that ServiceLoader could construct
-    /// under old no longer exists under new: ServiceConfigurationError ("provider not
-    /// found") at ServiceLoader.load()/iteration time. Not a LinkageError — the JVM
-    /// discovers the class via Class.forName, catches ClassNotFoundException itself, and
-    /// wraps it, so nothing else in this file's reference-based checks can see it.
+    /// A `META-INF/services` provider ServiceLoader could construct under old no longer
+    /// exists under new: ServiceConfigurationError, not a LinkageError, so no
+    /// reference-based check sees it (AGENTS.md "SPI provider breaks").
     ServiceProviderRemoved,
-    /// The provider still exists under new but ServiceLoader can no longer construct it
-    /// (became abstract/interface, lost public visibility, or lost every public no-arg
-    /// constructor and public static `provider()` factory): ServiceConfigurationError
-    /// ("provider could not be instantiated").
+    /// The provider still exists but is no longer a public concrete subtype of the service
+    /// with a public no-arg constructor.
     ServiceProviderNotInstantiable,
 }
 

@@ -20,10 +20,8 @@ use std::path::{Path, PathBuf};
 pub struct ServiceFile {
     pub iface: Sym,
     pub impls: Vec<Sym>,
-    /// Origin (JAR path or directory) the file was read from, interned the same way
-    /// `input.rs` interns a class's source. Unused by the reachability BFS itself, but
-    /// `check.rs::add_spi_violations` attributes a broken provider to the jar that still
-    /// registers it.
+    /// Origin (JAR path or directory), interned the same way `input.rs` interns a class's
+    /// source. `check.rs::add_spi_violations` attributes a broken provider to it.
     pub source: Sym,
 }
 
@@ -119,8 +117,10 @@ fn push_service(out: &mut Vec<ServiceFile>, dotted_iface: &str, bytes: &[u8], so
     let Ok(text) = std::str::from_utf8(bytes) else {
         return;
     };
+    // split on both terminators, not str::lines: ServiceLoader parses these files with
+    // BufferedReader.readLine, which also accepts a lone '\r'.
     let impls: Vec<Sym> = text
-        .lines()
+        .split(['\r', '\n'])
         .map(|line| line.split('#').next().unwrap_or("").trim())
         .filter(|line| !line.is_empty())
         .map(|line| intern(&line.replace('.', "/")))

@@ -338,22 +338,12 @@ fn detects_a_default_method_conflict_from_a_newly_added_default() {
     assert!(diff(&old_index, &new_index).is_empty());
 }
 
-/// A real JVM confirms the fixture: `fixture.lib.Impl` is registered in
-/// `META-INF/services/fixture.lib.Spi` on both sides. Running the consumer's
-/// `ServiceLoader.load(Spi.class)` loop against 1.0 prints normally; against 2.0 (Impl
-/// turned abstract) it throws `java.util.ServiceConfigurationError: fixture.lib.Spi:
-/// Provider fixture.lib.Impl could not be instantiated`, caused by
-/// `InstantiationException`. Not a LinkageError — ServiceLoader discovers the provider via
-/// Class.forName and wraps the checked exception itself — and not reachable through any
-/// other check here: nothing in the consumer's bytecode does `new Impl()` or names a member
-/// on it, only `Spi.class` and `ServiceLoader.load`. Uses `uika::run_check` rather than
-/// `check::check`: only the path-based entry point reads META-INF/services from the old/new
-/// JARs (`check::check` is handed already-loaded classes with no paths to read resources
-/// from). The new JAR is also a scan target, matching a real runtime classpath (it is where
-/// `META-INF/services/fixture.lib.Spi` registering Impl actually lives), which is what
-/// gives `reach.rs` the Spi -> Impl provider edge and makes the violation provably reachable
-/// from the consumer's own `Spi.class` reference, mirroring
-/// `reachability_tiers_violation_by_app_roots`.
+/// JVM-confirmed fixture (fixtures/README.md): Impl turned abstract, so the consumer's
+/// `ServiceLoader.load(Spi.class)` loop throws ServiceConfigurationError under 2.0. No
+/// other check can see it — the consumer's bytecode never names Impl. Uses `uika::run_check`
+/// because only the path-based entry points read META-INF/services (so no golden covers
+/// this; see AGENTS.md "SPI provider breaks"). The new JAR is a scan target, which gives
+/// `reach.rs` the Spi -> Impl provider edge and proves the violation reachable.
 #[test]
 fn detects_a_provider_that_lost_its_public_constructor() {
     let old_jar = fixture("synthetic-spi-1.0.jar");
@@ -384,6 +374,81 @@ fn detects_a_provider_that_lost_its_public_constructor() {
         "the consumer's own ServiceLoader.load(Spi.class) call makes Spi (and its \
          registered provider) reachable"
     );
+}
+
+/// When the new jar is NOT a scan target the provider is invisible to the reachability
+/// BFS, so its violation must stay unranked (None), never "proven unreachable" — a
+/// Some(false) would let `--fail-on reachable` pass on a JVM-confirmed break.
+#[test]
+fn an_unscanned_provider_is_not_proven_unreachable() {
+    let old_jar = fixture("synthetic-spi-1.0.jar");
+    let new_jar = fixture("synthetic-spi-2.0.jar");
+    let consumer = fixture("synthetic-spi-consumer.jar");
+
+    let report = uika::run_check(
+        std::slice::from_ref(&old_jar),
+        std::slice::from_ref(&new_jar),
+        std::slice::from_ref(&consumer),
+        std::slice::from_ref(&consumer),
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(report.violations.len(), 1, "{:?}", report.violations);
+    let v = &report.violations[0];
+    assert_eq!(v.reason, Reason::ServiceProviderNotInstantiable);
+    assert_eq!(v.reachable, None, "{:?}", v.reachable);
+}
+
+/// An SPI violation's source is the upgraded library's own jar, so mapping it through the
+/// coordinate table would advise aligning the coordinate with itself. It must stay
+/// unannotated instead.
+#[test]
+fn spi_violation_gets_no_self_referential_suggestion() {
+    let old_jar = fixture("synthetic-spi-1.0.jar");
+    let new_jar = fixture("synthetic-spi-2.0.jar");
+    let consumer = fixture("synthetic-spi-consumer.jar");
+
+    let dir = std::env::temp_dir().join(format!("uika-spi-suggest-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dump = |version: &str, file: &std::path::Path| {
+        format!(
+            r#"{{"modules":[{{"module":":app","classesDirs":[],"artifacts":[
+                {{"group":"fixture","name":"spi","version":"{version}","file":"{}"}},
+                {{"group":"fixture","name":"consumer","version":"1.0","file":"{}"}}
+            ]}}]}}"#,
+            file.display(),
+            consumer.display(),
+        )
+    };
+    let before_path = dir.join("before.json");
+    let after_path = dir.join("after.json");
+    std::fs::write(&before_path, dump("1.0", &old_jar)).unwrap();
+    std::fs::write(&after_path, dump("2.0", &new_jar)).unwrap();
+
+    let before = uika::gradle::load_dump(&before_path).unwrap();
+    let after = uika::gradle::load_dump(&after_path).unwrap();
+    let changes = uika::gradle::diff_dumps(&before, &after);
+    let mut report = uika::run_check(
+        &changes.old_jars,
+        &changes.new_jars,
+        &after.scan_targets,
+        &after.app_roots,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    uika::suggest::annotate(&mut report.violations, &before, &after, &changes.changes);
+
+    let v = report
+        .violations
+        .iter()
+        .find(|v| v.reason == Reason::ServiceProviderNotInstantiable)
+        .expect("SPI violation expected");
+    assert!(v.suggestion.is_none(), "{:?}", v.suggestion);
 }
 
 /// https://github.com/rburgst/okhttp-digest/issues/57:
@@ -1010,8 +1075,7 @@ fn jdk_layer_resolves_hierarchy_escapes_without_changing_verdicts() {
         &Default::default(),
         None,
         None,
-        &[],
-        &[],
+        &Default::default(),
         None,
     );
     assert!(baseline.unknown_refs > 0, "expected hierarchy escapes");
@@ -1034,8 +1098,7 @@ fn jdk_layer_resolves_hierarchy_escapes_without_changing_verdicts() {
         &Default::default(),
         Some(&mut indexer),
         None,
-        &[],
-        &[],
+        &Default::default(),
         None,
     );
     assert_eq!(with_jdk.unknown_refs, 0, "all escapes should conclude");
