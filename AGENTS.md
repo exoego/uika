@@ -112,8 +112,8 @@ not be relearned by experiment.
   modules. Gradle rehydration carries the input dump's value forward instead of
   stamping the rehydrating JVM.
 - Tuning knobs: `UIKA_CHUNK` (paths processed concurrently in pass 1; default =
-  rayon threads), `UIKA_WINDOW` (fallback zip-reader window size; default
-  1 MiB, two windows).
+  16x rayon threads, rationale in `check.rs::scan_target_paths`), `UIKA_WINDOW`
+  (fallback zip-reader window size; default 1 MiB, two windows).
 - `cli/Cargo.toml` stays at the `0.0.0-dev` placeholder; released binaries get
   their version from the `UIKA_VERSION` env var embedded at compile time
   (`option_env!` in `cli/src/cli.rs`). Never bump the placeholder for a

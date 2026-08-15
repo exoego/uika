@@ -82,6 +82,7 @@ Traps already hit in this repository:
 | SipHash shard selection + redundant `from_utf8` validation of ASCII names    | FxHash for intern shard choice; `from_utf8_unchecked` for ASCII (is_ascii proves soundness). |
 | A duplicate class already in the graph still had its references extracted before merge dropped them | Return early in `parse_targets` for a class the chunk-immutable graph already holds. |
 | ~60% of scanned classes are byte-identical duplicates bundled across JARs, all inflated and parsed only to lose first-wins | `representative_offsets` picks one entry per (name, CRC) from central directories in path order; the scan inflates only those. |
+| Pass-1 chunking (`UIKA_CHUNK`, one rayon barrier per chunk) defaulted to 1x thread count, parking workers at every boundary where paths finished unevenly | Default raised to 16x thread count (`check.rs::scan_target_paths`): ~8% less wall (sys 2.4s -> 1.6s), ~+12% peak RSS, output byte-identical across chunk sizes. No knee — 8x captures most, 32x still improves. A `sample` profile's parked-thread share suggested ~half the wall was reclaimable; trust the wall-clock diff, not the parking share. Rejected alongside: name-only dedup in `representative_offsets` (vs (name, CRC)) would drop invocation evidence a losing duplicate's distinct bytecode carries — CRC-keyed skipping is safe only because byte-identical copies carry identical evidence. |
 
 Not helpful, measured and rejected: `lto`/`codegen-units=1` (inflate is the wall
 and lives in a self-contained crate, so cross-crate inlining gained nothing while
