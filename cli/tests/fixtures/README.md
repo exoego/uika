@@ -283,7 +283,11 @@ javac --release 11 -cp o1 -d oa app/fixture/app/*.java
 
 `synthetic-spi-*` is authored here for the not-instantiable arm of the SPI provider-break
 check (see AGENTS.md "SPI provider breaks"); the removed arm has the real kotest and
-sshd pairs above, but no vendorable pair breaks a still-present provider's shape. `Impl` is
+sshd pairs above, but no published pair breaks a still-present provider's shape yet. The
+minimized scenario is real practice landing one class over: the vendored
+jackson-module-kotlin pair registers `KotlinModule` in
+`META-INF/services/com.fasterxml.jackson.databind.Module` while the same 2.18.2 -> 2.20.1
+upgrade made `ValueClassBoxConverter` abstract. `Impl` is
 registered in `META-INF/services/fixture.lib.Spi` on both sides; 2.0 makes `Impl`
 abstract. JVM-confirmed: the consumer's `ServiceLoader.load(Spi.class)` loop prints
 against 1.0 and throws `java.util.ServiceConfigurationError: ... Provider

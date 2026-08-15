@@ -338,12 +338,18 @@ fn detects_a_default_method_conflict_from_a_newly_added_default() {
     assert!(diff(&old_index, &new_index).is_empty());
 }
 
-/// JVM-confirmed fixture (fixtures/README.md): Impl turned abstract, so the consumer's
-/// `ServiceLoader.load(Spi.class)` loop throws ServiceConfigurationError under 2.0. No
-/// other check can see it — the consumer's bytecode never names Impl. Uses `uika::run_check`
-/// because only the path-based entry points read META-INF/services (so no golden covers
-/// this; see AGENTS.md "SPI provider breaks"). The new JAR is a scan target, which gives
-/// `reach.rs` the Spi -> Impl provider edge and proves the violation reachable.
+/// Synthetic triple minimizing a realistic-but-unpublished move: jackson-module-kotlin
+/// registers `KotlinModule` in `META-INF/services/com.fasterxml.jackson.databind.Module`,
+/// and the SAME vendored pair (2.18.2 -> 2.20.1) really did make a class abstract
+/// (`ValueClassBoxConverter`, the `new`-on-abstract fixture). This triple is that move
+/// landing on the registered provider itself — no published pair does it yet, so per the
+/// fixture policy it is authored and JVM-confirmed (fixtures/README.md): the consumer's
+/// `ServiceLoader.load(Spi.class)` loop throws `... Provider fixture.lib.Impl could not
+/// be instantiated` under 2.0. No other check can see it — the consumer's bytecode never
+/// names Impl. Uses `uika::run_check` because only the path-based entry points read
+/// META-INF/services (so no golden covers this; see AGENTS.md "SPI provider breaks").
+/// The new JAR is a scan target, which gives `reach.rs` the Spi -> Impl provider edge
+/// and proves the violation reachable.
 #[test]
 fn detects_a_provider_that_became_abstract() {
     let old_jar = fixture("synthetic-spi-1.0.jar");
