@@ -127,32 +127,40 @@ fn golden_jetty_util_http_skew() {
     assert_golden("jetty-util-http-skew");
 }
 
-/// Synthetic shape-2 AbstractMethodError: EventListener 2.0 adds an abstract
-/// end(), which BrokenTranslator (compiled against 1.0) never implements, so
-/// calling end() on it throws AbstractMethodError. GoodTranslator declares end()
-/// and is not reported. Synthetic because well-maintained libraries avoid this
-/// break with default methods, and the real incidents (jOOQ ExecuteListener.end)
-/// ship multi-megabyte jars; the source and build command live in
+/// Shape-2 AbstractMethodError, minimizing a real incident: jOOQ 3.17 added
+/// `ExecuteListener.end`, which Spring Boot's `JooqExceptionTranslator` (compiled
+/// against 3.16) never implements, so the first translated exception throws
+/// AbstractMethodError (https://github.com/jOOQ/jOOQ/issues/14430). Here
+/// EventListener 2.0 adds an abstract end() that BrokenTranslator never implements;
+/// GoodTranslator declares end() and is the not-reported control. Minimized because
+/// the real pair ships multi-megabyte jars; source and build command in
 /// tests/fixtures/README.md.
 #[test]
 fn golden_synthetic_abstract_added() {
     assert_golden("synthetic-abstract-added");
 }
 
-/// Synthetic sealing break: Shape 2.0 is `sealed permits Circle`, so Square
-/// (compiled against the unsealed 1.0) no longer loads. Marker implements the
-/// untouched Tagged and is the not-reported control. Synthetic because no real
-/// pair seals an extendable type.
+/// Sealing break, minimizing a realistic-but-unpublished move: Shape 2.0 is
+/// `sealed permits Circle`, so Square (compiled against the unsealed 1.0) no longer
+/// loads. Marker implements the untouched Tagged and is the not-reported control.
+/// No published pair seals a type consumers extend (mining 2026-08), but sealing
+/// existing public types is real practice — the JDK sealed java.lang.constant, and
+/// recompiling a Groovy enum under JDK 17 stamps PermittedSubclasses on it
+/// (https://issues.apache.org/jira/browse/GROOVY-10194) — so this triple minimizes
+/// that move landing on an existing implementor.
 #[test]
 fn golden_synthetic_sealed() {
     assert_golden("synthetic-sealed");
 }
 
-/// Synthetic default-method conflict: lib/B 2.0 adds a default n() that lib/A already
-/// declares, so Conflicted (implementing both, compiled against 1.0) can no longer select
-/// one. Overriding declares its own n() and is the not-reported control. Synthetic because
-/// adding a default is the sanctioned evolution move, so the collision only shows up in a
-/// consumer that happened to implement both interfaces.
+/// Default-method conflict, minimizing a break no library pair can exhibit alone:
+/// lib/B 2.0 adds a default n() that lib/A already declares, so Conflicted
+/// (implementing both, compiled against 1.0) can no longer select one. Overriding
+/// declares its own n() and is the not-reported control. Adding a default is the
+/// sanctioned evolution move and the collision exists only in a consumer implementing
+/// both interfaces, so published-pair evidence is structurally impossible; the JVM
+/// confirms both error forms in
+/// `detects_a_default_method_conflict_from_a_newly_added_default`.
 #[test]
 fn golden_synthetic_default_conflict() {
     assert_golden("synthetic-default-conflict");

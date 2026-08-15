@@ -94,7 +94,8 @@ reproduced from the third-party binaries:
 shape-2 `AbstractMethodError` cleanly and in a few kilobytes: an interface gains
 an abstract method that an existing concrete implementor does not provide. The
 real incidents of this shape (for example jOOQ 3.17 adding `ExecuteListener.end`,
-which breaks Spring's `JooqExceptionTranslator`) ship multi-megabyte jars, and
+which breaks Spring's `JooqExceptionTranslator`;
+https://github.com/jOOQ/jOOQ/issues/14430) ship multi-megabyte jars, and
 well-maintained libraries usually avoid the break with default methods, so a
 synthetic triple is the cheapest faithful cover. `golden_synthetic_abstract_added`
 pins it and a real JVM confirms `BrokenTranslator.end()` throws AbstractMethodError
