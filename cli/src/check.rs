@@ -4,7 +4,7 @@ use crate::index::{
     object_sym,
 };
 use crate::input::LoadedClass;
-use crate::intern::Sym;
+use crate::intern::{Sym, intern};
 use crate::model::{
     ACC_ABSTRACT, ACC_BRIDGE, ACC_ENUM, ACC_FINAL, ACC_INTERFACE, ACC_PRIVATE, ACC_PROTECTED,
     ACC_PUBLIC, ACC_STATIC, ACC_SYNTHETIC, MemberKey, Reason, RefKind, SymbolRef, Violation,
@@ -444,6 +444,33 @@ fn collect_abstract_wanted(
     }
 }
 
+/// SPI provider candidates (`add_spi_violations`) that live on the scanned classpath rather
+/// than in the compared library itself — the "moved to an unchanged artifact" case, where a
+/// provider the old library declared is not in `new` because it now ships from a different,
+/// untouched JAR that stays on the runtime classpath. Without fetching its member table,
+/// `add_spi_violations` could only see "absent from new" and misreport a class ServiceLoader
+/// still finds fine as removed. Hierarchy (for the assignability walk) needs no fetch: pass 1
+/// always records every scanned class's super/interfaces in `graph`, gated flag or not.
+fn collect_spi_wanted(
+    old_services: &[crate::reach::ServiceFile],
+    new_services: &[crate::reach::ServiceFile],
+    old: &ApiIndex,
+    new: &ApiIndex,
+    graph: &ClassGraph,
+    wanted: &mut FxHashSet<Sym>,
+) {
+    for file in old_services.iter().chain(new_services) {
+        for &provider in &file.impls {
+            if !old.classes.contains_key(&provider)
+                && !new.classes.contains_key(&provider)
+                && graph.contains(provider)
+            {
+                wanted.insert(provider);
+            }
+        }
+    }
+}
+
 /// Direct-super edges of classes scanned from upgraded (new-version) scan targets:
 /// the inputs to the version-lag check in `add_extends_final_violations`. Supers that
 /// only exist on the scanned classpath are added to `wanted` so pass 2 fetches their
@@ -544,6 +571,7 @@ fn fetch_members(scan: &ScanResult, wanted: &FxHashSet<Sym>) -> (ApiIndex, Vec<S
 /// positives for moves to another artifact or copies bundled into fat JARs. The old side
 /// is composed the same way to reduce Unknown results when a library hierarchy escapes to
 /// a classpath-side parent.
+#[allow(clippy::too_many_arguments)]
 pub fn check_scanned(
     scan: ScanResult,
     old: &ApiIndex,
@@ -551,6 +579,8 @@ pub fn check_scanned(
     upgraded_sources: &FxHashSet<Sym>,
     jdk: Option<&mut crate::jdk::JdkIndexer>,
     reach: Option<crate::reach::ReachInputs>,
+    old_services: &[crate::reach::ServiceFile],
+    new_services: &[crate::reach::ServiceFile],
     mut verdicts: Option<&mut crate::verdicts::VerdictWriter>,
 ) -> CheckReport {
     crate::memstats::report("after pass 1 (graph + reference records)");
@@ -563,6 +593,14 @@ pub fn check_scanned(
     let (mut wanted, mut escapes) = collect_wanted(&scan, old, new, jdk_on);
     collect_final_wanted(old, new, &scan.graph, &mut wanted);
     collect_abstract_wanted(old, new, &scan.graph, &mut wanted);
+    collect_spi_wanted(
+        old_services,
+        new_services,
+        old,
+        new,
+        &scan.graph,
+        &mut wanted,
+    );
     let lag_edges = collect_upgraded_super_edges(
         &scan.graph,
         upgraded_sources,
@@ -664,6 +702,15 @@ pub fn check_scanned(
         &mut violations,
         &mut seen,
     );
+    add_spi_violations(
+        &graph,
+        &old_scope,
+        &runtime_scope,
+        old_services,
+        new_services,
+        &mut violations,
+        &mut seen,
+    );
 
     // Canonical order, sorted by string value (never Sym ids): the reference loop
     // is already deterministic, but add_final_violations discovers violations in
@@ -744,7 +791,17 @@ pub fn check(
     if !probe.is_empty() {
         scan.extend_invocations(class_invocation_evidence(library_classes, &probe));
     }
-    check_scanned(scan, old, new, &FxHashSet::default(), None, None, None)
+    check_scanned(
+        scan,
+        old,
+        new,
+        &FxHashSet::default(),
+        None,
+        None,
+        &[],
+        &[],
+        None,
+    )
 }
 
 enum RefVerdict {
@@ -1217,6 +1274,182 @@ fn add_sealed_violations(
         for &iface in graph.interfaces_of(node) {
             report(iface, class_name, node);
         }
+    }
+}
+
+/// A class named in `META-INF/services/<iface>` that ServiceLoader could construct under old
+/// can no longer be found or instantiated under new: ServiceConfigurationError at
+/// ServiceLoader.load()/iteration time. Not a LinkageError at all — the JVM discovers the
+/// provider via Class.forName and wraps the checked exception itself, so no constant-pool
+/// reference or class-load edge carries this break; the "reference" is a text line in a
+/// resource file, which is why this needs its own data (`ServiceFile`) instead of riding the
+/// verdict loop or a ClassGraph walk like the checks above.
+///
+/// Old-relative and scoped to providers the NEW service file still lists: a provider only old
+/// listed (the new file dropped the line entirely) is a deliberate library decision, not
+/// diffable as "broken" without knowing whether anything actually required that specific
+/// provider — left unreported (see module docs / AGENTS.md for the full rationale). A provider
+/// only new lists is newly added, nothing to regress against.
+///
+/// `source_class` is the provider, `reference.owner` the service interface — the same shape
+/// the sealed/kind-flip walks use (subject first, changed supertype as the reference) — so
+/// `check_scanned`'s post-hoc reachability pass ranks these exactly like every other
+/// violation with no new evidence tier: a provider registered by a scanned jar's own
+/// META-INF/services file is already a reachability edge in `reach.rs`, so it inherits that
+/// BFS for free.
+///
+/// Resolved against the SAME "library + scanned classpath" scopes every other check in this
+/// file uses (`old_scope`/`runtime_scope`), not the bare old/new library index: a provider
+/// the upgrade moved out of the checked library into a different, unchanged JAR still on the
+/// classpath is not a violation, matching "moves to another artifact... are not violations"
+/// everywhere else here. `collect_spi_wanted` is what makes such a provider resolvable —
+/// without it a moved provider would be in no scope layer and this would (wrongly) treat
+/// "not in new" as proof of removal.
+fn add_spi_violations(
+    graph: &ClassGraph,
+    old_scope: &Scope,
+    runtime_scope: &Scope,
+    old_services: &[crate::reach::ServiceFile],
+    new_services: &[crate::reach::ServiceFile],
+    violations: &mut Vec<Violation>,
+    seen: &mut FxHashSet<(Sym, Sym, SymbolRef)>,
+) {
+    if new_services.is_empty() {
+        return;
+    }
+    let mut old_impls: FxHashMap<Sym, FxHashSet<Sym>> = FxHashMap::default();
+    for file in old_services {
+        old_impls.entry(file.iface).or_default().extend(&file.impls);
+    }
+    if old_impls.is_empty() {
+        return;
+    }
+    for file in new_services {
+        let Some(old_providers) = old_impls.get(&file.iface) else {
+            continue;
+        };
+        for &provider in &file.impls {
+            if !old_providers.contains(&provider) {
+                continue; // newly added: nothing to regress against
+            }
+            // Only a PROVEN old-side Yes gates the check: Unknown (an assignability edge
+            // escaping analyzed scope) must not be read as "was valid", the same
+            // conservative direction every escape takes elsewhere in this file.
+            if spi_instantiable(graph, old_scope, provider, file.iface) != Subclass::Yes {
+                continue;
+            }
+            // Symmetric on the new side: only a PROVEN No is reported. Still-Yes and
+            // Unknown both suppress, since an unproven break is not a break.
+            if spi_instantiable(graph, runtime_scope, provider, file.iface) != Subclass::No {
+                continue;
+            }
+            let reason = if runtime_scope.contains_class(provider) {
+                Reason::ServiceProviderNotInstantiable
+            } else {
+                Reason::ServiceProviderRemoved
+            };
+            let reference = SymbolRef {
+                kind: RefKind::Class,
+                owner: file.iface,
+                member: None,
+                expected_static: None,
+                field_write: None,
+                instantiated: None,
+            };
+            push_violation(violations, seen, file.source, provider, reference, reason);
+        }
+    }
+}
+
+/// Whether ServiceLoader could construct `provider` for service `iface`, matching
+/// `java.util.ServiceLoader`'s actual precedence: a public static zero-arg `provider()`
+/// method, when declared, is used EXCLUSIVELY — the provider class's own shape (even
+/// abstract, an interface, or unrelated to `iface`) stops mattering, only whether the
+/// method's return type is assignable to `iface`. The constructor path is tried only when
+/// no such method exists at all: then the class itself must be public, concrete, assignable
+/// to `iface`, and declare a public no-arg constructor.
+/// `Subclass::Unknown` (an assignability edge escaping analyzed scope) is never upgraded to
+/// Yes or No here; the caller decides what an unproven answer means for its own direction
+/// (old-relative gate vs. new-side break).
+fn spi_instantiable(graph: &ClassGraph, scope: &Scope, provider: Sym, iface: Sym) -> Subclass {
+    let Some(access) = scope.class_access(provider) else {
+        return Subclass::No; // not found anywhere in scope; caller distinguishes "removed"
+    };
+    if access & ACC_PUBLIC == 0 {
+        return Subclass::No;
+    }
+    if let Some(methods) = scope.methods_of(provider)
+        && let Some(&(key, _)) = methods.iter().find(|&&(key, m_access)| {
+            key.name.as_str() == "provider"
+                && key.descriptor.as_str().starts_with("()")
+                && m_access & (ACC_PUBLIC | ACC_STATIC) == (ACC_PUBLIC | ACC_STATIC)
+        })
+    {
+        return match descriptor_return_class(key.descriptor.as_str()) {
+            Some(ret) => is_assignable(graph, scope, intern(ret), iface),
+            // void/primitive/array return can never satisfy `iface`, and a declared
+            // provider() takes full precedence, so there is no constructor to fall back to.
+            None => Subclass::No,
+        };
+    }
+    if access & (ACC_INTERFACE | ACC_ABSTRACT) != 0 {
+        return Subclass::No;
+    }
+    let ctor = MemberKey::new("<init>", "()V");
+    if !scope
+        .direct_method_access(provider, ctor)
+        .is_some_and(|a| a & ACC_PUBLIC != 0)
+    {
+        return Subclass::No;
+    }
+    is_assignable(graph, scope, provider, iface)
+}
+
+/// The class named by a zero-arg method descriptor's return type ("()Lfoo/Bar;" ->
+/// "foo/Bar"), or None for void, a primitive, or an array return — none of which can satisfy
+/// a ServiceLoader `provider()` factory's assignability requirement to an interface/class
+/// service type.
+fn descriptor_return_class(descriptor: &str) -> Option<&str> {
+    descriptor
+        .strip_prefix("()")?
+        .strip_prefix('L')?
+        .strip_suffix(';')
+}
+
+/// Whether `from` is assignable to `to` — equal, extends, or implements it, transitively —
+/// via the scanned classpath's hierarchy (`graph`, checked first) or the resolution scope's
+/// layers (old/new/fetched/jdk), the same lookup order `is_subclass` uses. Unlike
+/// `is_subclass` (extends-only, for the protected-access check), this also follows
+/// interfaces: ServiceLoader assignability allows implementing the service type, not just
+/// extending it. An edge escaping both graph and scope answers Unknown, never No — an
+/// unproven relationship must not manufacture a violation.
+fn is_assignable(graph: &ClassGraph, scope: &Scope, from: Sym, to: Sym) -> Subclass {
+    let mut queue: VecDeque<Sym> = VecDeque::from([from]);
+    let mut seen: FxHashSet<Sym> = FxHashSet::default();
+    let mut escaped = false;
+    while let Some(c) = queue.pop_front() {
+        if c == to {
+            return Subclass::Yes;
+        }
+        if c == object_sym() || !seen.insert(c) {
+            continue;
+        }
+        let edges = graph
+            .get(c)
+            .map(|node| (node.super_name, graph.interfaces_of(node)))
+            .or_else(|| scope.super_and_interfaces(c));
+        match edges {
+            Some((super_name, interfaces)) => {
+                queue.extend(super_name);
+                queue.extend(interfaces.iter().copied());
+            }
+            None => escaped = true,
+        }
+    }
+    if escaped {
+        Subclass::Unknown
+    } else {
+        Subclass::No
     }
 }
 
@@ -1782,6 +2015,10 @@ fn package_name(name: &str) -> &str {
 /// the relationship is Unknown rather than No, so the caller does not report a
 /// reference that may well be legal. No means the full chain was walked to Object
 /// without finding the target (a provable non-subclass).
+///
+/// Reused by `is_assignable` (the SPI provider check) for the same three-valued shape,
+/// even though that walk also follows interfaces, not just the superclass chain.
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Subclass {
     Yes,
     No,
@@ -1825,6 +2062,7 @@ mod tests {
     use crate::index::JAVA_LANG_OBJECT;
     use crate::intern::intern;
     use crate::model::{ACC_FINAL, ACC_PUBLIC, ACC_STATIC, ClassApi, MemberKey, build_members};
+    use crate::reach::ServiceFile;
 
     fn class(name: &str, methods: &[(&str, &str)]) -> ClassApi {
         ClassApi {
@@ -2397,6 +2635,345 @@ mod tests {
             c
         }]);
         assert!(sealed_violations(&old, &new, "app/Sub", "lib/C", true).is_empty());
+    }
+
+    // ---- SPI provider walk (add_spi_violations) ----
+
+    fn service_file(iface: &str, impls: &[&str], source: &str) -> ServiceFile {
+        ServiceFile {
+            iface: intern(iface),
+            impls: impls.iter().map(|i| intern(i)).collect(),
+            source: intern(source),
+        }
+    }
+
+    /// `old`/`new` are checked with no supplementary classpath data (`Scope::new(vec![old])`
+    /// / `vec![new]`), matching a provider that lives entirely inside the compared library.
+    fn spi_violations(
+        old: &ApiIndex,
+        new: &ApiIndex,
+        old_services: &[ServiceFile],
+        new_services: &[ServiceFile],
+    ) -> Vec<Violation> {
+        spi_violations_with_classpath(
+            old,
+            new,
+            &ClassGraph::new(),
+            &ApiIndex::new(),
+            old_services,
+            new_services,
+        )
+    }
+
+    /// `graph`/`fetched` stand in for what pass 1 (hierarchy) and pass 2 (member tables, via
+    /// `collect_spi_wanted`) would have produced for a provider that lives on the scanned
+    /// classpath rather than in `old`/`new` themselves.
+    fn spi_violations_with_classpath(
+        old: &ApiIndex,
+        new: &ApiIndex,
+        graph: &ClassGraph,
+        fetched: &ApiIndex,
+        old_services: &[ServiceFile],
+        new_services: &[ServiceFile],
+    ) -> Vec<Violation> {
+        let old_scope = Scope::new(vec![old, fetched]);
+        let runtime_scope = Scope::new(vec![new, fetched]);
+        let mut violations = Vec::new();
+        let mut seen = FxHashSet::default();
+        add_spi_violations(
+            graph,
+            &old_scope,
+            &runtime_scope,
+            old_services,
+            new_services,
+            &mut violations,
+            &mut seen,
+        );
+        violations
+    }
+
+    /// A provider with a public no-arg constructor that implements `iface` — the common shape.
+    fn instantiable_provider(name: &str, iface: &str) -> ClassApi {
+        let mut c = class_with_method_access(name, &[("<init>", "()V", ACC_PUBLIC)]);
+        c.interfaces = vec![intern(iface)];
+        c
+    }
+
+    #[test]
+    fn provider_removed_from_new_is_broken() {
+        let old = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let new = ApiIndex::build([]);
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let new_svc = [service_file("lib/Spi", &["lib/Impl"], "new.jar")];
+        let violations = spi_violations(&old, &new, &old_svc, &new_svc);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, Reason::ServiceProviderRemoved);
+        assert_eq!(violations[0].source_class.as_str(), "lib/Impl");
+        assert_eq!(violations[0].reference.owner.as_str(), "lib/Spi");
+        assert!(violations[0].reference.member.is_none());
+        // Attributed to the jar that still registers the now-missing provider.
+        assert_eq!(violations[0].source.as_str(), "new.jar");
+    }
+
+    #[test]
+    fn provider_became_abstract_is_broken() {
+        let old = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let new = ApiIndex::build([abstract_class("lib/Impl")]);
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let new_svc = [service_file("lib/Spi", &["lib/Impl"], "new.jar")];
+        let violations = spi_violations(&old, &new, &old_svc, &new_svc);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, Reason::ServiceProviderNotInstantiable);
+    }
+
+    #[test]
+    fn provider_became_an_interface_is_broken() {
+        let old = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let new = ApiIndex::build([interface("lib/Impl")]);
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let new_svc = [service_file("lib/Spi", &["lib/Impl"], "new.jar")];
+        let violations = spi_violations(&old, &new, &old_svc, &new_svc);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, Reason::ServiceProviderNotInstantiable);
+    }
+
+    #[test]
+    fn provider_lost_its_public_no_arg_constructor_is_broken() {
+        let old = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let new = ApiIndex::build([class_with_method_access(
+            "lib/Impl",
+            &[("<init>", "()V", ACC_PRIVATE)],
+        )]);
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let new_svc = [service_file("lib/Spi", &["lib/Impl"], "new.jar")];
+        let violations = spi_violations(&old, &new, &old_svc, &new_svc);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, Reason::ServiceProviderNotInstantiable);
+    }
+
+    #[test]
+    fn provider_narrowed_to_package_private_class_is_broken() {
+        let old = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let new = ApiIndex::build([{
+            let mut c = instantiable_provider("lib/Impl", "lib/Spi");
+            c.access = 0; // package-private, no longer public
+            c
+        }]);
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let new_svc = [service_file("lib/Spi", &["lib/Impl"], "new.jar")];
+        let violations = spi_violations(&old, &new, &old_svc, &new_svc);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, Reason::ServiceProviderNotInstantiable);
+    }
+
+    #[test]
+    fn provider_no_longer_assignable_to_the_service_interface_is_broken() {
+        let old = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let new = ApiIndex::build([class_with_method_access(
+            "lib/Impl",
+            &[("<init>", "()V", ACC_PUBLIC)],
+        )]); // public, concrete, has a ctor -- but no longer `implements Spi`
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let new_svc = [service_file("lib/Spi", &["lib/Impl"], "new.jar")];
+        let violations = spi_violations(&old, &new, &old_svc, &new_svc);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, Reason::ServiceProviderNotInstantiable);
+    }
+
+    #[test]
+    fn provider_with_a_static_provider_factory_is_not_reported() {
+        // JEP 238: ServiceLoader accepts a public static no-arg `provider()` factory in
+        // place of a public constructor, so losing the constructor alone is not a break.
+        let old = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let new = ApiIndex::build([class_with_method_access(
+            "lib/Impl",
+            &[("provider", "()Llib/Spi;", ACC_PUBLIC | ACC_STATIC)],
+        )]);
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let new_svc = [service_file("lib/Spi", &["lib/Impl"], "new.jar")];
+        assert!(spi_violations(&old, &new, &old_svc, &new_svc).is_empty());
+    }
+
+    #[test]
+    fn a_factory_on_an_abstract_class_is_not_reported() {
+        // provider() takes full precedence: the class's own shape (abstract, here) does not
+        // matter once a valid factory is declared.
+        let old = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let new = ApiIndex::build([{
+            let mut c = abstract_class("lib/Impl");
+            c.methods = build_members([(
+                MemberKey::new("provider", "()Llib/Spi;"),
+                ACC_PUBLIC | ACC_STATIC,
+            )]);
+            c
+        }]);
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let new_svc = [service_file("lib/Spi", &["lib/Impl"], "new.jar")];
+        assert!(spi_violations(&old, &new, &old_svc, &new_svc).is_empty());
+    }
+
+    #[test]
+    fn a_void_returning_factory_is_broken() {
+        let old = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let new = ApiIndex::build([class_with_method_access(
+            "lib/Impl",
+            &[("provider", "()V", ACC_PUBLIC | ACC_STATIC)],
+        )]);
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let new_svc = [service_file("lib/Spi", &["lib/Impl"], "new.jar")];
+        let violations = spi_violations(&old, &new, &old_svc, &new_svc);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, Reason::ServiceProviderNotInstantiable);
+    }
+
+    #[test]
+    fn a_factory_returning_an_unrelated_type_is_broken() {
+        let old = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let new = ApiIndex::build([
+            class("lib/Unrelated", &[]),
+            class_with_method_access(
+                "lib/Impl",
+                &[("provider", "()Llib/Unrelated;", ACC_PUBLIC | ACC_STATIC)],
+            ),
+        ]);
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let new_svc = [service_file("lib/Spi", &["lib/Impl"], "new.jar")];
+        let violations = spi_violations(&old, &new, &old_svc, &new_svc);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, Reason::ServiceProviderNotInstantiable);
+    }
+
+    #[test]
+    fn a_broken_factory_is_not_rescued_by_a_valid_constructor() {
+        // provider() is tried FIRST: an otherwise-valid public no-arg constructor on the
+        // same class does not save a factory with the wrong return type.
+        let old = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let new = ApiIndex::build([class_with_method_access(
+            "lib/Impl",
+            &[
+                ("<init>", "()V", ACC_PUBLIC),
+                ("provider", "()V", ACC_PUBLIC | ACC_STATIC),
+            ],
+        )]);
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let new_svc = [service_file("lib/Spi", &["lib/Impl"], "new.jar")];
+        let violations = spi_violations(&old, &new, &old_svc, &new_svc);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].reason, Reason::ServiceProviderNotInstantiable);
+    }
+
+    #[test]
+    fn provider_broken_on_both_sides_is_pre_existing() {
+        // Never a usable provider under old either, so the upgrade did not break it.
+        let old = ApiIndex::build([abstract_class("lib/Impl")]);
+        let new = ApiIndex::build([abstract_class("lib/Impl")]);
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let new_svc = [service_file("lib/Spi", &["lib/Impl"], "new.jar")];
+        assert!(spi_violations(&old, &new, &old_svc, &new_svc).is_empty());
+    }
+
+    #[test]
+    fn a_newly_added_provider_is_not_reported() {
+        // Only in new's service file: nothing to regress against.
+        let old = ApiIndex::build([]);
+        let new = ApiIndex::build([abstract_class("lib/Impl")]);
+        let old_svc: [ServiceFile; 0] = [];
+        let new_svc = [service_file("lib/Spi", &["lib/Impl"], "new.jar")];
+        assert!(spi_violations(&old, &new, &old_svc, &new_svc).is_empty());
+    }
+
+    #[test]
+    fn a_provider_dropped_from_news_service_file_is_not_reported() {
+        // Arm B (silent provider loss): out of scope for now, see add_spi_violations docs.
+        let old = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let new = ApiIndex::build([abstract_class("lib/Impl")]);
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let new_svc: [ServiceFile; 0] = [];
+        assert!(spi_violations(&old, &new, &old_svc, &new_svc).is_empty());
+    }
+
+    #[test]
+    fn a_still_instantiable_provider_is_not_reported() {
+        let old = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let new = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let new_svc = [service_file("lib/Spi", &["lib/Impl"], "new.jar")];
+        assert!(spi_violations(&old, &new, &old_svc, &new_svc).is_empty());
+    }
+
+    #[test]
+    fn a_provider_moved_to_an_unchanged_runtime_artifact_is_not_reported() {
+        // The upgrade extracted lib/Impl out of the checked library into a different,
+        // unchanged JAR that stays on the runtime classpath (the same "moves to another
+        // artifact... are not violations" shape every other check in this file honors).
+        // ServiceLoader still finds and constructs it fine; "not in new" alone must not be
+        // read as removed.
+        let old = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let new = ApiIndex::build([]); // lib/Impl no longer ships with the checked library
+        let mut graph = ClassGraph::new();
+        graph.insert_if_absent(
+            intern("lib/Impl"),
+            Some(object_sym()),
+            &[intern("lib/Spi")],
+            &[],
+            None,
+            intern("unrelated.jar"),
+        );
+        // What collect_spi_wanted + pass 2 would have fetched for this graph-only class.
+        let fetched = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let new_svc = [service_file("lib/Spi", &["lib/Impl"], "new.jar")];
+        assert!(
+            spi_violations_with_classpath(&old, &new, &graph, &fetched, &old_svc, &new_svc)
+                .is_empty()
+        );
+    }
+
+    // ---- collect_spi_wanted ----
+
+    #[test]
+    fn collect_spi_wanted_adds_graph_only_providers_named_by_a_service_file() {
+        let old = ApiIndex::build([]);
+        let new = ApiIndex::build([]);
+        let mut graph = ClassGraph::new();
+        graph.insert_if_absent(
+            intern("lib/Impl"),
+            Some(object_sym()),
+            &[],
+            &[],
+            None,
+            intern("x.jar"),
+        );
+        graph.insert_if_absent(
+            intern("lib/OnClasspathButUnnamed"),
+            Some(object_sym()),
+            &[],
+            &[],
+            None,
+            intern("x.jar"),
+        );
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let new_svc = [service_file(
+            "lib/Spi",
+            &["lib/NamedButNotOnClasspathOrLibrary"],
+            "new.jar",
+        )];
+        let mut wanted = FxHashSet::default();
+        collect_spi_wanted(&old_svc, &new_svc, &old, &new, &graph, &mut wanted);
+        assert!(wanted.contains(&intern("lib/Impl")));
+        assert!(!wanted.contains(&intern("lib/OnClasspathButUnnamed")));
+        assert!(!wanted.contains(&intern("lib/NamedButNotOnClasspathOrLibrary")));
+    }
+
+    #[test]
+    fn collect_spi_wanted_skips_providers_already_in_the_library_index() {
+        let old = ApiIndex::build([instantiable_provider("lib/Impl", "lib/Spi")]);
+        let new = ApiIndex::build([]);
+        let graph = ClassGraph::new(); // lib/Impl is not even a scan target
+        let old_svc = [service_file("lib/Spi", &["lib/Impl"], "old.jar")];
+        let mut wanted = FxHashSet::default();
+        collect_spi_wanted(&old_svc, &[], &old, &new, &graph, &mut wanted);
+        assert!(wanted.is_empty());
     }
 
     #[test]

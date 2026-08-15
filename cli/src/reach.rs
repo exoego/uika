@@ -20,6 +20,11 @@ use std::path::{Path, PathBuf};
 pub struct ServiceFile {
     pub iface: Sym,
     pub impls: Vec<Sym>,
+    /// Origin (JAR path or directory) the file was read from, interned the same way
+    /// `input.rs` interns a class's source. Unused by the reachability BFS itself, but
+    /// `check.rs::add_spi_violations` attributes a broken provider to the jar that still
+    /// registers it.
+    pub source: Sym,
 }
 
 /// Inputs for the reachability pass.
@@ -55,6 +60,7 @@ fn services_of(path: &Path) -> Result<Vec<ServiceFile>> {
     if path.is_dir() {
         return services_of_dir(path);
     }
+    let source = intern(&path.display().to_string());
     let file =
         std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
     let reader = crate::window::WindowedReader::new(file, 256 * 1024);
@@ -78,7 +84,7 @@ fn services_of(path: &Path) -> Result<Vec<ServiceFile>> {
             Err(_) => false,
         };
         if read_ok {
-            push_service(&mut out, &name[SERVICES_PREFIX.len()..], &bytes);
+            push_service(&mut out, &name[SERVICES_PREFIX.len()..], &bytes, source);
         }
     }
     Ok(out)
@@ -86,6 +92,7 @@ fn services_of(path: &Path) -> Result<Vec<ServiceFile>> {
 
 fn services_of_dir(path: &Path) -> Result<Vec<ServiceFile>> {
     let dir = path.join("META-INF/services");
+    let source = intern(&path.display().to_string());
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return Ok(out); // No services directory: nothing to collect.
@@ -97,7 +104,7 @@ fn services_of_dir(path: &Path) -> Result<Vec<ServiceFile>> {
             continue;
         };
         if entry.file_type()?.is_file() {
-            push_service(&mut out, name, &std::fs::read(entry.path())?);
+            push_service(&mut out, name, &std::fs::read(entry.path())?, source);
         }
     }
     Ok(out)
@@ -108,7 +115,7 @@ fn is_service_name(name: &str) -> bool {
     !name.is_empty() && !name.contains('/')
 }
 
-fn push_service(out: &mut Vec<ServiceFile>, dotted_iface: &str, bytes: &[u8]) {
+fn push_service(out: &mut Vec<ServiceFile>, dotted_iface: &str, bytes: &[u8], source: Sym) {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return;
     };
@@ -122,6 +129,7 @@ fn push_service(out: &mut Vec<ServiceFile>, dotted_iface: &str, bytes: &[u8]) {
         out.push(ServiceFile {
             iface: intern(&dotted_iface.replace('.', "/")),
             impls,
+            source,
         });
     }
 }
@@ -283,10 +291,12 @@ mod tests {
             ServiceFile {
                 iface: intern("lib/Spi"),
                 impls: vec![intern("lib/SpiImpl")],
+                source: intern("lib.jar"),
             },
             ServiceFile {
                 iface: intern("lib/OtherSpi"),
                 impls: vec![intern("lib/OtherImpl")],
+                source: intern("lib.jar"),
             },
         ];
         let marks = reachable_classes(&graph, &inputs(&["app-dir"], services)).marks;
@@ -302,6 +312,7 @@ mod tests {
         let services = vec![ServiceFile {
             iface: intern("java/sql/Driver"),
             impls: vec![intern("lib/JdbcDriver")],
+            source: intern("lib.jar"),
         }];
         let marks = reachable_classes(&graph, &inputs(&["app-dir"], services)).marks;
         assert!(is_reachable(&marks, intern("lib/JdbcDriver")));
@@ -314,6 +325,7 @@ mod tests {
             &mut out,
             "com.example.Spi",
             b"# comment\ncom.example.ImplA\n\n  com.example.ImplB  # trailing\n",
+            intern("test.jar"),
         );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].iface, intern("com/example/Spi"));
@@ -321,5 +333,6 @@ mod tests {
             out[0].impls,
             vec![intern("com/example/ImplA"), intern("com/example/ImplB")]
         );
+        assert_eq!(out[0].source, intern("test.jar"));
     }
 }

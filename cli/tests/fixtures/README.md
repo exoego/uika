@@ -2,9 +2,9 @@
 
 Mostly unmodified third-party JARs vendored from Maven Central, used by the
 integration tests (`tests/integration.rs`) and golden tests (`tests/golden.rs`)
-as real-world ground truth. Three small synthetic triples
-(`synthetic-abstract-added-*`, `synthetic-sealed-*`, `synthetic-default-conflict-*`)
-are authored here rather than downloaded; see
+as real-world ground truth. Four small synthetic triples
+(`synthetic-abstract-added-*`, `synthetic-sealed-*`, `synthetic-default-conflict-*`,
+`synthetic-spi-*`) are authored here rather than downloaded; see
 [Synthetic fixtures](#synthetic-fixtures) below. Several real GitHub reports are
 reproduced from the third-party binaries:
 
@@ -254,6 +254,74 @@ javac --release 11 -cp o1 -d oa app/fixture/app/*.java
 (cd o2 && jar cf ../synthetic-default-conflict-2.0.jar fixture)
 (cd oa && jar cf ../synthetic-default-conflict-consumer.jar fixture)
 ```
+
+`synthetic-spi-*` is authored here for the SPI (ServiceLoader) provider-break check
+(`check.rs::add_spi_violations`), which is not a `LinkageError` at all — no vendorable
+pair reproduces it, since it needs a `META-INF/services` provider that a version bump makes
+non-instantiable, and real-world instances of that shape (slf4j 1.x -> 2.x moving off static
+binding) don't fail this cleanly in a few kilobytes. `Impl` implements `Spi` and is
+registered as its `META-INF/services` provider on both sides; 2.0 makes `Impl` abstract. A
+real JVM confirms: the consumer's `ServiceLoader.load(Spi.class)` loop against 1.0 prints
+normally, against 2.0 it throws `java.util.ServiceConfigurationError: fixture.lib.Spi:
+Provider fixture.lib.Impl could not be instantiated`, caused by `InstantiationException` —
+not a `NoSuchMethodError`/`IllegalAccessError`, because ServiceLoader reflects the
+constructor itself rather than the JVM linker resolving a constant-pool reference. Nothing in
+the consumer's bytecode does `new Impl()`, so no other check here would ever see this break.
+
+```bash
+mkdir -p v1/fixture/lib v2/fixture/lib app/fixture/app o1/META-INF/services o2/META-INF/services
+
+cat > v1/fixture/lib/Spi.java <<'EOF'
+package fixture.lib;
+public interface Spi { String hello(); }
+EOF
+
+cat > v1/fixture/lib/Impl.java <<'EOF'
+package fixture.lib;
+public class Impl implements Spi {
+    public Impl() { }
+    public String hello() { return "hello from Impl"; }
+}
+EOF
+
+cp v1/fixture/lib/Spi.java v2/fixture/lib/Spi.java
+
+cat > v2/fixture/lib/Impl.java <<'EOF'
+package fixture.lib;
+public abstract class Impl implements Spi {
+    public String hello() { return "hello from Impl"; }
+}
+EOF
+
+cat > app/fixture/app/Main.java <<'EOF'
+package fixture.app;
+import java.util.ServiceLoader;
+public class Main {
+    public static void main(String[] args) {
+        ServiceLoader<fixture.lib.Spi> loader = ServiceLoader.load(fixture.lib.Spi.class);
+        for (fixture.lib.Spi s : loader) {
+            System.out.println(s.hello());
+        }
+    }
+}
+EOF
+
+echo "fixture.lib.Impl" > o1/META-INF/services/fixture.lib.Spi
+echo "fixture.lib.Impl" > o2/META-INF/services/fixture.lib.Spi
+
+javac --release 11 -d o1 v1/fixture/lib/*.java
+javac --release 11 -d o2 v2/fixture/lib/*.java
+javac --release 11 -cp o1 -d oa app/fixture/app/*.java
+(cd o1 && jar cf ../synthetic-spi-1.0.jar fixture META-INF/services)
+(cd o2 && jar cf ../synthetic-spi-2.0.jar fixture META-INF/services)
+(cd oa && jar cf ../synthetic-spi-consumer.jar fixture)
+```
+
+No golden scenario: `check::check` (the entry point `golden.rs`/most of `integration.rs` use)
+takes already-loaded classes with no JAR paths to read `META-INF/services` from, so this
+check only runs through the path-based `uika::run_check`/`run_check_with_indexes` entry
+point. Covered instead by `detects_a_provider_that_lost_its_public_constructor` in
+`integration.rs`, which calls `run_check` directly.
 
 ## Contents
 

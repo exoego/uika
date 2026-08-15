@@ -371,6 +371,14 @@ impl<'a> Scope<'a> {
         find_member(idx.methods_of(entry), key)
     }
 
+    /// Every method declared directly on `name`, from whichever layer defines it. None when
+    /// the class is in no scope layer. Unlike `direct_method_access`, this enumerates rather
+    /// than looks up a known key — needed to find a method by name alone (the SPI check's
+    /// `provider()` factory, which has no fixed descriptor).
+    pub fn methods_of(&self, name: ClassName) -> Option<&'a [(MemberKey, u16)]> {
+        self.class(name).map(|(idx, entry)| idx.methods_of(entry))
+    }
+
     /// Simplified JVMS 5.4.3.2 / 5.4.3.3. Check member existence by walking the owner,
     /// then the superclass chain, then superinterfaces by BFS.
     /// java/lang/Object members are resolved from built-in knowledge because Kt facade

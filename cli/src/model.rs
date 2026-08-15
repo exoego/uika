@@ -288,13 +288,24 @@ pub enum Reason {
     FieldBecameFinal,
     FieldBecameStatic,
     FieldBecameInstance,
+    /// A class named in `META-INF/services/<iface>` that ServiceLoader could construct
+    /// under old no longer exists under new: ServiceConfigurationError ("provider not
+    /// found") at ServiceLoader.load()/iteration time. Not a LinkageError — the JVM
+    /// discovers the class via Class.forName, catches ClassNotFoundException itself, and
+    /// wraps it, so nothing else in this file's reference-based checks can see it.
+    ServiceProviderRemoved,
+    /// The provider still exists under new but ServiceLoader can no longer construct it
+    /// (became abstract/interface, lost public visibility, or lost every public no-arg
+    /// constructor and public static `provider()` factory): ServiceConfigurationError
+    /// ("provider could not be instantiated").
+    ServiceProviderNotInstantiable,
 }
 
 impl Reason {
     /// ADD NEW VARIANTS HERE TOO — the compiler cannot check this, since an exhaustive
     /// `match` forces a new arm and never a new array entry. A variant missing here loses
     /// its exclude-rule `kind` string, so a legitimate rule fails with `unknown kind`.
-    pub const ALL: [Reason; 20] = [
+    pub const ALL: [Reason; 22] = [
         Reason::ClassRemoved,
         Reason::ClassAccessNarrowed,
         Reason::ClassBecameAbstract,
@@ -315,6 +326,8 @@ impl Reason {
         Reason::FieldBecameFinal,
         Reason::FieldBecameStatic,
         Reason::FieldBecameInstance,
+        Reason::ServiceProviderRemoved,
+        Reason::ServiceProviderNotInstantiable,
     ];
 
     /// The stable wire/report string. Everything user-visible (JSON, verdicts stream,
@@ -341,6 +354,8 @@ impl Reason {
             Reason::FieldBecameFinal => "field became final",
             Reason::FieldBecameStatic => "field became static",
             Reason::FieldBecameInstance => "field became instance",
+            Reason::ServiceProviderRemoved => "service provider removed",
+            Reason::ServiceProviderNotInstantiable => "service provider not instantiable",
         }
     }
 
