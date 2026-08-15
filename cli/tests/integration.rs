@@ -490,6 +490,61 @@ fn detects_kotest_stale_engine_registration_in_the_relocation_shim() {
     assert!(v.reference.member.is_none());
 }
 
+/// sshd-core 2.2.0's module split moved `RootedFileSystemProvider` to the new sshd-common
+/// artifact but left `META-INF/services/java.nio.file.spi.FileSystemProvider` behind,
+/// stale until 2.7.0 moved the file too
+/// (https://github.com/apache/mina-sshd/commit/23773e383221; fallout:
+/// https://issues.apache.org/jira/browse/MCOMPILER-436). Without sshd-common on the
+/// classpath, touching `FileSystems`/`Paths` throws `ServiceConfigurationError`
+/// (JVM-confirmed, fixtures/README.md). The service is a JDK class outside every scope,
+/// but the provider names it as its DIRECT superclass, so reaching the target name on the
+/// walk proves the old side without resolving the JDK class — no `--jdk-release` needed.
+/// The three `class removed` violations are the same split seen by the ordinary reference
+/// check: on this curated classpath both faces of the incident surface together.
+#[test]
+fn detects_sshds_stale_file_system_provider_registration() {
+    let old_jar = fixture("sshd-core-2.1.0.jar");
+    let new_jar = fixture("sshd-core-2.2.0.jar");
+    let targets = [new_jar.clone()];
+
+    let report = uika::run_check(
+        std::slice::from_ref(&old_jar),
+        std::slice::from_ref(&new_jar),
+        &targets,
+        &[],
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(report.violations.len(), 4, "{:?}", report.violations);
+    let spi: Vec<_> = report
+        .violations
+        .iter()
+        .filter(|v| v.reason == Reason::ServiceProviderRemoved)
+        .collect();
+    assert_eq!(spi.len(), 1, "{:?}", report.violations);
+    assert_eq!(
+        spi[0].source_class.as_str(),
+        "org/apache/sshd/common/file/root/RootedFileSystemProvider"
+    );
+    assert_eq!(
+        spi[0].reference.owner.as_str(),
+        "java/nio/file/spi/FileSystemProvider"
+    );
+    assert!(
+        report
+            .violations
+            .iter()
+            .filter(|v| v.reason == Reason::ClassRemoved)
+            .count()
+            == 3,
+        "{:?}",
+        report.violations
+    );
+}
+
 /// https://github.com/rburgst/okhttp-digest/issues/57:
 /// okhttp-digest 1.x calls RequestLine.requestPath as a static OkHttp 3 method.
 /// OkHttp 4.0.x changed RequestLine into a Kotlin object, making requestPath an

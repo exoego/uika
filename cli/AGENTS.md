@@ -431,8 +431,11 @@ pass-2 classes are typically below 0.1% of the scan.
 - Not in the verdicts stream (the root CLAUDE.md exclusion list names both reasons) and
   not golden-coverable: `check::check`, the goldens' entry point, has no JAR paths to read
   META-INF/services from. Coverage is `detects_a_provider_that_became_abstract` (synthetic,
-  not instantiable) and `detects_kotest_stale_engine_registration_in_the_relocation_shim`
-  (real pair, removed), both path-based `run_check`, plus the check.rs unit tests.
+  not instantiable), `detects_kotest_stale_engine_registration_in_the_relocation_shim`
+  (real pair, removed) and `detects_sshds_stale_file_system_provider_registration`
+  (real pair whose service is a JDK class outside every scope: the provider names it as
+  its direct superclass, so the walk proves the old side from the edge alone), all
+  path-based `run_check`, plus the check.rs unit tests.
 
 ## Suggestions (upgrade-check only)
 

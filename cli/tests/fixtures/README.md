@@ -70,6 +70,20 @@ reproduced from the third-party binaries:
   (JVM-confirmed both ways: 5.9.1 with its dependency set loads the engine).
   junit-platform-engine 1.9.3 is vendored alongside so the old side can prove
   the provider implemented `TestEngine` (the `service provider removed` check)
+- sshd-core 2.2.0's module split moved `RootedFileSystemProvider` (and much of
+  `org.apache.sshd.common`) to the new sshd-common artifact but left
+  `META-INF/services/java.nio.file.spi.FileSystemProvider` behind in sshd-core,
+  stale until 2.7.0 moved the file too
+  (https://github.com/apache/mina-sshd/commit/23773e383221; fallout:
+  https://issues.apache.org/jira/browse/MCOMPILER-436). On a classpath without
+  sshd-common, the first `FileSystems`/`Paths` touch enumerates installed
+  providers and throws `java.util.ServiceConfigurationError: ... Provider
+  org.apache.sshd.common.file.root.RootedFileSystemProvider not found`
+  (JVM-confirmed both ways on JDK 21; the old side loads with slf4j-api on the
+  classpath). The service is a JDK class outside every scope, but the provider
+  names it as its direct superclass, so the old side proves assignability from
+  the edge alone — the `service provider removed` report needs no
+  `--jdk-release`
 - kotlin-stdlib 2.2.20 is probe support, not a scan input: the Kotlin-built
   fixtures (coroutines, ktor, koin, okhttp 4, pact) need it on the classpath
   when `tools/jvm-probe` loads their classes in a real JVM
@@ -267,8 +281,8 @@ javac --release 11 -cp o1 -d oa app/fixture/app/*.java
 ```
 
 `synthetic-spi-*` is authored here for the not-instantiable arm of the SPI provider-break
-check (see AGENTS.md "SPI provider breaks"); the removed arm has the real kotest pair
-above, but no vendorable pair breaks a still-present provider's shape. `Impl` is
+check (see AGENTS.md "SPI provider breaks"); the removed arm has the real kotest and
+sshd pairs above, but no vendorable pair breaks a still-present provider's shape. `Impl` is
 registered in `META-INF/services/fixture.lib.Spi` on both sides; 2.0 makes `Impl`
 abstract. JVM-confirmed: the consumer's `ServiceLoader.load(Spi.class)` loop prints
 against 1.0 and throws `java.util.ServiceConfigurationError: ... Provider
@@ -366,6 +380,8 @@ No golden scenario — only the path-based entry points read `META-INF/services`
 | `io.kotest:kotest-runner-junit5-jvm:5.9.1` | `76957400399f55a24164581419f2a3d07f727c48b03dc3972e2576e18747ea22` |
 | `io.kotest:kotest-runner-junit5-jvm:6.2.3` | `7d0a6cb0dee0c8186860154240911fcde3a1d00158ab0dea9a7c14570f7e5c64` |
 | `org.junit.platform:junit-platform-engine:1.9.3` | `0c39553d9a03510757227f5a1c6cc6530287b1a321ed6258450664874aa2a16a` |
+| `org.apache.sshd:sshd-core:2.1.0` | `e2378b388e3f234aeb9ad03d7fa7b84977eab94b862449dcbf859d096428d7ef` |
+| `org.apache.sshd:sshd-core:2.2.0` | `c0cd5ae21f427788afa3e17afe6588957207ccdffeb0f5ce446fcad9913eed27` |
 
 ## Licensing
 
@@ -387,6 +403,7 @@ Under the Apache License, Version 2.0 (`LICENSE-APACHE-2.0.txt`):
 - Caffeine — Copyright Ben Manes
 - Pact JVM — Copyright DiUS Computing Pty Ltd
 - Kotest — Copyright the Kotest contributors
+- Apache MINA SSHD — Copyright the Apache Software Foundation
 - Eclipse Jetty — Copyright Mort Bay Consulting Pty Ltd and others
   (dual-licensed EPL-2.0 / Apache-2.0; redistributed here under Apache-2.0)
 
