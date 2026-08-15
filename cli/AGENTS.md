@@ -384,74 +384,58 @@ pass-2 classes are typically below 0.1% of the scan.
 
 ## SPI (ServiceLoader) provider breaks
 
-- A class named in `META-INF/services/<iface>` that `ServiceLoader` could construct under
-  old but not under new throws `ServiceConfigurationError` at `ServiceLoader.load()`/
-  iteration time. Deliberately not part of "Linkage Semantics" above:
-  `ServiceConfigurationError` extends `Error` directly, not `LinkageError`. ServiceLoader
-  discovers the provider via `Class.forName` and wraps the checked exception itself
-  (`ClassNotFoundException`, `InstantiationException`, `IllegalAccessException`,
-  `NoSuchMethodException`), so there is no constant-pool reference or class-load edge for the
-  verdict loop or any graph walk above to see — the "reference" is a text line in a resource
-  file. JVM-confirmed on the `synthetic-spi-*` fixture (see `tests/fixtures/README.md`):
-  `Provider fixture.lib.Impl could not be instantiated`, caused by `InstantiationException`,
-  when `Impl` turns abstract between versions; the removed-class shape confirms as `Provider
-  ... not found`.
-- `check.rs::add_spi_violations` is its own walk, fed `ServiceFile`s (`reach.rs`) read
-  directly from the old/new library JARs — not the consumer scan targets `ReachInputs` reads,
-  which is gated behind reachability. Library JARs are small, so this always runs, the same
-  reasoning as "old/new library indexing simple and complete" in the top-level CLAUDE.md.
-- Resolved against the SAME "library + scanned classpath" scopes every other check in this
-  file uses (`old_scope`/`runtime_scope`), not the bare old/new library index: a provider the
-  upgrade moved out of the checked library into a different, unchanged JAR still on the
-  classpath is not a violation ("moves to another artifact... are not violations", same as
-  everywhere else). `collect_spi_wanted` adds such a provider to pass 2's `wanted` set (its
-  hierarchy needs no fetch — `graph` always carries super/interfaces for every scanned class —
-  only its member table does), so it resolves through `fetched` instead of reading as "not in
-  new" and getting misreported as removed.
-- Two reasons, both old-relative and scoped to providers the NEW service file still lists.
-  `ServiceProviderRemoved`: the class is in no scope layer at all. `ServiceProviderNotInstantiable`:
-  the class exists somewhere in scope but `spi_instantiable` says no. A provider only OLD
-  listed (the new file dropped the line entirely) is a deliberate library decision, not
-  diffable as "broken" without knowing whether anything actually required that one provider —
-  left unreported (no such "Arm B"). A provider only NEW lists is newly added, nothing to
-  regress against. The old-relative gate and the new-side verdict are both strict: only a
-  PROVEN old-side Yes gates the check, and only a PROVEN new-side No is reported —
-  `Subclass::Unknown` (an assignability edge escaping analyzed scope) suppresses either way,
-  the same "an unproven relationship must not manufacture a violation" direction as
-  `is_subclass`.
-- `spi_instantiable` matches `java.util.ServiceLoader`'s actual precedence (confirmed against
-  the JDK's own spec, not assumed): a public static zero-arg `provider()` method, when
-  declared, is used EXCLUSIVELY — found or not, the provider class's own shape (abstract, an
-  interface, or unrelated to the service type) stops mattering, only whether the method's
-  return type is assignable to the service interface. The constructor path (public, concrete,
-  assignable to the service type, public no-arg constructor) is tried only when no `provider()`
-  method exists at all. An invalid factory is not rescued by an otherwise-valid constructor on
-  the same class — first version of this check got both wrong (checked the constructor first
-  as an OR with the factory, and did not verify the factory's return type at all), caught in
-  review before merge; `a_broken_factory_is_not_rescued_by_a_valid_constructor`,
-  `a_factory_on_an_abstract_class_is_not_reported`, `a_void_returning_factory_is_broken`, and
-  `a_factory_returning_an_unrelated_type_is_broken` pin the fix. `is_assignable` is `is_subclass`
-  widened to also follow interfaces (assignability allows implementing the service type, not
-  just extending it): graph edges first, then the resolution scope's layers, Unknown on an
-  escape rather than a guess.
-- `source_class` is the provider, `reference.owner` the service interface, `source` the jar
-  whose service file still names it — the same shape the sealed/kind-flip walks use (subject
-  first, changed supertype as the reference) — so it renders as a structural violation
-  (`report.rs::is_structural`/`structural_lines`, no `runtime_error` line of its own) and is
-  ranked by the SAME post-hoc reachability pass as everything else, no new evidence tier: a
-  provider a scanned jar's own `META-INF/services` file registers is already a reachability
-  edge (`reach.rs::reachable_classes`'s `providers` map), so BFS marks it reachable for free
-  whenever the interface is (`service_impls_follow_iface_reachability`), or roots it directly
-  when the interface escapes scope (`service_iface_outside_scope_makes_impls_roots`).
-- No golden coverage: `check::check`, the entry point `golden.rs` and most of
-  `integration.rs` use, is handed already-loaded classes with no JAR paths to read
-  `META-INF/services` from. Only the path-based `run_check`/`run_check_with_indexes` reads
-  old/new service files, so this check is covered by
-  `detects_a_provider_that_lost_its_public_constructor` in `integration.rs` (calls
-  `run_check` directly) plus `check.rs` unit tests for every arm: removed, became
-  abstract/interface, lost constructor, narrowed visibility, no longer assignable to the
-  service interface, moved to an unchanged runtime artifact, the `provider()` precedence and
-  assignability cases above, broken-on-both-sides, newly-added, and the Arm-B skip.
+- A class named in `META-INF/services/<iface>` that ServiceLoader could construct under
+  old but not under new throws `ServiceConfigurationError` at load()/iteration time.
+  Deliberately not part of "Linkage Semantics" above: SCE extends Error, not LinkageError —
+  ServiceLoader resolves the provider reflectively and wraps the failure itself, so no
+  constant-pool reference or class-load edge carries the break; the "reference" is a text
+  line in a resource file. JVM-confirmed on the `synthetic-spi-*` fixture and the real
+  kotest relocation-shim pair (tests/fixtures/README.md).
+- `check.rs::add_spi_violations` is fed `ServiceFile`s read from the old/new library JARs
+  in `run_check_with_indexes` — always, unlike the reachability-gated consumer-side read
+  (library JARs are small). Candidates are only providers BOTH sides list for the same
+  service (`still_listed_providers`, deduplicated across files the way ServiceLoader dedups
+  names, first registration wins): a dropped line is a deliberate library decision, not
+  provably a break (the unreported "Arm B"); a newly added one has nothing to regress
+  against.
+- Instantiability is the CLASS-PATH rule: public, concrete, assignable to the service
+  type, public no-arg constructor. A public static `provider()` factory is deliberately
+  ignored: the JDK honors factories only for explicit-module providers resolved from
+  `provides` directives (`ServiceLoader.loadProvider` gates on `inExplicitModule`), while
+  `LazyClassPathLookupIterator` — the only reader of META-INF/services — and the
+  automatic-module path derived from those files require the constructor unconditionally.
+  A factory therefore neither rescues a lost constructor nor breaks a valid provider; an
+  earlier version modeled factory precedence and had both directions wrong, pinned now by
+  `a_provider_factory_does_not_rescue_a_lost_constructor` and
+  `a_stray_provider_factory_on_a_valid_provider_is_not_reported`.
+- Only a PROVEN old-side Yes gates the check and only a PROVEN new-side No is reported;
+  `Subclass::Unknown` suppresses both ways, including a provider only the scan graph knows
+  (still on the runtime classpath, member table unfetched — never "removed"). Resolution
+  uses the same old/runtime scopes as every other check, so a provider moved to an
+  unchanged classpath JAR is not a violation; `collect_spi_wanted` fetches member tables
+  for still-listed providers missing from either library index (the moved case, and a
+  shadow copy surviving a library-side removal). The old side's assignability walk
+  (`is_assignable`) is scope-first: the scan graph carries the NEW hierarchy whenever the
+  upgraded jar is a scan target, and graph-first re-judged the old side by the new shape,
+  hiding every dropped-interface break
+  (`a_dropped_interface_is_reported_when_the_new_jar_is_a_scan_target`).
+- Violation shape: `source_class` = provider, `reference.owner` = service interface,
+  `source` = the jar whose service file still names it — the sealed/kind-flip subject-first
+  shape, rendered via `report.rs::structural_lines`. A scanned jar's own registrations are
+  already reachability edges in `reach.rs`, so the provider is ranked for free; when no
+  scan target registers it the mark is unobservable and `check_scanned` leaves
+  `reachable = None` rather than claiming proven-unreachable
+  (`an_unscanned_provider_is_not_proven_unreachable`). In upgrade-check, a suggestion whose
+  referencing coordinate IS the changed coordinate is skipped as self-referential
+  (suggest.rs).
+- Not in the verdicts stream (the root CLAUDE.md exclusion list names both reasons) and
+  not golden-coverable: `check::check`, the goldens' entry point, has no JAR paths to read
+  META-INF/services from. Coverage is `detects_a_provider_that_became_abstract` (synthetic,
+  not instantiable), `detects_kotest_stale_engine_registration_in_the_relocation_shim`
+  (real pair, removed) and `detects_sshds_stale_file_system_provider_registration`
+  (real pair whose service is a JDK class outside every scope: the provider names it as
+  its direct superclass, so the walk proves the old side from the edge alone), all
+  path-based `run_check`, plus the check.rs unit tests.
 
 ## Suggestions (upgrade-check only)
 

@@ -59,6 +59,31 @@ reproduced from the third-party binaries:
   `new`. Bytecode compiled against 2.18.2, where it was a concrete final class,
   throws `InstantiationError` under 2.20.1 (the `new`-on-abstract check). The
   2.18.2 jar is both the old side and the consumer here
+- kotest 6 turned `kotest-runner-junit5-jvm` into a relocation shim: the 6.2.3
+  jar holds nothing but `META-INF/services/org.junit.platform.engine.TestEngine`,
+  still naming `KotestJunitPlatformTestEngine`, whose class moved to the new
+  `kotest-runner-junit-platform-jvm` artifact. The shim's POM pulls the sibling
+  in, so resolver-built classpaths survive; one assembled without it (minimized
+  fat jar, hand-built deploy) makes JUnit engine discovery throw
+  `java.util.ServiceConfigurationError: ... Provider
+  io.kotest.runner.junit.platform.KotestJunitPlatformTestEngine not found`
+  (JVM-confirmed both ways: 5.9.1 with its dependency set loads the engine).
+  junit-platform-engine 1.9.3 is vendored alongside so the old side can prove
+  the provider implemented `TestEngine` (the `service provider removed` check)
+- sshd-core 2.2.0's module split moved `RootedFileSystemProvider` (and much of
+  `org.apache.sshd.common`) to the new sshd-common artifact but left
+  `META-INF/services/java.nio.file.spi.FileSystemProvider` behind in sshd-core,
+  stale until 2.7.0 moved the file too
+  (https://github.com/apache/mina-sshd/commit/23773e383221; fallout:
+  https://issues.apache.org/jira/browse/MCOMPILER-436). On a classpath without
+  sshd-common, the first `FileSystems`/`Paths` touch enumerates installed
+  providers and throws `java.util.ServiceConfigurationError: ... Provider
+  org.apache.sshd.common.file.root.RootedFileSystemProvider not found`
+  (JVM-confirmed both ways on JDK 21; the old side loads with slf4j-api on the
+  classpath). The service is a JDK class outside every scope, but the provider
+  names it as its direct superclass, so the old side proves assignability from
+  the edge alone — the `service provider removed` report needs no
+  `--jdk-release`
 - kotlin-stdlib 2.2.20 is probe support, not a scan input: the Kotlin-built
   fixtures (coroutines, ktor, koin, okhttp 4, pact) need it on the classpath
   when `tools/jvm-probe` loads their classes in a real JVM
@@ -69,7 +94,8 @@ reproduced from the third-party binaries:
 shape-2 `AbstractMethodError` cleanly and in a few kilobytes: an interface gains
 an abstract method that an existing concrete implementor does not provide. The
 real incidents of this shape (for example jOOQ 3.17 adding `ExecuteListener.end`,
-which breaks Spring's `JooqExceptionTranslator`) ship multi-megabyte jars, and
+which breaks Spring's `JooqExceptionTranslator`;
+https://github.com/jOOQ/jOOQ/issues/14430) ship multi-megabyte jars, and
 well-maintained libraries usually avoid the break with default methods, so a
 synthetic triple is the cheapest faithful cover. `golden_synthetic_abstract_added`
 pins it and a real JVM confirms `BrokenTranslator.end()` throws AbstractMethodError
@@ -255,18 +281,18 @@ javac --release 11 -cp o1 -d oa app/fixture/app/*.java
 (cd oa && jar cf ../synthetic-default-conflict-consumer.jar fixture)
 ```
 
-`synthetic-spi-*` is authored here for the SPI (ServiceLoader) provider-break check
-(`check.rs::add_spi_violations`), which is not a `LinkageError` at all — no vendorable
-pair reproduces it, since it needs a `META-INF/services` provider that a version bump makes
-non-instantiable, and real-world instances of that shape (slf4j 1.x -> 2.x moving off static
-binding) don't fail this cleanly in a few kilobytes. `Impl` implements `Spi` and is
-registered as its `META-INF/services` provider on both sides; 2.0 makes `Impl` abstract. A
-real JVM confirms: the consumer's `ServiceLoader.load(Spi.class)` loop against 1.0 prints
-normally, against 2.0 it throws `java.util.ServiceConfigurationError: fixture.lib.Spi:
-Provider fixture.lib.Impl could not be instantiated`, caused by `InstantiationException` —
-not a `NoSuchMethodError`/`IllegalAccessError`, because ServiceLoader reflects the
-constructor itself rather than the JVM linker resolving a constant-pool reference. Nothing in
-the consumer's bytecode does `new Impl()`, so no other check here would ever see this break.
+`synthetic-spi-*` is authored here for the not-instantiable arm of the SPI provider-break
+check (see AGENTS.md "SPI provider breaks"); the removed arm has the real kotest and
+sshd pairs above, but no published pair breaks a still-present provider's shape yet. The
+minimized scenario is real practice landing one class over: the vendored
+jackson-module-kotlin pair registers `KotlinModule` in
+`META-INF/services/com.fasterxml.jackson.databind.Module` while the same 2.18.2 -> 2.20.1
+upgrade made `ValueClassBoxConverter` abstract. `Impl` is
+registered in `META-INF/services/fixture.lib.Spi` on both sides; 2.0 makes `Impl`
+abstract. JVM-confirmed: the consumer's `ServiceLoader.load(Spi.class)` loop prints
+against 1.0 and throws `java.util.ServiceConfigurationError: ... Provider
+fixture.lib.Impl could not be instantiated` (caused by `InstantiationException`) against
+2.0. Nothing in the consumer's bytecode names `Impl`, so no other check sees the break.
 
 ```bash
 mkdir -p v1/fixture/lib v2/fixture/lib app/fixture/app o1/META-INF/services o2/META-INF/services
@@ -317,11 +343,8 @@ javac --release 11 -cp o1 -d oa app/fixture/app/*.java
 (cd oa && jar cf ../synthetic-spi-consumer.jar fixture)
 ```
 
-No golden scenario: `check::check` (the entry point `golden.rs`/most of `integration.rs` use)
-takes already-loaded classes with no JAR paths to read `META-INF/services` from, so this
-check only runs through the path-based `uika::run_check`/`run_check_with_indexes` entry
-point. Covered instead by `detects_a_provider_that_lost_its_public_constructor` in
-`integration.rs`, which calls `run_check` directly.
+No golden scenario — only the path-based entry points read `META-INF/services`; AGENTS.md
+"SPI provider breaks" names the coverage.
 
 ## Contents
 
@@ -359,6 +382,11 @@ point. Covered instead by `detects_a_provider_that_lost_its_public_constructor` 
 | `org.ow2.asm:asm:9.10.1` | `ed825d10ab1399c8c0cb669e688cf0c8c82629b4c8399b58352b68e92ca10fcb` |
 | `org.eclipse.sisu:org.eclipse.sisu.inject:0.3.4` | `8c0e6aa7f35593016f2c5e78b604b57f023cdaca3561fe2fe36f2b5dbbae1d16` |
 | `org.eclipse.sisu:org.eclipse.sisu.inject:1.0.0` | `3ab8d7bfe68f3b6ec95c1a0a47e628edbc9d76e90634cb0a0ba121fbb11b8e42` |
+| `io.kotest:kotest-runner-junit5-jvm:5.9.1` | `76957400399f55a24164581419f2a3d07f727c48b03dc3972e2576e18747ea22` |
+| `io.kotest:kotest-runner-junit5-jvm:6.2.3` | `7d0a6cb0dee0c8186860154240911fcde3a1d00158ab0dea9a7c14570f7e5c64` |
+| `org.junit.platform:junit-platform-engine:1.9.3` | `0c39553d9a03510757227f5a1c6cc6530287b1a321ed6258450664874aa2a16a` |
+| `org.apache.sshd:sshd-core:2.1.0` | `e2378b388e3f234aeb9ad03d7fa7b84977eab94b862449dcbf859d096428d7ef` |
+| `org.apache.sshd:sshd-core:2.2.0` | `c0cd5ae21f427788afa3e17afe6588957207ccdffeb0f5ce446fcad9913eed27` |
 
 ## Licensing
 
@@ -379,6 +407,8 @@ Under the Apache License, Version 2.0 (`LICENSE-APACHE-2.0.txt`):
 - Koin — Copyright Kotzilla and Koin project contributors
 - Caffeine — Copyright Ben Manes
 - Pact JVM — Copyright DiUS Computing Pty Ltd
+- Kotest — Copyright the Kotest contributors
+- Apache MINA SSHD — Copyright the Apache Software Foundation
 - Eclipse Jetty — Copyright Mort Bay Consulting Pty Ltd and others
   (dual-licensed EPL-2.0 / Apache-2.0; redistributed here under Apache-2.0)
 
@@ -391,4 +421,6 @@ Under the Eclipse Public License:
 - Eclipse Sisu 0.3.4 — Copyright Sonatype, Inc. and others
   (EPL-1.0, `LICENSE-EPL-1.0.txt`)
 - Eclipse Sisu 1.0.0 — Copyright the Eclipse Sisu contributors
+  (EPL-2.0, `LICENSE-EPL-2.0.txt`)
+- JUnit Platform — Copyright the JUnit Team
   (EPL-2.0, `LICENSE-EPL-2.0.txt`)

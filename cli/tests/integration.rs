@@ -338,24 +338,20 @@ fn detects_a_default_method_conflict_from_a_newly_added_default() {
     assert!(diff(&old_index, &new_index).is_empty());
 }
 
-/// A real JVM confirms the fixture: `fixture.lib.Impl` is registered in
-/// `META-INF/services/fixture.lib.Spi` on both sides. Running the consumer's
-/// `ServiceLoader.load(Spi.class)` loop against 1.0 prints normally; against 2.0 (Impl
-/// turned abstract) it throws `java.util.ServiceConfigurationError: fixture.lib.Spi:
-/// Provider fixture.lib.Impl could not be instantiated`, caused by
-/// `InstantiationException`. Not a LinkageError — ServiceLoader discovers the provider via
-/// Class.forName and wraps the checked exception itself — and not reachable through any
-/// other check here: nothing in the consumer's bytecode does `new Impl()` or names a member
-/// on it, only `Spi.class` and `ServiceLoader.load`. Uses `uika::run_check` rather than
-/// `check::check`: only the path-based entry point reads META-INF/services from the old/new
-/// JARs (`check::check` is handed already-loaded classes with no paths to read resources
-/// from). The new JAR is also a scan target, matching a real runtime classpath (it is where
-/// `META-INF/services/fixture.lib.Spi` registering Impl actually lives), which is what
-/// gives `reach.rs` the Spi -> Impl provider edge and makes the violation provably reachable
-/// from the consumer's own `Spi.class` reference, mirroring
-/// `reachability_tiers_violation_by_app_roots`.
+/// Synthetic triple minimizing a realistic-but-unpublished move: jackson-module-kotlin
+/// registers `KotlinModule` in `META-INF/services/com.fasterxml.jackson.databind.Module`,
+/// and the SAME vendored pair (2.18.2 -> 2.20.1) really did make a class abstract
+/// (`ValueClassBoxConverter`, the `new`-on-abstract fixture). This triple is that move
+/// landing on the registered provider itself — no published pair does it yet, so per the
+/// fixture policy it is authored and JVM-confirmed (fixtures/README.md): the consumer's
+/// `ServiceLoader.load(Spi.class)` loop throws `... Provider fixture.lib.Impl could not
+/// be instantiated` under 2.0. No other check can see it — the consumer's bytecode never
+/// names Impl. Uses `uika::run_check` because only the path-based entry points read
+/// META-INF/services (so no golden covers this; see AGENTS.md "SPI provider breaks").
+/// The new JAR is a scan target, which gives `reach.rs` the Spi -> Impl provider edge
+/// and proves the violation reachable.
 #[test]
-fn detects_a_provider_that_lost_its_public_constructor() {
+fn detects_a_provider_that_became_abstract() {
     let old_jar = fixture("synthetic-spi-1.0.jar");
     let new_jar = fixture("synthetic-spi-2.0.jar");
     let consumer = fixture("synthetic-spi-consumer.jar");
@@ -383,6 +379,175 @@ fn detects_a_provider_that_lost_its_public_constructor() {
         Some(true),
         "the consumer's own ServiceLoader.load(Spi.class) call makes Spi (and its \
          registered provider) reachable"
+    );
+}
+
+/// When the new jar is NOT a scan target the provider is invisible to the reachability
+/// BFS, so its violation must stay unranked (None), never "proven unreachable" — a
+/// Some(false) would let `--fail-on reachable` pass on a JVM-confirmed break.
+#[test]
+fn an_unscanned_provider_is_not_proven_unreachable() {
+    let old_jar = fixture("synthetic-spi-1.0.jar");
+    let new_jar = fixture("synthetic-spi-2.0.jar");
+    let consumer = fixture("synthetic-spi-consumer.jar");
+
+    let report = uika::run_check(
+        std::slice::from_ref(&old_jar),
+        std::slice::from_ref(&new_jar),
+        std::slice::from_ref(&consumer),
+        std::slice::from_ref(&consumer),
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(report.violations.len(), 1, "{:?}", report.violations);
+    let v = &report.violations[0];
+    assert_eq!(v.reason, Reason::ServiceProviderNotInstantiable);
+    assert_eq!(v.reachable, None, "{:?}", v.reachable);
+}
+
+/// An SPI violation's source is the upgraded library's own jar, so mapping it through the
+/// coordinate table would advise aligning the coordinate with itself. It must stay
+/// unannotated instead.
+#[test]
+fn spi_violation_gets_no_self_referential_suggestion() {
+    let old_jar = fixture("synthetic-spi-1.0.jar");
+    let new_jar = fixture("synthetic-spi-2.0.jar");
+    let consumer = fixture("synthetic-spi-consumer.jar");
+
+    let dir = std::env::temp_dir().join(format!("uika-spi-suggest-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dump = |version: &str, file: &std::path::Path| {
+        format!(
+            r#"{{"modules":[{{"module":":app","classesDirs":[],"artifacts":[
+                {{"group":"fixture","name":"spi","version":"{version}","file":"{}"}},
+                {{"group":"fixture","name":"consumer","version":"1.0","file":"{}"}}
+            ]}}]}}"#,
+            file.display(),
+            consumer.display(),
+        )
+    };
+    let before_path = dir.join("before.json");
+    let after_path = dir.join("after.json");
+    std::fs::write(&before_path, dump("1.0", &old_jar)).unwrap();
+    std::fs::write(&after_path, dump("2.0", &new_jar)).unwrap();
+
+    let before = uika::gradle::load_dump(&before_path).unwrap();
+    let after = uika::gradle::load_dump(&after_path).unwrap();
+    let changes = uika::gradle::diff_dumps(&before, &after);
+    let mut report = uika::run_check(
+        &changes.old_jars,
+        &changes.new_jars,
+        &after.scan_targets,
+        &after.app_roots,
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    uika::suggest::annotate(&mut report.violations, &before, &after, &changes.changes);
+
+    let v = report
+        .violations
+        .iter()
+        .find(|v| v.reason == Reason::ServiceProviderNotInstantiable)
+        .expect("SPI violation expected");
+    assert!(v.suggestion.is_none(), "{:?}", v.suggestion);
+}
+
+/// Kotest 6 turned kotest-runner-junit5-jvm into a relocation shim whose only content is
+/// `META-INF/services/org.junit.platform.engine.TestEngine`, still naming
+/// `KotestJunitPlatformTestEngine`; the class moved to kotest-runner-junit-platform-jvm.
+/// On a classpath without that sibling, JUnit engine discovery throws
+/// `ServiceConfigurationError: Provider ... not found` (JVM-confirmed both ways,
+/// fixtures/README.md) — the real-pair cover for the removed arm, next to the synthetic
+/// not-instantiable one above.
+#[test]
+fn detects_kotest_stale_engine_registration_in_the_relocation_shim() {
+    let old_jar = fixture("kotest-runner-junit5-jvm-5.9.1.jar");
+    let new_jar = fixture("kotest-runner-junit5-jvm-6.2.3.jar");
+    let platform = fixture("junit-platform-engine-1.9.3.jar");
+    let targets = [new_jar.clone(), platform.clone()];
+
+    let report = uika::run_check(
+        std::slice::from_ref(&old_jar),
+        std::slice::from_ref(&new_jar),
+        &targets,
+        &[],
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(report.violations.len(), 1, "{:?}", report.violations);
+    let v = &report.violations[0];
+    assert_eq!(v.reason, Reason::ServiceProviderRemoved);
+    assert_eq!(
+        v.source_class.as_str(),
+        "io/kotest/runner/junit/platform/KotestJunitPlatformTestEngine"
+    );
+    assert_eq!(
+        v.reference.owner.as_str(),
+        "org/junit/platform/engine/TestEngine"
+    );
+    assert!(v.reference.member.is_none());
+}
+
+/// sshd-core 2.2.0's module split moved `RootedFileSystemProvider` to the new sshd-common
+/// artifact but left `META-INF/services/java.nio.file.spi.FileSystemProvider` behind,
+/// stale until 2.7.0 moved the file too
+/// (https://github.com/apache/mina-sshd/commit/23773e383221; fallout:
+/// https://issues.apache.org/jira/browse/MCOMPILER-436). Without sshd-common on the
+/// classpath, touching `FileSystems`/`Paths` throws `ServiceConfigurationError`
+/// (JVM-confirmed, fixtures/README.md). The service is a JDK class outside every scope,
+/// but the provider names it as its DIRECT superclass, so reaching the target name on the
+/// walk proves the old side without resolving the JDK class — no `--jdk-release` needed.
+/// The three `class removed` violations are the same split seen by the ordinary reference
+/// check: on this curated classpath both faces of the incident surface together.
+#[test]
+fn detects_sshds_stale_file_system_provider_registration() {
+    let old_jar = fixture("sshd-core-2.1.0.jar");
+    let new_jar = fixture("sshd-core-2.2.0.jar");
+    let targets = [new_jar.clone()];
+
+    let report = uika::run_check(
+        std::slice::from_ref(&old_jar),
+        std::slice::from_ref(&new_jar),
+        &targets,
+        &[],
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(report.violations.len(), 4, "{:?}", report.violations);
+    let spi: Vec<_> = report
+        .violations
+        .iter()
+        .filter(|v| v.reason == Reason::ServiceProviderRemoved)
+        .collect();
+    assert_eq!(spi.len(), 1, "{:?}", report.violations);
+    assert_eq!(
+        spi[0].source_class.as_str(),
+        "org/apache/sshd/common/file/root/RootedFileSystemProvider"
+    );
+    assert_eq!(
+        spi[0].reference.owner.as_str(),
+        "java/nio/file/spi/FileSystemProvider"
+    );
+    assert!(
+        report
+            .violations
+            .iter()
+            .filter(|v| v.reason == Reason::ClassRemoved)
+            .count()
+            == 3,
+        "{:?}",
+        report.violations
     );
 }
 
@@ -1010,8 +1175,7 @@ fn jdk_layer_resolves_hierarchy_escapes_without_changing_verdicts() {
         &Default::default(),
         None,
         None,
-        &[],
-        &[],
+        &Default::default(),
         None,
     );
     assert!(baseline.unknown_refs > 0, "expected hierarchy escapes");
@@ -1034,8 +1198,7 @@ fn jdk_layer_resolves_hierarchy_escapes_without_changing_verdicts() {
         &Default::default(),
         Some(&mut indexer),
         None,
-        &[],
-        &[],
+        &Default::default(),
         None,
     );
     assert_eq!(with_jdk.unknown_refs, 0, "all escapes should conclude");

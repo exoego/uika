@@ -9,7 +9,7 @@
 
 use crate::gradle::{ChangeKind, DependencyChange, Universe};
 use crate::intern::{Sym, intern};
-use crate::model::{Suggestion, Violation};
+use crate::model::{Reason, Suggestion, Violation};
 use rustc_hash::FxHashMap;
 use std::path::Path;
 
@@ -62,6 +62,20 @@ impl<'a> Annotator<'a> {
             };
             let change = &changes[ci];
             let referenced_by = self.file_coord.get(v.source.as_str()).cloned();
+            // An SPI violation's source is the upgraded library's own jar; when the service
+            // interface is that same coordinate, the advice below would tell the user to
+            // align the coordinate with itself. No annotation beats a self-referential one.
+            // referenced_by is "g:n:v", change.coordinate "g:n".
+            if matches!(
+                v.reason,
+                Reason::ServiceProviderRemoved | Reason::ServiceProviderNotInstantiable
+            ) && referenced_by
+                .as_deref()
+                .and_then(|c| c.rsplit_once(':'))
+                .is_some_and(|(gn, _)| gn == change.coordinate)
+            {
+                continue;
+            }
             // Only asked for a coordinate the upgrade dropped entirely; that is the one advice
             // branch whose claim ("still needs it") an optional declaration contradicts.
             let owner_optional = change.after.is_empty()

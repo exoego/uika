@@ -437,22 +437,19 @@ fn structural_lines(v: &Violation) -> (String, String) {
             format!("extends or implements {owner}, which became a class"),
             icce_on_load(),
         ),
-        // Not class-load breaks at all — ServiceLoader discovers providers via
-        // Class.forName, catching ClassNotFoundException/ReflectiveOperationException
-        // itself, so neither throws a LinkageError. Rendered here anyway (not
-        // reference_blocks) because there is no constant-pool reference behind it: the
-        // "reference" is a text line in META-INF/services.
+        // Not class-load breaks: ServiceLoader wraps the reflective failure itself, so
+        // neither is a LinkageError. Rendered here rather than reference_blocks because no
+        // constant-pool reference exists behind them.
         (ServiceProviderRemoved, _) => (
-            format!("is registered in META-INF/services as a provider for {owner}, but the class is gone"),
+            format!("is still registered in this jar's META-INF/services as a provider for {owner}, but the class is gone"),
             "throws ServiceConfigurationError (provider not found) when ServiceLoader loads it".to_string(),
         ),
         (ServiceProviderNotInstantiable, _) => (
             format!(
                 "is registered in META-INF/services as a provider for {owner}, but is no longer \
-                 a public concrete class with a public no-arg constructor (or a public static \
-                 `provider()` method)"
+                 a public concrete subtype of it with a public no-arg constructor"
             ),
-            "throws ServiceConfigurationError (provider could not be instantiated) when ServiceLoader loads it".to_string(),
+            "throws ServiceConfigurationError (not a subtype, or provider could not be instantiated) when ServiceLoader loads it".to_string(),
         ),
         // The graph walks always attach the member to these two reasons (check.rs); a
         // member-less one would be malformed, so degrade readably rather than panic.
