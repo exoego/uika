@@ -59,6 +59,17 @@ reproduced from the third-party binaries:
   `new`. Bytecode compiled against 2.18.2, where it was a concrete final class,
   throws `InstantiationError` under 2.20.1 (the `new`-on-abstract check). The
   2.18.2 jar is both the old side and the consumer here
+- kotest 6 turned `kotest-runner-junit5-jvm` into a relocation shim: the 6.2.3
+  jar holds nothing but `META-INF/services/org.junit.platform.engine.TestEngine`,
+  still naming `KotestJunitPlatformTestEngine`, whose class moved to the new
+  `kotest-runner-junit-platform-jvm` artifact. The shim's POM pulls the sibling
+  in, so resolver-built classpaths survive; one assembled without it (minimized
+  fat jar, hand-built deploy) makes JUnit engine discovery throw
+  `java.util.ServiceConfigurationError: ... Provider
+  io.kotest.runner.junit.platform.KotestJunitPlatformTestEngine not found`
+  (JVM-confirmed both ways: 5.9.1 with its dependency set loads the engine).
+  junit-platform-engine 1.9.3 is vendored alongside so the old side can prove
+  the provider implemented `TestEngine` (the `service provider removed` check)
 - kotlin-stdlib 2.2.20 is probe support, not a scan input: the Kotlin-built
   fixtures (coroutines, ktor, koin, okhttp 4, pact) need it on the classpath
   when `tools/jvm-probe` loads their classes in a real JVM
@@ -255,8 +266,9 @@ javac --release 11 -cp o1 -d oa app/fixture/app/*.java
 (cd oa && jar cf ../synthetic-default-conflict-consumer.jar fixture)
 ```
 
-`synthetic-spi-*` is authored here for the SPI provider-break check (see AGENTS.md "SPI
-provider breaks"); no vendorable pair fails this cleanly in a few kilobytes. `Impl` is
+`synthetic-spi-*` is authored here for the not-instantiable arm of the SPI provider-break
+check (see AGENTS.md "SPI provider breaks"); the removed arm has the real kotest pair
+above, but no vendorable pair breaks a still-present provider's shape. `Impl` is
 registered in `META-INF/services/fixture.lib.Spi` on both sides; 2.0 makes `Impl`
 abstract. JVM-confirmed: the consumer's `ServiceLoader.load(Spi.class)` loop prints
 against 1.0 and throws `java.util.ServiceConfigurationError: ... Provider
@@ -351,6 +363,9 @@ No golden scenario — only the path-based entry points read `META-INF/services`
 | `org.ow2.asm:asm:9.10.1` | `ed825d10ab1399c8c0cb669e688cf0c8c82629b4c8399b58352b68e92ca10fcb` |
 | `org.eclipse.sisu:org.eclipse.sisu.inject:0.3.4` | `8c0e6aa7f35593016f2c5e78b604b57f023cdaca3561fe2fe36f2b5dbbae1d16` |
 | `org.eclipse.sisu:org.eclipse.sisu.inject:1.0.0` | `3ab8d7bfe68f3b6ec95c1a0a47e628edbc9d76e90634cb0a0ba121fbb11b8e42` |
+| `io.kotest:kotest-runner-junit5-jvm:5.9.1` | `76957400399f55a24164581419f2a3d07f727c48b03dc3972e2576e18747ea22` |
+| `io.kotest:kotest-runner-junit5-jvm:6.2.3` | `7d0a6cb0dee0c8186860154240911fcde3a1d00158ab0dea9a7c14570f7e5c64` |
+| `org.junit.platform:junit-platform-engine:1.9.3` | `0c39553d9a03510757227f5a1c6cc6530287b1a321ed6258450664874aa2a16a` |
 
 ## Licensing
 
@@ -371,6 +386,7 @@ Under the Apache License, Version 2.0 (`LICENSE-APACHE-2.0.txt`):
 - Koin — Copyright Kotzilla and Koin project contributors
 - Caffeine — Copyright Ben Manes
 - Pact JVM — Copyright DiUS Computing Pty Ltd
+- Kotest — Copyright the Kotest contributors
 - Eclipse Jetty — Copyright Mort Bay Consulting Pty Ltd and others
   (dual-licensed EPL-2.0 / Apache-2.0; redistributed here under Apache-2.0)
 
@@ -383,4 +399,6 @@ Under the Eclipse Public License:
 - Eclipse Sisu 0.3.4 — Copyright Sonatype, Inc. and others
   (EPL-1.0, `LICENSE-EPL-1.0.txt`)
 - Eclipse Sisu 1.0.0 — Copyright the Eclipse Sisu contributors
+  (EPL-2.0, `LICENSE-EPL-2.0.txt`)
+- JUnit Platform — Copyright the JUnit Team
   (EPL-2.0, `LICENSE-EPL-2.0.txt`)

@@ -345,7 +345,7 @@ fn detects_a_default_method_conflict_from_a_newly_added_default() {
 /// this; see AGENTS.md "SPI provider breaks"). The new JAR is a scan target, which gives
 /// `reach.rs` the Spi -> Impl provider edge and proves the violation reachable.
 #[test]
-fn detects_a_provider_that_lost_its_public_constructor() {
+fn detects_a_provider_that_became_abstract() {
     let old_jar = fixture("synthetic-spi-1.0.jar");
     let new_jar = fixture("synthetic-spi-2.0.jar");
     let consumer = fixture("synthetic-spi-consumer.jar");
@@ -449,6 +449,45 @@ fn spi_violation_gets_no_self_referential_suggestion() {
         .find(|v| v.reason == Reason::ServiceProviderNotInstantiable)
         .expect("SPI violation expected");
     assert!(v.suggestion.is_none(), "{:?}", v.suggestion);
+}
+
+/// Kotest 6 turned kotest-runner-junit5-jvm into a relocation shim whose only content is
+/// `META-INF/services/org.junit.platform.engine.TestEngine`, still naming
+/// `KotestJunitPlatformTestEngine`; the class moved to kotest-runner-junit-platform-jvm.
+/// On a classpath without that sibling, JUnit engine discovery throws
+/// `ServiceConfigurationError: Provider ... not found` (JVM-confirmed both ways,
+/// fixtures/README.md) — the real-pair cover for the removed arm, next to the synthetic
+/// not-instantiable one above.
+#[test]
+fn detects_kotest_stale_engine_registration_in_the_relocation_shim() {
+    let old_jar = fixture("kotest-runner-junit5-jvm-5.9.1.jar");
+    let new_jar = fixture("kotest-runner-junit5-jvm-6.2.3.jar");
+    let platform = fixture("junit-platform-engine-1.9.3.jar");
+    let targets = [new_jar.clone(), platform.clone()];
+
+    let report = uika::run_check(
+        std::slice::from_ref(&old_jar),
+        std::slice::from_ref(&new_jar),
+        &targets,
+        &[],
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(report.violations.len(), 1, "{:?}", report.violations);
+    let v = &report.violations[0];
+    assert_eq!(v.reason, Reason::ServiceProviderRemoved);
+    assert_eq!(
+        v.source_class.as_str(),
+        "io/kotest/runner/junit/platform/KotestJunitPlatformTestEngine"
+    );
+    assert_eq!(
+        v.reference.owner.as_str(),
+        "org/junit/platform/engine/TestEngine"
+    );
+    assert!(v.reference.member.is_none());
 }
 
 /// https://github.com/rburgst/okhttp-digest/issues/57:

@@ -389,8 +389,8 @@ pass-2 classes are typically below 0.1% of the scan.
   Deliberately not part of "Linkage Semantics" above: SCE extends Error, not LinkageError —
   ServiceLoader resolves the provider reflectively and wraps the failure itself, so no
   constant-pool reference or class-load edge carries the break; the "reference" is a text
-  line in a resource file. JVM-confirmed on the `synthetic-spi-*` fixture
-  (tests/fixtures/README.md).
+  line in a resource file. JVM-confirmed on the `synthetic-spi-*` fixture and the real
+  kotest relocation-shim pair (tests/fixtures/README.md).
 - `check.rs::add_spi_violations` is fed `ServiceFile`s read from the old/new library JARs
   in `run_check_with_indexes` — always, unlike the reachability-gated consumer-side read
   (library JARs are small). Candidates are only providers BOTH sides list for the same
@@ -430,8 +430,9 @@ pass-2 classes are typically below 0.1% of the scan.
   (suggest.rs).
 - Not in the verdicts stream (the root CLAUDE.md exclusion list names both reasons) and
   not golden-coverable: `check::check`, the goldens' entry point, has no JAR paths to read
-  META-INF/services from. Coverage is `detects_a_provider_that_lost_its_public_constructor`
-  (path-based `run_check`) plus the check.rs unit tests.
+  META-INF/services from. Coverage is `detects_a_provider_that_became_abstract` (synthetic,
+  not instantiable) and `detects_kotest_stale_engine_registration_in_the_relocation_shim`
+  (real pair, removed), both path-based `run_check`, plus the check.rs unit tests.
 
 ## Suggestions (upgrade-check only)
 
