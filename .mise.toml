@@ -1,6 +1,6 @@
 [tools]
-gradle = "9.6.1"
-sbt = "1.12.12"
+gradle = "9.7.0"
+sbt = "1.12.15"
 maven = "3.9.16"
 # tools/jvm-probe needs JDK 16+ (records, switch expressions, source launcher).
 java = "temurin-21"
