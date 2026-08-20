@@ -405,6 +405,19 @@ pass-2 classes are typically below 0.1% of the scan.
   two segments minimum). Names normalize to the slashed form so lookups match
   `Violation.source_class` directly. Frames cap at MAX_FRAMES; first stack
   wins.
+- Two rules exist because REAL JDK 25 cause output broke the synthetic
+  assumptions (`real_jdk_stack_shape_parses_through_monitors_and_custom_loaders`
+  pins the verbatim shape): monitor annotations (`- locked <0x...>`) interleave
+  a stack's frames and must not end the block, and `is_machinery` matches
+  loader METHOD NAMES (loadClass/findClass/defineClass) on top of the JDK
+  loader packages, because a custom loader (javac's source-launcher
+  MemoryClassLoader, an app server's) sits in the delegation chain under its
+  own package and would otherwise be picked as the trigger. The only test
+  allowed to shell out to a JVM,
+  `a_real_jvm_emitted_class_load_log_promotes_the_violation`, feeds a log a
+  real `java -Xlog` run EMITTED into the full report and skips without a JVM —
+  keep it, because promote-only means parser-vs-format drift has no symptom
+  besides silently promoting nothing.
 - Drafting groups by the referenced symbol because that is what an exclude rule
   matches: a symbol also broken by a reachable or observed class is never
   drafted, since the rule would waive the real break too. Drafted TOML must

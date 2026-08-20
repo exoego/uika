@@ -913,6 +913,164 @@ fn reachability_tiers_violation_by_app_roots() {
     );
 }
 
+/// Locate a JVM and its feature release: JAVA_HOME first, then PATH. None when absent or
+/// the `--version` line does not parse.
+fn find_java() -> Option<(std::path::PathBuf, u32)> {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(home) = std::env::var("JAVA_HOME") {
+        candidates.push(std::path::Path::new(&home).join("bin").join("java"));
+    }
+    candidates.push(std::path::PathBuf::from("java"));
+    for java in candidates {
+        let Ok(out) = std::process::Command::new(&java).arg("--version").output() else {
+            continue;
+        };
+        if !out.status.success() {
+            continue;
+        }
+        // First line reads like "openjdk 21.0.11 2026-04-21 LTS".
+        let text = String::from_utf8_lossy(&out.stdout);
+        let feature = text
+            .split_whitespace()
+            .nth(1)
+            .and_then(|v| v.split('.').next())
+            .and_then(|v| v.parse().ok());
+        if let Some(feature) = feature {
+            return Some((java, feature));
+        }
+    }
+    None
+}
+
+/// True end to end over a real JVM: the class-load log is EMITTED by `java -Xlog`, never
+/// hand-written, so drift between real unified-logging output and the evidence parser
+/// fails here — promote-only means a parser that matches nothing has no symptom beyond
+/// silently promoting nothing. On JDK 22+ the `class+load+cause` variant is exercised too
+/// (https://bugs.openjdk.org/browse/JDK-8193513); real output from it found two bugs the
+/// synthetic tests missed (monitor annotations read as the end of a stack, and a custom
+/// loader's frame chosen as the trigger). Skipped without a usable JVM, and on Windows
+/// (classpath separators and -Xlog file quoting differ there).
+#[test]
+fn a_real_jvm_emitted_class_load_log_promotes_the_violation() {
+    if cfg!(windows) {
+        eprintln!("skipping: classpath separators and -Xlog file quoting differ on Windows");
+        return;
+    }
+    let Some((java, feature)) = find_java() else {
+        eprintln!("skipping: no usable java on JAVA_HOME or PATH");
+        return;
+    };
+    if feature < 11 {
+        eprintln!("skipping: the source-file launcher needs JDK 11+ (found {feature})");
+        return;
+    }
+
+    let dir = std::env::temp_dir().join(format!("uika-real-jvm-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let runner = dir.join("LoadIt.java");
+    std::fs::write(
+        &runner,
+        "public class LoadIt {\n\
+         \x20   public static void main(String[] args) throws Exception {\n\
+         \x20       Class.forName(args[0], false, LoadIt.class.getClassLoader());\n\
+         \x20   }\n\
+         }\n",
+    )
+    .unwrap();
+    // The CURRENT (pre-upgrade) classpath, exactly the collection workflow: coroutines
+    // 1.7.1 still has the method, so BlockingAdapter loads cleanly while the log is
+    // written. kotlin-stdlib is vendored in fixtures for the probe already.
+    let classpath = [
+        fixture("ktor-io-jvm-2.3.13.jar"),
+        fixture("kotlin-stdlib-2.2.20.jar"),
+        fixture("kotlinx-coroutines-core-jvm-1.7.1.jar"),
+    ]
+    .iter()
+    .map(|p| p.display().to_string())
+    .collect::<Vec<_>>()
+    .join(":");
+    let emit = |xlog_args: &[String]| {
+        let out = std::process::Command::new(&java)
+            .args(xlog_args)
+            .arg("-cp")
+            .arg(&classpath)
+            .arg(&runner)
+            .arg("io.ktor.utils.io.jvm.javaio.BlockingAdapter")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "java run failed:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    let log = dir.join("class-load.log");
+    emit(&[format!("-Xlog:class+load=info:file={}", log.display())]);
+
+    // Same setup as reachability_tiers_violation_by_app_roots: the only root never
+    // references BlockingAdapter, so the violation starts ⚠️.
+    let old = fixture("kotlinx-coroutines-core-jvm-1.7.1.jar");
+    let new = fixture("kotlinx-coroutines-core-jvm-1.11.0.jar");
+    let unrelated = fixture("koin-logger-slf4j-3.2.2.jar");
+    let targets = [fixture("ktor-io-jvm-2.3.13.jar"), unrelated.clone()];
+    let mut report = uika::run_check(
+        std::slice::from_ref(&old),
+        std::slice::from_ref(&new),
+        &targets,
+        std::slice::from_ref(&unrelated),
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(report.violations.len(), 1);
+    assert_eq!(report.violations[0].reachable, Some(false));
+
+    let evidence = uika::evidence::load(std::slice::from_ref(&log)).unwrap();
+    uika::evidence::apply(&mut report.violations, &evidence);
+    assert!(
+        report.violations[0].observed_loading,
+        "real -Xlog output did not register BlockingAdapter as loaded \
+         ({} distinct classes parsed from it)",
+        evidence.distinct_classes()
+    );
+    let text = uika::report::check_text(&report);
+    assert!(text.contains("💥 1 reachable"), "not promoted:\n{text}");
+    assert!(
+        text.contains(
+            "io.ktor.utils.io.jvm.javaio.BlockingAdapter  (ktor-io-jvm-2.3.13.jar)  ⚡ observed loading at runtime"
+        ),
+        "missing the observed marker:\n{text}"
+    );
+
+    if feature >= 22 {
+        let cause_log = dir.join("cause.log");
+        emit(&[
+            format!("-Xlog:class+load+cause=info:file={}", cause_log.display()),
+            "-XX:LogClassLoadingCauseFor=io.ktor.utils.io.jvm.javaio.BlockingAdapter".to_string(),
+        ]);
+        let cause_evidence = uika::evidence::load(std::slice::from_ref(&cause_log)).unwrap();
+        uika::evidence::apply(&mut report.violations, &cause_evidence);
+        let trigger = report.violations[0]
+            .load_trigger
+            .clone()
+            .unwrap_or_default();
+        assert!(
+            trigger.starts_with("java.lang.Class.forName") && trigger.contains(" from LoadIt.main"),
+            "unexpected trigger from a real cause stack: {trigger:?}"
+        );
+        let text = uika::report::check_text(&report);
+        assert!(
+            text.contains("⚡ observed loading at runtime (via java.lang.Class.forName"),
+            "missing the trigger in the report:\n{text}"
+        );
+    } else {
+        eprintln!("note: class+load+cause half skipped (JDK {feature} < 22)");
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The base-branch-artifact workflow end to end: a class-load log from a test run of the
 /// current build names BlockingAdapter, so the ⚠️ violation is promoted (observed loading,
 /// Breaks tier for the gate) and nothing is drafted for exclusion; without the log entry
