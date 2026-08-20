@@ -438,6 +438,18 @@ pub struct Violation {
     /// so this is evidence, not proof).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invocation_found: Option<bool>,
+    /// Runtime load evidence (--class-load-log): the referencing class was observed loading
+    /// in a supplied log. Promote-only — never set to a meaningful `false`, because absence
+    /// of a load entry proves nothing beyond the observed runs. Omitted from JSON when
+    /// false, so evidence-less output (and the goldens pinning it) stays byte-identical.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub observed_loading: bool,
+    /// The frame that pulled the class in, when the log carried a `class+load+cause` stack
+    /// for it: the topmost frame outside the JDK's class-loading machinery. Reflection
+    /// frames are deliberately kept — they are the answer to why the static walk missed
+    /// the edge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load_trigger: Option<String>,
     /// Actionable fix hint attributing the break to the artifacts involved. Only populated by
     /// upgrade-check (where dumps carry coordinates); None otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -485,8 +497,13 @@ pub fn is_latent(v: &Violation) -> bool {
 /// `reachable_axis_valid` is false when app roots were supplied but matched nothing: every
 /// violation then carries `reachable = Some(false)` with nothing behind it. The latent axis
 /// survives that, its evidence comes from the bytecode rather than from roots.
+///
+/// Runtime load evidence beats the static walk on the reachable axis only: an observed
+/// load proves the class reachable, so the violation leaves ⚠️, but it says nothing about
+/// invocation, so the latent axis is untouched (a loaded class still cannot throw
+/// AbstractMethodError until something calls the member).
 pub fn tier(v: &Violation, reachable_axis_valid: bool) -> Tier {
-    if reachable_axis_valid && !counts_as_reachable(v.reachable) {
+    if reachable_axis_valid && !counts_as_reachable(v.reachable) && !v.observed_loading {
         Tier::Unproven
     } else if is_latent(v) {
         Tier::Latent

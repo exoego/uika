@@ -2,6 +2,7 @@ pub mod check;
 pub mod classfile;
 pub mod cli;
 pub mod diff;
+pub mod evidence;
 pub mod exclude;
 pub mod extract;
 pub mod gradle;
@@ -41,6 +42,8 @@ pub fn run(cli: Cli) -> Result<i32> {
             jdk_release_old,
             jdk_release_new,
             verdicts_json,
+            class_load_log,
+            draft_exclude_file,
         } => {
             let mut targets: Vec<PathBuf> = classpath;
             let mut app_roots: Vec<PathBuf> = app.clone();
@@ -61,6 +64,8 @@ pub fn run(cli: Cli) -> Result<i32> {
                 jdk_release,
                 jdk_release_old.zip(jdk_release_new),
                 verdicts_json.as_deref(),
+                &class_load_log,
+                draft_exclude_file.as_deref(),
             )
         }
         Command::UpgradeCheck {
@@ -72,6 +77,8 @@ pub fn run(cli: Cli) -> Result<i32> {
             jdk_release,
             verdicts_json,
             merged,
+            class_load_log,
+            draft_exclude_file,
         } => cmd_upgrade_check(
             &before,
             &after,
@@ -81,6 +88,8 @@ pub fn run(cli: Cli) -> Result<i32> {
             jdk_release,
             verdicts_json.as_deref(),
             merged,
+            &class_load_log,
+            draft_exclude_file.as_deref(),
         ),
         Command::Dump { path } => cmd_dump(&path),
     }
@@ -131,8 +140,11 @@ fn cmd_check(
     jdk_release: Option<u32>,
     jdk_pair: Option<(u32, u32)>,
     verdicts_json: Option<&Path>,
+    class_load_log: &[PathBuf],
+    draft_exclude_file: Option<&Path>,
 ) -> Result<i32> {
     let exclude_rules = exclude::load(exclude_file)?;
+    let load_evidence = load_evidence(class_load_log)?;
     let mut jdk_indexer = jdk::indexer_for(jdk_release)?;
     let mut verdict_writer = verdicts_json
         .map(verdicts::VerdictWriter::create)
@@ -164,7 +176,8 @@ fn cmd_check(
             verdict_writer.as_mut(),
         ),
     };
-    let result = finish_verdicts(verdict_writer, result)?;
+    let mut result = finish_verdicts(verdict_writer, result)?;
+    apply_evidence_and_draft(&mut result, load_evidence.as_ref(), draft_exclude_file)?;
     if json {
         println!("{}", report::check_json(&result)?);
     } else {
@@ -213,6 +226,43 @@ fn finish_verdicts<T>(writer: Option<verdicts::VerdictWriter>, result: Result<T>
         }
         (result, None) => result,
     }
+}
+
+/// Load runtime class-load logs (--class-load-log) and note the ingest, so a user can see
+/// their artifact was actually read. None when the flag was not given.
+fn load_evidence(paths: &[PathBuf]) -> Result<Option<evidence::LoadEvidence>> {
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    let ev = evidence::load(paths)?;
+    eprintln!(
+        "note: runtime load evidence: {} distinct classes from {}",
+        ev.distinct_classes(),
+        ev.sources().join(", ")
+    );
+    Ok(Some(ev))
+}
+
+/// The one evidence site per command: promote observed violations on the FINAL set (after
+/// per-module merging and exclusion, before printing and the exit decision, so promotion
+/// reaches both the report and the gate), then write the requested draft exclude file.
+/// run_check stays untouched, which keeps the goldens and the verdicts stream stable.
+fn apply_evidence_and_draft(
+    result: &mut check::CheckReport,
+    evidence: Option<&evidence::LoadEvidence>,
+    draft: Option<&Path>,
+) -> Result<()> {
+    let Some(ev) = evidence else { return Ok(()) };
+    evidence::apply(&mut result.violations, ev);
+    if let Some(path) = draft {
+        let drafted =
+            evidence::draft_excludes(&result.violations, result.app_roots_matched, ev, path)?;
+        eprintln!(
+            "note: drafted {drafted} exclude rule(s) to {}",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 /// Filter known false positives and record the unused-rule warnings on the report (the one
@@ -437,8 +487,13 @@ fn cmd_upgrade_check(
     jdk_release: Option<u32>,
     verdicts_json: Option<&Path>,
     merged: bool,
+    class_load_log: &[PathBuf],
+    draft_exclude_file: Option<&Path>,
 ) -> Result<i32> {
     let exclude_rules = exclude::load(exclude_file)?;
+    // Loaded before the no-changes early return for the same reason as jdk_indexer below:
+    // a bad log path must fail on every run, not only when jars changed.
+    let load_evidence = load_evidence(class_load_log)?;
     // Opened before the no-changes early return: a bad --jdk-release value or
     // environment must fail on every run, not only on the first run that has
     // changed jars (a misconfigured PR gate would otherwise pass for weeks).
@@ -459,6 +514,8 @@ fn cmd_upgrade_check(
             fail_on,
             jdk_indexer.as_mut(),
             verdicts_json,
+            load_evidence.as_ref(),
+            draft_exclude_file,
         );
     }
     if !merged {
@@ -470,6 +527,7 @@ fn cmd_upgrade_check(
 
     let jdk_pair = jdk_change(&before_universe, &after_universe);
     if changes.old_jars.is_empty() && jdk_pair.is_none() {
+        draft_without_report(load_evidence.as_ref(), draft_exclude_file)?;
         print_upgrade(json, &changes.changes, None, None)?;
         return Ok(0);
     }
@@ -519,8 +577,22 @@ fn cmd_upgrade_check(
         &after_universe,
         &changes.changes,
     );
+    apply_evidence_and_draft(&mut result, load_evidence.as_ref(), draft_exclude_file)?;
     print_upgrade(json, &changes.changes, Some(&result), None)?;
     Ok(exit_code(&result, fail_on))
+}
+
+/// A requested draft file must exist even when no check ran (a run with no version
+/// changes), like --verdicts-json, so a script reading it never breaks on a quiet run.
+fn draft_without_report(
+    evidence: Option<&evidence::LoadEvidence>,
+    draft: Option<&Path>,
+) -> Result<()> {
+    if let (Some(ev), Some(path)) = (evidence, draft) {
+        evidence::draft_excludes(&[], None, ev, path)?;
+        eprintln!("note: drafted 0 exclude rule(s) to {}", path.display());
+    }
+    Ok(())
 }
 
 /// Whether a dump can drive per-module checking: at least one module lists its own artifacts.
@@ -793,6 +865,8 @@ fn upgrade_check_per_module(
     fail_on: FailOn,
     mut jdk_indexer: Option<&mut jdk::JdkIndexer>,
     verdicts_json: Option<&Path>,
+    load_evidence: Option<&evidence::LoadEvidence>,
+    draft_exclude_file: Option<&Path>,
 ) -> Result<i32> {
     let plan = plan_module_runs(before_universe, after_universe);
     // Created before the empty-plan return so a requested --verdicts-json file always
@@ -803,6 +877,7 @@ fn upgrade_check_per_module(
 
     if plan.runs.is_empty() {
         finish_verdicts(verdict_writer, Ok(()))?;
+        draft_without_report(load_evidence, draft_exclude_file)?;
         let summary = module_summary(&plan, Vec::new());
         print_upgrade(json, &changes.changes, None, Some(&summary))?;
         return Ok(0);
@@ -928,6 +1003,9 @@ fn upgrade_check_per_module(
 
     apply_excludes(&mut merged, exclude_rules);
     warn_all(&merged.warnings);
+    // After merging and exclusion, before the per-run exit decisions below, so an
+    // observed load promotes a violation for the gate too.
+    apply_evidence_and_draft(&mut merged, load_evidence, draft_exclude_file)?;
 
     // Fail per run with its own roots state: a module whose classesDirs matched nothing
     // degrades --fail-on reachable to any for ITS violations only (module attribution
@@ -1106,6 +1184,8 @@ mod tests {
             },
             reachable,
             invocation_found,
+            observed_loading: false,
+            load_trigger: None,
             suggestion: None,
             modules: Vec::new(),
         }
@@ -1206,10 +1286,45 @@ mod tests {
         ));
     }
 
+    /// Runtime load evidence promotes only the reachable axis: an observed load lifts a
+    /// proven-unreachable violation into the failing tier, while a latent one stays
+    /// latent (loading proves nothing about invocation).
+    #[test]
+    fn observed_loading_promotes_only_the_reachable_axis() {
+        let mut observed = violation(Some(false), None);
+        observed.observed_loading = true;
+        assert_eq!(
+            crate::model::tier(&observed, true),
+            crate::model::Tier::Breaks
+        );
+        assert!(should_fail(
+            [&observed].into_iter(),
+            Some(true),
+            FailOn::Reachable
+        ));
+
+        let mut observed_latent = violation(Some(false), Some(false));
+        observed_latent.observed_loading = true;
+        assert_eq!(
+            crate::model::tier(&observed_latent, true),
+            crate::model::Tier::Latent
+        );
+        assert!(!should_fail(
+            [&observed_latent].into_iter(),
+            Some(true),
+            FailOn::Reachable
+        ));
+    }
+
     /// A reader must be able to predict the exit code from the report, including when
     /// roots matched nothing and the reachable axis is dropped on both sides.
     #[test]
     fn gate_threshold_matches_the_reported_tier() {
+        let observed = |reachable, invocation_found| {
+            let mut v = violation(reachable, invocation_found);
+            v.observed_loading = true;
+            v
+        };
         let cases = [
             (violation(Some(true), None), Some(true)),
             (violation(Some(false), None), Some(true)),
@@ -1221,6 +1336,11 @@ mod tests {
             // Reachability off entirely.
             (violation(None, None), None),
             (violation(None, Some(false)), None),
+            // Runtime load evidence in every degraded state.
+            (observed(Some(false), None), Some(true)),
+            (observed(Some(false), Some(false)), Some(true)),
+            (observed(Some(false), None), Some(false)),
+            (observed(None, None), None),
         ];
         for (v, matched) in cases {
             let axis = crate::model::reachable_axis_valid(matched);

@@ -102,6 +102,19 @@ pub enum Command {
         /// to this file, for answer-checking against a real JVM (tools/jvm-probe)
         #[arg(long)]
         verdicts_json: Option<PathBuf>,
+        /// Runtime class-load log(s) from the current (pre-upgrade) build, e.g. a test run
+        /// with -Xlog:class+load=info:file=... stored as a CI artifact. Violations whose
+        /// referencing class was observed loading leave the not-proven-reachable tier
+        /// (promote-only; absence of a load entry never demotes anything). May be
+        /// specified multiple times; a directory reads every file under it, and
+        /// class+load+cause stacks and plain class lists are also accepted
+        #[arg(long)]
+        class_load_log: Vec<PathBuf>,
+        /// Write draft --exclude-file rules for symbols referenced only by classes that
+        /// no static path reaches AND that were not observed loading in the supplied
+        /// logs. Every drafted reason opens with REVIEW; commit only what you can justify
+        #[arg(long, requires = "class_load_log")]
+        draft_exclude_file: Option<PathBuf>,
     },
     /// Compare resolved classpath JSON files before and after a dependency update,
     /// then detect breaking references from all artifacts whose versions changed
@@ -137,6 +150,19 @@ pub enum Command {
         /// fallback when the dumps carry no per-module artifact data
         #[arg(long)]
         merged: bool,
+        /// Runtime class-load log(s) from the current (pre-upgrade) build, e.g. a test run
+        /// with -Xlog:class+load=info:file=... stored as a CI artifact. Violations whose
+        /// referencing class was observed loading leave the not-proven-reachable tier
+        /// (promote-only; absence of a load entry never demotes anything). May be
+        /// specified multiple times; a directory reads every file under it, and
+        /// class+load+cause stacks and plain class lists are also accepted
+        #[arg(long)]
+        class_load_log: Vec<PathBuf>,
+        /// Write draft --exclude-file rules for symbols referenced only by classes that
+        /// no static path reaches AND that were not observed loading in the supplied
+        /// logs. Every drafted reason opens with REVIEW; commit only what you can justify
+        #[arg(long, requires = "class_load_log")]
+        draft_exclude_file: Option<PathBuf>,
     },
     /// Debugging: dump the API surface extracted from a JAR or directory
     Dump { path: PathBuf },
