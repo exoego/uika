@@ -1058,6 +1058,8 @@ fn push_violation<'v>(
         reason,
         reachable: None,
         invocation_found: None,
+        observed_loading: false,
+        load_trigger: None,
         suggestion: None,
         modules: Vec::new(),
     });

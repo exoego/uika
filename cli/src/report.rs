@@ -477,6 +477,19 @@ fn modules_suffix(v: &Violation) -> String {
     }
 }
 
+/// Runtime load evidence (--class-load-log), appended to the line naming the referencing
+/// class: the class was observed loading, and when the log carried a cause stack, the
+/// frame that pulled it in — typically the reflective path the static walk could not see.
+fn observed_suffix(v: &Violation) -> String {
+    if !v.observed_loading {
+        return String::new();
+    }
+    match &v.load_trigger {
+        Some(t) => format!("  ⚡ observed loading at runtime (via {t})"),
+        None => "  ⚡ observed loading at runtime".to_string(),
+    }
+}
+
 /// Render a set of violations as blocks (no trailing newlines; the caller joins with blank
 /// lines). upgrade-check violations carry a suggestion and group by the fix (one 💡 block
 /// lists every reference a single piece of advice covers). The rest split by shape:
@@ -593,7 +606,7 @@ fn suggestion_line(v: &Violation, target: &str) -> String {
     } else {
         "calls"
     };
-    match v.reason {
+    let sentence = match v.reason {
         ClassRemoved => format!("{target} was removed, but {class} still uses it"),
         MethodRemoved if ctor => format!("{target} was removed, but {class} still instantiates it"),
         MethodRemoved => format!("{target} was removed, but {class} still calls it"),
@@ -656,7 +669,8 @@ fn suggestion_line(v: &Violation, target: &str) -> String {
         ServiceProviderNotInstantiable => format!(
             "{class} can no longer be instantiated by ServiceLoader, but is still registered as a provider for {owner}"
         ),
-    }
+    };
+    format!("{sentence}{}", observed_suffix(v))
 }
 
 /// One ❌ block per broken symbol: the symbol as heading, the reason with the runtime
@@ -697,20 +711,21 @@ fn reference_blocks(violations: &[&Violation]) -> Vec<String> {
                 Some(err) => writeln!(out, "    {}, throws {err}", display_reason(vs[0])).unwrap(),
                 None => writeln!(out, "    {}", display_reason(vs[0])).unwrap(),
             }
-            let users: std::collections::BTreeSet<(String, String, String)> = vs
+            let users: std::collections::BTreeSet<(String, String, String, String)> = vs
                 .iter()
                 .map(|v| {
                     (
                         dotted(v.source_class.as_str()),
                         source_display(v.source.as_str()).to_string(),
                         modules_suffix(v),
+                        observed_suffix(v),
                     )
                 })
                 .collect();
             let plural = if users.len() == 1 { "" } else { "es" };
             writeln!(out, "    used by {} class{plural}:", users.len()).unwrap();
-            for (class, source, mods) in users {
-                writeln!(out, "        {class}  ({source}){mods}").unwrap();
+            for (class, source, mods, observed) in users {
+                writeln!(out, "        {class}  ({source}){mods}{observed}").unwrap();
             }
             out.truncate(out.trim_end().len());
             out
@@ -733,7 +748,15 @@ fn structural_blocks(violations: &[&Violation]) -> Vec<String> {
         .into_iter()
         .map(|((class, source), mut vs)| {
             let mut out = String::new();
-            writeln!(out, "❌ {class}  ({})", source_display(source)).unwrap();
+            // One class per block, so the observed marker is a block-level fact: any
+            // violation of the group carries the same evidence.
+            writeln!(
+                out,
+                "❌ {class}  ({}){}",
+                source_display(source),
+                observed_suffix(vs[0])
+            )
+            .unwrap();
             vs.sort_by_cached_key(|v| (pretty_target(v), v.reason.as_str()));
             for v in vs {
                 let (what, err) = structural_lines(v);
@@ -771,6 +794,15 @@ fn summary_line(report: &CheckReport, reachable: usize, latent: usize, unproven:
         .unwrap();
     } else if latent > 0 && broken > 0 {
         write!(line, " (of which 💤 {latent} latent)").unwrap();
+    }
+    // Runtime load evidence (--class-load-log); the count stays out of evidence-less runs.
+    let observed = report
+        .violations
+        .iter()
+        .filter(|v| v.observed_loading)
+        .count();
+    if observed > 0 {
+        write!(line, ", ⚡ {observed} observed loading at runtime").unwrap();
     }
     if report.unknown_refs > 0 {
         write!(
@@ -1091,6 +1123,8 @@ mod tests {
             reason,
             reachable,
             invocation_found: None,
+            observed_loading: false,
+            load_trigger: None,
             suggestion: advice.map(|a| Suggestion {
                 referenced_by: Some("g:referencer:1".to_string()),
                 removed_by: "g:owner".to_string(),
@@ -1137,6 +1171,8 @@ mod tests {
             reason,
             reachable: None,
             invocation_found: None,
+            observed_loading: false,
+            load_trigger: None,
             suggestion: None,
             modules: Vec::new(),
         }
@@ -1870,6 +1906,98 @@ mod tests {
             .max()
             .unwrap();
         assert_eq!(widest, TAG_WIDTH, "TAG_WIDTH should be the longest tag");
+    }
+
+    /// Runtime load evidence: the promoted violation sits in the 💥 section carrying the
+    /// ⚡ marker with its trigger frame, and the summary counts it. `--json` says the same
+    /// (observed_loading / load_trigger), and both keys are absent without evidence.
+    #[test]
+    fn observed_loading_marks_lines_summary_and_json() {
+        let mut v = class_violation("a/Foo", "x/Gone", Reason::ClassRemoved, Some(false), None);
+        v.observed_loading = true;
+        v.load_trigger = Some("java.lang.Class.forName(Class.java:100)".to_string());
+        let plain = class_violation("a/Dead", "x/Gone2", Reason::ClassRemoved, Some(false), None);
+        let r = report(vec![v, plain]);
+        let out = check_text(&r);
+        assert!(
+            out.contains(
+                "        a.Foo  (consumer.jar)  ⚡ observed loading at runtime (via java.lang.Class.forName(Class.java:100))"
+            ),
+            "\n{out}"
+        );
+        // Promoted out of ⚠️: the observed violation prints before the unproven section,
+        // and the tier counts follow.
+        let unproven_at = out.find("not proven reachable (no static path").unwrap();
+        assert!(out.find("a.Foo").unwrap() < unproven_at, "\n{out}");
+        assert!(out.find("a.Dead").unwrap() > unproven_at, "\n{out}");
+        assert!(
+            out.contains("💥 1 reachable, ⚠️ 1 not proven reachable"),
+            "\n{out}"
+        );
+        assert!(
+            out.contains(", ⚡ 1 observed loading at runtime"),
+            "\n{out}"
+        );
+
+        let json = check_json(&r).unwrap();
+        assert!(json.contains("\"observed_loading\": true"), "\n{json}");
+        assert!(
+            json.contains("\"load_trigger\": \"java.lang.Class.forName(Class.java:100)\""),
+            "\n{json}"
+        );
+        let evidence_less = check_json(&report(vec![class_violation(
+            "a/Foo",
+            "x/Gone",
+            Reason::ClassRemoved,
+            Some(true),
+            None,
+        )]))
+        .unwrap();
+        assert!(
+            !evidence_less.contains("observed_loading"),
+            "\n{evidence_less}"
+        );
+        assert!(!evidence_less.contains("load_trigger"), "\n{evidence_less}");
+    }
+
+    /// The ⚡ marker also lands on structural blocks (on the class heading — the evidence
+    /// is a fact about the class, shared by every entry) and on 💡 suggestion sentences.
+    #[test]
+    fn observed_marker_reaches_structural_and_suggestion_shapes() {
+        let mut structural = member_violation(
+            "org/koin/logger/SLF4JLogger",
+            "org/koin/core/logger/Logger",
+            "log",
+            "(Lorg/koin/core/logger/Level;Ljava/lang/String;)V",
+            RefKind::Method,
+            Reason::MethodBecameFinal,
+        );
+        structural.observed_loading = true;
+        let mut r = report(vec![structural]);
+        r.reachability_computed = false;
+        let out = check_text(&r);
+        assert!(
+            out.contains(
+                "❌ org.koin.logger.SLF4JLogger  (consumer.jar)  ⚡ observed loading at runtime"
+            ),
+            "\n{out}"
+        );
+
+        let mut suggested = class_violation(
+            "a/Foo",
+            "x/Gone",
+            Reason::ClassRemoved,
+            Some(true),
+            Some("ADVICE_A"),
+        );
+        suggested.observed_loading = true;
+        let out = check_text(&report(vec![suggested]));
+        assert!(
+            out.contains(
+                "        x.Gone was removed, but a.Foo still uses it  ⚡ observed loading at runtime"
+            ),
+            "\n{out}"
+        );
     }
 
     /// The summary line notes suppressed violations only when the count is nonzero.

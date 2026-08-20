@@ -913,6 +913,96 @@ fn reachability_tiers_violation_by_app_roots() {
     );
 }
 
+/// The base-branch-artifact workflow end to end: a class-load log from a test run of the
+/// current build names BlockingAdapter, so the ⚠️ violation is promoted (observed loading,
+/// Breaks tier for the gate) and nothing is drafted for exclusion; without the log entry
+/// the violation stays ⚠️ and --draft-exclude-file writes a REVIEW entry that the real
+/// exclude parser accepts.
+#[test]
+fn class_load_log_promotes_the_unproven_violation_and_gates_drafts() {
+    let old = fixture("kotlinx-coroutines-core-jvm-1.7.1.jar");
+    let new = fixture("kotlinx-coroutines-core-jvm-1.11.0.jar");
+    let ktor_io = fixture("ktor-io-jvm-2.3.13.jar");
+    let unrelated = fixture("koin-logger-slf4j-3.2.2.jar");
+
+    let targets = [ktor_io, unrelated.clone()];
+    let report = uika::run_check(
+        std::slice::from_ref(&old),
+        std::slice::from_ref(&new),
+        &targets,
+        std::slice::from_ref(&unrelated),
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(report.violations.len(), 1);
+    assert_eq!(report.violations[0].reachable, Some(false));
+
+    let dir = std::env::temp_dir().join(format!("uika-load-log-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // Unobserved: the violation stays ⚠️ and the draft names its symbol.
+    let empty_log = dir.join("empty.log");
+    std::fs::write(
+        &empty_log,
+        "[0.1s][info][class,load] com.example.Other source: x\n",
+    )
+    .unwrap();
+    let mut unobserved = report.violations.clone();
+    let evidence = uika::evidence::load(std::slice::from_ref(&empty_log)).unwrap();
+    uika::evidence::apply(&mut unobserved, &evidence);
+    assert!(!unobserved[0].observed_loading);
+    let draft = dir.join("draft.toml");
+    let drafted =
+        uika::evidence::draft_excludes(&unobserved, report.app_roots_matched, &evidence, &draft)
+            .unwrap();
+    assert_eq!(drafted, 1);
+    let content = std::fs::read_to_string(&draft).unwrap();
+    assert!(
+        content.contains("owner = \"kotlinx/coroutines/EventLoopKt\""),
+        "{content}"
+    );
+    assert!(
+        content.contains("member = \"processNextEventInCurrentThread\""),
+        "{content}"
+    );
+    assert!(content.contains("REVIEW:"), "{content}");
+    assert_eq!(
+        uika::exclude::load(std::slice::from_ref(&draft))
+            .unwrap()
+            .len(),
+        1,
+        "draft must load as a real exclude file"
+    );
+
+    // Observed: a test-run log naming the referencing class promotes it and empties the draft.
+    let log = dir.join("test-run.log");
+    std::fs::write(
+        &log,
+        "[0.2s][info][class,load] io.ktor.utils.io.jvm.javaio.BlockingAdapter source: file:/ktor-io.jar\n",
+    )
+    .unwrap();
+    let mut observed = report.violations.clone();
+    let evidence = uika::evidence::load(std::slice::from_ref(&log)).unwrap();
+    uika::evidence::apply(&mut observed, &evidence);
+    assert!(observed[0].observed_loading);
+    assert_eq!(
+        uika::model::tier(
+            &observed[0],
+            uika::model::reachable_axis_valid(report.app_roots_matched)
+        ),
+        uika::model::Tier::Breaks,
+        "an observed load must reach the failing tier"
+    );
+    let drafted =
+        uika::evidence::draft_excludes(&observed, report.app_roots_matched, &evidence, &draft)
+            .unwrap();
+    assert_eq!(drafted, 0, "an observed symbol must not be drafted");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// https://github.com/pact-foundation/pact-jvm/issues/1338:
 /// junit5spring 4.2.3 subclasses PactVerificationExtension, which junit5 4.2.3
 /// opened up but 4.2.2 still declares final (Kotlin classes start final). When

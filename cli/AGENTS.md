@@ -382,6 +382,36 @@ pass-2 classes are typically below 0.1% of the scan.
   depend on parse order (determinism); non-class strings become dead `Sym`s that
   BFS never marks.
 
+## Runtime load evidence (--class-load-log)
+
+- Promote-only, enforced in two places: `evidence::apply` only ever sets
+  `observed_loading = true`, and `model::tier` reads it only to defeat the
+  Unproven arm — never to demote, and never to touch the latent axis (loading
+  proves nothing about invocation, so an observed `method became abstract`
+  without invocation evidence stays 💤). The one deliberate consumer of
+  absence-of-evidence is `--draft-exclude-file`, which writes a REVIEW-prefixed
+  file for a human and nothing else.
+- Applied ONCE per command by the lib.rs command layer
+  (`apply_evidence_and_draft`), to the FINAL violation set: after per-module
+  merging and exclusion, before printing and the exit decision. `run_check` is
+  untouched, which is what keeps the goldens byte-identical (the new Violation
+  fields are skip-serialized at their defaults) and the verdicts stream stable.
+  Do not push evidence into run_check: per-module runs would re-apply it per
+  run and the single-policy-site rule would be lost.
+- The parser (`evidence.rs::parse_line`) is deliberately lenient — decorated UL
+  lines (skipping other tags sharing the file), `class+load+cause` stack blocks
+  (`at ...` frames are NEVER read as loaded classes), and bare class-name
+  tokens (segment-validated, so IPs and versions in mixed logs do not register;
+  two segments minimum). Names normalize to the slashed form so lookups match
+  `Violation.source_class` directly. Frames cap at MAX_FRAMES; first stack
+  wins.
+- Drafting groups by the referenced symbol because that is what an exclude rule
+  matches: a symbol also broken by a reachable or observed class is never
+  drafted, since the rule would waive the real break too. Drafted TOML must
+  round-trip through `exclude::load` (pinned by
+  `drafts_only_fully_unproven_unobserved_symbols`); a requested draft file is
+  always written, like --verdicts-json.
+
 ## SPI (ServiceLoader) provider breaks
 
 - A class named in `META-INF/services/<iface>` that ServiceLoader could construct under

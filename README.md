@@ -302,6 +302,66 @@ This is for false positives you have actually investigated, not a shortcut
 around triaging `⚠️  not proven reachable` violations wholesale; use
 `--fail-on reachable` for that instead.
 
+### Runtime load evidence (`--class-load-log`)
+
+The ⚠️ tier means "no static path found", and its blind spot is reflection. A
+JVM can close that gap: run the **current, not yet upgraded** build — its test
+suite, or a staging/production soak — with
+
+```
+-Xlog:class+load=info:file=class-load.log
+```
+
+(JDK 9+; every loaded class, one line each, negligible overhead) and feed the
+log to the check:
+
+```console
+$ uika check ... --class-load-log class-load.log
+$ uika upgrade-check ... --class-load-log class-load.log
+```
+
+The intended CI shape mirrors [baseline caching](BASELINE-CACHING.md): the base
+branch's test run produces the log once per push and stores it as an artifact,
+and the dependency PR's `upgrade-check` downloads it. A ⚠️ violation whose
+referencing class appears in the log is promoted out of the tier and marked
+`⚡ observed loading at runtime` — the class provably loads, reflection
+included, so `--fail-on reachable` now fails on it. `--json` carries the same
+evidence per violation (`observed_loading`, `load_trigger`).
+
+Ingestion is promote-only, the same stance reachability takes: absence of a
+load entry proves nothing beyond the observed runs (a different code path, a
+run that never got there), so no violation is ever demoted or dropped because
+of a log. Accepted formats, mixed freely and parsed leniently: unified-logging
+`[class,load]` lines with any decorators (other `-Xlog` streams sharing the
+file are skipped), plain class-name lists (dotted or slashed, so
+`-XX:DumpLoadedClassList` classlists work), and `class+load+cause` stack
+blocks.
+
+On JDK 22+ the log can also say *what loads each class*
+(https://bugs.openjdk.org/browse/JDK-8193513):
+
+```
+-Xlog:class+load+cause=info:file=class-load.log -XX:LogClassLoadingCauseFor=*
+```
+
+captures a Java stack per load (`*` logs every class; the flag also takes a
+substring to narrow it — stacks are not free, so prefer the narrow form
+outside test suites). uika then names the trigger in the marker, e.g.
+`⚡ observed loading at runtime (via java.lang.Class.forName from
+com.example.PluginRegistry.discover(PluginRegistry.java:42))` — the reflective
+edge the static walk could not see, documented for free.
+
+**Drafting an exclude file (`--draft-exclude-file <path>`).** The deliberate
+consumer of the opposite signal. After soaking the evidence, symbols whose
+every violation is still ⚠️ *and* was never observed loading can be drafted
+into [`--exclude-file`](#excluding-known-false-positives---exclude-file)
+rules. Every drafted reason opens with `REVIEW:` and records exactly what the
+evidence shows (which classes, which logs); a symbol that also breaks a
+reachable or observed class is never drafted, because the rule would waive
+that real break too. The draft is input for a human: review each entry and
+delete what you cannot justify before committing the file. Requires
+`--class-load-log`.
+
 ## Build-tool plugins
 
 The Gradle, sbt, and Maven plugins write the same dump format: every module's resolved runtime
