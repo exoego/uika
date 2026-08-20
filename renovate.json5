@@ -1,18 +1,12 @@
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
-  // Modern default set. Includes config:recommended, the dependency dashboard,
-  // and helpers:pinGitHubActionDigests so new Actions keep the SHA-pin +
-  // "# vX.Y.Z" comment style this repo already uses.
   extends: [
     "config:best-practices",
     ":semanticCommitScope(deps)",
   ],
   timezone: "Asia/Tokyo",
   labels: ["dependencies"],
-  // Let a release settle for a week before proposing it. Catches the
-  // yanked-or-hotfixed-within-days case without any manual triage.
   minimumReleaseAge: "7 days",
-  // Keep the PR stream calm for a small OSS project.
   prConcurrentLimit: 5,
   prHourlyLimit: 2,
   // Integration-test fixtures pin versions on purpose. Bumping them is noise
@@ -22,7 +16,6 @@
     "**/src/it/**",
     "**/src/sbt-test/**",
   ],
-  // Refresh Cargo.lock on a schedule even when no manifest range changes.
   lockFileMaintenance: {
     enabled: true,
   },
@@ -42,9 +35,7 @@
       groupName: "build toolchain (mise)",
     },
     // sbt 1.x itself runs on Scala 2.12, so an sbt 1.x plugin can only be
-    // built on 2.12. There is no scripted-sbt_2.13 or scripted-sbt_3 to
-    // resolve against, so any bump here fails at update time. This pin is
-    // part of the sbt version, not a dependency we get to choose.
+    // built on 2.12.
     {
       matchManagers: ["sbt"],
       matchDepNames: ["scala"],
@@ -52,16 +43,11 @@
     },
     // Stay on sbt 1.x. An sbt 2.0 build publishes the plugin as
     // sbt-uika_sbt2_3 (sbt binary version, then Scala 3), while every sbt 1.x
-    // consumer resolves sbt-uika_2.12_1.0. The two are unrelated coordinates
-    // with no fallback, so moving to 2.0 silently drops all current users.
-    // Supporting both means cross-publishing, which doubles the Maven Central
-    // footprint we just halved, and porting off the Classpath type sbt 2
-    // changed to HashedVirtualFileRef. Revisit deliberately, not via a bump.
-    // build.properties decides what actually builds and publishes. The mise
-    // pin only picks the launcher, which reads build.properties and boots
-    // whatever it says, so the two are constrained for different reasons.
+    // consumer resolves sbt-uika_2.12_1.0.
+    // "sbt/sbt" conda, asdf plugin
+    // "github:sbt/sbt" — GitHub release
     {
-      matchDepNames: ["sbt", "sbt/sbt"],
+      matchDepNames: ["sbt/sbt", "github:sbt/sbt"],
       allowedVersions: "<2",
     },
   ],
