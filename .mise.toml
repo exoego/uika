@@ -5,7 +5,6 @@ gradle = "9.7.0"
 # no 1.12.13 or later, so install the launcher from the GitHub release.
 "github:sbt/sbt" = "1.12.15"
 maven = "3.9.16"
-# tools/jvm-probe needs JDK 16+ (records, switch expressions, source launcher).
 java = "temurin-21"
 # aqua backend mislabels the native binary; the asdf plugin installs a working shim.
 "asdf:joschi/asdf-jreleaser" = "1.25.0"
