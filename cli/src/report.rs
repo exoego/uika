@@ -837,6 +837,122 @@ const LATENT_HEADING: &str = "💤 latent (no scanned code invokes the affected 
 const LATENT_HEADING_RANKED: &str =
     "💤 latent (class reachable, but no scanned code invokes the affected member)";
 
+/// The release that introduced `-Xlog:class+load+cause` and `-XX:LogClassLoadingCauseFor`
+/// (https://bugs.openjdk.org/browse/JDK-8193513), which the ⚠️ hint below drives.
+const CLASS_LOAD_CAUSE_JDK: u32 = 22;
+
+/// Runtime follow-up for the ⚠️ tier, printed as the section's closing block and carried
+/// in `--json` as `runtime_confirmation`. The ⚠️ label means "no static path found", and
+/// its blind spot is reflection; class-loading-cause logging answers exactly that at
+/// runtime — whether a listed class loads at all, and the stack that loads it. Derived via
+/// `model::tier` like the section split and the exit gate, so the three can never disagree
+/// about which violations are ⚠️.
+#[derive(Serialize)]
+struct RuntimeConfirmation {
+    /// Both JVM flags exist only on this release and later.
+    requires_jdk: u32,
+    /// Referencing classes of the ⚠️ violations: dotted binary names, deduplicated,
+    /// sorted by string value (the determinism rule; never by `Sym` id).
+    classes: Vec<String>,
+    /// A single `-XX:LogClassLoadingCauseFor` value covering every class above, when a
+    /// usable one exists. Omitted otherwise: the flag takes exactly one substring, so
+    /// classes with no common package prefix need one run per class.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pattern: Option<String>,
+}
+
+/// The one `-XX:LogClassLoadingCauseFor` value covering every class, if a usable one
+/// exists. The flag is a single `strstr` substring over the dotted external name, so one
+/// distinct class uses its exact name, and several use their common package prefix with a
+/// trailing dot — kept only when at least two segments survive, because a one-segment
+/// prefix is unanchored ("io." also matches every `java.io` load). The final
+/// `starts_with` check guards the edge where the prefix IS one of the classes (a class
+/// named like a package): that class does not contain the dotted pattern, so no single
+/// value covers the set.
+fn load_cause_pattern(classes: &[String]) -> Option<String> {
+    let (first, rest) = classes.split_first()?;
+    if rest.is_empty() {
+        return Some(first.clone());
+    }
+    let mut prefix: Vec<&str> = first.split('.').collect();
+    prefix.pop();
+    for class in rest {
+        let common = prefix
+            .iter()
+            .zip(class.split('.'))
+            .take_while(|(a, b)| **a == *b)
+            .count();
+        prefix.truncate(common);
+    }
+    if prefix.len() < 2 {
+        return None;
+    }
+    let pattern = format!("{}.", prefix.join("."));
+    classes
+        .iter()
+        .all(|c| c.starts_with(&pattern))
+        .then_some(pattern)
+}
+
+/// The `runtime_confirmation` payload for a report, None when no violation is ⚠️ (which
+/// also covers reachability-off and roots-matched-nothing runs, where `tier` never answers
+/// Unproven).
+fn runtime_confirmation(report: &CheckReport) -> Option<RuntimeConfirmation> {
+    let axis = reachable_axis_valid(report.app_roots_matched);
+    let mut classes: Vec<String> = report
+        .violations
+        .iter()
+        .filter(|v| tier(v, axis) == Tier::Unproven)
+        .map(|v| dotted(v.source_class.as_str()))
+        .collect();
+    classes.sort_unstable();
+    classes.dedup();
+    if classes.is_empty() {
+        return None;
+    }
+    let pattern = load_cause_pattern(&classes);
+    Some(RuntimeConfirmation {
+        requires_jdk: CLASS_LOAD_CAUSE_JDK,
+        classes,
+        pattern,
+    })
+}
+
+/// The ⚠️ section's closing block: copy-pasteable JVM flags that make a runtime report who
+/// loads a listed class. Aimed at the CURRENT (pre-upgrade) deployment, where the classes
+/// still load cleanly — a cause stack collected there proves a violation live before the
+/// upgrade ships, and names the reflective path the static walk could not see. Absence of
+/// a log entry proves nothing (a different run, a path not taken), matching the
+/// promote-only stance ⚠️ already has.
+fn confirmation_block(rc: &RuntimeConfirmation) -> String {
+    let mut out = String::new();
+    writeln!(
+        out,
+        "🔍 confirm at runtime (JDK {}+): run the current, not yet upgraded, build with",
+        rc.requires_jdk
+    )
+    .unwrap();
+    let value = rc.pattern.as_deref().unwrap_or("<class>");
+    writeln!(
+        out,
+        "        -Xlog:class+load+cause=info:file=uika-class-load.log -XX:LogClassLoadingCauseFor={value}"
+    )
+    .unwrap();
+    if rc.pattern.is_none() {
+        writeln!(
+            out,
+            "    (the flag takes one substring; run once per class listed above)"
+        )
+        .unwrap();
+    }
+    write!(
+        out,
+        "    a \"Java stack when loading <class>\" entry naming a class above means it does load,\n    and the stack shows what loads it (reflection included)"
+    )
+    .unwrap();
+    out
+}
+
 pub fn check_text(report: &CheckReport) -> String {
     let mut sections: Vec<String> = Vec::new();
     // Most severe first.
@@ -868,12 +984,16 @@ pub fn check_text(report: &CheckReport) -> String {
             ));
         }
         if !unproven.is_empty() {
+            let mut blocks = violation_blocks(&unproven);
+            if let Some(rc) = runtime_confirmation(report) {
+                blocks.push(confirmation_block(&rc));
+            }
             sections.push(format!(
                 "{}\n\n{}",
                 section_heading(
                     "⚠️  not proven reachable (no static path found; may still load via reflection)"
                 ),
-                violation_blocks(&unproven).join("\n\n")
+                blocks.join("\n\n")
             ));
         }
     } else if !report.violations.is_empty() {
@@ -1028,6 +1148,8 @@ struct UpgradeJson<'a> {
     unknown_refs: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     suppressed: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_confirmation: Option<RuntimeConfirmation>,
 }
 
 pub fn upgrade_json(
@@ -1042,6 +1164,7 @@ pub fn upgrade_json(
         scanned_classes: result.map(|r| r.scanned_classes),
         unknown_refs: result.map(|r| r.unknown_refs),
         suppressed: result.map(|r| r.suppressed),
+        runtime_confirmation: result.and_then(runtime_confirmation),
     })?)
 }
 
@@ -1052,6 +1175,10 @@ struct CheckJson<'a> {
     total: usize,
     unknown_refs: usize,
     suppressed: usize,
+    /// Present only when some violation is ⚠️, so plain-check output (and the goldens
+    /// pinning it) stays byte-identical.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime_confirmation: Option<RuntimeConfirmation>,
 }
 
 pub fn check_json(report: &CheckReport) -> Result<String> {
@@ -1061,6 +1188,7 @@ pub fn check_json(report: &CheckReport) -> Result<String> {
         total: report.violations.len(),
         unknown_refs: report.unknown_refs,
         suppressed: report.suppressed,
+        runtime_confirmation: runtime_confirmation(report),
     })?)
 }
 
@@ -1870,6 +1998,191 @@ mod tests {
             .max()
             .unwrap();
         assert_eq!(widest, TAG_WIDTH, "TAG_WIDTH should be the longest tag");
+    }
+
+    /// The ⚠️ section closes with the runtime-confirmation hint: the JDK 22+ flag pair,
+    /// with the classes' common package prefix (trailing dot, so it anchors as a
+    /// substring) as the LogClassLoadingCauseFor value. Reachable violations contribute
+    /// nothing to it.
+    #[test]
+    fn unproven_section_closes_with_runtime_confirmation_hint() {
+        let out = check_text(&report(vec![
+            class_violation(
+                "io/ktor/utils/io/A",
+                "x/GoneA",
+                Reason::ClassRemoved,
+                Some(false),
+                None,
+            ),
+            class_violation(
+                "io/ktor/client/B",
+                "x/GoneB",
+                Reason::ClassRemoved,
+                Some(false),
+                None,
+            ),
+            class_violation(
+                "app/Main",
+                "x/GoneC",
+                Reason::ClassRemoved,
+                Some(true),
+                None,
+            ),
+        ]));
+        assert!(
+            out.contains(
+                "        -Xlog:class+load+cause=info:file=uika-class-load.log -XX:LogClassLoadingCauseFor=io.ktor."
+            ),
+            "\n{out}"
+        );
+        // Inside the ⚠️ section, after its violation blocks.
+        let unproven_at = out.find("not proven reachable (no static path").unwrap();
+        let hint_at = out.find("🔍 confirm at runtime (JDK 22+)").unwrap();
+        assert!(hint_at > unproven_at, "\n{out}");
+        assert!(hint_at > out.find("x.GoneB").unwrap(), "\n{out}");
+        // The reachable violation's class is not what the hint watches.
+        assert!(!out.contains("LogClassLoadingCauseFor=app"), "\n{out}");
+    }
+
+    /// One distinct ⚠️ class is watched by its exact name; no package truncation.
+    #[test]
+    fn runtime_confirmation_uses_the_exact_name_for_a_single_class() {
+        let out = check_text(&report(vec![class_violation(
+            "io/ktor/utils/io/jvm/javaio/BlockingAdapter",
+            "x/Gone",
+            Reason::ClassRemoved,
+            Some(false),
+            None,
+        )]));
+        assert!(
+            out.contains("-XX:LogClassLoadingCauseFor=io.ktor.utils.io.jvm.javaio.BlockingAdapter"),
+            "\n{out}"
+        );
+    }
+
+    /// No usable common prefix (fewer than two shared segments): the hint degrades to a
+    /// per-class instruction instead of suggesting an unanchored substring like "io.".
+    #[test]
+    fn runtime_confirmation_degrades_to_per_class_runs_without_a_shared_package() {
+        let out = check_text(&report(vec![
+            class_violation(
+                "io/ktor/A",
+                "x/GoneA",
+                Reason::ClassRemoved,
+                Some(false),
+                None,
+            ),
+            class_violation(
+                "org/foo/B",
+                "x/GoneB",
+                Reason::ClassRemoved,
+                Some(false),
+                None,
+            ),
+        ]));
+        assert!(
+            out.contains("-XX:LogClassLoadingCauseFor=<class>"),
+            "\n{out}"
+        );
+        assert!(
+            out.contains("(the flag takes one substring; run once per class listed above)"),
+            "\n{out}"
+        );
+    }
+
+    /// No hint without a ⚠️ violation: a flat (reachability-off) report, and a ranked one
+    /// where every violation is reachable, both stay untouched. Roots that matched nothing
+    /// invalidate the reachable axis, so the hint disappears with the section it belongs to.
+    #[test]
+    fn runtime_confirmation_absent_without_unproven_violations() {
+        let mut flat = report(vec![class_violation(
+            "a/Foo",
+            "x/Gone",
+            Reason::ClassRemoved,
+            None,
+            None,
+        )]);
+        flat.reachability_computed = false;
+        assert!(!check_text(&flat).contains("🔍"));
+
+        let reachable_only = report(vec![class_violation(
+            "a/Foo",
+            "x/Gone",
+            Reason::ClassRemoved,
+            Some(true),
+            None,
+        )]);
+        assert!(!check_text(&reachable_only).contains("🔍"));
+
+        let mut roots_matched_nothing = report(vec![class_violation(
+            "a/Foo",
+            "x/Gone",
+            Reason::ClassRemoved,
+            Some(false),
+            None,
+        )]);
+        roots_matched_nothing.app_roots_matched = Some(false);
+        assert!(!check_text(&roots_matched_nothing).contains("🔍"));
+    }
+
+    /// `--json` carries the same data as `runtime_confirmation`, and omits the key
+    /// entirely when nothing is ⚠️ (what keeps the goldens byte-identical).
+    #[test]
+    fn check_json_carries_runtime_confirmation_only_for_unproven() {
+        let r = report(vec![
+            class_violation(
+                "io/ktor/client/B",
+                "x/GoneB",
+                Reason::ClassRemoved,
+                Some(false),
+                None,
+            ),
+            class_violation(
+                "io/ktor/utils/io/A",
+                "x/GoneA",
+                Reason::ClassRemoved,
+                Some(false),
+                None,
+            ),
+        ]);
+        let json: serde_json::Value = serde_json::from_str(&check_json(&r).unwrap()).unwrap();
+        let rc = &json["runtime_confirmation"];
+        assert_eq!(rc["requires_jdk"], 22);
+        assert_eq!(rc["pattern"], "io.ktor.");
+        // Sorted by string value, deduplicated.
+        assert_eq!(
+            rc["classes"],
+            serde_json::json!(["io.ktor.client.B", "io.ktor.utils.io.A"])
+        );
+
+        let clean = report(vec![class_violation(
+            "a/Foo",
+            "x/Gone",
+            Reason::ClassRemoved,
+            Some(true),
+            None,
+        )]);
+        assert!(!check_json(&clean).unwrap().contains("runtime_confirmation"));
+    }
+
+    /// A class named exactly like the shared package prefix cannot be covered by the
+    /// dotted pattern (its own name does not contain the trailing dot), so no single value
+    /// is suggested. A class sitting one level above the others still is: the shorter
+    /// common prefix covers both.
+    #[test]
+    fn load_cause_pattern_rejects_a_prefix_that_is_itself_a_class() {
+        assert_eq!(
+            load_cause_pattern(&["a.b".to_string(), "a.b.X.Y".to_string()]),
+            None
+        );
+        assert_eq!(
+            load_cause_pattern(&["a.b.c".to_string(), "a.b.c.D".to_string()]),
+            Some("a.b.".to_string())
+        );
+        assert_eq!(
+            load_cause_pattern(&["a.b.c.D".to_string(), "a.b.c.E".to_string()]),
+            Some("a.b.c.".to_string())
+        );
     }
 
     /// The summary line notes suppressed violations only when the count is nonzero.

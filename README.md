@@ -206,6 +206,28 @@ Without usable roots every violation stays 💥, so `reachable` behaves like
 roots that matched no scanned class (build outputs not compiled, which prints a
 warning naming the cause).
 
+**Confirming ⚠️ at runtime (JDK 22+).** The ⚠️ section closes with a 🔍 hint
+printing the JVM flags that make a runtime answer the question the static walk
+cannot: does a listed class actually load, and what loads it. Run the current,
+not yet upgraded, build (there the classes still load cleanly) with
+
+```
+-Xlog:class+load+cause=info:file=uika-class-load.log -XX:LogClassLoadingCauseFor=<pattern>
+```
+
+`-XX:LogClassLoadingCauseFor` (JDK 22+,
+https://bugs.openjdk.org/browse/JDK-8193513) matches a single substring against
+fully-qualified class names. uika fills in the exact class when one ⚠️ class
+exists, the common package prefix when several share one, and otherwise asks
+for one run per class. A `Java stack when loading <class>` entry naming a
+listed class means the violation is live despite the missing static path, and
+the stack names what loads it — typically the reflective path
+(`Class.forName`, `ServiceLoader`) the walk cannot see. Absence of an entry
+proves nothing (a different run, a path not taken), so uika never downgrades a
+violation on runtime evidence. `--json` carries the same data under
+`runtime_confirmation` (`requires_jdk`, `classes`, and `pattern` when a single
+substring covers them).
+
 **Invocation evidence (💤).** `AbstractMethodError` is the one break that does
 not fire when the class loads. A concrete class inheriting an unimplemented
 abstract method loads, verifies, and instantiates without complaint, and throws

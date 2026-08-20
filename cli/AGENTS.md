@@ -355,6 +355,18 @@ pass-2 classes are typically below 0.1% of the scan.
   bytecode rather than from app roots. Pinned by
   `gate_threshold_matches_the_reported_tier`. Exclude rules, not `--fail-on`, are
   where a kind-level policy lives, so the gate stays a pure tier threshold.
+- The ⚠️ section's closing 🔍 hint and the JSON `runtime_confirmation` field
+  (report.rs) select violations via the same `model::tier` call as the sections
+  and the gate, so all three agree on what is ⚠️. The
+  `-XX:LogClassLoadingCauseFor` value is one strstr substring (JDK 22+,
+  https://bugs.openjdk.org/browse/JDK-8193513), so `load_cause_pattern` offers a
+  common package prefix only when at least two segments survive (a one-segment
+  prefix like "io." also matches every `java.io` load) and with a trailing dot;
+  a class named exactly like the prefix defeats it, so that set gets per-class
+  runs. The field is `skip_serializing_if` None, which is what keeps the goldens
+  byte-identical (reachability off means nothing is ⚠️). Runtime load evidence
+  is promote-only by design: absence of a load entry must never demote a
+  violation.
 - On automatically, gated by app roots, not a flag: `run_check` computes
   `reachability = !app_roots.is_empty()` (single policy site). `upgrade-check`
   dumps and `check --app` have roots (on); a bare `check --classpath` has none
