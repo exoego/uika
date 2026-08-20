@@ -332,8 +332,10 @@ fn parse_class_index_list(body: &[u8]) -> Option<Vec<u16>> {
         return None;
     }
     Some(
-        rest.chunks_exact(2)
-            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+        rest.as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| u16::from_be_bytes(*c))
             .collect(),
     )
 }
