@@ -60,8 +60,12 @@
     // build.properties decides what actually builds and publishes. The mise
     // pin only picks the launcher, which reads build.properties and boots
     // whatever it says, so the two are constrained for different reasons.
+    // "github:sbt/sbt" is the depName the mise manager reports for the
+    // .mise.toml pin (backend prefix included), so it must be listed
+    // explicitly. Matching "sbt/sbt" alone missed it and let an sbt 2 PR
+    // through.
     {
-      matchDepNames: ["sbt", "sbt/sbt"],
+      matchDepNames: ["sbt", "sbt/sbt", "github:sbt/sbt"],
       allowedVersions: "<2",
     },
   ],
