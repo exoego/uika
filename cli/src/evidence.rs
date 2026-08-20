@@ -20,8 +20,10 @@ use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
 /// Cause stacks are only read for their topmost useful frame, and real stacks run
-/// hundreds of frames deep, so retention is capped.
-const MAX_FRAMES: usize = 16;
+/// hundreds of frames deep, so retention is capped. 32, not less: the loader-delegation
+/// machinery alone ran 10 frames deep on a real JDK 25 stack (defineClass through a custom
+/// loader's loadClass), and the trigger is the first frame PAST the machinery.
+const MAX_FRAMES: usize = 32;
 
 pub struct LoadEvidence {
     /// Slashed internal name -> retained `class+load+cause` frames of the first observed
@@ -172,6 +174,13 @@ fn parse_line(
         }
         return;
     }
+    // Monitor annotations ("- locked <0x...> (a java.lang.Object)") interleave the frames
+    // of a real stack (observed on JDK 25: synchronized loader frames carry one). They are
+    // part of the block, never its end — reading one as a terminator cut every stack at
+    // its first synchronized loader frame and silently lost the trigger.
+    if current.is_some() && rest.starts_with("- ") {
+        return;
+    }
     *current = None;
     let Some(token) = rest.split_whitespace().next() else {
         return;
@@ -216,16 +225,30 @@ pub fn apply(violations: &mut [Violation], evidence: &LoadEvidence) {
     }
 }
 
-/// The frame that pulled the class in: the topmost frame outside the JDK's class-loading
-/// machinery. Reflection frames (Class.forName, ServiceLoader, Method.invoke) are
-/// deliberately kept — they are the answer to why the static walk missed the edge.
-fn trigger(frames: &[String]) -> Option<String> {
-    const MACHINERY: [&str; 4] = [
+/// Class-loading machinery: the JDK's loader packages, plus any frame whose method is a
+/// loader hook. The method-name rule is what catches custom loaders — a build tool's or
+/// app server's loader sits in the delegation chain under its own package (a real JDK 25
+/// run put `com.sun.tools.javac.launcher.MemoryClassLoader.loadClass` there), and its
+/// delegation frames say nothing about what pulled the class in.
+fn is_machinery(frame: &str) -> bool {
+    const PACKAGES: [&str; 4] = [
         "java.lang.ClassLoader.",
         "java.security.SecureClassLoader.",
         "java.net.URLClassLoader.",
         "jdk.internal.loader.",
     ];
+    if PACKAGES.iter().any(|p| frame.starts_with(p)) {
+        return true;
+    }
+    let method = frame.split('(').next().unwrap_or(frame);
+    let method = method.rsplit('.').next().unwrap_or(method);
+    matches!(method, "loadClass" | "findClass" | "defineClass")
+}
+
+/// The frame that pulled the class in: the topmost frame outside the class-loading
+/// machinery. Reflection frames (Class.forName, ServiceLoader, Method.invoke) are
+/// deliberately kept — they are the answer to why the static walk missed the edge.
+fn trigger(frames: &[String]) -> Option<String> {
     // The reflective APIs whose presence explains a missing static edge. When one is the
     // topmost useful frame, the first frame below the reflective plumbing is named too:
     // "Class.forName" alone says how, the caller says who.
@@ -237,11 +260,10 @@ fn trigger(frames: &[String]) -> Option<String> {
         "sun.reflect.",
         "java.lang.invoke.",
     ];
-    let machinery = |f: &str| MACHINERY.iter().any(|m| f.starts_with(m));
     let reflective = |f: &str| REFLECTIVE.iter().any(|m| f.starts_with(m));
-    let first = frames.iter().find(|f| !machinery(f))?;
+    let first = frames.iter().find(|f| !is_machinery(f))?;
     if reflective(first)
-        && let Some(caller) = frames.iter().find(|f| !machinery(f) && !reflective(f))
+        && let Some(caller) = frames.iter().find(|f| !is_machinery(f) && !reflective(f))
     {
         // "java.lang.Class.forName(Class.java:100)" -> "java.lang.Class.forName": the
         // reflective API's own source location says nothing; the caller keeps its own.
@@ -443,6 +465,46 @@ mod tests {
             Some("java.lang.Class.forName from com.example.Registry.discover(Registry.java:42)")
         );
         assert!(e.observed("java/lang/ClassLoader").is_none());
+    }
+
+    /// The stack shape a real JDK 25 emits, verbatim (module-qualified frames, monitor
+    /// annotations on synchronized loader frames, a custom loader in the delegation
+    /// chain): the "- locked" lines must not end the block, the custom loader's loadClass
+    /// counts as machinery, and the trigger composes the reflective API with its first
+    /// real caller.
+    #[test]
+    fn real_jdk_stack_shape_parses_through_monitors_and_custom_loaders() {
+        let e = parse(
+            "[0.295s][info][class,load,cause] Java stack when loading io.ktor.utils.io.jvm.javaio.BlockingAdapter:\n\
+             [0.295s][info][class,load,cause] \tat java.lang.ClassLoader.defineClass1(java.base@25.0.3/Native Method)\n\
+             [0.295s][info][class,load,cause] \tat java.lang.ClassLoader.defineClass(java.base@25.0.3/ClassLoader.java:962)\n\
+             [0.295s][info][class,load,cause] \tat java.security.SecureClassLoader.defineClass(java.base@25.0.3/SecureClassLoader.java:144)\n\
+             [0.295s][info][class,load,cause] \tat jdk.internal.loader.BuiltinClassLoader.defineClass(java.base@25.0.3/BuiltinClassLoader.java:776)\n\
+             [0.295s][info][class,load,cause] \tat jdk.internal.loader.BuiltinClassLoader.findClassOnClassPathOrNull(java.base@25.0.3/BuiltinClassLoader.java:691)\n\
+             [0.295s][info][class,load,cause] \tat jdk.internal.loader.BuiltinClassLoader.loadClassOrNull(java.base@25.0.3/BuiltinClassLoader.java:620)\n\
+             [0.295s][info][class,load,cause] \t- locked <0x0000000c4f1f3d40> (a java.lang.Object)\n\
+             [0.295s][info][class,load,cause] \tat jdk.internal.loader.BuiltinClassLoader.loadClass(java.base@25.0.3/BuiltinClassLoader.java:578)\n\
+             [0.295s][info][class,load,cause] \tat java.lang.ClassLoader.loadClass(java.base@25.0.3/ClassLoader.java:490)\n\
+             [0.295s][info][class,load,cause] \tat com.sun.tools.javac.launcher.MemoryClassLoader.loadClass(jdk.compiler@25.0.3/MemoryClassLoader.java:129)\n\
+             [0.295s][info][class,load,cause] \t- locked <0x0000000c4f1c8ff8> (a com.sun.tools.javac.launcher.MemoryClassLoader)\n\
+             [0.295s][info][class,load,cause] \tat java.lang.ClassLoader.loadClass(java.base@25.0.3/ClassLoader.java:490)\n\
+             [0.295s][info][class,load,cause] \tat java.lang.Class.forName0(java.base@25.0.3/Native Method)\n\
+             [0.295s][info][class,load,cause] \tat java.lang.Class.forName(java.base@25.0.3/Class.java:547)\n\
+             [0.295s][info][class,load,cause] \tat LoadIt.main(LoadIt.java:3)\n\
+             [0.295s][info][class,load,cause] \tat java.lang.invoke.LambdaForm$DMH/0x000001c00106c000.invokeStatic(java.base@25.0.3/LambdaForm$DMH)\n",
+        );
+        let frames = e
+            .observed("io/ktor/utils/io/jvm/javaio/BlockingAdapter")
+            .unwrap();
+        assert!(
+            frames.iter().any(|f| f.starts_with("LoadIt.main")),
+            "a monitor annotation ended the stack early: {frames:?}"
+        );
+        assert_eq!(
+            trigger(frames).as_deref(),
+            Some("java.lang.Class.forName0 from LoadIt.main(LoadIt.java:3)"),
+            "frames: {frames:?}"
+        );
     }
 
     /// The native variant marks the class loaded without collecting VM frames.
