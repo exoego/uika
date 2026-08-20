@@ -62,6 +62,22 @@ public final class UpgradeCheckMojo extends AbstractMojo {
     @Parameter(property = "uika.jdkRelease")
     private Integer jdkRelease;
 
+    /**
+     * Runtime class-load log (file or directory) from a test run of the current, not yet
+     * upgraded build, passed as {@code --class-load-log}. Collect it with the test JVM flag,
+     * e.g. {@code mvn test -DargLine="-Xlog:class+load=info:file=target/uika-class-load-%p.log"}
+     * ({@code %p} keeps parallel forks from truncating each other's file).
+     */
+    @Parameter(property = "uika.classLoadLog")
+    private File classLoadLog;
+
+    /**
+     * Where the CLI writes draft exclude rules for symbols never observed loading, passed as
+     * {@code --draft-exclude-file}. The CLI rejects it without {@code classLoadLog}.
+     */
+    @Parameter(property = "uika.draftExcludeFile")
+    private File draftExcludeFile;
+
     @Parameter(defaultValue = "${repositorySystemSession}", readonly = true, required = true)
     private RepositorySystemSession repositorySession;
 
@@ -95,7 +111,10 @@ public final class UpgradeCheckMojo extends AbstractMojo {
                     jdkRelease != null ? jdkRelease : defaultJdkRelease(),
                     line -> getLog().info(line));
             exit = UikaCli.runUpgradeCheck(binary, before.toPath(), after.toPath(), failOn,
-                    excludeFilePaths, effectiveJdkRelease, line -> getLog().info(line));
+                    excludeFilePaths, effectiveJdkRelease,
+                    classLoadLog != null ? List.of(classLoadLog.toPath()) : List.of(),
+                    draftExcludeFile != null ? draftExcludeFile.toPath() : null,
+                    line -> getLog().info(line));
         } catch (IOException e) {
             throw new MojoExecutionException("failed to run uika upgrade-check", e);
         } catch (InterruptedException e) {

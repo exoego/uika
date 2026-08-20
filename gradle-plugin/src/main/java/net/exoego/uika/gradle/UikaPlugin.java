@@ -9,6 +9,8 @@ import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.TaskProvider;
 
+import java.io.File;
+
 /**
  * uika integration plugin.
  * When applied to the root project, it creates:
@@ -154,6 +156,14 @@ public class UikaPlugin implements Plugin<Project> {
                     if (excludeFile != null) {
                         task.getExcludeFiles().from(root.file(excludeFile.toString()));
                     }
+                    File classLoadLogDir = classLoadLogDir(root);
+                    if (classLoadLogDir != null) {
+                        task.getClassLoadLogs().from(classLoadLogDir);
+                    }
+                    Object draftExcludeFile = root.findProperty("uikaDraftExcludeFile");
+                    if (draftExcludeFile != null) {
+                        task.getDraftExcludeFile().set(root.file(draftExcludeFile.toString()));
+                    }
                     Object jdkRelease = root.findProperty("uikaJdkRelease");
                     if (jdkRelease != null) {
                         task.getJdkRelease().set(Integer.parseInt(jdkRelease.toString()));
@@ -194,6 +204,28 @@ public class UikaPlugin implements Plugin<Project> {
                     + task.getCliVersion().get() + ":" + classifier + "@zip";
             task.getCliZip().from(detachedFor(root, notation));
         }));
+
+        // -PuikaClassLoadLog=<dir> makes every Test task write a runtime class-load log
+        // into <dir> (one file per process — %p — because -Xlog truncates a shared file on
+        // open), which is exactly what uikaUpgradeCheck reads back as --class-load-log.
+        // One property serves both phases: the base branch's test run collects, the
+        // dependency PR's check consumes. Configuration only touches task properties, so
+        // the tasks stay configuration-cache compatible (the doFirst lambda captures a
+        // plain File).
+        File classLoadLogDir = classLoadLogDir(root);
+        if (classLoadLogDir != null) {
+            root.allprojects(p -> p.getTasks()
+                    .withType(org.gradle.api.tasks.testing.Test.class)
+                    .configureEach(test -> {
+                        String prefix = (p.getPath().equals(":") ? "root" : p.getPath())
+                                .replaceAll("[^A-Za-z0-9._-]", "_")
+                                + "-" + test.getName();
+                        test.jvmArgs(
+                                UikaCli.classLoadLogJvmArg(classLoadLogDir.toPath(), prefix));
+                        test.doFirst("uika class-load log directory",
+                                t -> classLoadLogDir.mkdirs());
+                    }));
+        }
 
         root.allprojects(p -> {
             TaskProvider<DumpModuleClasspathTask> moduleTask = p.getTasks().register(
@@ -275,5 +307,24 @@ public class UikaPlugin implements Plugin<Project> {
 
     private static boolean buildOutputs(Project root) {
         return !"false".equals(String.valueOf(root.findProperty("uikaBuildOutputs")));
+    }
+
+    /**
+     * The directory named by {@code -PuikaClassLoadLog}, or null when the property is
+     * absent. An empty value (bare {@code -PuikaClassLoadLog}) means the default
+     * {@code <root build dir>/uika/class-load}, so a local collect-then-check loop needs no
+     * path at all.
+     */
+    private static File classLoadLogDir(Project root) {
+        Object value = root.findProperty("uikaClassLoadLog");
+        if (value == null) {
+            return null;
+        }
+        String path = value.toString();
+        if (path.isEmpty()) {
+            return root.getLayout().getBuildDirectory().dir("uika/class-load")
+                    .get().getAsFile();
+        }
+        return root.file(path);
     }
 }

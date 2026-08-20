@@ -71,6 +71,21 @@ description: Invariants for the uika Gradle, sbt, and Maven build-tool plugins a
   Clamping down is the conservative direction (missing-on-both-sides stays
   unreported). The build JVM's home is exported as UIKA_JDK so the child CLI
   never depends on the caller's JAVA_HOME. Opt out with 0.
+- Runtime load evidence is ONE knob per tool pointed at one directory, serving
+  both phases (collect on the base branch's test run, consume on the PR's
+  check): Gradle `-PuikaClassLoadLog` (bare value defaults to
+  `build/uika/class-load`), sbt `uikaClassLoadLog := Some(dir)`, Maven
+  `-Duika.classLoadLog` plus `argLine` for collection (no mojo can inject into
+  surefire). The test-JVM argument comes from `UikaCli.classLoadLogJvmArg` in
+  core — per-process `%p` file names because `-Xlog` truncates a shared file on
+  open, and the value is quoted when the path carries a Windows drive colon —
+  so the three tools cannot drift. Gradle injects via
+  `withType(Test).configureEach` plus a doFirst mkdirs lambda capturing a plain
+  File (configuration-cache safe); sbt appends to `Test/javaOptions`, which
+  only reaches tests under `Test/fork := true`.
+  `UpgradeCheckTask.getDraftExcludeFile` is `@Internal`, NOT `@OutputFile`:
+  declaring an output made a second invocation UP-TO-DATE and silently skipped
+  the whole check (caught by `configurationCacheReusesUpgradeCheck`).
 - Their tests stub uika-cli with a shell-script ZIP in a file-based Maven repo
   (Gradle TestKit + sbt scripted + Maven invoker; invoker needs `-U` because
   target/it-repo caches resolution failures across runs, and its pre-build
