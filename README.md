@@ -105,6 +105,30 @@ To keep the base-branch resolution off the PR's critical path, dump the
 baseline once per push instead and cache it as an artifact keyed by SHA:
 [BASELINE-CACHING.md](BASELINE-CACHING.md).
 
+### Runtime load evidence from the base branch (optional)
+
+[Runtime load evidence](#runtime-load-evidence---class-load-log) rides the same
+artifact flow: the base branch runs its test suite with class-load logging and
+uploads the logs, the PR job downloads them by `base.sha` and adds one flag. A
+⚠️ class that provably loads during tests then fails `--fail-on reachable`
+instead of being deprioritized. For Gradle, next to the baseline dump:
+
+```yaml
+      - run: ./gradlew test -PuikaClassLoadLog=/tmp/uika-load
+      - uses: actions/upload-artifact@v7
+        with:
+          name: uika-class-load-${{ github.sha }}
+          path: /tmp/uika-load
+```
+
+and in the PR job, after downloading the artifact into `/tmp/uika-load`:
+
+```yaml
+      - run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json -PuikaClassLoadLog=/tmp/uika-load
+```
+
+The [per-tool knobs](#build-tool-plugins) cover sbt and Maven.
+
 ## Command reference
 
 ```console
@@ -397,6 +421,27 @@ JVM, so the release is derived from the Gradle toolchain,
 JVM's `ct.sym` serves. Override with `jdkRelease` / `uikaJdkRelease` /
 `<jdkRelease>` (`-PuikaJdkRelease=`, `-Duika.jdkRelease=`), or set 0 to disable
 it.
+
+[Runtime load evidence](#runtime-load-evidence---class-load-log) is one knob
+per tool, pointed at one directory for both phases (collect on the base
+branch, consume on the PR):
+
+- Gradle: `-PuikaClassLoadLog=<dir>` makes every `Test` task write a
+  per-process class-load log there, and makes `uikaUpgradeCheck` read the
+  directory back as `--class-load-log`. A bare `-PuikaClassLoadLog` uses
+  `build/uika/class-load`.
+- sbt: `uikaClassLoadLog := Some(file("<dir>"))` does the same for forked test
+  JVMs and for `uikaUpgradeCheck`. It needs `Test / fork := true`: an
+  in-process test runs inside sbt's own JVM, which no flag can reach after
+  startup.
+- Maven: collect with the test JVM flag
+  (`mvn test -DargLine="-Xlog:class+load=info:file=<dir>/load-%p.log"`), check
+  with `-Duika.classLoadLog=<dir>`.
+
+The `%p` in the file names keeps parallel test JVMs from truncating each
+other's log. [`--draft-exclude-file`](#runtime-load-evidence---class-load-log)
+maps to `-PuikaDraftExcludeFile=` / `uikaDraftExcludeFile :=` /
+`-Duika.draftExcludeFile=`.
 
 ### Gradle (`gradle-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-gradle-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-gradle-plugin)
 

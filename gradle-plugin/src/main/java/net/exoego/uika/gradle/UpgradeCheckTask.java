@@ -73,6 +73,28 @@ public abstract class UpgradeCheckTask extends DefaultTask {
     @Optional
     public abstract Property<Integer> getJdkRelease();
 
+    /**
+     * Runtime class-load logs (files or directories) from a test run of the current, not yet
+     * upgraded build, passed as repeated {@code --class-load-log}. Wired from
+     * {@code -PuikaClassLoadLog} — the same property that makes {@code Test} tasks write the
+     * logs, so one value serves the collect run and the check run.
+     */
+    @InputFiles
+    @Optional
+    @PathSensitive(PathSensitivity.NONE)
+    public abstract ConfigurableFileCollection getClassLoadLogs();
+
+    /**
+     * Where the CLI writes draft exclude rules for symbols never observed loading, passed as
+     * {@code --draft-exclude-file}. The CLI rejects it without class-load logs, so the flag
+     * is only useful together with {@link #getClassLoadLogs()}. Internal, not OutputFile:
+     * this task declares no outputs on purpose, because declaring one makes a second
+     * invocation UP-TO-DATE, and a check must always run and print its report (the draft is
+     * consumed by a human, never by another task).
+     */
+    @Internal
+    public abstract RegularFileProperty getDraftExcludeFile();
+
     /** Where the binary is extracted, scoped by version and classifier below this directory. */
     @Internal
     public abstract DirectoryProperty getInstallDir();
@@ -102,12 +124,20 @@ public abstract class UpgradeCheckTask extends DefaultTask {
                 .toList();
         Integer jdkRelease =
                 UikaCli.effectiveJdkRelease(getJdkRelease().getOrNull(), getLogger()::lifecycle);
+        List<Path> classLoadLogs = getClassLoadLogs().getFiles().stream()
+                .map(File::toPath)
+                .toList();
+        Path draftExcludeFile = getDraftExcludeFile().isPresent()
+                ? getDraftExcludeFile().get().getAsFile().toPath()
+                : null;
         int exit = UikaCli.runUpgradeCheck(binary,
                 getBeforeFile().get().getAsFile().toPath(),
                 getAfterFile().get().getAsFile().toPath(),
                 getFailOn().getOrElse("any"),
                 excludeFiles,
                 jdkRelease,
+                classLoadLogs,
+                draftExcludeFile,
                 getLogger()::lifecycle);
         if (exit == 1) {
             throw new GradleException("uika upgrade-check found broken references (see output above)");

@@ -207,6 +207,76 @@ final class UpgradeCheckTaskIntegrationTest {
     }
 
     @Test
+    void passesClassLoadLogAndDraftFileToCli() throws Exception {
+        Path logDir = Files.createDirectories(projectDir.resolve("load-logs"));
+        Path draft = projectDir.resolve("uika-draft.toml");
+        BuildResult result = runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION,
+                        "-PuikaClassLoadLog=" + logDir,
+                        "-PuikaDraftExcludeFile=" + draft)
+                .build();
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(args.contains("--class-load-log " + logDir),
+                () -> "-PuikaClassLoadLog was not forwarded to the CLI: " + args);
+        assertTrue(args.contains("--draft-exclude-file " + draft),
+                () -> "-PuikaDraftExcludeFile was not forwarded to the CLI: " + args);
+    }
+
+    /// -PuikaClassLoadLog points Test tasks and the check at one directory: every Test JVM
+    /// gets the -Xlog flag writing a per-process file there (%p, because -Xlog truncates a
+    /// shared file on open), and without the property test JVMs stay untouched.
+    @Test
+    void classLoadLogPropertyInjectsTestJvmArgs() throws Exception {
+        Path logDir = projectDir.resolve("load-logs");
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    java
+                    id("net.exoego.uika")
+                }
+
+                repositories {
+                    maven {
+                        url = uri("%s")
+                        metadataSources { artifact() }
+                    }
+                }
+
+                tasks.register("printTestJvmArgs") {
+                    val args = tasks.test.get().allJvmArgs
+                    doLast { println("TEST_JVM_ARGS=" + args) }
+                }
+                """.formatted(repoDir.toUri()));
+
+        BuildResult with = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments("printTestJvmArgs", "-PuikaClassLoadLog=" + logDir)
+                .withPluginClasspath()
+                .forwardOutput()
+                .build();
+        String expected = "-Xlog:class+load=info:file="
+                + logDir.resolve("root-test-%p.log");
+        assertTrue(with.getOutput().contains(expected),
+                () -> "expected " + expected + " in test JVM args:\n" + with.getOutput());
+
+        BuildResult without = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments("printTestJvmArgs")
+                .withPluginClasspath()
+                .forwardOutput()
+                .build();
+        assertTrue(!without.getOutput().contains("-Xlog:class+load"),
+                () -> "test JVM args must stay untouched without the property:\n"
+                        + without.getOutput());
+    }
+
+    @Test
     void jdkReleaseDefaultsToTheBuildJvmClamped() throws Exception {
         // No java plugin in the test project, so the default derivation falls to the JVM
         // running the build (the TestKit daemon uses this JVM), clamped by one because a

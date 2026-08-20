@@ -81,3 +81,32 @@ checkCliOutputLogged := {
   if (!outs.exists(f => IO.read(f).contains(marker)))
     sys.error(s"CLI output did not reach the task logger (searched ${outs.size} stream files)")
 }
+
+// Declarative config in build.sbt: the directory must reach the CLI as --class-load-log,
+// the draft file as --draft-exclude-file, and forked Test JVMs must get the -Xlog flag
+// pointing into the same directory.
+ThisBuild / uikaClassLoadLog := Some(baseDirectory.value / "load-logs")
+ThisBuild / uikaDraftExcludeFile := Some(baseDirectory.value / "uika-draft.toml")
+
+lazy val checkClassLoadLogPassed = taskKey[Unit]("Asserts uikaClassLoadLog and uikaDraftExcludeFile reached the CLI")
+
+checkClassLoadLogPassed := {
+  val args = IO.read(baseDirectory.value / "before.json.args")
+  val dir = (baseDirectory.value / "load-logs").getAbsolutePath
+  if (!args.contains(s"--class-load-log $dir"))
+    sys.error(s"uikaClassLoadLog setting was not forwarded to the CLI: $args")
+  val draft = (baseDirectory.value / "uika-draft.toml").getAbsolutePath
+  if (!args.contains(s"--draft-exclude-file $draft"))
+    sys.error(s"uikaDraftExcludeFile setting was not forwarded to the CLI: $args")
+}
+
+lazy val checkTestJavaOptionsInjected = taskKey[Unit]("Asserts uikaClassLoadLog injected the -Xlog flag into Test/javaOptions")
+
+// The flag only reaches tests with Test/fork := true, but the injected option must be
+// there either way; %p keeps parallel forks from truncating each other's file.
+checkTestJavaOptionsInjected := {
+  val opts = (Test / javaOptions).value
+  val dir = (baseDirectory.value / "load-logs").getAbsolutePath
+  if (!opts.exists(o => o.startsWith("-Xlog:class+load=info:file=") && o.contains(dir) && o.endsWith("-%p.log")))
+    sys.error(s"uikaClassLoadLog did not inject Test/javaOptions: $opts")
+}

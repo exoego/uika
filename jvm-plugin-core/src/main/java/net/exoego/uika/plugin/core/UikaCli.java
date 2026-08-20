@@ -110,6 +110,22 @@ public final class UikaCli {
     }
 
     /**
+     * The test-JVM argument that writes a class-load log into {@code dir}, one file per
+     * process. {@code %p} is substituted by the JVM itself: parallel test JVMs must never
+     * share a file, because {@code -Xlog} truncates it on open. The file value is quoted
+     * when the path contains a colon (a Windows drive letter), which unified logging would
+     * otherwise parse as its own separator. All three build-tool plugins compose the
+     * argument here so the format cannot drift between them.
+     */
+    public static String classLoadLogJvmArg(Path dir, String filePrefix) {
+        String file = dir.resolve(filePrefix + "-%p.log").toString();
+        if (file.contains(":")) {
+            file = "\"" + file + "\"";
+        }
+        return "-Xlog:class+load=info:file=" + file;
+    }
+
+    /**
      * Runs {@code uika upgrade-check}, passing each line of the CLI's merged stdout/stderr to
      * {@code output}. The report must go through the build tool's own logger: a child process
      * that inherits file descriptors writes past the tool's log capture, so under a Gradle
@@ -124,9 +140,16 @@ public final class UikaCli {
      *     from {@link #effectiveJdkRelease}); null omits the flag. The build JVM's home is
      *     exported as UIKA_JDK so the CLI reads that JDK's ct.sym regardless of the caller's
      *     JAVA_HOME.
+     * @param classLoadLogs runtime class-load logs (files or directories) from a test run of
+     *     the current, not yet upgraded build, passed through as repeated
+     *     {@code --class-load-log} flags. Null or empty adds nothing.
+     * @param draftExcludeFile where the CLI writes draft exclude rules for symbols never
+     *     observed loading ({@code --draft-exclude-file}); null omits the flag. The CLI
+     *     rejects it without at least one class-load log.
      */
     public static int runUpgradeCheck(Path binary, Path before, Path after, String failOn,
-            List<Path> excludeFiles, Integer jdkRelease, Consumer<String> output)
+            List<Path> excludeFiles, Integer jdkRelease, List<Path> classLoadLogs,
+            Path draftExcludeFile, Consumer<String> output)
             throws IOException, InterruptedException {
         List<String> command = new ArrayList<>(List.of(
                 binary.toString(), "upgrade-check",
@@ -145,6 +168,16 @@ public final class UikaCli {
         if (jdkRelease != null) {
             command.add("--jdk-release");
             command.add(jdkRelease.toString());
+        }
+        if (classLoadLogs != null) {
+            for (Path classLoadLog : classLoadLogs) {
+                command.add("--class-load-log");
+                command.add(classLoadLog.toString());
+            }
+        }
+        if (draftExcludeFile != null) {
+            command.add("--draft-exclude-file");
+            command.add(draftExcludeFile.toString());
         }
         ProcessBuilder builder = new ProcessBuilder(command);
         if (jdkRelease != null) {

@@ -20,3 +20,12 @@ assert log.isFile() : "invoker build log not found: $log"
 // be lost entirely under mvnd.
 assert log.text.contains("[INFO] uika-stub: dependency changes: 0") :
     "CLI output did not go through the mojo logger"
+
+// -Duika.classLoadLog and -Duika.draftExcludeFile must reach the CLI, resolved against
+// the project basedir like the other file properties.
+def classLoadDir = new File(basedir, "load-logs")
+assert args.text.contains("--class-load-log ${classLoadDir.absolutePath}") :
+    "-Duika.classLoadLog was not forwarded to the CLI: ${args.text}"
+def draftFile = new File(basedir, "uika-draft.toml")
+assert args.text.contains("--draft-exclude-file ${draftFile.absolutePath}") :
+    "-Duika.draftExcludeFile was not forwarded to the CLI: ${args.text}"
