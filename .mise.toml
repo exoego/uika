@@ -2,7 +2,7 @@
 gradle = "9.7.0"
 # The default backends (conda, asdf plugin) lag behind sbt releases and have
 # no 1.12.13 or later, so install the launcher from the GitHub release.
-"github:sbt/sbt" = "1.12.15"
+"github:sbt/sbt" = "2.0.6"
 maven = "3.9.16"
 # tools/jvm-probe needs JDK 16+ (records, switch expressions, source launcher).
 java = "temurin-21"
