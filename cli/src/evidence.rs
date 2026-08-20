@@ -58,33 +58,68 @@ impl LoadEvidence {
 /// Anything else is ignored rather than an error: these files are produced by a JVM, can
 /// interleave with other output, and get truncated by the crashes worth studying, so a
 /// strict parser would reject exactly the interesting runs.
+///
+/// A directory reads every regular file under it (recursively, in sorted path order for
+/// determinism) as one source: parallel test JVMs write per-process files (`%p` in the
+/// `-Xlog` file name, because each JVM truncates a shared file on open), and a downloaded
+/// CI artifact unpacks to a directory, so the directory is the natural unit to pass.
 pub fn load(paths: &[PathBuf]) -> Result<LoadEvidence> {
     let mut evidence = LoadEvidence {
         loaded: FxHashMap::default(),
         sources: Vec::new(),
     };
     for path in paths {
-        let file = std::fs::File::open(path)
-            .with_context(|| format!("cannot read class-load log {}", path.display()))?;
-        let mut reader = std::io::BufReader::new(file);
-        let mut buf = Vec::new();
-        // The class whose Java cause stack is being collected, across lines.
-        let mut current: Option<String> = None;
-        loop {
-            buf.clear();
-            if reader
-                .read_until(b'\n', &mut buf)
-                .with_context(|| format!("cannot read class-load log {}", path.display()))?
-                == 0
-            {
-                break;
+        if path.is_dir() {
+            let mut files = Vec::new();
+            collect_files(path, &mut files)?;
+            files.sort();
+            for file in &files {
+                parse_file(file, &mut evidence.loaded)?;
             }
-            let line = String::from_utf8_lossy(&buf);
-            parse_line(line.trim_end(), &mut current, &mut evidence.loaded);
+        } else {
+            parse_file(path, &mut evidence.loaded)?;
         }
         evidence.sources.push(path.display().to_string());
     }
     Ok(evidence)
+}
+
+fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    let entries = std::fs::read_dir(dir)
+        .with_context(|| format!("cannot read class-load log directory {}", dir.display()))?;
+    for entry in entries {
+        let path = entry
+            .with_context(|| format!("cannot read class-load log directory {}", dir.display()))?
+            .path();
+        if path.is_dir() {
+            collect_files(&path, files)?;
+        } else {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn parse_file(path: &Path, loaded: &mut FxHashMap<String, Vec<String>>) -> Result<()> {
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("cannot read class-load log {}", path.display()))?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut buf = Vec::new();
+    // The class whose Java cause stack is being collected, across lines.
+    let mut current: Option<String> = None;
+    loop {
+        buf.clear();
+        if reader
+            .read_until(b'\n', &mut buf)
+            .with_context(|| format!("cannot read class-load log {}", path.display()))?
+            == 0
+        {
+            break;
+        }
+        let line = String::from_utf8_lossy(&buf);
+        parse_line(line.trim_end(), &mut current, loaded);
+    }
+    Ok(())
 }
 
 fn parse_line(
@@ -503,6 +538,21 @@ mod tests {
         // The draft must load as a real exclude file.
         let rules = crate::exclude::load(std::slice::from_ref(&path)).unwrap();
         assert_eq!(rules.len(), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A directory of logs (per-process files from parallel test JVMs, or an unpacked CI
+    /// artifact) reads recursively as one source.
+    #[test]
+    fn a_directory_of_logs_reads_every_file() {
+        let dir = std::env::temp_dir().join(format!("uika-load-dir-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("nested")).unwrap();
+        std::fs::write(dir.join("a.log"), "com.example.A\n").unwrap();
+        std::fs::write(dir.join("nested").join("b.log"), "com.example.B\n").unwrap();
+        let e = load(std::slice::from_ref(&dir)).unwrap();
+        assert!(e.observed("com/example/A").is_some());
+        assert!(e.observed("com/example/B").is_some());
+        assert_eq!(e.sources().len(), 1, "the directory is one source");
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -335,7 +335,10 @@ of a log. Accepted formats, mixed freely and parsed leniently: unified-logging
 `[class,load]` lines with any decorators (other `-Xlog` streams sharing the
 file are skipped), plain class-name lists (dotted or slashed, so
 `-XX:DumpLoadedClassList` classlists work), and `class+load+cause` stack
-blocks.
+blocks. Passing a directory reads every file under it, so a downloaded artifact
+directory works as-is; when parallel test JVMs share one target, put `%p` in
+the file name (each JVM truncates a shared file on open):
+`-Xlog:class+load=info:file=logs/load-%p.log`.
 
 On JDK 22+ the log can also say *what loads each class*
 (https://bugs.openjdk.org/browse/JDK-8193513):

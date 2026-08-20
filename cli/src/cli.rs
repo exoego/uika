@@ -106,8 +106,8 @@ pub enum Command {
         /// with -Xlog:class+load=info:file=... stored as a CI artifact. Violations whose
         /// referencing class was observed loading leave the not-proven-reachable tier
         /// (promote-only; absence of a load entry never demotes anything). May be
-        /// specified multiple times; class+load+cause stacks and plain class lists are
-        /// also accepted
+        /// specified multiple times; a directory reads every file under it, and
+        /// class+load+cause stacks and plain class lists are also accepted
         #[arg(long)]
         class_load_log: Vec<PathBuf>,
         /// Write draft --exclude-file rules for symbols referenced only by classes that
@@ -154,8 +154,8 @@ pub enum Command {
         /// with -Xlog:class+load=info:file=... stored as a CI artifact. Violations whose
         /// referencing class was observed loading leave the not-proven-reachable tier
         /// (promote-only; absence of a load entry never demotes anything). May be
-        /// specified multiple times; class+load+cause stacks and plain class lists are
-        /// also accepted
+        /// specified multiple times; a directory reads every file under it, and
+        /// class+load+cause stacks and plain class lists are also accepted
         #[arg(long)]
         class_load_log: Vec<PathBuf>,
         /// Write draft --exclude-file rules for symbols referenced only by classes that
