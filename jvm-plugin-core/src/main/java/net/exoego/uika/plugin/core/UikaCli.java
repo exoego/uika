@@ -114,8 +114,10 @@ public final class UikaCli {
      * process. {@code %p} is substituted by the JVM itself: parallel test JVMs must never
      * share a file, because {@code -Xlog} truncates it on open. The file value is quoted
      * when the path contains a colon (a Windows drive letter), which unified logging would
-     * otherwise parse as its own separator. All three build-tool plugins compose the
-     * argument here so the format cannot drift between them.
+     * otherwise parse as its own separator; the JVM strips the quotes. The Gradle and sbt
+     * plugins compose the argument here so those two cannot drift; Maven users hand-write
+     * an argLine (no mojo can inject into surefire), so its documented recipe must be kept
+     * in sync with this format by hand.
      */
     public static String classLoadLogJvmArg(Path dir, String filePrefix) {
         String file = dir.resolve(filePrefix + "-%p.log").toString();

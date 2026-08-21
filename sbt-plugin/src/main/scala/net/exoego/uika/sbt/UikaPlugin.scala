@@ -19,8 +19,8 @@ object UikaPlugin extends AutoPlugin {
     val uikaFailOn = settingKey[String]("When uikaUpgradeCheck fails the build: never, reachable, or any (default)")
     val uikaExcludeFiles = settingKey[Seq[File]]("TOML files of known false positives to suppress, passed as repeated --exclude-file")
     val uikaJdkRelease = settingKey[Int]("JDK API release for --jdk-release (0 disables; defaults to the build JVM's feature release, clamped to what its ct.sym serves)")
-    val uikaClassLoadLog = settingKey[Option[File]]("Directory for runtime class-load logs: forked Test JVMs write -Xlog:class+load files there (per-process names; needs Test/fork := true), and uikaUpgradeCheck reads it back as --class-load-log")
-    val uikaDraftExcludeFile = settingKey[Option[File]]("File for uikaUpgradeCheck to write draft exclude rules to (--draft-exclude-file); only meaningful with uikaClassLoadLog")
+    val uikaClassLoadLog = settingKey[Option[File]]("Directory for runtime class-load logs: forked Test JVMs write -Xlog:class+load files there (per-process names; needs Test/fork := true), and uikaUpgradeCheck reads it back as --class-load-log. Set it bare in build.sbt or at ThisBuild; a per-subproject value reaches only that project's tests, not the check")
+    val uikaDraftExcludeFile = settingKey[Option[File]]("File for uikaUpgradeCheck to write draft exclude rules to (--draft-exclude-file); only meaningful with uikaClassLoadLog. Set it bare in build.sbt or at ThisBuild")
     val uikaUpgradeCheck = inputKey[Unit]("Runs uika upgrade-check: uikaUpgradeCheck <before.json> <after.json>")
   }
 
@@ -62,8 +62,16 @@ object UikaPlugin extends AutoPlugin {
       val binary = UikaCli.extractBinary(zip.toPath, (uikaDir / s"cli-$version-$classifier").toPath)
       val excludeFiles = uikaExcludeFiles.value.map(_.toPath).asJava
       val jdkRelease = UikaCli.effectiveJdkRelease(uikaJdkRelease.value, (line: String) => log.info(line))
-      val classLoadLogs = uikaClassLoadLog.value.map(_.toPath).toSeq.asJava
-      val draftExcludeFile = uikaDraftExcludeFile.value.map(_.toPath).orNull
+      // LocalRootProject scope, not bare: this task lives in buildSettings, and a bare
+      // read resolves ThisBuild only — the README's plain `uikaClassLoadLog := Some(...)`
+      // in build.sbt is root-project-scoped, and missing it here silently ran the check
+      // without --class-load-log while forked tests kept writing logs. Root-project scope
+      // still delegates to ThisBuild, so both spellings work. Absolutized like the
+      // javaOptions side so both halves and the CLI agree on one directory.
+      val classLoadLogs =
+        (LocalRootProject / uikaClassLoadLog).value.map(_.getAbsoluteFile.toPath).toSeq.asJava
+      val draftExcludeFile =
+        (LocalRootProject / uikaDraftExcludeFile).value.map(_.getAbsoluteFile.toPath).orNull
       UikaCli.runUpgradeCheck(binary, file(args.head).toPath, file(args(1)).toPath, uikaFailOn.value, excludeFiles, jdkRelease, classLoadLogs, draftExcludeFile, (line: String) => log.info(line)) match {
         case 0 => ()
         case 1 => sys.error("uika upgrade-check found broken references (see output above)")
@@ -76,12 +84,17 @@ object UikaPlugin extends AutoPlugin {
     // Forked Test JVMs write class-load logs into uikaClassLoadLog, per-process file names
     // via the shared core helper (%p, because -Xlog truncates a shared file on open).
     // javaOptions only reaches the tests with Test/fork := true; in-process tests run in
-    // sbt's own JVM, where no flag can be added after startup.
+    // sbt's own JVM, where no flag can be added after startup. The directory is
+    // absolutized: a relative value would otherwise split three ways (createDirectory and
+    // the CLI child resolve against sbt's launch directory, each forked test JVM against
+    // its own subproject's baseDirectory working dir), scattering logs the check then
+    // never reads — or aborting forks whose per-subproject directory does not exist.
     Test / javaOptions ++= {
       uikaClassLoadLog.value match {
         case Some(dir) =>
-          IO.createDirectory(dir)
-          Seq(UikaCli.classLoadLogJvmArg(dir.toPath, thisProject.value.id))
+          val abs = dir.getAbsoluteFile
+          IO.createDirectory(abs)
+          Seq(UikaCli.classLoadLogJvmArg(abs.toPath, thisProject.value.id))
         case None => Seq.empty
       }
     },

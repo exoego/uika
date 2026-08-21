@@ -179,7 +179,9 @@ pub fn diff_json(changes: &[BreakingChange]) -> Result<String> {
 
 /// "com/google/Foo$Bar" -> "com.google.Foo$Bar". `$` is kept: it is part of the class's
 /// binary name and dotting it would fabricate a nesting that does not exist for Foo$1.
-fn dotted(name: &str) -> String {
+/// pub(crate) because evidence.rs names classes in drafted reasons and the two must
+/// agree.
+pub(crate) fn dotted(name: &str) -> String {
     name.replace('/', ".")
 }
 

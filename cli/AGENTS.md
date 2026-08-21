@@ -96,8 +96,9 @@ pass-2 classes are typically below 0.1% of the scan.
   via module attribution) are judged with that run's own `app_roots_matched`,
   so one module whose roots matched nothing degrades `--fail-on reachable`
   to `any` for ITS violations only, not for healthy modules. The merged
-  report's `app_roots_matched` keeps the Some(false)-dominating fold for the
-  display warning.
+  report's `app_roots_matched` stays None (per-run states live on the
+  `RunOutcome`s); anything needing one cross-run axis folds those states
+  Some(false)-dominant, the way `--draft-exclude-file` gating does.
 
 ## Linkage Semantics
 
@@ -399,12 +400,25 @@ pass-2 classes are typically below 0.1% of the scan.
   Do not push evidence into run_check: per-module runs would re-apply it per
   run and the single-policy-site rule would be lost.
 - The parser (`evidence.rs::parse_line`) is deliberately lenient — decorated UL
-  lines (skipping other tags sharing the file), `class+load+cause` stack blocks
-  (`at ...` frames are NEVER read as loaded classes), and bare class-name
-  tokens (segment-validated, so IPs and versions in mixed logs do not register;
-  two segments minimum). Names normalize to the slashed form so lookups match
-  `Violation.source_class` directly. Frames cap at MAX_FRAMES; first stack
-  wins.
+  lines, `class+load+cause` stack blocks (`at ...` frames are NEVER read as
+  loaded classes), and bare class-name tokens. The tags decorator is matched by
+  exact comma-membership ("class" and "load" both present), not substring:
+  `class,loader,data` contains the substring but is another stream. Only a
+  multi-member group counts as a FOREIGN tags decorator (a single word could be
+  a level or hostname decorator), so a tags-less decorator set still parses via
+  the token path, and a skipped foreign line does not end an open stack block
+  (streams interleave per line). Tokens are segment-validated (IPs and versions
+  in mixed logs do not register; non-ASCII bytes are identifier characters,
+  since JVM names are barely restricted); a bare token needs two segments,
+  while a JVM-labeled one (tagged line or stack header) accepts one, so
+  default-package classes still promote. Names normalize to the slashed form
+  so lookups match `Violation.source_class` directly. Cause stacks are never
+  retained: the trigger is computed as frames stream by and one record per
+  class is stored (`-XX:LogClassLoadingCauseFor=*` names every loaded class of
+  a run, and retaining even capped stacks cost hundreds of MB), which also
+  finds the trigger past arbitrarily deep delegation chains. First stack with
+  frames wins. Lines are read with a length cap so a stray newline-less binary
+  in the directory cannot be buffered whole.
 - Two rules exist because REAL JDK 25 cause output broke the synthetic
   assumptions (`real_jdk_stack_shape_parses_through_monitors_and_custom_loaders`
   pins the verbatim shape): monitor annotations (`- locked <0x...>`) interleave
@@ -412,18 +426,29 @@ pass-2 classes are typically below 0.1% of the scan.
   loader METHOD NAMES (loadClass/findClass/defineClass) on top of the JDK
   loader packages, because a custom loader (javac's source-launcher
   MemoryClassLoader, an app server's) sits in the delegation chain under its
-  own package and would otherwise be picked as the trigger. The only test
-  allowed to shell out to a JVM,
-  `a_real_jvm_emitted_class_load_log_promotes_the_violation`, feeds a log a
-  real `java -Xlog` run EMITTED into the full report and skips without a JVM —
-  keep it, because promote-only means parser-vs-format drift has no symptom
-  besides silently promoting nothing.
+  own package and would otherwise be picked as the trigger. The class-load
+  guard test, `a_real_jvm_emitted_class_load_log_promotes_the_violation`,
+  feeds a log a real `java -Xlog` run EMITTED into the full report and skips
+  without a JVM (JAVA_HOME, PATH, or mise) — keep it, because promote-only
+  means parser-vs-format drift has no symptom besides silently promoting
+  nothing. Its `class+load+cause` half needs JDK 22+, above the pinned
+  toolchain, so run it against a newer JDK when touching the cause parsing.
 - Drafting groups by the referenced symbol because that is what an exclude rule
   matches: a symbol also broken by a reachable or observed class is never
-  drafted, since the rule would waive the real break too. Drafted TOML must
+  drafted, since the rule would waive the real break too. A member-less rule is
+  wider than its symbol — `exclude::filter` reads it as the owner outright — so
+  a class-level symbol is drafted only when every symbol on its owner is
+  draftable. Per-module drafting judges the axis from the Some(false)-dominating
+  fold of the per-run roots states, never `merged.app_roots_matched` (which
+  stays None): a module whose roots matched nothing has meaningless
+  `reachable = Some(false)` violations that the per-run gate fails as Breaks,
+  and drafting them would propose waiving exactly those. Drafted TOML must
   round-trip through `exclude::load` (pinned by
-  `drafts_only_fully_unproven_unobserved_symbols`); a requested draft file is
-  always written, like --verdicts-json.
+  `drafts_only_fully_unproven_unobserved_symbols`). A requested draft file is
+  created upfront like --verdicts-json (`create_draft_placeholder`), so an
+  errored run leaves a fresh placeholder, never a stale draft from an earlier
+  run; quiet runs (no changes, empty plan) write the empty draft through the
+  same `apply_evidence_and_draft` call as checked runs.
 
 ## SPI (ServiceLoader) provider breaks
 

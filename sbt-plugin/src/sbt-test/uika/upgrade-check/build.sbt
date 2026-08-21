@@ -103,10 +103,12 @@ checkClassLoadLogPassed := {
 lazy val checkTestJavaOptionsInjected = taskKey[Unit]("Asserts uikaClassLoadLog injected the -Xlog flag into Test/javaOptions")
 
 // The flag only reaches tests with Test/fork := true, but the injected option must be
-// there either way; %p keeps parallel forks from truncating each other's file.
+// there either way; %p keeps parallel forks from truncating each other's file. contains,
+// not endsWith: on a path with a colon (a Windows drive) the core helper quotes the file
+// value, so the option ends with a quote there.
 checkTestJavaOptionsInjected := {
   val opts = (Test / javaOptions).value
   val dir = (baseDirectory.value / "load-logs").getAbsolutePath
-  if (!opts.exists(o => o.startsWith("-Xlog:class+load=info:file=") && o.contains(dir) && o.endsWith("-%p.log")))
+  if (!opts.exists(o => o.startsWith("-Xlog:class+load=info:file=") && o.contains(dir) && o.contains("-%p.log")))
     sys.error(s"uikaClassLoadLog did not inject Test/javaOptions: $opts")
 }

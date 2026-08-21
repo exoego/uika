@@ -913,14 +913,26 @@ fn reachability_tiers_violation_by_app_roots() {
     );
 }
 
-/// Locate a JVM and its feature release: JAVA_HOME first, then PATH. None when absent or
-/// the `--version` line does not parse.
+/// Locate a JVM and its feature release: JAVA_HOME first, then PATH, then the repo's
+/// pinned toolchain via `mise where java` — the same convention find_ct_sym_for_test
+/// falls back to, so this guard test does not silently skip on a machine where mise
+/// alone provides java (this test guards parser-vs-real-format drift, and promote-only
+/// means its loss has no other symptom). None when absent or the `--version` line does
+/// not parse.
 fn find_java() -> Option<(std::path::PathBuf, u32)> {
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
     if let Ok(home) = std::env::var("JAVA_HOME") {
         candidates.push(std::path::Path::new(&home).join("bin").join("java"));
     }
     candidates.push(std::path::PathBuf::from("java"));
+    if let Ok(out) = std::process::Command::new("mise")
+        .args(["where", "java"])
+        .output()
+        && out.status.success()
+    {
+        let home = String::from_utf8_lossy(&out.stdout);
+        candidates.push(std::path::Path::new(home.trim()).join("bin").join("java"));
+    }
     for java in candidates {
         let Ok(out) = std::process::Command::new(&java).arg("--version").output() else {
             continue;
@@ -942,6 +954,29 @@ fn find_java() -> Option<(std::path::PathBuf, u32)> {
     None
 }
 
+/// The coroutines-pair check whose one violation starts ⚠️ (the only app root never
+/// references BlockingAdapter), shared by the class-load-log tests — same shape as
+/// reachability_tiers_violation_by_app_roots.
+fn one_unproven_blocking_adapter_report() -> uika::check::CheckReport {
+    let old = fixture("kotlinx-coroutines-core-jvm-1.7.1.jar");
+    let new = fixture("kotlinx-coroutines-core-jvm-1.11.0.jar");
+    let unrelated = fixture("koin-logger-slf4j-3.2.2.jar");
+    let targets = [fixture("ktor-io-jvm-2.3.13.jar"), unrelated.clone()];
+    let report = uika::run_check(
+        std::slice::from_ref(&old),
+        std::slice::from_ref(&new),
+        &targets,
+        std::slice::from_ref(&unrelated),
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(report.violations.len(), 1);
+    assert_eq!(report.violations[0].reachable, Some(false));
+    report
+}
+
 /// True end to end over a real JVM: the class-load log is EMITTED by `java -Xlog`, never
 /// hand-written, so drift between real unified-logging output and the evidence parser
 /// fails here — promote-only means a parser that matches nothing has no symptom beyond
@@ -957,7 +992,7 @@ fn a_real_jvm_emitted_class_load_log_promotes_the_violation() {
         return;
     }
     let Some((java, feature)) = find_java() else {
-        eprintln!("skipping: no usable java on JAVA_HOME or PATH");
+        eprintln!("skipping: no usable java on JAVA_HOME, PATH, or mise");
         return;
     };
     if feature < 11 {
@@ -1007,24 +1042,7 @@ fn a_real_jvm_emitted_class_load_log_promotes_the_violation() {
     let log = dir.join("class-load.log");
     emit(&[format!("-Xlog:class+load=info:file={}", log.display())]);
 
-    // Same setup as reachability_tiers_violation_by_app_roots: the only root never
-    // references BlockingAdapter, so the violation starts ⚠️.
-    let old = fixture("kotlinx-coroutines-core-jvm-1.7.1.jar");
-    let new = fixture("kotlinx-coroutines-core-jvm-1.11.0.jar");
-    let unrelated = fixture("koin-logger-slf4j-3.2.2.jar");
-    let targets = [fixture("ktor-io-jvm-2.3.13.jar"), unrelated.clone()];
-    let mut report = uika::run_check(
-        std::slice::from_ref(&old),
-        std::slice::from_ref(&new),
-        &targets,
-        std::slice::from_ref(&unrelated),
-        &[],
-        None,
-        None,
-    )
-    .unwrap();
-    assert_eq!(report.violations.len(), 1);
-    assert_eq!(report.violations[0].reachable, Some(false));
+    let mut report = one_unproven_blocking_adapter_report();
 
     let evidence = uika::evidence::load(std::slice::from_ref(&log)).unwrap();
     uika::evidence::apply(&mut report.violations, &evidence);
@@ -1078,24 +1096,7 @@ fn a_real_jvm_emitted_class_load_log_promotes_the_violation() {
 /// exclude parser accepts.
 #[test]
 fn class_load_log_promotes_the_unproven_violation_and_gates_drafts() {
-    let old = fixture("kotlinx-coroutines-core-jvm-1.7.1.jar");
-    let new = fixture("kotlinx-coroutines-core-jvm-1.11.0.jar");
-    let ktor_io = fixture("ktor-io-jvm-2.3.13.jar");
-    let unrelated = fixture("koin-logger-slf4j-3.2.2.jar");
-
-    let targets = [ktor_io, unrelated.clone()];
-    let report = uika::run_check(
-        std::slice::from_ref(&old),
-        std::slice::from_ref(&new),
-        &targets,
-        std::slice::from_ref(&unrelated),
-        &[],
-        None,
-        None,
-    )
-    .unwrap();
-    assert_eq!(report.violations.len(), 1);
-    assert_eq!(report.violations[0].reachable, Some(false));
+    let report = one_unproven_blocking_adapter_report();
 
     let dir = std::env::temp_dir().join(format!("uika-load-log-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
