@@ -261,6 +261,7 @@ fn parse_line(line: &str, parser: &mut Parser<'_>) {
     let mut rest = line.trim_start();
     let mut trusted = false;
     let mut foreign = false;
+    let mut native = false;
     while let Some(tail) = rest.strip_prefix('[') {
         let Some(end) = tail.find(']') else { break };
         let group = &tail[..end];
@@ -271,6 +272,7 @@ fn parse_line(line: &str, parser: &mut Parser<'_>) {
                 match tag.trim() {
                     "class" => class_seen = true,
                     "load" => load_seen = true,
+                    "native" => native = true,
                     _ => {}
                 }
             }
@@ -301,6 +303,13 @@ fn parse_line(line: &str, parser: &mut Parser<'_>) {
         if let Some(class) = normalize(class.trim_end_matches(':'), true) {
             parser.loaded.entry(class).or_insert(LoadRecord::Loaded);
         }
+        return;
+    }
+    // Native stack frames share the class,load,cause,native tags with their header, and
+    // they are not class names: the frame-kind letters ("V  [libjvm.so+0x...]",
+    // "j  java.lang.Thread.run()V+8") would pass the trusted single-segment path and
+    // register bogus default-package classes an obfuscated jar could then collide with.
+    if native {
         return;
     }
     if let Some(frame) = rest.strip_prefix("at ") {
@@ -362,7 +371,11 @@ pub fn apply(violations: &mut [Violation], evidence: &LoadEvidence) {
     for v in violations.iter_mut() {
         if let Some(record) = evidence.observed(v.source_class.as_str()) {
             v.observed_loading = true;
-            v.load_trigger = record.trigger().map(str::to_string);
+            // Promote-only holds across evidence sets too: a later stack-less observation
+            // must not clear a trigger an earlier log established.
+            if let Some(trigger) = record.trigger() {
+                v.load_trigger = Some(trigger.to_string());
+            }
         }
     }
 }
@@ -660,17 +673,44 @@ mod tests {
         );
     }
 
-    /// The native variant marks the class loaded without collecting VM frames.
+    /// The native variant marks the class loaded without collecting VM frames. The frame
+    /// lines carry the same class,load,cause,native tags as their header, and their
+    /// frame-kind letters ("V", "j") must not register as trusted single-segment classes.
     #[test]
     fn native_stack_marks_loaded_without_frames() {
         let e = parse(
             "[info][class,load,cause,native] Native stack when loading com.example.N:\n\
-             V  [libjvm.so+0x123abc]\n\
-             j  java.lang.Thread.run()V\n",
+             [info][class,load,cause,native] V  [libjvm.so+0x123abc]\n\
+             [info][class,load,cause,native] j  java.lang.Thread.run()V+8\n\
+             [info][class,load,cause,native] j  com.example.Caller.run()V+2\n",
         );
         let record = e.observed("com/example/N").unwrap();
         assert!(record.trigger().is_none());
-        assert_eq!(e.distinct_classes(), 1);
+        assert_eq!(
+            e.distinct_classes(),
+            1,
+            "native frame lines leaked in as classes"
+        );
+    }
+
+    /// apply is promote-only across evidence sets too: a stack-less observation applied
+    /// after a stacked one must not clear the established trigger.
+    #[test]
+    fn apply_never_clears_an_established_trigger() {
+        let stacked = parse(
+            "Java stack when loading io.ktor.A:\n\
+             \tat com.example.Boot.init(Boot.java:5)\n",
+        );
+        let plain = parse("io.ktor.A\n");
+        let mut violations = vec![violation("io/ktor/A", "x/Gone", None)];
+        apply(&mut violations, &stacked);
+        apply(&mut violations, &plain);
+        assert!(violations[0].observed_loading);
+        assert_eq!(
+            violations[0].load_trigger.as_deref(),
+            Some("com.example.Boot.init(Boot.java:5)"),
+            "a later stack-less observation cleared the trigger"
+        );
     }
 
     /// Nothing is retained per frame, so a delegation chain of any depth still yields
