@@ -110,21 +110,30 @@ public final class UikaCli {
     }
 
     /**
-     * The test-JVM argument that writes a class-load log into {@code dir}, one file per
-     * process. {@code %p} is substituted by the JVM itself: parallel test JVMs must never
-     * share a file, because {@code -Xlog} truncates it on open. The file value is quoted
-     * when the path contains a colon (a Windows drive letter), which unified logging would
-     * otherwise parse as its own separator; the JVM strips the quotes. The Gradle and sbt
-     * plugins compose the argument here so those two cannot drift; Maven users hand-write
-     * an argLine (no mojo can inject into surefire), so its documented recipe must be kept
+     * The test-JVM argument that records every class load (stack traces included) into a
+     * JFR recording under {@code dir}. JFR generates pid-unique file names when the
+     * filename option names a directory, so parallel test JVMs never clobber each other,
+     * and the comma-delimited option syntax has no problem with Windows drive colons —
+     * both problems the earlier {@code -Xlog} injection had to solve by hand. The one
+     * character that syntax cannot carry bare is the comma itself, its own delimiter: an
+     * unquoted comma in the path truncates {@code filename=} there and the JVM still
+     * starts (exit 0), recording to the truncated path while the real directory stays
+     * empty — silent evidence loss, so the value is quoted when the path contains one
+     * (the JVM strips the quotes; verified against a real StartFlightRecording run). The
+     * event settings syntax needs JDK 17+, the project's build floor. {@code stackTrace}
+     * is spelled out because the triggers ({@code via ... from ...}) come from those
+     * stacks and a custom JFC could have disabled the default. The Gradle and sbt plugins
+     * compose the argument here so those two cannot drift; Maven users hand-write an
+     * argLine (no mojo can inject into surefire), so its documented recipe must be kept
      * in sync with this format by hand.
      */
-    public static String classLoadLogJvmArg(Path dir, String filePrefix) {
-        String file = dir.resolve(filePrefix + "-%p.log").toString();
-        if (file.contains(":")) {
-            file = "\"" + file + "\"";
+    public static String jfrClassLoadJvmArg(Path dir) {
+        String filename = dir.toString();
+        if (filename.contains(",")) {
+            filename = "\"" + filename + "\"";
         }
-        return "-Xlog:class+load=info:file=" + file;
+        return "-XX:StartFlightRecording:jdk.ClassLoad#enabled=true,jdk.ClassLoad#stackTrace=true,filename="
+                + filename;
     }
 
     /**

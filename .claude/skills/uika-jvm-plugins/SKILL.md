@@ -73,33 +73,77 @@ description: Invariants for the uika Gradle, sbt, and Maven build-tool plugins a
   never depends on the caller's JAVA_HOME. Opt out with 0.
 - Runtime load evidence is ONE knob per tool pointed at one directory, serving
   both phases (collect on the base branch's test run, consume on the PR's
-  check): Gradle `-PuikaClassLoadLog` (bare value defaults to
-  `build/uika/class-load`; the value must be a directory, an existing-file
-  value fails fast at configuration), sbt `uikaClassLoadLog := Some(dir)`,
-  Maven `-Duika.classLoadLog` plus a hand-written `argLine` for collection (no
-  mojo can inject into surefire), so Maven alone bypasses the shared composer —
-  its README/javadoc recipe must be kept in sync with it by hand. Gradle and
-  sbt compose the test-JVM argument via `UikaCli.classLoadLogJvmArg` in core —
-  per-process `%p` file names because `-Xlog` truncates a shared file on open,
-  and the value is quoted when the path carries a colon (a Windows drive; the
-  JVM strips the quotes, verified against a real -Xlog run). Gradle injects via
-  `withType(Test).configureEach` using `jvmArgumentProviders` (a build script's
-  `jvmArgs = [...]` setter silently wiped a plain jvmArgs injection) plus
-  `upToDateWhen(false)`/`doNotCacheIf` (provider args are not fingerprinted,
-  and an UP-TO-DATE or FROM-CACHE test forks no JVM, so a collect run would
-  upload an empty artifact with no symptom) plus a doFirst mkdirs lambda
-  capturing a plain File — all verified configuration-cache safe on 9.7.0, and
-  the mkdirs is load-bearing (-Xlog aborts JVM startup on a missing directory).
+  check): Gradle `-PuikaJfr` (bare value defaults to `build/uika/jfr`; the
+  value must be a directory or a `.jfr` recording — any other existing-file
+  value fails fast at configuration, and a DIRECTORY named `x.jfr` still
+  counts as a directory), sbt `uikaJfr := Some(dir)`, Maven `-Duika.jfr` plus
+  a hand-written `argLine` for collection (no mojo can inject into surefire),
+  so Maven alone bypasses the shared composer — its README/javadoc recipe must
+  be kept in sync with it by hand. Collection is JFR, not -Xlog, on purpose:
+  `jdk.ClassLoad` with stacks is an information superset of both -Xlog
+  variants (stacks for every class, no single-substring filter, JDK 17+
+  instead of 22+ for triggers), JFR generates pid-unique file names for a
+  directory-valued `filename` (no `%p`, no Windows colon quoting — but a COMMA
+  in the path is the option delimiter, silently truncating `filename=` with
+  exit 0, so the composer quotes the value exactly when it carries one), and
+  the known trade-offs are bounded (maxsize rotation defaults to 250MB, far
+  above class-load volume; a SIGKILLed fork loses its recording, which
+  promote-only absorbs; stackdepth 64 truncates the OUTER frames only — pinned
+  by `deepCallerStacksKeepTheTriggerFrames`). Gradle and sbt compose the
+  test-JVM argument via `UikaCli.jfrClassLoadJvmArg` in core, and both decide
+  the consumption-only skip via `JfrEvidence.valueNamesRecording` (also core,
+  and announced with a log line — the skip is otherwise a symptomless empty
+  collect run); the test JVMs
+  need JDK 17+ (the event-settings syntax). Gradle injects via
+  `withType(Test).configureEach` using `jvmArgumentProviders` (a build
+  script's `jvmArgs = [...]` setter silently wiped a plain jvmArgs injection)
+  plus `upToDateWhen(false)`/`doNotCacheIf` (provider args are not
+  fingerprinted, and an UP-TO-DATE or FROM-CACHE test forks no JVM, so a
+  collect run would upload an empty artifact with no symptom) plus a doFirst
+  mkdirs lambda — all verified configuration-cache safe on 9.7.0, and the
+  mkdirs is load-bearing (a missing PARENT aborts JVM startup, but a missing
+  leaf directory under an existing parent makes JFR silently record to a
+  single clobbered FILE at that path — the Maven recipe says "create it
+  first" for the same reason).
   sbt appends to `Test/javaOptions`, which only reaches tests under
   `Test/fork := true`; both sbt halves absolutize the directory (a relative
   value split across launch dir vs each fork's baseDirectory), and the
   buildSettings task reads the keys via `LocalRootProject / ...` so the
-  README's bare `uikaClassLoadLog := Some(...)` (root-project scope) reaches
-  the check, not only ThisBuild.
+  README's bare `uikaJfr := Some(...)` (root-project scope) reaches the
+  check, not only ThisBuild.
   `UpgradeCheckTask.getDraftExcludeFile` is `@Internal`, NOT `@OutputFile`:
   declaring an output made a second invocation UP-TO-DATE and silently skipped
   the whole check (caught by `configurationCacheReusesUpgradeCheck`, which sets
   the draft property for exactly that reason).
+- Recordings are converted PLUGIN-side
+  (`JfrEvidence` in core, `jdk.jfr.consumer.RecordingFile`), never CLI-side:
+  the CLI is JVM-free and must not read binary JFR. The converter emits the
+  CLI's own trusted text shapes (`[class,load] name` per stackless event, a
+  `Java stack when loading X:` block per stacked one), so the whole evidence
+  pipeline including trigger composition is reused unchanged — and unlike
+  -Xlog cause stacks, jdk.ClassLoad stacks start at the loading call site with
+  no defineClass machinery on top. A `.jfr` knob value is consumption-only
+  (Test-JVM injection is skipped for it; tests cannot record into an existing
+  recording); recordings inside the directory are found following symlinks
+  (the CLI follows them too) and by content, not name alone (`FLR\0` magic —
+  `jcmd JFR.dump` and a file-valued `filename=` write suffixless recordings),
+  then converted with the binary left in place (the CLI skips `.jfr` names in
+  its directory walk), and any text logs in the directory still reach the CLI
+  as-is (bring-your-own -Xlog). Conversion dedups per batch to exactly what
+  the CLI keeps (first bare line per class, first framed stack block —
+  evidence.rs is or_insert / first-framed-wins, so every test fork repeating
+  the JDK load set would otherwise write hundreds of MB the CLI drops), a
+  truncated or unreadable recording is logged and skipped, never fatal (a fork
+  killed mid-dump must not cost the intact recordings' evidence), and stale
+  `jfr-*.log` conversions are deleted from the workdir (`JfrEvidence.WORK_DIR_NAME`,
+  shared by all three plugins) before converting, since pid-unique recording
+  names would otherwise accumulate orphans. Every conversion logs
+  its event count because the event is disabled in the default JFC profile and
+  an empty conversion is otherwise symptomless. Tests must record REAL
+  recordings with a runtime-compiled probe class loaded through a fresh
+  URLClassLoader (`JfrTestRecordings`): a nested test class cannot serve —
+  JUnit discovery loads nested classes via getDeclaredClasses() before any
+  test body runs, so its load never lands in the recording.
 - Their tests stub uika-cli with a shell-script ZIP in a file-based Maven repo
   (Gradle TestKit + sbt scripted + Maven invoker; invoker needs `-U` because
   target/it-repo caches resolution failures across runs, and its pre-build

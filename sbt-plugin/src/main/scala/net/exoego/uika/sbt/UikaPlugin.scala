@@ -2,6 +2,7 @@ package net.exoego.uika.sbt
 
 import net.exoego.uika.plugin.core.ClasspathDump
 import net.exoego.uika.plugin.core.DumpFormat
+import net.exoego.uika.plugin.core.JfrEvidence
 import net.exoego.uika.plugin.core.UikaCli
 import sbt._
 import sbt.Keys._
@@ -19,8 +20,8 @@ object UikaPlugin extends AutoPlugin {
     val uikaFailOn = settingKey[String]("When uikaUpgradeCheck fails the build: never, reachable, or any (default)")
     val uikaExcludeFiles = settingKey[Seq[File]]("TOML files of known false positives to suppress, passed as repeated --exclude-file")
     val uikaJdkRelease = settingKey[Int]("JDK API release for --jdk-release (0 disables; defaults to the build JVM's feature release, clamped to what its ct.sym serves)")
-    val uikaClassLoadLog = settingKey[Option[File]]("Directory for runtime class-load logs: forked Test JVMs write -Xlog:class+load files there (per-process names; needs Test/fork := true), and uikaUpgradeCheck reads it back as --class-load-log. Set it bare in build.sbt or at ThisBuild; a per-subproject value reaches only that project's tests, not the check")
-    val uikaDraftExcludeFile = settingKey[Option[File]]("File for uikaUpgradeCheck to write draft exclude rules to (--draft-exclude-file); only meaningful with uikaClassLoadLog. Set it bare in build.sbt or at ThisBuild")
+    val uikaJfr = settingKey[Option[File]]("JFR class-load evidence location: a directory makes forked Test JVMs record jdk.ClassLoad there (pid-unique file names; needs Test/fork := true and a JDK 17+ test JVM) and uikaUpgradeCheck converts and reads it back; a .jfr file is consumed only. Set it bare in build.sbt or at ThisBuild; a per-subproject value reaches only that project's tests, not the check")
+    val uikaDraftExcludeFile = settingKey[Option[File]]("File for uikaUpgradeCheck to write draft exclude rules to (--draft-exclude-file); only meaningful with uikaJfr. Set it bare in build.sbt or at ThisBuild")
     val uikaUpgradeCheck = inputKey[Unit]("Runs uika upgrade-check: uikaUpgradeCheck <before.json> <after.json>")
   }
 
@@ -37,7 +38,7 @@ object UikaPlugin extends AutoPlugin {
     // The build runs on a JVM, so the JDK API layer defaults ON (the bare CLI keeps it
     // opt-in); UikaCli.effectiveJdkRelease clamps to what the build JVM's ct.sym serves.
     uikaJdkRelease := java.lang.Runtime.version().feature(),
-    uikaClassLoadLog := None,
+    uikaJfr := None,
     uikaDraftExcludeFile := None,
     uikaUpgradeCheck := {
       val args = Def.spaceDelimited("<before.json> <after.json>").parsed
@@ -63,13 +64,18 @@ object UikaPlugin extends AutoPlugin {
       val excludeFiles = uikaExcludeFiles.value.map(_.toPath).asJava
       val jdkRelease = UikaCli.effectiveJdkRelease(uikaJdkRelease.value, (line: String) => log.info(line))
       // LocalRootProject scope, not bare: this task lives in buildSettings, and a bare
-      // read resolves ThisBuild only — the README's plain `uikaClassLoadLog := Some(...)`
-      // in build.sbt is root-project-scoped, and missing it here silently ran the check
-      // without --class-load-log while forked tests kept writing logs. Root-project scope
+      // read resolves ThisBuild only — the README's plain `uikaJfr := Some(...)` in
+      // build.sbt is root-project-scoped, and missing it here silently ran the check
+      // without --class-load-log while forked tests kept recording. Root-project scope
       // still delegates to ThisBuild, so both spellings work. Absolutized like the
-      // javaOptions side so both halves and the CLI agree on one directory.
-      val classLoadLogs =
-        (LocalRootProject / uikaClassLoadLog).value.map(_.getAbsoluteFile.toPath).toSeq.asJava
+      // javaOptions side so both halves and the CLI agree on one directory. Recordings
+      // (a .jfr value, or recordings inside the directory) are converted to the CLI's
+      // text format here: the CLI is JVM-free and never reads binary JFR.
+      val classLoadLogs = JfrEvidence.rewrite(
+        (LocalRootProject / uikaJfr).value.map(_.getAbsoluteFile.toPath).toSeq.asJava,
+        (uikaDir / JfrEvidence.WORK_DIR_NAME).toPath,
+        (line: String) => log.info(line)
+      )
       val draftExcludeFile =
         (LocalRootProject / uikaDraftExcludeFile).value.map(_.getAbsoluteFile.toPath).orNull
       UikaCli.runUpgradeCheck(binary, file(args.head).toPath, file(args(1)).toPath, uikaFailOn.value, excludeFiles, jdkRelease, classLoadLogs, draftExcludeFile, (line: String) => log.info(line)) match {
@@ -81,20 +87,31 @@ object UikaPlugin extends AutoPlugin {
   )
 
   override def projectSettings: Seq[Setting[_]] = Seq(
-    // Forked Test JVMs write class-load logs into uikaClassLoadLog, per-process file names
-    // via the shared core helper (%p, because -Xlog truncates a shared file on open).
-    // javaOptions only reaches the tests with Test/fork := true; in-process tests run in
-    // sbt's own JVM, where no flag can be added after startup. The directory is
-    // absolutized: a relative value would otherwise split three ways (createDirectory and
-    // the CLI child resolve against sbt's launch directory, each forked test JVM against
-    // its own subproject's baseDirectory working dir), scattering logs the check then
-    // never reads — or aborting forks whose per-subproject directory does not exist.
+    // Forked Test JVMs record jdk.ClassLoad into uikaJfr via the shared core helper (JFR
+    // generates pid-unique file names for a directory-valued filename, so parallel forks
+    // never clobber each other). javaOptions only reaches the tests with
+    // Test/fork := true; in-process tests run in sbt's own JVM, where no flag can be
+    // added after startup. The directory is absolutized: a relative value would
+    // otherwise split three ways (createDirectory and the CLI child resolve against
+    // sbt's launch directory, each forked test JVM against its own subproject's
+    // baseDirectory working dir), scattering recordings the check then never reads — or
+    // aborting forks whose per-subproject directory does not exist.
     Test / javaOptions ++= {
-      uikaClassLoadLog.value match {
-        case Some(dir) =>
+      val log = sLog.value
+      uikaJfr.value match {
+        // A .jfr value is consumption-only: test JVMs cannot record into an existing
+        // recording, so injection is skipped for it. The truth table (a directory named
+        // logs.jfr is still a directory and keeps injection) is shared with the Gradle
+        // plugin via core so the two cannot drift.
+        case Some(dir) if !JfrEvidence.valueNamesRecording(dir.toPath) =>
           val abs = dir.getAbsoluteFile
           IO.createDirectory(abs)
-          Seq(UikaCli.classLoadLogJvmArg(abs.toPath, thisProject.value.id))
+          Seq(UikaCli.jfrClassLoadJvmArg(abs.toPath))
+        case Some(recording) =>
+          // Said out loud because the skip is otherwise symptomless: a collect run
+          // against a .jfr value records nothing and uploads an empty artifact.
+          log.info(s"uika: uikaJfr names a .jfr recording (consumption-only); forked test JVMs will not record: $recording")
+          Seq.empty
         case None => Seq.empty
       }
     },

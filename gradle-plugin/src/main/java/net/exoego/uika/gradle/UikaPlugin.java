@@ -133,7 +133,7 @@ public class UikaPlugin implements Plugin<Project> {
         // that relocates layout.buildDirectory after the plugins block make the tests
         // write one directory while the check read another — and resolving it eagerly at
         // apply time would capture the pre-relocation build directory for both.
-        org.gradle.api.provider.Provider<File> classLoadLogDir = classLoadLogDir(root);
+        org.gradle.api.provider.Provider<File> jfrDir = jfrDir(root);
 
         TaskProvider<UpgradeCheckTask> upgradeCheck =
                 root.getTasks().register("uikaUpgradeCheck", UpgradeCheckTask.class, task -> {
@@ -164,8 +164,8 @@ public class UikaPlugin implements Plugin<Project> {
                     if (excludeFile != null) {
                         task.getExcludeFiles().from(root.file(excludeFile.toString()));
                     }
-                    if (classLoadLogDir != null) {
-                        task.getClassLoadLogs().from(classLoadLogDir);
+                    if (jfrDir != null) {
+                        task.getClassLoadLogs().from(jfrDir);
                     }
                     Object draftExcludeFile = root.findProperty("uikaDraftExcludeFile");
                     if (draftExcludeFile != null) {
@@ -184,6 +184,9 @@ public class UikaPlugin implements Plugin<Project> {
                                 root.getProviders().provider(() -> defaultJdkRelease(root)));
                     }
                     task.getInstallDir().convention(root.getLayout().getBuildDirectory().dir("uika/cli"));
+                    task.getJfrWorkDir().convention(
+                            root.getLayout().getBuildDirectory()
+                                    .dir("uika/" + net.exoego.uika.plugin.core.JfrEvidence.WORK_DIR_NAME));
                     // The root tasks carry no data dependencies on each other, but a single
                     // invocation (dump + resolve + check) must run the check last so it
                     // reads the files the others just wrote. Soft ordering only: standalone
@@ -212,12 +215,12 @@ public class UikaPlugin implements Plugin<Project> {
             task.getCliZip().from(detachedFor(root, notation));
         }));
 
-        // -PuikaClassLoadLog=<dir> makes every Test task write a runtime class-load log
-        // into <dir> (one file per process — %p — because -Xlog truncates a shared file on
-        // open), which is exactly what uikaUpgradeCheck reads back as --class-load-log.
-        // One property serves both phases: the base branch's test run collects, the
-        // dependency PR's check consumes. Three deliberate choices, each verified against
-        // Gradle 9.7.0:
+        // -PuikaJfr=<dir> makes every Test task record class loads into a JFR recording
+        // under <dir> (JFR generates pid-unique file names for a directory-valued
+        // filename, so parallel forks never clobber each other), which is exactly what
+        // uikaUpgradeCheck converts and reads back. One property serves both phases: the
+        // base branch's test run collects, the dependency PR's check consumes. Three
+        // deliberate choices, each verified against Gradle 9.7.0:
         // - jvmArgumentProviders, not jvmArgs: a build script's `jvmArgs = listOf(...)`
         //   setter replaces the list and silently discarded the injected flag; provider
         //   args survive it and still show in getAllJvmArgs().
@@ -225,27 +228,33 @@ public class UikaPlugin implements Plugin<Project> {
         //   an UP-TO-DATE or FROM-CACHE Test task forks no JVM — the collect run would
         //   upload an empty artifact with no symptom (promote-only evidence). Collection
         //   is a side effect that needs a real run, so asking for it defeats both.
-        // - the doFirst mkdirs is load-bearing: -Xlog aborts JVM startup when the log
-        //   file's directory does not exist.
-        // Configuration only touches task properties and lambdas capturing a File/String,
+        // - the doFirst mkdirs is load-bearing: a missing PARENT aborts JVM startup, but
+        //   a missing leaf directory under an existing parent makes JFR silently record
+        //   to a single FILE at that path, every fork clobbering the last — verified
+        //   against a real StartFlightRecording run.
+        // Configuration only touches task properties and lambdas capturing a provider,
         // so the tasks stay configuration-cache compatible.
-        if (classLoadLogDir != null) {
-            org.gradle.api.provider.Provider<File> dir = classLoadLogDir;
+        // A .jfr value is consumption-only: it feeds the check after conversion, and test
+        // JVMs cannot record into an existing recording, so injection is skipped for it.
+        if (jfrDir != null && jfrValueIsRecording(root)) {
+            // Said out loud because the skip is otherwise symptomless: a collect run
+            // against a .jfr value records nothing and uploads an empty artifact.
+            root.getLogger().lifecycle(
+                    "uika: -PuikaJfr names a .jfr recording (consumption-only); test JVMs will not record");
+        } else if (jfrDir != null) {
+            org.gradle.api.provider.Provider<File> dir = jfrDir;
             root.allprojects(p -> p.getTasks()
                     .withType(org.gradle.api.tasks.testing.Test.class)
                     .configureEach(test -> {
-                        String prefix = (p.getPath().equals(":") ? "root" : p.getPath())
-                                .replaceAll("[^A-Za-z0-9._-]", "_")
-                                + "-" + test.getName();
                         // The argument is composed inside the provider, at execution
                         // time, so the bare default follows a relocated build directory.
                         test.getJvmArgumentProviders().add(() -> java.util.List.of(
-                                UikaCli.classLoadLogJvmArg(dir.get().toPath(), prefix)));
+                                UikaCli.jfrClassLoadJvmArg(dir.get().toPath())));
                         test.getOutputs().upToDateWhen(t -> false);
                         test.getOutputs().doNotCacheIf(
-                                "uika class-load log collection needs a real JVM run",
+                                "uika JFR class-load collection needs a real JVM run",
                                 t -> true);
-                        test.doFirst("uika class-load log directory", t -> dir.get().mkdirs());
+                        test.doFirst("uika JFR recording directory", t -> dir.get().mkdirs());
                     }));
         }
 
@@ -332,32 +341,47 @@ public class UikaPlugin implements Plugin<Project> {
     }
 
     /**
-     * The directory named by {@code -PuikaClassLoadLog}, or null when the property is
-     * absent. An empty value (bare {@code -PuikaClassLoadLog}) means the default
-     * {@code <root build dir>/uika/class-load}, kept as a lazy provider so a build script
+     * The directory (or recording) named by {@code -PuikaJfr}, or null when the property is
+     * absent. An empty value (bare {@code -PuikaJfr}) means the default
+     * {@code <root build dir>/uika/jfr}, kept as a lazy provider so a build script
      * relocating {@code layout.buildDirectory} after the plugins block still lands the
-     * logs under the final location; an explicit value is a fixed directory. A value
-     * naming an existing regular file is rejected here with the property's own
-     * vocabulary: the CLI flag accepts a log file, but this knob also drives Test-task
-     * collection, which composes {@code <value>/<prefix>-%p.log} — a file value would
-     * make every test JVM abort at startup with an -Xlog error that never mentions uika.
+     * recordings under the final location; an explicit value is a fixed path. A value
+     * naming an existing regular file is rejected unless it is a {@code .jfr} recording
+     * (consumption-only; the check converts it): any other file would make every test JVM
+     * abort at startup with a JFR error that never mentions uika.
      */
-    private static org.gradle.api.provider.Provider<File> classLoadLogDir(Project root) {
-        Object value = root.findProperty("uikaClassLoadLog");
+    private static org.gradle.api.provider.Provider<File> jfrDir(Project root) {
+        Object value = root.findProperty("uikaJfr");
         if (value == null) {
             return null;
         }
         String path = value.toString();
         if (path.isEmpty()) {
-            return root.getLayout().getBuildDirectory().dir("uika/class-load")
+            return root.getLayout().getBuildDirectory().dir("uika/jfr")
                     .map(org.gradle.api.file.Directory::getAsFile);
         }
         File dir = root.file(path);
-        if (dir.isFile()) {
+        if (dir.isFile() && !jfrValueIsRecording(root)) {
             throw new org.gradle.api.GradleException(
-                    "-PuikaClassLoadLog must name a directory (test JVMs write per-process"
-                            + " log files into it), but " + dir + " is a file");
+                    "-PuikaJfr must name a directory (test JVMs record into it) or a .jfr"
+                            + " recording, but " + dir + " is neither");
         }
         return root.getProviders().provider(() -> dir);
+    }
+
+    /**
+     * Whether -PuikaJfr names a recording rather than a recording directory. The truth
+     * table (a directory named {@code logs.jfr} is still a directory and keeps Test-JVM
+     * injection; a path that does not exist yet keeps the suffix's meaning) lives in
+     * {@code JfrEvidence.valueNamesRecording}, shared with the sbt plugin so the two
+     * cannot drift. Reads the raw property string, never the {@code jfrDir} provider:
+     * forcing the lazy bare-value default at apply time would capture a pre-relocation
+     * build directory.
+     */
+    private static boolean jfrValueIsRecording(Project root) {
+        Object value = root.findProperty("uikaJfr");
+        return value != null && !value.toString().isEmpty()
+                && net.exoego.uika.plugin.core.JfrEvidence.valueNamesRecording(
+                        root.file(value.toString()).toPath());
     }
 }

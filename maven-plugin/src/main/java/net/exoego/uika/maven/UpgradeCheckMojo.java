@@ -1,5 +1,6 @@
 package net.exoego.uika.maven;
 
+import net.exoego.uika.plugin.core.JfrEvidence;
 import net.exoego.uika.plugin.core.UikaCli;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
@@ -63,25 +64,28 @@ public final class UpgradeCheckMojo extends AbstractMojo {
     private Integer jdkRelease;
 
     /**
-     * Runtime class-load log (file or directory) from a test run of the current, not yet
-     * upgraded build, passed as {@code --class-load-log}. Collect it with the test JVM flag
-     * into a dedicated directory, e.g.
-     * {@code mvn test -DargLine="-Xlog:class+load=info:file=/tmp/uika-load/load-%p.log"}
-     * ({@code %p} keeps parallel forks from truncating each other's file; create the
-     * directory first, since {@code -Xlog} aborts JVM startup when it cannot open the file),
-     * then check with {@code -Duika.classLoadLog=/tmp/uika-load}. Use an absolute path in a
-     * multi-module build: surefire forks resolve a relative path against each module's
-     * basedir, while this aggregator mojo resolves it against the execution root, so a
-     * relative directory collects logs the check never reads. A command-line
-     * {@code -DargLine} also replaces any POM-configured argLine (jacoco's agent included);
-     * append to the POM's argLine instead when one exists.
+     * JFR class-load evidence from a test run of the current, not yet upgraded build: a
+     * {@code .jfr} recording, or a directory of recordings, converted and passed as
+     * {@code --class-load-log}. Collect it with the test JVM flag (JDK 17+), e.g.
+     * {@code mvn test -DargLine="-XX:StartFlightRecording:jdk.ClassLoad#enabled=true,jdk.ClassLoad#stackTrace=true,filename=/tmp/uika-jfr"}
+     * (JFR generates pid-unique file names for a directory-valued filename; create the
+     * directory first — given a missing parent JFR aborts JVM startup, but given an
+     * existing parent it silently records to a single FILE at that path, every fork
+     * clobbering the last), then
+     * check with {@code -Duika.jfr=/tmp/uika-jfr}. Keep this recipe in sync with
+     * {@code UikaCli.jfrClassLoadJvmArg} by hand: no mojo can inject into surefire. Use
+     * an absolute path in a multi-module build: surefire forks resolve a relative path
+     * against each module's basedir, while this aggregator mojo resolves it against the
+     * execution root, so a relative directory collects recordings the check never reads.
+     * A command-line {@code -DargLine} also replaces any POM-configured argLine (jacoco's
+     * agent included); append to the POM's argLine instead when one exists.
      */
-    @Parameter(property = "uika.classLoadLog")
-    private File classLoadLog;
+    @Parameter(property = "uika.jfr")
+    private File jfr;
 
     /**
      * Where the CLI writes draft exclude rules for symbols never observed loading, passed as
-     * {@code --draft-exclude-file}. The CLI rejects it without {@code classLoadLog}.
+     * {@code --draft-exclude-file}. The CLI rejects it without {@code jfr}.
      */
     @Parameter(property = "uika.draftExcludeFile")
     private File draftExcludeFile;
@@ -118,9 +122,17 @@ public final class UpgradeCheckMojo extends AbstractMojo {
             Integer effectiveJdkRelease = UikaCli.effectiveJdkRelease(
                     jdkRelease != null ? jdkRelease : defaultJdkRelease(),
                     line -> getLog().info(line));
+            // Recordings (a .jfr value, or recordings inside the directory) are converted
+            // to the CLI's text format here: the CLI is JVM-free and never reads binary
+            // JFR.
+            List<Path> classLoadLogs = JfrEvidence.rewrite(
+                    jfr != null ? List.of(jfr.toPath()) : List.of(),
+                    Path.of(session.getExecutionRootDirectory(), "target", "uika",
+                            JfrEvidence.WORK_DIR_NAME),
+                    line -> getLog().info(line));
             exit = UikaCli.runUpgradeCheck(binary, before.toPath(), after.toPath(), failOn,
                     excludeFilePaths, effectiveJdkRelease,
-                    classLoadLog != null ? List.of(classLoadLog.toPath()) : List.of(),
+                    classLoadLogs,
                     draftExcludeFile != null ? draftExcludeFile.toPath() : null,
                     line -> getLog().info(line));
         } catch (IOException e) {

@@ -107,26 +107,26 @@ baseline once per push instead and cache it as an artifact keyed by SHA:
 
 ### Runtime load evidence from the base branch (optional)
 
-[Runtime load evidence](#runtime-load-evidence---class-load-log) rides the same
-artifact flow: the base branch runs its test suite with class-load logging and
-uploads the logs, the PR job downloads them by `base.sha` and adds one flag. A
-⚠️ class that provably loads during tests then fails `--fail-on reachable`
-instead of being deprioritized (a 💤 latent violation stays latent — loading
-proves the class reachable, not that anything invokes the affected member).
-For Gradle, next to the baseline dump:
+[Runtime load evidence](#runtime-load-evidence-jfr---class-load-log) rides the
+same artifact flow: the base branch runs its test suite with JFR class-load
+recording on, uploads the recordings, and the PR job downloads them by
+`base.sha` and adds one flag. A ⚠️ class that provably loads during tests then
+fails `--fail-on reachable` instead of being deprioritized (a 💤 latent
+violation stays latent — loading proves the class reachable, not that anything
+invokes the affected member). For Gradle, next to the baseline dump:
 
 ```yaml
-      - run: ./gradlew test -PuikaClassLoadLog=/tmp/uika-load
+      - run: ./gradlew test -PuikaJfr=/tmp/uika-jfr
       - uses: actions/upload-artifact@v7
         with:
-          name: uika-class-load-${{ github.sha }}
-          path: /tmp/uika-load
+          name: uika-jfr-${{ github.sha }}
+          path: /tmp/uika-jfr
 ```
 
-and in the PR job, after downloading the artifact into `/tmp/uika-load`:
+and in the PR job, after downloading the artifact into `/tmp/uika-jfr`:
 
 ```yaml
-      - run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json -PuikaClassLoadLog=/tmp/uika-load
+      - run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json -PuikaJfr=/tmp/uika-jfr
 ```
 
 The [per-tool knobs](#build-tool-plugins) cover sbt and Maven.
@@ -328,57 +328,71 @@ This is for false positives you have actually investigated, not a shortcut
 around triaging `⚠️  not proven reachable` violations wholesale; use
 `--fail-on reachable` for that instead.
 
-### Runtime load evidence (`--class-load-log`)
+### Runtime load evidence (JFR, `--class-load-log`)
 
 The ⚠️ tier means "no static path found", and its blind spot is reflection. A
 JVM can close that gap: run the **current, not yet upgraded** build — its test
-suite, or a staging/production soak — with
-
-```
--Xlog:class+load=info:file=class-load.log
-```
-
-(JDK 9+; every loaded class, one line each, negligible overhead) and feed the
-log to the check:
+suite, or a staging/production soak — with JFR recording every class load:
 
 ```console
-$ uika check ... --class-load-log class-load.log
-$ uika upgrade-check ... --class-load-log class-load.log
+-XX:StartFlightRecording:jdk.ClassLoad#enabled=true,jdk.ClassLoad#stackTrace=true,filename=<dir>
 ```
 
-The intended CI shape mirrors [baseline caching](BASELINE-CACHING.md): the base
-branch's test run produces the log once per push and stores it as an artifact,
-and the dependency PR's `upgrade-check` downloads it. A ⚠️ violation whose
-referencing class appears in the log is promoted out of the tier and marked
-`⚡ observed loading at runtime` — the class provably loads, reflection
-included, so `--fail-on reachable` now fails on it. `--json` carries the same
-evidence per violation (`observed_loading`, `load_trigger`).
+(JDK 17+ syntax; the [build-tool plugins](#build-tool-plugins) inject exactly
+this into test JVMs from one knob). JFR generates pid-unique file names for a
+directory-valued `filename`, so parallel test JVMs never collide, and the
+recorded stacks are what uika turns into the `via ...` trigger on every
+promoted violation. Teams already running continuous production JFR only need
+the `jdk.ClassLoad` event enabled — the recording they already collect then IS
+the evidence, no extra flags.
+
+The intended CI shape mirrors [baseline caching](BASELINE-CACHING.md): the
+base branch's test run records once per push and stores the directory as an
+artifact, and the dependency PR's `upgrade-check` downloads it and points the
+same knob at it. The plugins convert recordings with the JDK's own JFR reader
+before invoking the CLI, which stays JVM-free and never reads binary
+recordings. A ⚠️ violation whose referencing class appears in the evidence is
+promoted out of the tier and marked, trigger included:
+`⚡ observed loading at runtime (via java.lang.Class.forName from
+com.example.PluginRegistry.discover(...))` — the reflective edge the static
+walk could not see, documented for free. `--fail-on reachable` then fails on
+it, and `--json` carries the same evidence per violation (`observed_loading`,
+`load_trigger`).
 
 Ingestion is promote-only, the same stance reachability takes: absence of a
 load entry proves nothing beyond the observed runs (a different code path, a
 run that never got there), so no violation is ever demoted or dropped because
-of a log. Accepted formats, mixed freely and parsed leniently: unified-logging
-`[class,load]` lines with any decorators (other `-Xlog` streams sharing the
-file are skipped), plain class-name lists (dotted or slashed, so
-`-XX:DumpLoadedClassList` classlists work), and `class+load+cause` stack
-blocks. Passing a directory reads every file under it, so a downloaded artifact
-directory works as-is; when parallel test JVMs share one target, put `%p` in
-the file name (each JVM truncates a shared file on open):
-`-Xlog:class+load=info:file=logs/load-%p.log`.
+of it.
 
-On JDK 22+ the log can also say *what loads each class*
-(https://bugs.openjdk.org/browse/JDK-8193513):
+JFR caveats, all bounded: the event is disabled in the default JFC profile
+(the flag above enables it — the plugin prints each conversion's event count,
+and `0 jdk.ClassLoad events` means a recording made without it); a recording
+rotates away its oldest chunks past `maxsize` (250MB by default when
+`filename` is set — far above what class-load events reach); a SIGKILLed JVM
+never writes its final dump, so a crashed test fork contributes no evidence
+(promote-only makes that safe); and stack capture keeps the innermost 64
+frames (`-XX:FlightRecorderOptions:stackdepth=` to raise), which truncates the
+harness side uika never reads — the trigger sits at the inner end.
 
+**Bring-your-own text logs.** `--class-load-log` also reads text evidence,
+mixed freely with recordings in one directory and parsed leniently:
+unified-logging `[class,load]` lines with any decorators (`-Xlog:class+load`
+output; other `-Xlog` streams sharing the file are skipped), plain class-name
+lists dotted or slashed (`-XX:DumpLoadedClassList` classlists), and
+`class+load+cause` stack blocks — the JDK 22+ flags
+(https://bugs.openjdk.org/browse/JDK-8193513,
+`-Xlog:class+load+cause=info -XX:LogClassLoadingCauseFor=<substring>`) remain
+the right tool for a *targeted* production look at one class, and uika reads
+their output too. Without a build tool, convert a recording by hand:
+
+```console
+jfr print --json --events jdk.ClassLoad rec.jfr \
+  | jq -r '.recording.events[].values.loadedClass.name
+           | select(startswith("[") | not) | "[class,load] \(.)"'
 ```
--Xlog:class+load+cause=info:file=class-load.log -XX:LogClassLoadingCauseFor=*
-```
 
-captures a Java stack per load (`*` logs every class; the flag also takes a
-substring to narrow it — stacks are not free, so prefer the narrow form
-outside test suites). uika then names the trigger in the marker, e.g.
-`⚡ observed loading at runtime (via java.lang.Class.forName from
-com.example.PluginRegistry.discover(PluginRegistry.java:42))` — the reflective
-edge the static walk could not see, documented for free.
+yields tagged class-load lines the CLI reads (classes only, no triggers; the
+tag keeps default-package names accepted, and the filter drops array classes).
 
 **Drafting an exclude file (`--draft-exclude-file <path>`).** The deliberate
 consumer of the opposite signal. After soaking the evidence, symbols whose
@@ -424,32 +438,36 @@ JVM's `ct.sym` serves. Override with `jdkRelease` / `uikaJdkRelease` /
 `<jdkRelease>` (`-PuikaJdkRelease=`, `-Duika.jdkRelease=`), or set 0 to disable
 it.
 
-[Runtime load evidence](#runtime-load-evidence---class-load-log) is one knob
-per tool, pointed at one directory for both phases (collect on the base
+[Runtime load evidence](#runtime-load-evidence-jfr---class-load-log) is one
+knob per tool, pointed at one directory for both phases (collect on the base
 branch, consume on the PR):
 
-- Gradle: `-PuikaClassLoadLog=<dir>` makes every `Test` task write a
-  per-process class-load log there (and run for real — an `UP-TO-DATE` or
-  `FROM-CACHE` test task forks no JVM and would collect nothing), and makes
-  `uikaUpgradeCheck` read the directory back as `--class-load-log`. A bare
-  `-PuikaClassLoadLog` uses `build/uika/class-load`.
-- sbt: `uikaClassLoadLog := Some(file("<dir>"))` in `build.sbt` (bare or
+- Gradle: `-PuikaJfr=<dir>` makes every `Test` task record class loads into a
+  JFR recording there (and run for real — an `UP-TO-DATE` or `FROM-CACHE`
+  test task forks no JVM and would collect nothing), and makes
+  `uikaUpgradeCheck` convert and read the directory back. A bare `-PuikaJfr`
+  uses `build/uika/jfr`.
+- sbt: `uikaJfr := Some(file("<dir>"))` in `build.sbt` (bare or
   `ThisBuild`-scoped) does the same for forked test JVMs and for
   `uikaUpgradeCheck`. It needs `Test / fork := true`: an in-process test runs
   inside sbt's own JVM, which no flag can reach after startup.
-- Maven: collect with the test JVM flag
-  (`mvn test -DargLine="-Xlog:class+load=info:file=<dir>/load-%p.log"`), check
-  with `-Duika.classLoadLog=<dir>`. Create `<dir>` first (`-Xlog` aborts JVM
-  startup when it cannot open the file) and make it absolute in a multi-module
-  build: surefire forks resolve a relative path against each module, the
-  aggregator goal against the execution root. A command-line `-DargLine`
-  replaces any POM-configured argLine (jacoco's agent included) — append to
-  the POM's argLine instead when one exists.
+- Maven: collect with the test JVM flag (`mvn test
+  -DargLine="-XX:StartFlightRecording:jdk.ClassLoad#enabled=true,jdk.ClassLoad#stackTrace=true,filename=<dir>"`),
+  check with `-Duika.jfr=<dir>`. Create `<dir>` first: given a missing parent
+  JFR aborts JVM startup, but given an existing parent it silently records to a
+  single file at that path, every fork clobbering the last. Make it absolute in
+  a multi-module build:
+  surefire forks resolve a relative path against each module, the aggregator
+  goal against the execution root. A command-line `-DargLine` replaces any
+  POM-configured argLine (jacoco's agent included) — append to the POM's
+  argLine instead when one exists.
 
-The `%p` in the file names keeps parallel test JVMs from truncating each
-other's log, and the injected flag assumes the test JVMs are JDK 9+ (`-Xlog`
-aborts a JDK 8 JVM at startup, so leave the knob off for a legacy test leg).
-[`--draft-exclude-file`](#runtime-load-evidence---class-load-log)
+JFR generates pid-unique recording names for a directory value, so parallel
+test JVMs never collide, and the injected flag needs JDK 17+ test JVMs (the
+event-settings syntax; leave the knob off for an older test leg). A `.jfr`
+value instead of a directory — a production recording, say — is
+consumption-only: the check converts it, test JVMs are left untouched.
+[`--draft-exclude-file`](#runtime-load-evidence-jfr---class-load-log)
 maps to `-PuikaDraftExcludeFile=` / `uikaDraftExcludeFile :=` /
 `-Duika.draftExcludeFile=`.
 

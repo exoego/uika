@@ -217,21 +217,21 @@ final class UpgradeCheckTaskIntegrationTest {
                         "-PuikaBefore=" + before,
                         "-PuikaAfter=" + after,
                         "-PuikaCliVersion=" + CLEAN_VERSION,
-                        "-PuikaClassLoadLog=" + logDir,
+                        "-PuikaJfr=" + logDir,
                         "-PuikaDraftExcludeFile=" + draft)
                 .build();
 
         assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
         String args = Files.readString(Path.of(before + ".args"));
         assertTrue(args.contains("--class-load-log " + logDir),
-                () -> "-PuikaClassLoadLog was not forwarded to the CLI: " + args);
+                () -> "-PuikaJfr was not forwarded to the CLI: " + args);
         assertTrue(args.contains("--draft-exclude-file " + draft),
                 () -> "-PuikaDraftExcludeFile was not forwarded to the CLI: " + args);
     }
 
-    /// -PuikaClassLoadLog points Test tasks and the check at one directory: every Test JVM
-    /// gets the -Xlog flag writing a per-process file there (%p, because -Xlog truncates a
-    /// shared file on open), and without the property test JVMs stay untouched.
+    /// -PuikaJfr points Test tasks and the check at one directory: every Test JVM
+    /// gets the StartFlightRecording flag recording jdk.ClassLoad there (JFR generates
+    /// pid-unique file names), and without the property test JVMs stay untouched.
     @Test
     void classLoadLogPropertyInjectsTestJvmArgs() throws Exception {
         Path logDir = projectDir.resolve("load-logs");
@@ -256,13 +256,12 @@ final class UpgradeCheckTaskIntegrationTest {
 
         BuildResult with = GradleRunner.create()
                 .withProjectDir(projectDir.toFile())
-                .withArguments("printTestJvmArgs", "-PuikaClassLoadLog=" + logDir)
+                .withArguments("printTestJvmArgs", "-PuikaJfr=" + logDir)
                 .withPluginClasspath()
                 .forwardOutput()
                 .build();
-        // Composed by the same core helper the plugin calls, so the assertion also holds
-        // where the helper quotes the file value (a Windows drive colon).
-        String expected = UikaCli.classLoadLogJvmArg(logDir, "root-test");
+        // Composed by the same core helper the plugin calls.
+        String expected = UikaCli.jfrClassLoadJvmArg(logDir);
         assertTrue(with.getOutput().contains(expected),
                 () -> "expected " + expected + " in test JVM args:\n" + with.getOutput());
 
@@ -272,12 +271,56 @@ final class UpgradeCheckTaskIntegrationTest {
                 .withPluginClasspath()
                 .forwardOutput()
                 .build();
-        assertTrue(!without.getOutput().contains("-Xlog:class+load"),
+        assertTrue(!without.getOutput().contains("-XX:StartFlightRecording"),
                 () -> "test JVM args must stay untouched without the property:\n"
                         + without.getOutput());
     }
 
-    /// The bare -PuikaClassLoadLog default is a lazy provider: a build script relocating
+    /// A .jfr value on the knob is converted before the CLI runs: the recording itself
+    /// never reaches the JVM-free CLI, the converted text (with the probe class and its
+    /// stack) does. The recording is REAL, made in this test JVM; the probe is compiled
+    /// at runtime (JfrTestRecordings explains why a member class cannot serve).
+    @Test
+    void convertsAJfrRecordingBeforeInvokingTheCli() throws Exception {
+        String probe = "UikaJfrProbeGradle";
+        Path jfr = projectDir.resolve("rec.jfr");
+        net.exoego.uika.plugin.core.JfrTestRecordings.recordFreshClassLoad(
+                projectDir, jfr, probe);
+
+        BuildResult result = runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION,
+                        "-PuikaJfr=" + jfr)
+                .build();
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
+        // The injection skip must be said out loud: a collect run against a .jfr value
+        // records nothing, and without this line the empty artifact has no symptom.
+        assertTrue(result.getOutput().contains("consumption-only"),
+                () -> "expected the consumption-only notice in the build output:\n"
+                        + result.getOutput());
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(!args.contains("rec.jfr"),
+                () -> "the raw recording must not reach the CLI: " + args);
+        String converted = null;
+        String[] words = args.trim().split(" ");
+        for (int i = 0; i + 1 < words.length; i++) {
+            if (words[i].equals("--class-load-log")) {
+                converted = words[i + 1];
+            }
+        }
+        assertTrue(converted != null && converted.contains("jfr-class-load"),
+                "expected a converted log under jfr-class-load in: " + args);
+        String text = Files.readString(Path.of(converted));
+        assertTrue(text.contains("Java stack when loading " + probe + ":"),
+                () -> "converted log lost the probe load:\n" + text);
+    }
+
+    /// The bare -PuikaJfr default is a lazy provider: a build script relocating
     /// layout.buildDirectory AFTER the plugins block must land both halves — the injected
     /// test JVM flag and the check task's --class-load-log — under the final location,
     /// never under the pre-relocation default.
@@ -306,15 +349,15 @@ final class UpgradeCheckTaskIntegrationTest {
 
         BuildResult injected = GradleRunner.create()
                 .withProjectDir(projectDir.toFile())
-                .withArguments("printTestJvmArgs", "-PuikaClassLoadLog")
+                .withArguments("printTestJvmArgs", "-PuikaJfr")
                 .withPluginClasspath()
                 .forwardOutput()
                 .build();
         // toRealPath: Gradle canonicalizes the project directory (macOS /var vs
         // /private/var), and the bare default is derived from it.
         Path relocated = projectDir.toRealPath()
-                .resolve("custom-build").resolve("uika").resolve("class-load");
-        String expected = UikaCli.classLoadLogJvmArg(relocated, "root-test");
+                .resolve("custom-build").resolve("uika").resolve("jfr");
+        String expected = UikaCli.jfrClassLoadJvmArg(relocated);
         assertTrue(injected.getOutput().contains(expected),
                 () -> "expected " + expected + " in test JVM args:\n" + injected.getOutput());
 
@@ -326,7 +369,7 @@ final class UpgradeCheckTaskIntegrationTest {
                         "-PuikaBefore=" + before,
                         "-PuikaAfter=" + after,
                         "-PuikaCliVersion=" + CLEAN_VERSION,
-                        "-PuikaClassLoadLog")
+                        "-PuikaJfr")
                 .withPluginClasspath()
                 .forwardOutput()
                 .build();
@@ -454,7 +497,7 @@ final class UpgradeCheckTaskIntegrationTest {
                 "-PuikaBefore=" + before,
                 "-PuikaAfter=" + after,
                 "-PuikaCliVersion=" + CLEAN_VERSION,
-                "-PuikaClassLoadLog=" + logDir,
+                "-PuikaJfr=" + logDir,
                 "-PuikaDraftExcludeFile=" + draft};
         BuildResult first = runner(CLEAN_VERSION)
                 .withArguments(args)
