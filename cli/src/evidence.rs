@@ -12,26 +12,49 @@
 //! says so in every reason it drafts.
 
 use crate::model::{Tier, Violation, reachable_axis_valid, tier};
+// "com/foo/Bar" -> "com.foo.Bar" for prose inside drafted reasons; report.rs owns the
+// definition so the rendering and the drafts name classes identically.
+use crate::report::dotted;
 use anyhow::{Context, Result};
 use rustc_hash::FxHashMap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
-use std::io::BufRead;
+use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
 
-/// Cause stacks are only read for their topmost useful frame, and real stacks run
-/// hundreds of frames deep, so retention is capped. 32, not less: the loader-delegation
-/// machinery alone ran 10 frames deep on a real JDK 25 stack (defineClass through a custom
-/// loader's loadClass), and the trigger is the first frame PAST the machinery.
-const MAX_FRAMES: usize = 32;
+/// Longest line the parser will look at. JVM log lines are short; the cap exists so a
+/// stray file with no newline (a binary dropped into the log directory) is skipped in
+/// bounded memory instead of being buffered whole.
+const MAX_LINE: usize = 64 * 1024;
+
+/// What the logs recorded for one loaded class.
+enum LoadRecord {
+    /// Load line(s) only, no cause stack consumed yet.
+    Loaded,
+    /// A `class+load+cause` stack was consumed (first stack with frames wins) and reduced
+    /// to its trigger — None when every frame was loading machinery.
+    Stacked(Option<String>),
+}
+
+impl LoadRecord {
+    fn trigger(&self) -> Option<&str> {
+        match self {
+            LoadRecord::Loaded => None,
+            LoadRecord::Stacked(t) => t.as_deref(),
+        }
+    }
+}
 
 pub struct LoadEvidence {
-    /// Slashed internal name -> retained `class+load+cause` frames of the first observed
-    /// stack (empty when only load lines were seen). Slashed so lookups match
-    /// `Violation.source_class` without converting per violation.
-    loaded: FxHashMap<String, Vec<String>>,
-    /// The log files the evidence came from, for notes and drafted reasons.
-    sources: Vec<String>,
+    /// Slashed internal name -> what was observed. Slashed so lookups match
+    /// `Violation.source_class` without converting per violation. Only the composed
+    /// trigger is retained per class, never raw frames: a cause-mode log
+    /// (`-XX:LogClassLoadingCauseFor=*`, the shape README recommends for test suites)
+    /// names every class the run loaded, and retaining even a capped stack for each of
+    /// tens of thousands of classes cost hundreds of MB for data `apply` never read.
+    loaded: FxHashMap<String, LoadRecord>,
+    /// The log paths the evidence came from (pre-joined), for notes and drafted reasons.
+    sources: String,
 }
 
 impl LoadEvidence {
@@ -39,18 +62,105 @@ impl LoadEvidence {
         self.loaded.len()
     }
 
-    pub fn sources(&self) -> &[String] {
+    pub fn sources(&self) -> &str {
         &self.sources
     }
 
-    fn observed(&self, slashed: &str) -> Option<&[String]> {
-        self.loaded.get(slashed).map(Vec::as_slice)
+    fn observed(&self, slashed: &str) -> Option<&LoadRecord> {
+        self.loaded.get(slashed)
+    }
+}
+
+/// Streaming state for one open `class+load+cause` stack block. The trigger is computed
+/// as the frames pass by — never retained — so cause-mode logs cost one record per class,
+/// and a delegation chain of any depth still yields its trigger (a fixed retention cap
+/// used to lose the trigger past 32 machinery frames).
+struct StackBlock {
+    /// Slashed class the block is for.
+    class: String,
+    /// Whether this block owns the class's stack slot (first stack with frames wins; a
+    /// class whose stack was already consumed has later blocks read and dropped).
+    fresh: bool,
+    frames_seen: bool,
+    /// First frame outside the loading machinery — the trigger candidate.
+    first_useful: Option<String>,
+    /// First non-machinery, non-reflective frame, sought only when `first_useful` is a
+    /// reflective API: "Class.forName" alone says how, the caller says who.
+    caller: Option<String>,
+}
+
+/// Per-file parser state: the map of observations plus the open stack block, if any.
+struct Parser<'a> {
+    loaded: &'a mut FxHashMap<String, LoadRecord>,
+    current: Option<StackBlock>,
+}
+
+impl Parser<'_> {
+    /// Close the open stack block, reducing its frames to the composed trigger.
+    fn close_block(&mut self) {
+        let Some(block) = self.current.take() else {
+            return;
+        };
+        if !(block.fresh && block.frames_seen) {
+            return;
+        }
+        let trigger = match block.first_useful {
+            None => None,
+            Some(first) if is_reflective(&first) => match block.caller {
+                // "java.lang.Class.forName(Class.java:100)" -> "java.lang.Class.forName":
+                // the reflective API's own source location says nothing; the caller keeps
+                // its own.
+                Some(caller) => {
+                    let api = first.split('(').next().unwrap_or(&first);
+                    Some(format!("{api} from {caller}"))
+                }
+                None => Some(first),
+            },
+            Some(first) => Some(first),
+        };
+        self.loaded
+            .insert(block.class, LoadRecord::Stacked(trigger));
+    }
+
+    fn open_block(&mut self, class: String) {
+        // First stack wins: a class several loaders define logs several stacks, and the
+        // first is the one that pulled the class in.
+        let fresh = !matches!(self.loaded.get(&class), Some(LoadRecord::Stacked(_)));
+        self.loaded
+            .entry(class.clone())
+            .or_insert(LoadRecord::Loaded);
+        self.current = Some(StackBlock {
+            class,
+            fresh,
+            frames_seen: false,
+            first_useful: None,
+            caller: None,
+        });
+    }
+
+    fn frame(&mut self, frame: &str) {
+        let Some(block) = &mut self.current else {
+            return;
+        };
+        block.frames_seen = true;
+        if !block.fresh || is_machinery(frame) {
+            return;
+        }
+        match &block.first_useful {
+            None => block.first_useful = Some(frame.to_string()),
+            Some(first)
+                if is_reflective(first) && block.caller.is_none() && !is_reflective(frame) =>
+            {
+                block.caller = Some(frame.to_string());
+            }
+            _ => {}
+        }
     }
 }
 
 /// Parse one or more class-load logs. Accepted per line, leniently:
 /// - JDK unified logging with any decorators: `[0.1s][info][class,load] a.b.C source: ...`.
-///   A line whose decorator groups name other tags (gc, jit) is skipped, so a log file
+///   A line whose tags decorator names another stream (gc, jit) is skipped, so a log file
 ///   shared with other `-Xlog` streams works.
 /// - `class+load+cause` blocks: `Java stack when loading a.b.C:` followed by `at ...`
 ///   frames. The native variant marks the class loaded; its frames are not Java frames.
@@ -61,154 +171,195 @@ impl LoadEvidence {
 /// interleave with other output, and get truncated by the crashes worth studying, so a
 /// strict parser would reject exactly the interesting runs.
 ///
-/// A directory reads every regular file under it (recursively, in sorted path order for
-/// determinism) as one source: parallel test JVMs write per-process files (`%p` in the
-/// `-Xlog` file name, because each JVM truncates a shared file on open), and a downloaded
-/// CI artifact unpacks to a directory, so the directory is the natural unit to pass.
+/// A directory reads every regular file under it (recursively, in sorted order for
+/// determinism; symlinks are followed, and a symlink cycle is a clean error): parallel
+/// test JVMs write per-process files (`%p` in the `-Xlog` file name, because each JVM
+/// truncates a shared file on open), and a downloaded CI artifact unpacks to a directory,
+/// so the directory is the natural unit to pass.
 pub fn load(paths: &[PathBuf]) -> Result<LoadEvidence> {
-    let mut evidence = LoadEvidence {
-        loaded: FxHashMap::default(),
-        sources: Vec::new(),
-    };
+    let mut loaded = FxHashMap::default();
     for path in paths {
         if path.is_dir() {
-            let mut files = Vec::new();
-            collect_files(path, &mut files)?;
-            files.sort();
-            for file in &files {
-                parse_file(file, &mut evidence.loaded)?;
+            for entry in walkdir::WalkDir::new(path)
+                .follow_links(true)
+                .sort_by_file_name()
+            {
+                let entry = entry.with_context(|| {
+                    format!("cannot read class-load log directory {}", path.display())
+                })?;
+                if entry.file_type().is_file() {
+                    parse_file(entry.path(), &mut loaded)?;
+                }
             }
         } else {
-            parse_file(path, &mut evidence.loaded)?;
-        }
-        evidence.sources.push(path.display().to_string());
-    }
-    Ok(evidence)
-}
-
-fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
-    let entries = std::fs::read_dir(dir)
-        .with_context(|| format!("cannot read class-load log directory {}", dir.display()))?;
-    for entry in entries {
-        let path = entry
-            .with_context(|| format!("cannot read class-load log directory {}", dir.display()))?
-            .path();
-        if path.is_dir() {
-            collect_files(&path, files)?;
-        } else {
-            files.push(path);
+            parse_file(path, &mut loaded)?;
         }
     }
-    Ok(())
+    Ok(LoadEvidence {
+        loaded,
+        sources: paths
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+    })
 }
 
-fn parse_file(path: &Path, loaded: &mut FxHashMap<String, Vec<String>>) -> Result<()> {
+fn parse_file(path: &Path, loaded: &mut FxHashMap<String, LoadRecord>) -> Result<()> {
     let file = std::fs::File::open(path)
         .with_context(|| format!("cannot read class-load log {}", path.display()))?;
     let mut reader = std::io::BufReader::new(file);
     let mut buf = Vec::new();
-    // The class whose Java cause stack is being collected, across lines.
-    let mut current: Option<String> = None;
+    let mut parser = Parser {
+        loaded,
+        current: None,
+    };
     loop {
         buf.clear();
-        if reader
+        let read_error = || format!("cannot read class-load log {}", path.display());
+        let n = reader
+            .by_ref()
+            .take(MAX_LINE as u64)
             .read_until(b'\n', &mut buf)
-            .with_context(|| format!("cannot read class-load log {}", path.display()))?
-            == 0
-        {
+            .with_context(read_error)?;
+        if n == 0 {
             break;
         }
+        if n == MAX_LINE && buf.last() != Some(&b'\n') {
+            // Oversized line (a binary in the directory): skip to the next newline in
+            // bounded memory, treat it like any other unrecognized line.
+            loop {
+                buf.clear();
+                let n = reader
+                    .by_ref()
+                    .take(MAX_LINE as u64)
+                    .read_until(b'\n', &mut buf)
+                    .with_context(read_error)?;
+                if n == 0 || buf.last() == Some(&b'\n') {
+                    break;
+                }
+            }
+            parser.close_block();
+            continue;
+        }
         let line = String::from_utf8_lossy(&buf);
-        parse_line(line.trim_end(), &mut current, loaded);
+        parse_line(line.trim_end(), &mut parser);
     }
+    // EOF ends an open stack block like any other block boundary.
+    parser.close_block();
     Ok(())
 }
 
-fn parse_line(
-    line: &str,
-    current: &mut Option<String>,
-    loaded: &mut FxHashMap<String, Vec<String>>,
-) {
-    // Strip unified-logging decorator groups. The tags are one of them, so a line
-    // decorated with something other than class+load belongs to another stream sharing
-    // the file. An undecorated line may still be a plain class list.
+fn parse_line(line: &str, parser: &mut Parser<'_>) {
+    // Strip unified-logging decorator groups. A tags decorator naming another stream
+    // means the line belongs to a different `-Xlog` output sharing the file. Tags are
+    // matched as exact comma-separated members ("class" and "load" both present), because
+    // substring matching also caught the class,loader,* family; and only a multi-member
+    // group counts as a foreign tags decorator, since a single-word group is just as
+    // likely a level ([info]) or hostname decorator, and a tags-less decorator set
+    // (-Xlog:class+load=info:file=x:time) must still fall through to the token parse.
     let mut rest = line.trim_start();
-    let mut saw_group = false;
-    let mut saw_class_load = false;
+    let mut trusted = false;
+    let mut foreign = false;
+    let mut native = false;
     while let Some(tail) = rest.strip_prefix('[') {
         let Some(end) = tail.find(']') else { break };
-        saw_group = true;
-        saw_class_load |= tail[..end].contains("class,load");
+        let group = &tail[..end];
+        if group.contains(',') {
+            let mut class_seen = false;
+            let mut load_seen = false;
+            for tag in group.split(',') {
+                match tag.trim() {
+                    "class" => class_seen = true,
+                    "load" => load_seen = true,
+                    "native" => native = true,
+                    _ => {}
+                }
+            }
+            if class_seen && load_seen {
+                trusted = true;
+            } else {
+                foreign = true;
+            }
+        }
         rest = tail[end + 1..].trim_start();
     }
-    if saw_group && !saw_class_load {
+    if foreign && !trusted {
+        // A foreign line is skipped outright — it must not end an open stack block,
+        // because streams interleave per line and the cause block continues after it.
         return;
     }
     let rest = rest.trim();
     if let Some(class) = rest.strip_prefix("Java stack when loading ") {
-        *current = match normalize(class.trim_end_matches(':')) {
-            Some(class) => {
-                let frames = loaded.entry(class.clone()).or_default();
-                // First stack wins: a class several loaders define logs several stacks,
-                // and the first is the one that pulled the class in.
-                frames.is_empty().then_some(class)
-            }
-            None => None,
-        };
+        parser.close_block();
+        // The JVM itself printed the header, so the name is trusted like a tagged line.
+        if let Some(class) = normalize(class.trim_end_matches(':'), true) {
+            parser.open_block(class);
+        }
         return;
     }
     if let Some(class) = rest.strip_prefix("Native stack when loading ") {
-        if let Some(class) = normalize(class.trim_end_matches(':')) {
-            loaded.entry(class).or_default();
+        parser.close_block();
+        if let Some(class) = normalize(class.trim_end_matches(':'), true) {
+            parser.loaded.entry(class).or_insert(LoadRecord::Loaded);
         }
-        *current = None;
+        return;
+    }
+    // Native stack frames share the class,load,cause,native tags with their header, and
+    // they are not class names: the frame-kind letters ("V  [libjvm.so+0x...]",
+    // "j  java.lang.Thread.run()V+8") would pass the trusted single-segment path and
+    // register bogus default-package classes an obfuscated jar could then collide with.
+    if native {
         return;
     }
     if let Some(frame) = rest.strip_prefix("at ") {
         // A frame belongs to the open stack block and is never read as a loaded class.
-        if let Some(class) = current {
-            let frames = loaded.entry(class.clone()).or_default();
-            if frames.len() < MAX_FRAMES {
-                frames.push(frame.trim().to_string());
-            }
-        }
+        parser.frame(frame.trim());
         return;
     }
     // Monitor annotations ("- locked <0x...> (a java.lang.Object)") interleave the frames
     // of a real stack (observed on JDK 25: synchronized loader frames carry one). They are
     // part of the block, never its end — reading one as a terminator cut every stack at
     // its first synchronized loader frame and silently lost the trigger.
-    if current.is_some() && rest.starts_with("- ") {
+    if parser.current.is_some() && rest.starts_with("- ") {
         return;
     }
-    *current = None;
+    parser.close_block();
     let Some(token) = rest.split_whitespace().next() else {
         return;
     };
-    if let Some(class) = normalize(token.trim_end_matches([':', ',', ';'])) {
-        loaded.entry(class).or_default();
+    if let Some(class) = normalize(token.trim_end_matches([':', ',', ';']), trusted) {
+        parser.loaded.entry(class).or_insert(LoadRecord::Loaded);
     }
 }
 
 /// A token is kept as a class name when every '.'/'/'-separated segment is a plausible
-/// Java identifier (letters, digits, '_', '$', not digit-first). That rejects the numeric
-/// tokens sharing the shape in mixed logs (IPs, versions) while keeping inner classes. At
-/// least two segments are required, since a default-package class is indistinguishable
-/// from a bare word. Dots normalize to the slashed internal form violations use.
-fn normalize(token: &str) -> Option<String> {
+/// Java identifier: not digit-first, ASCII letters/digits/'_'/'$' plus any non-ASCII byte
+/// (JVM names are barely restricted, and Kotlin/Scala/obfuscators emit non-ASCII names).
+/// That rejects the numeric tokens sharing the shape in mixed logs (IPs, versions) while
+/// keeping inner classes. `extract.rs::slashed_class_name` applies the same shape test to
+/// string constants, slashed-only and length-gated for the scan's needs.
+///
+/// A bare token needs at least two segments, since a default-package class is
+/// indistinguishable from a stray word; a `trusted` token — one the JVM itself labeled
+/// via a `[class,load]` tags decorator or a stack-block header — is a class name by
+/// construction, so a single segment (default package) is accepted. Dots normalize to
+/// the slashed internal form violations use.
+fn normalize(token: &str, trusted: bool) -> Option<String> {
     let mut segments = 0usize;
     for segment in token.split(['.', '/']) {
         segments += 1;
         let mut bytes = segment.bytes();
         let first = bytes.next()?;
-        if !(first.is_ascii_alphabetic() || first == b'_' || first == b'$') {
+        if !(first.is_ascii_alphabetic() || first == b'_' || first == b'$' || first >= 0x80) {
             return None;
         }
-        if !bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'$') {
+        if !bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80) {
             return None;
         }
     }
-    (segments >= 2).then(|| token.replace('.', "/"))
+    let min_segments = if trusted { 1 } else { 2 };
+    (segments >= min_segments).then(|| token.replace('.', "/"))
 }
 
 /// The one application site, promote-only: a violation whose referencing class was
@@ -218,9 +369,13 @@ fn normalize(token: &str) -> Option<String> {
 /// stay untouched.
 pub fn apply(violations: &mut [Violation], evidence: &LoadEvidence) {
     for v in violations.iter_mut() {
-        if let Some(frames) = evidence.observed(v.source_class.as_str()) {
+        if let Some(record) = evidence.observed(v.source_class.as_str()) {
             v.observed_loading = true;
-            v.load_trigger = trigger(frames);
+            // Promote-only holds across evidence sets too: a later stack-less observation
+            // must not clear a trigger an earlier log established.
+            if let Some(trigger) = record.trigger() {
+                v.load_trigger = Some(trigger.to_string());
+            }
         }
     }
 }
@@ -245,13 +400,10 @@ fn is_machinery(frame: &str) -> bool {
     matches!(method, "loadClass" | "findClass" | "defineClass")
 }
 
-/// The frame that pulled the class in: the topmost frame outside the class-loading
-/// machinery. Reflection frames (Class.forName, ServiceLoader, Method.invoke) are
-/// deliberately kept — they are the answer to why the static walk missed the edge.
-fn trigger(frames: &[String]) -> Option<String> {
-    // The reflective APIs whose presence explains a missing static edge. When one is the
-    // topmost useful frame, the first frame below the reflective plumbing is named too:
-    // "Class.forName" alone says how, the caller says who.
+/// The reflective APIs whose presence explains a missing static edge. Reflection frames
+/// are deliberately kept as triggers — they are the answer to why the static walk missed
+/// the edge — and when one tops the stack its first non-reflective caller is named too.
+fn is_reflective(frame: &str) -> bool {
     const REFLECTIVE: [&str; 6] = [
         "java.lang.Class.forName",
         "java.util.ServiceLoader",
@@ -260,17 +412,7 @@ fn trigger(frames: &[String]) -> Option<String> {
         "sun.reflect.",
         "java.lang.invoke.",
     ];
-    let reflective = |f: &str| REFLECTIVE.iter().any(|m| f.starts_with(m));
-    let first = frames.iter().find(|f| !is_machinery(f))?;
-    if reflective(first)
-        && let Some(caller) = frames.iter().find(|f| !is_machinery(f) && !reflective(f))
-    {
-        // "java.lang.Class.forName(Class.java:100)" -> "java.lang.Class.forName": the
-        // reflective API's own source location says nothing; the caller keeps its own.
-        let api = first.split('(').next().unwrap_or(first);
-        return Some(format!("{api} from {caller}"));
-    }
-    Some(first.clone())
+    REFLECTIVE.iter().any(|m| frame.starts_with(m))
 }
 
 /// Escape for a TOML basic (double-quoted) string.
@@ -278,18 +420,26 @@ fn toml_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// "com/foo/Bar" -> "com.foo.Bar" for prose inside drafted reasons.
-fn dotted(name: &str) -> String {
-    name.replace('/', ".")
+/// Truncate the draft file before the check runs, mirroring `--verdicts-json`'s
+/// create-upfront contract: a run that errors mid-scan leaves this marker, never a stale
+/// draft from an earlier run for a human to review.
+pub fn create_draft_placeholder(path: &Path) -> Result<()> {
+    std::fs::write(
+        path,
+        "# uika --draft-exclude-file: the check did not complete; no rules were drafted.\n",
+    )
+    .with_context(|| format!("cannot write draft exclude file {}", path.display()))
 }
 
 /// Write draft `--exclude-file` rules for the symbols whose EVERY violation stayed ⚠️
 /// with no observed load. Grouped by the referenced symbol because that is what an
 /// exclude rule matches: a symbol that also breaks a reachable (or observed) class must
-/// not be drafted, since the rule would waive that real break too. Every reason opens
-/// with REVIEW and states exactly what the evidence does and does not show. Returns the
-/// number of drafted rules; the file is always written, so a requested draft is never
-/// silently absent.
+/// not be drafted, since the rule would waive that real break too. A member-less rule is
+/// wider still — `exclude::filter` reads it as "the owner outright", member violations
+/// included — so a class-level symbol is only drafted when every symbol on its owner is
+/// draftable. Every reason opens with REVIEW and states exactly what the evidence does
+/// and does not show. Returns the number of drafted rules; the file is always written, so
+/// a requested draft is never silently absent.
 pub fn draft_excludes(
     violations: &[Violation],
     app_roots_matched: Option<bool>,
@@ -297,50 +447,40 @@ pub fn draft_excludes(
     path: &Path,
 ) -> Result<usize> {
     let axis = reachable_axis_valid(app_roots_matched);
-    type SymbolKey = (String, Option<(String, String)>);
-    // BTreeMap on string keys: drafted rules are ordered by symbol string value.
+    type SymbolKey = (&'static str, Option<(&'static str, &'static str)>);
+    // BTreeMap on interned strs: drafted rules are ordered by symbol string value.
     let mut by_symbol: BTreeMap<SymbolKey, (bool, BTreeSet<String>)> = BTreeMap::new();
     for v in violations {
         let key = (
-            v.reference.owner.as_str().to_string(),
-            v.reference.member.map(|m| {
-                (
-                    m.name.as_str().to_string(),
-                    m.descriptor.as_str().to_string(),
-                )
-            }),
+            v.reference.owner.as_str(),
+            v.reference
+                .member
+                .map(|m| (m.name.as_str(), m.descriptor.as_str())),
         );
         let entry = by_symbol.entry(key).or_insert((true, BTreeSet::new()));
         entry.0 &= tier(v, axis) == Tier::Unproven;
         entry.1.insert(dotted(v.source_class.as_str()));
     }
+    let undraftable_owners: BTreeSet<&str> = by_symbol
+        .iter()
+        .filter(|(_, (draftable, _))| !draftable)
+        .map(|((owner, _), _)| *owner)
+        .collect();
 
-    let logs = evidence.sources().join(", ");
+    let logs = evidence.sources();
     let mut out = String::new();
     let mut drafted = 0usize;
     writeln!(
         out,
-        "# Draft exclude rules generated by uika --draft-exclude-file."
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "# Basis: no static path from the application reaches the referencing classes, and"
-    )
-    .unwrap();
-    writeln!(out, "# none was observed loading in: {logs}").unwrap();
-    writeln!(
-        out,
-        "# Absence of a load entry proves nothing beyond the observed runs. Review each"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "# entry and delete any you cannot justify before committing this file."
+        "# Draft exclude rules generated by uika --draft-exclude-file.\n\
+         # Basis: no static path from the application reaches the referencing classes, and\n\
+         # none was observed loading in: {logs}\n\
+         # Absence of a load entry proves nothing beyond the observed runs. Review each\n\
+         # entry and delete any you cannot justify before committing this file."
     )
     .unwrap();
     for ((owner, member), (draftable, users)) in &by_symbol {
-        if !draftable {
+        if !*draftable || (member.is_none() && undraftable_owners.contains(owner)) {
             continue;
         }
         drafted += 1;
@@ -351,11 +491,10 @@ pub fn draft_excludes(
             writeln!(out, "member = \"{}\"", toml_escape(name)).unwrap();
             writeln!(out, "descriptor = \"{}\"", toml_escape(descriptor)).unwrap();
         }
-        let mut shown: Vec<&str> = users.iter().map(String::as_str).take(3).collect();
+        let shown: Vec<&str> = users.iter().map(String::as_str).take(3).collect();
         let more = users.len().saturating_sub(shown.len());
         let list = if more > 0 {
-            shown.push("");
-            format!("{} and {more} more", shown[..shown.len() - 1].join(", "))
+            format!("{} and {more} more", shown.join(", "))
         } else {
             shown.join(", ")
         };
@@ -387,15 +526,19 @@ mod tests {
     use crate::model::{MemberKey, Reason, RefKind, SymbolRef};
 
     fn parse(text: &str) -> LoadEvidence {
-        let mut evidence = LoadEvidence {
-            loaded: FxHashMap::default(),
-            sources: vec!["test.log".to_string()],
+        let mut loaded = FxHashMap::default();
+        let mut parser = Parser {
+            loaded: &mut loaded,
+            current: None,
         };
-        let mut current = None;
         for line in text.lines() {
-            parse_line(line.trim_end(), &mut current, &mut evidence.loaded);
+            parse_line(line.trim_end(), &mut parser);
         }
-        evidence
+        parser.close_block();
+        LoadEvidence {
+            loaded,
+            sources: "test.log".to_string(),
+        }
     }
 
     fn violation(source_class: &str, owner: &str, member: Option<(&str, &str)>) -> Violation {
@@ -421,13 +564,17 @@ mod tests {
     }
 
     /// Every accepted format lands in the same set; numeric tokens and other -Xlog
-    /// streams sharing the file do not.
+    /// streams sharing the file do not. A tag-confirmed line accepts a default-package
+    /// or non-ASCII name (both are legal JVM class names); a bare token still needs two
+    /// segments.
     #[test]
     fn parses_unified_logging_classlists_and_plain_lists() {
         let e = parse(
             "[0.062s][info][class,load] java.lang.Object source: shared objects file\n\
              [0.100s][info][gc,start     ] Pause Young (Normal)\n\
              [0.101s][info][class,load  ] com.example.App$Inner source: file:/app.jar\n\
+             [0.102s][info][class,load] LoadIt source: file:/\n\
+             [0.103s][info][class,load] com.example.日本語テスト source: file:/app.jar\n\
              io/ktor/Thing id: 12\n\
              com.example.Plain\n\
              127.0.0.1 connected\n\
@@ -437,15 +584,39 @@ mod tests {
         for present in [
             "java/lang/Object",
             "com/example/App$Inner",
+            "LoadIt",
+            "com/example/日本語テスト",
             "io/ktor/Thing",
             "com/example/Plain",
         ] {
             assert!(e.observed(present).is_some(), "{present} missing");
         }
-        assert_eq!(e.distinct_classes(), 4, "numeric or bare tokens leaked in");
+        assert_eq!(e.distinct_classes(), 6, "numeric or bare tokens leaked in");
     }
 
-    /// A cause stack is captured for its class, frame lines are never read as loaded
+    /// The tags decorator is matched by exact membership: the class,loader,* family
+    /// shares the "class,load" substring but belongs to other streams, and a decorator
+    /// set without tags at all (-Xlog:...:file=x:time) still parses via the token path.
+    #[test]
+    fn tag_matching_is_exact_and_survives_missing_tags_decorator() {
+        let e = parse(
+            "[0.1s][info][class,loader,data] create class loader data 0x0 for instance of jdk.internal.loader.ClassLoaders$AppClassLoader\n\
+             [0.2s][info][class,loader,constraints] adding new constraint for name: java/lang/String\n\
+             [2026-08-21T12:00:00.000+0900] java.lang.Object source: shared objects file\n",
+        );
+        assert!(
+            e.observed("jdk/internal/loader/ClassLoaders$AppClassLoader")
+                .is_none(),
+            "a class,loader,data line leaked through the tag gate"
+        );
+        assert!(
+            e.observed("java/lang/Object").is_some(),
+            "a tags-less decorator set must fall through to the token parse"
+        );
+        assert_eq!(e.distinct_classes(), 1);
+    }
+
+    /// A cause stack is reduced to its trigger, frame lines are never read as loaded
     /// classes, and the first stack wins.
     #[test]
     fn captures_cause_stacks_and_picks_the_trigger_frame() {
@@ -457,11 +628,10 @@ mod tests {
              [info][class,load,cause] Java stack when loading org.example.Plugin:\n\
              [info][class,load,cause] \tat com.example.Other.later(Other.java:1)\n",
         );
-        let frames = e.observed("org/example/Plugin").unwrap();
-        assert_eq!(frames.len(), 3, "second stack must not append: {frames:?}");
-        // ClassLoader machinery is skipped; the reflective frame is the answer.
+        // ClassLoader machinery is skipped; the reflective frame is the answer, and the
+        // second stack must not override the first.
         assert_eq!(
-            trigger(frames).as_deref(),
+            e.observed("org/example/Plugin").unwrap().trigger(),
             Some("java.lang.Class.forName from com.example.Registry.discover(Registry.java:42)")
         );
         assert!(e.observed("java/lang/ClassLoader").is_none());
@@ -493,41 +663,72 @@ mod tests {
              [0.295s][info][class,load,cause] \tat LoadIt.main(LoadIt.java:3)\n\
              [0.295s][info][class,load,cause] \tat java.lang.invoke.LambdaForm$DMH/0x000001c00106c000.invokeStatic(java.base@25.0.3/LambdaForm$DMH)\n",
         );
-        let frames = e
-            .observed("io/ktor/utils/io/jvm/javaio/BlockingAdapter")
-            .unwrap();
-        assert!(
-            frames.iter().any(|f| f.starts_with("LoadIt.main")),
-            "a monitor annotation ended the stack early: {frames:?}"
-        );
+        // A monitor annotation ending the stack early would leave a machinery-only
+        // prefix and a None trigger, so the composed value pins both rules at once.
         assert_eq!(
-            trigger(frames).as_deref(),
-            Some("java.lang.Class.forName0 from LoadIt.main(LoadIt.java:3)"),
-            "frames: {frames:?}"
+            e.observed("io/ktor/utils/io/jvm/javaio/BlockingAdapter")
+                .unwrap()
+                .trigger(),
+            Some("java.lang.Class.forName0 from LoadIt.main(LoadIt.java:3)")
         );
     }
 
-    /// The native variant marks the class loaded without collecting VM frames.
+    /// The native variant marks the class loaded without collecting VM frames. The frame
+    /// lines carry the same class,load,cause,native tags as their header, and their
+    /// frame-kind letters ("V", "j") must not register as trusted single-segment classes.
     #[test]
     fn native_stack_marks_loaded_without_frames() {
         let e = parse(
             "[info][class,load,cause,native] Native stack when loading com.example.N:\n\
-             V  [libjvm.so+0x123abc]\n\
-             j  java.lang.Thread.run()V\n",
+             [info][class,load,cause,native] V  [libjvm.so+0x123abc]\n\
+             [info][class,load,cause,native] j  java.lang.Thread.run()V+8\n\
+             [info][class,load,cause,native] j  com.example.Caller.run()V+2\n",
         );
-        assert_eq!(e.observed("com/example/N"), Some(&[][..]));
-        assert_eq!(e.distinct_classes(), 1);
+        let record = e.observed("com/example/N").unwrap();
+        assert!(record.trigger().is_none());
+        assert_eq!(
+            e.distinct_classes(),
+            1,
+            "native frame lines leaked in as classes"
+        );
     }
 
-    /// Frame retention is capped; the trigger only ever needs the top of the stack.
+    /// apply is promote-only across evidence sets too: a stack-less observation applied
+    /// after a stacked one must not clear the established trigger.
     #[test]
-    fn frame_capture_is_capped() {
+    fn apply_never_clears_an_established_trigger() {
+        let stacked = parse(
+            "Java stack when loading io.ktor.A:\n\
+             \tat com.example.Boot.init(Boot.java:5)\n",
+        );
+        let plain = parse("io.ktor.A\n");
+        let mut violations = vec![violation("io/ktor/A", "x/Gone", None)];
+        apply(&mut violations, &stacked);
+        apply(&mut violations, &plain);
+        assert!(violations[0].observed_loading);
+        assert_eq!(
+            violations[0].load_trigger.as_deref(),
+            Some("com.example.Boot.init(Boot.java:5)"),
+            "a later stack-less observation cleared the trigger"
+        );
+    }
+
+    /// Nothing is retained per frame, so a delegation chain of any depth still yields
+    /// its trigger (a fixed retention cap used to lose it past 32 machinery frames).
+    #[test]
+    fn trigger_survives_arbitrarily_deep_delegation_chains() {
         let mut text = String::from("Java stack when loading a.b.C:\n");
         for i in 0..100 {
-            text.push_str(&format!("\tat p.Q.m{i}(Q.java:{i})\n"));
+            text.push_str(&format!(
+                "\tat jdk.internal.loader.Deep.m{i}(Deep.java:{i})\n"
+            ));
         }
+        text.push_str("\tat com.example.Boot.init(Boot.java:5)\n");
         let e = parse(&text);
-        assert_eq!(e.observed("a/b/C").unwrap().len(), MAX_FRAMES);
+        assert_eq!(
+            e.observed("a/b/C").unwrap().trigger(),
+            Some("com.example.Boot.init(Boot.java:5)")
+        );
     }
 
     /// apply is promote-only: observed classes gain the flag and trigger, everything else
@@ -553,7 +754,10 @@ mod tests {
     }
 
     /// Drafts cover only symbols whose every violation is ⚠️ and unobserved; the file
-    /// round-trips through the real exclude parser.
+    /// round-trips through the real exclude parser. A member-less rule matches the owner
+    /// outright in exclude::filter, so it is withheld whenever any symbol on the same
+    /// owner is not draftable — otherwise the drafted class-level rule would waive a
+    /// reachable member break too.
     #[test]
     fn drafts_only_fully_unproven_unobserved_symbols() {
         let unobserved_a = violation("app/DeadA", "lib/Gone", Some(("m", "()V")));
@@ -566,6 +770,11 @@ mod tests {
         let mixed_dead = violation("app/DeadC", "lib/Mixed", None);
         let mut mixed_live = violation("app/Hot2", "lib/Mixed", None);
         mixed_live.reachable = Some(true);
+        // A draftable class-level symbol whose owner also carries a reachable member
+        // break: the member-less rule would waive that break, so it must not be drafted.
+        let split_class = violation("app/DeadD", "lib/Split", None);
+        let mut split_member = violation("app/Hot3", "lib/Split", Some(("n", "()V")));
+        split_member.reachable = Some(true);
 
         let evidence = parse("com.example.Whatever\n");
         let dir = std::env::temp_dir().join(format!("uika-draft-test-{}", std::process::id()));
@@ -579,6 +788,8 @@ mod tests {
                 reachable,
                 mixed_dead,
                 mixed_live,
+                split_class,
+                split_member,
             ],
             Some(true),
             &evidence,
@@ -597,9 +808,28 @@ mod tests {
         assert!(!content.contains("lib/AlsoGone"), "{content}");
         assert!(!content.contains("lib/Hot"), "{content}");
         assert!(!content.contains("lib/Mixed"), "{content}");
+        assert!(!content.contains("lib/Split"), "{content}");
         // The draft must load as a real exclude file.
         let rules = crate::exclude::load(std::slice::from_ref(&path)).unwrap();
         assert_eq!(rules.len(), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// An invalid reachable axis (roots matched nothing, app_roots_matched = Some(false))
+    /// drafts nothing: every reachable = Some(false) then carries no evidence, and the
+    /// per-module fold in lib.rs passes exactly this value when any run's roots matched
+    /// nothing — the gate fails those violations, so drafting them would propose waiving
+    /// the very breaks the command exits 1 on.
+    #[test]
+    fn nothing_is_drafted_when_the_reachable_axis_is_invalid() {
+        let v = violation("app/Dead", "lib/Gone", None);
+        let evidence = parse("");
+        let dir = std::env::temp_dir().join(format!("uika-draft-axis-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("draft.toml");
+        let drafted =
+            draft_excludes(std::slice::from_ref(&v), Some(false), &evidence, &path).unwrap();
+        assert_eq!(drafted, 0);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -614,7 +844,26 @@ mod tests {
         let e = load(std::slice::from_ref(&dir)).unwrap();
         assert!(e.observed("com/example/A").is_some());
         assert!(e.observed("com/example/B").is_some());
-        assert_eq!(e.sources().len(), 1, "the directory is one source");
+        assert_eq!(
+            e.sources(),
+            dir.display().to_string(),
+            "the directory is one source"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A newline-less binary dropped into the log directory is skipped in bounded memory
+    /// and does not derail the lines after it in other respects.
+    #[test]
+    fn oversized_lines_are_skipped_in_bounded_memory() {
+        let dir = std::env::temp_dir().join(format!("uika-load-binary-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut junk = vec![b'x'; 3 * MAX_LINE];
+        junk.extend_from_slice(b"\ncom.example.After\n");
+        std::fs::write(dir.join("junk.bin"), &junk).unwrap();
+        let e = load(std::slice::from_ref(&dir)).unwrap();
+        assert!(e.observed("com/example/After").is_some());
+        assert_eq!(e.distinct_classes(), 1);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -632,6 +881,25 @@ mod tests {
         assert_eq!(drafted, 0);
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("Nothing to draft"), "{content}");
+        assert!(
+            crate::exclude::load(std::slice::from_ref(&path))
+                .unwrap()
+                .is_empty()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The placeholder written before the check runs is a valid, empty exclude file, so
+    /// an errored run leaves neither a stale draft nor an unparseable one.
+    #[test]
+    fn draft_placeholder_is_a_valid_empty_exclude_file() {
+        let dir = std::env::temp_dir().join(format!("uika-draft-holder-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("draft.toml");
+        std::fs::write(&path, "[[exclude]]\nowner = \"stale/Rule\"\n").unwrap();
+        create_draft_placeholder(&path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(!content.contains("stale/Rule"), "{content}");
         assert!(
             crate::exclude::load(std::slice::from_ref(&path))
                 .unwrap()

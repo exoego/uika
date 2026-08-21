@@ -40,7 +40,7 @@ new ZipOutputStream(zip.newOutputStream()).withCloseable { out ->
 
 new File(basedir, "before.json").text = "{}"
 new File(basedir, "after.json").text = "{}"
-return true
-
-// The class-load log directory the goals point at with -Duika.classLoadLog.
+// The class-load log directory the goals point at with -Duika.classLoadLog. Before the
+// return: a Groovy script's return ends it, so a statement after one never runs.
 new File(basedir, "load-logs").mkdirs()
+return true

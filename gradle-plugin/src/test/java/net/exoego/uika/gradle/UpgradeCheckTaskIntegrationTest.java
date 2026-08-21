@@ -260,8 +260,9 @@ final class UpgradeCheckTaskIntegrationTest {
                 .withPluginClasspath()
                 .forwardOutput()
                 .build();
-        String expected = "-Xlog:class+load=info:file="
-                + logDir.resolve("root-test-%p.log");
+        // Composed by the same core helper the plugin calls, so the assertion also holds
+        // where the helper quotes the file value (a Windows drive colon).
+        String expected = UikaCli.classLoadLogJvmArg(logDir, "root-test");
         assertTrue(with.getOutput().contains(expected),
                 () -> "expected " + expected + " in test JVM args:\n" + with.getOutput());
 
@@ -274,6 +275,65 @@ final class UpgradeCheckTaskIntegrationTest {
         assertTrue(!without.getOutput().contains("-Xlog:class+load"),
                 () -> "test JVM args must stay untouched without the property:\n"
                         + without.getOutput());
+    }
+
+    /// The bare -PuikaClassLoadLog default is a lazy provider: a build script relocating
+    /// layout.buildDirectory AFTER the plugins block must land both halves — the injected
+    /// test JVM flag and the check task's --class-load-log — under the final location,
+    /// never under the pre-relocation default.
+    @Test
+    void bareClassLoadLogFollowsARelocatedBuildDirectory() throws Exception {
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    java
+                    id("net.exoego.uika")
+                }
+
+                layout.buildDirectory = file("custom-build")
+
+                repositories {
+                    maven {
+                        url = uri("%s")
+                        metadataSources { artifact() }
+                    }
+                }
+
+                tasks.register("printTestJvmArgs") {
+                    val args = tasks.test.get().allJvmArgs
+                    doLast { println("TEST_JVM_ARGS=" + args) }
+                }
+                """.formatted(repoDir.toUri()));
+
+        BuildResult injected = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments("printTestJvmArgs", "-PuikaClassLoadLog")
+                .withPluginClasspath()
+                .forwardOutput()
+                .build();
+        // toRealPath: Gradle canonicalizes the project directory (macOS /var vs
+        // /private/var), and the bare default is derived from it.
+        Path relocated = projectDir.toRealPath()
+                .resolve("custom-build").resolve("uika").resolve("class-load");
+        String expected = UikaCli.classLoadLogJvmArg(relocated, "root-test");
+        assertTrue(injected.getOutput().contains(expected),
+                () -> "expected " + expected + " in test JVM args:\n" + injected.getOutput());
+
+        BuildResult checked = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION,
+                        "-PuikaClassLoadLog")
+                .withPluginClasspath()
+                .forwardOutput()
+                .build();
+        assertEquals(TaskOutcome.SUCCESS, checked.task(":uikaUpgradeCheck").getOutcome());
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(args.contains("--class-load-log " + relocated),
+                () -> "the check must read the relocated default: " + args);
     }
 
     @Test
@@ -380,14 +440,24 @@ final class UpgradeCheckTaskIntegrationTest {
     /// configuration is wired at configuration time, and a reused entry still runs the CLI.
     @Test
     void configurationCacheReusesUpgradeCheck() throws Exception {
+        // The draft/log properties are set on purpose: getDraftExcludeFile must stay
+        // @Internal, and this second-run-still-executes assertion is the regression guard
+        // for it — an @OutputFile here registered an output, made the second invocation
+        // UP-TO-DATE, and silently skipped the whole check. Without the property set the
+        // task has no output files either way and the guard asserts nothing.
+        Path logDir = Files.createDirectories(projectDir.resolve("cc-load-logs"));
+        Path draft = projectDir.resolve("cc-draft.toml");
+        String[] args = {
+                "uikaUpgradeCheck",
+                "--configuration-cache",
+                "--stacktrace",
+                "-PuikaBefore=" + before,
+                "-PuikaAfter=" + after,
+                "-PuikaCliVersion=" + CLEAN_VERSION,
+                "-PuikaClassLoadLog=" + logDir,
+                "-PuikaDraftExcludeFile=" + draft};
         BuildResult first = runner(CLEAN_VERSION)
-                .withArguments(
-                        "uikaUpgradeCheck",
-                        "--configuration-cache",
-                        "--stacktrace",
-                        "-PuikaBefore=" + before,
-                        "-PuikaAfter=" + after,
-                        "-PuikaCliVersion=" + CLEAN_VERSION)
+                .withArguments(args)
                 .build();
         assertEquals(TaskOutcome.SUCCESS, first.task(":uikaUpgradeCheck").getOutcome());
         assertTrue(first.getOutput().contains("Configuration cache entry stored"),
@@ -396,13 +466,7 @@ final class UpgradeCheckTaskIntegrationTest {
 
         Files.delete(Path.of(before + ".marker"));
         BuildResult second = runner(CLEAN_VERSION)
-                .withArguments(
-                        "uikaUpgradeCheck",
-                        "--configuration-cache",
-                        "--stacktrace",
-                        "-PuikaBefore=" + before,
-                        "-PuikaAfter=" + after,
-                        "-PuikaCliVersion=" + CLEAN_VERSION)
+                .withArguments(args)
                 .build();
         assertEquals(TaskOutcome.SUCCESS, second.task(":uikaUpgradeCheck").getOutcome());
         assertTrue(second.getOutput().contains("Configuration cache entry reused"),

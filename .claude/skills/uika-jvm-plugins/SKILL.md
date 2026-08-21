@@ -74,18 +74,32 @@ description: Invariants for the uika Gradle, sbt, and Maven build-tool plugins a
 - Runtime load evidence is ONE knob per tool pointed at one directory, serving
   both phases (collect on the base branch's test run, consume on the PR's
   check): Gradle `-PuikaClassLoadLog` (bare value defaults to
-  `build/uika/class-load`), sbt `uikaClassLoadLog := Some(dir)`, Maven
-  `-Duika.classLoadLog` plus `argLine` for collection (no mojo can inject into
-  surefire). The test-JVM argument comes from `UikaCli.classLoadLogJvmArg` in
-  core — per-process `%p` file names because `-Xlog` truncates a shared file on
-  open, and the value is quoted when the path carries a Windows drive colon —
-  so the three tools cannot drift. Gradle injects via
-  `withType(Test).configureEach` plus a doFirst mkdirs lambda capturing a plain
-  File (configuration-cache safe); sbt appends to `Test/javaOptions`, which
-  only reaches tests under `Test/fork := true`.
+  `build/uika/class-load`; the value must be a directory, an existing-file
+  value fails fast at configuration), sbt `uikaClassLoadLog := Some(dir)`,
+  Maven `-Duika.classLoadLog` plus a hand-written `argLine` for collection (no
+  mojo can inject into surefire), so Maven alone bypasses the shared composer —
+  its README/javadoc recipe must be kept in sync with it by hand. Gradle and
+  sbt compose the test-JVM argument via `UikaCli.classLoadLogJvmArg` in core —
+  per-process `%p` file names because `-Xlog` truncates a shared file on open,
+  and the value is quoted when the path carries a colon (a Windows drive; the
+  JVM strips the quotes, verified against a real -Xlog run). Gradle injects via
+  `withType(Test).configureEach` using `jvmArgumentProviders` (a build script's
+  `jvmArgs = [...]` setter silently wiped a plain jvmArgs injection) plus
+  `upToDateWhen(false)`/`doNotCacheIf` (provider args are not fingerprinted,
+  and an UP-TO-DATE or FROM-CACHE test forks no JVM, so a collect run would
+  upload an empty artifact with no symptom) plus a doFirst mkdirs lambda
+  capturing a plain File — all verified configuration-cache safe on 9.7.0, and
+  the mkdirs is load-bearing (-Xlog aborts JVM startup on a missing directory).
+  sbt appends to `Test/javaOptions`, which only reaches tests under
+  `Test/fork := true`; both sbt halves absolutize the directory (a relative
+  value split across launch dir vs each fork's baseDirectory), and the
+  buildSettings task reads the keys via `LocalRootProject / ...` so the
+  README's bare `uikaClassLoadLog := Some(...)` (root-project scope) reaches
+  the check, not only ThisBuild.
   `UpgradeCheckTask.getDraftExcludeFile` is `@Internal`, NOT `@OutputFile`:
   declaring an output made a second invocation UP-TO-DATE and silently skipped
-  the whole check (caught by `configurationCacheReusesUpgradeCheck`).
+  the whole check (caught by `configurationCacheReusesUpgradeCheck`, which sets
+  the draft property for exactly that reason).
 - Their tests stub uika-cli with a shell-script ZIP in a file-based Maven repo
   (Gradle TestKit + sbt scripted + Maven invoker; invoker needs `-U` because
   target/it-repo caches resolution failures across runs, and its pre-build

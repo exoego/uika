@@ -127,6 +127,14 @@ public class UikaPlugin implements Plugin<Project> {
             task.getWiredAtConfiguration().set(true);
         }));
 
+        // ONE shared provider for the Test-task injection and the uikaUpgradeCheck wiring
+        // below, resolved lazily by both consumers: evaluating the bare-property default
+        // (the root build directory) twice at different configuration phases let a script
+        // that relocates layout.buildDirectory after the plugins block make the tests
+        // write one directory while the check read another — and resolving it eagerly at
+        // apply time would capture the pre-relocation build directory for both.
+        org.gradle.api.provider.Provider<File> classLoadLogDir = classLoadLogDir(root);
+
         TaskProvider<UpgradeCheckTask> upgradeCheck =
                 root.getTasks().register("uikaUpgradeCheck", UpgradeCheckTask.class, task -> {
                     task.setGroup("uika");
@@ -156,7 +164,6 @@ public class UikaPlugin implements Plugin<Project> {
                     if (excludeFile != null) {
                         task.getExcludeFiles().from(root.file(excludeFile.toString()));
                     }
-                    File classLoadLogDir = classLoadLogDir(root);
                     if (classLoadLogDir != null) {
                         task.getClassLoadLogs().from(classLoadLogDir);
                     }
@@ -209,21 +216,36 @@ public class UikaPlugin implements Plugin<Project> {
         // into <dir> (one file per process — %p — because -Xlog truncates a shared file on
         // open), which is exactly what uikaUpgradeCheck reads back as --class-load-log.
         // One property serves both phases: the base branch's test run collects, the
-        // dependency PR's check consumes. Configuration only touches task properties, so
-        // the tasks stay configuration-cache compatible (the doFirst lambda captures a
-        // plain File).
-        File classLoadLogDir = classLoadLogDir(root);
+        // dependency PR's check consumes. Three deliberate choices, each verified against
+        // Gradle 9.7.0:
+        // - jvmArgumentProviders, not jvmArgs: a build script's `jvmArgs = listOf(...)`
+        //   setter replaces the list and silently discarded the injected flag; provider
+        //   args survive it and still show in getAllJvmArgs().
+        // - upToDateWhen(false) + doNotCacheIf: provider args are not fingerprinted, and
+        //   an UP-TO-DATE or FROM-CACHE Test task forks no JVM — the collect run would
+        //   upload an empty artifact with no symptom (promote-only evidence). Collection
+        //   is a side effect that needs a real run, so asking for it defeats both.
+        // - the doFirst mkdirs is load-bearing: -Xlog aborts JVM startup when the log
+        //   file's directory does not exist.
+        // Configuration only touches task properties and lambdas capturing a File/String,
+        // so the tasks stay configuration-cache compatible.
         if (classLoadLogDir != null) {
+            org.gradle.api.provider.Provider<File> dir = classLoadLogDir;
             root.allprojects(p -> p.getTasks()
                     .withType(org.gradle.api.tasks.testing.Test.class)
                     .configureEach(test -> {
                         String prefix = (p.getPath().equals(":") ? "root" : p.getPath())
                                 .replaceAll("[^A-Za-z0-9._-]", "_")
                                 + "-" + test.getName();
-                        test.jvmArgs(
-                                UikaCli.classLoadLogJvmArg(classLoadLogDir.toPath(), prefix));
-                        test.doFirst("uika class-load log directory",
-                                t -> classLoadLogDir.mkdirs());
+                        // The argument is composed inside the provider, at execution
+                        // time, so the bare default follows a relocated build directory.
+                        test.getJvmArgumentProviders().add(() -> java.util.List.of(
+                                UikaCli.classLoadLogJvmArg(dir.get().toPath(), prefix)));
+                        test.getOutputs().upToDateWhen(t -> false);
+                        test.getOutputs().doNotCacheIf(
+                                "uika class-load log collection needs a real JVM run",
+                                t -> true);
+                        test.doFirst("uika class-load log directory", t -> dir.get().mkdirs());
                     }));
         }
 
@@ -312,10 +334,15 @@ public class UikaPlugin implements Plugin<Project> {
     /**
      * The directory named by {@code -PuikaClassLoadLog}, or null when the property is
      * absent. An empty value (bare {@code -PuikaClassLoadLog}) means the default
-     * {@code <root build dir>/uika/class-load}, so a local collect-then-check loop needs no
-     * path at all.
+     * {@code <root build dir>/uika/class-load}, kept as a lazy provider so a build script
+     * relocating {@code layout.buildDirectory} after the plugins block still lands the
+     * logs under the final location; an explicit value is a fixed directory. A value
+     * naming an existing regular file is rejected here with the property's own
+     * vocabulary: the CLI flag accepts a log file, but this knob also drives Test-task
+     * collection, which composes {@code <value>/<prefix>-%p.log} — a file value would
+     * make every test JVM abort at startup with an -Xlog error that never mentions uika.
      */
-    private static File classLoadLogDir(Project root) {
+    private static org.gradle.api.provider.Provider<File> classLoadLogDir(Project root) {
         Object value = root.findProperty("uikaClassLoadLog");
         if (value == null) {
             return null;
@@ -323,8 +350,14 @@ public class UikaPlugin implements Plugin<Project> {
         String path = value.toString();
         if (path.isEmpty()) {
             return root.getLayout().getBuildDirectory().dir("uika/class-load")
-                    .get().getAsFile();
+                    .map(org.gradle.api.file.Directory::getAsFile);
         }
-        return root.file(path);
+        File dir = root.file(path);
+        if (dir.isFile()) {
+            throw new org.gradle.api.GradleException(
+                    "-PuikaClassLoadLog must name a directory (test JVMs write per-process"
+                            + " log files into it), but " + dir + " is a file");
+        }
+        return root.getProviders().provider(() -> dir);
     }
 }

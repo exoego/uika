@@ -111,7 +111,9 @@ baseline once per push instead and cache it as an artifact keyed by SHA:
 artifact flow: the base branch runs its test suite with class-load logging and
 uploads the logs, the PR job downloads them by `base.sha` and adds one flag. A
 ⚠️ class that provably loads during tests then fails `--fail-on reachable`
-instead of being deprioritized. For Gradle, next to the baseline dump:
+instead of being deprioritized (a 💤 latent violation stays latent — loading
+proves the class reachable, not that anything invokes the affected member).
+For Gradle, next to the baseline dump:
 
 ```yaml
       - run: ./gradlew test -PuikaClassLoadLog=/tmp/uika-load
@@ -427,19 +429,27 @@ per tool, pointed at one directory for both phases (collect on the base
 branch, consume on the PR):
 
 - Gradle: `-PuikaClassLoadLog=<dir>` makes every `Test` task write a
-  per-process class-load log there, and makes `uikaUpgradeCheck` read the
-  directory back as `--class-load-log`. A bare `-PuikaClassLoadLog` uses
-  `build/uika/class-load`.
-- sbt: `uikaClassLoadLog := Some(file("<dir>"))` does the same for forked test
-  JVMs and for `uikaUpgradeCheck`. It needs `Test / fork := true`: an
-  in-process test runs inside sbt's own JVM, which no flag can reach after
-  startup.
+  per-process class-load log there (and run for real — an `UP-TO-DATE` or
+  `FROM-CACHE` test task forks no JVM and would collect nothing), and makes
+  `uikaUpgradeCheck` read the directory back as `--class-load-log`. A bare
+  `-PuikaClassLoadLog` uses `build/uika/class-load`.
+- sbt: `uikaClassLoadLog := Some(file("<dir>"))` in `build.sbt` (bare or
+  `ThisBuild`-scoped) does the same for forked test JVMs and for
+  `uikaUpgradeCheck`. It needs `Test / fork := true`: an in-process test runs
+  inside sbt's own JVM, which no flag can reach after startup.
 - Maven: collect with the test JVM flag
   (`mvn test -DargLine="-Xlog:class+load=info:file=<dir>/load-%p.log"`), check
-  with `-Duika.classLoadLog=<dir>`.
+  with `-Duika.classLoadLog=<dir>`. Create `<dir>` first (`-Xlog` aborts JVM
+  startup when it cannot open the file) and make it absolute in a multi-module
+  build: surefire forks resolve a relative path against each module, the
+  aggregator goal against the execution root. A command-line `-DargLine`
+  replaces any POM-configured argLine (jacoco's agent included) — append to
+  the POM's argLine instead when one exists.
 
 The `%p` in the file names keeps parallel test JVMs from truncating each
-other's log. [`--draft-exclude-file`](#runtime-load-evidence---class-load-log)
+other's log, and the injected flag assumes the test JVMs are JDK 9+ (`-Xlog`
+aborts a JDK 8 JVM at startup, so leave the knob off for a legacy test leg).
+[`--draft-exclude-file`](#runtime-load-evidence---class-load-log)
 maps to `-PuikaDraftExcludeFile=` / `uikaDraftExcludeFile :=` /
 `-Duika.draftExcludeFile=`.
 

@@ -64,9 +64,17 @@ public final class UpgradeCheckMojo extends AbstractMojo {
 
     /**
      * Runtime class-load log (file or directory) from a test run of the current, not yet
-     * upgraded build, passed as {@code --class-load-log}. Collect it with the test JVM flag,
-     * e.g. {@code mvn test -DargLine="-Xlog:class+load=info:file=target/uika-class-load-%p.log"}
-     * ({@code %p} keeps parallel forks from truncating each other's file).
+     * upgraded build, passed as {@code --class-load-log}. Collect it with the test JVM flag
+     * into a dedicated directory, e.g.
+     * {@code mvn test -DargLine="-Xlog:class+load=info:file=/tmp/uika-load/load-%p.log"}
+     * ({@code %p} keeps parallel forks from truncating each other's file; create the
+     * directory first, since {@code -Xlog} aborts JVM startup when it cannot open the file),
+     * then check with {@code -Duika.classLoadLog=/tmp/uika-load}. Use an absolute path in a
+     * multi-module build: surefire forks resolve a relative path against each module's
+     * basedir, while this aggregator mojo resolves it against the execution root, so a
+     * relative directory collects logs the check never reads. A command-line
+     * {@code -DargLine} also replaces any POM-configured argLine (jacoco's agent included);
+     * append to the POM's argLine instead when one exists.
      */
     @Parameter(property = "uika.classLoadLog")
     private File classLoadLog;
