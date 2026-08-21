@@ -188,6 +188,14 @@ pub fn load(paths: &[PathBuf]) -> Result<LoadEvidence> {
                     format!("cannot read class-load log directory {}", path.display())
                 })?;
                 if entry.file_type().is_file() {
+                    // Binary JFR recordings live next to their plugin-converted text in
+                    // the intended flow; skip them by name instead of byte-scanning up
+                    // to 250MB each for newlines. An explicitly passed `.jfr` path is
+                    // still read (and skipped line by line), so text evidence
+                    // deliberately named `.jfr` keeps a way in.
+                    if entry.path().extension().is_some_and(|ext| ext == "jfr") {
+                        continue;
+                    }
                     parse_file(entry.path(), &mut loaded)?;
                 }
             }
@@ -864,6 +872,33 @@ mod tests {
         let e = load(std::slice::from_ref(&dir)).unwrap();
         assert!(e.observed("com/example/After").is_some());
         assert_eq!(e.distinct_classes(), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `.jfr` files in a directory are the binary recordings the plugins convert and
+    /// leave in place; the walk skips them by NAME (never byte-scanning megabytes for
+    /// newlines, never fluke-registering pool strings), while an explicitly passed
+    /// `.jfr` path is still read line by line.
+    #[test]
+    fn jfr_named_files_are_skipped_in_the_directory_walk_only() {
+        let dir = std::env::temp_dir().join(format!("uika-load-jfr-skip-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let jfr = dir.join("rec.jfr");
+        // Readable text on purpose: if the walk opened the file at all, this would
+        // register and the assertion below would catch it.
+        std::fs::write(&jfr, "com.example.FromRecording\n").unwrap();
+        std::fs::write(dir.join("plain.log"), "com.example.FromLog\n").unwrap();
+        let e = load(std::slice::from_ref(&dir)).unwrap();
+        assert!(e.observed("com/example/FromLog").is_some());
+        assert!(
+            e.observed("com/example/FromRecording").is_none(),
+            "a .jfr inside the directory must be skipped by name"
+        );
+        let direct = load(std::slice::from_ref(&jfr)).unwrap();
+        assert!(
+            direct.observed("com/example/FromRecording").is_some(),
+            "an explicitly passed .jfr path must still be read"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

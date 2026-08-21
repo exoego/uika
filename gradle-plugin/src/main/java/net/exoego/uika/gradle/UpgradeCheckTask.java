@@ -74,10 +74,11 @@ public abstract class UpgradeCheckTask extends DefaultTask {
     public abstract Property<Integer> getJdkRelease();
 
     /**
-     * Runtime class-load logs (files or directories) from a test run of the current, not yet
-     * upgraded build, passed as repeated {@code --class-load-log}. Wired from
-     * {@code -PuikaClassLoadLog} — the same property that makes {@code Test} tasks write the
-     * logs, so one value serves the collect run and the check run.
+     * Runtime class-load evidence (JFR recordings, text logs, or directories of both) from a
+     * test run of the current, not yet upgraded build, passed as repeated
+     * {@code --class-load-log} after recordings are converted into {@link #getJfrWorkDir()}.
+     * Wired from {@code -PuikaJfr} — the same property that makes {@code Test} tasks record,
+     * so one value serves the collect run and the check run.
      */
     @InputFiles
     @Optional
@@ -94,6 +95,10 @@ public abstract class UpgradeCheckTask extends DefaultTask {
      */
     @Internal
     public abstract RegularFileProperty getDraftExcludeFile();
+
+    /** Where JFR recordings on the class-load knob are converted to text for the CLI. */
+    @Internal
+    public abstract DirectoryProperty getJfrWorkDir();
 
     /** Where the binary is extracted, scoped by version and classifier below this directory. */
     @Internal
@@ -124,9 +129,13 @@ public abstract class UpgradeCheckTask extends DefaultTask {
                 .toList();
         Integer jdkRelease =
                 UikaCli.effectiveJdkRelease(getJdkRelease().getOrNull(), getLogger()::lifecycle);
-        List<Path> classLoadLogs = getClassLoadLogs().getFiles().stream()
-                .map(File::toPath)
-                .toList();
+        // JFR recordings on the knob (a .jfr value, or recordings inside a directory) are
+        // converted to the CLI's text format here: the CLI is JVM-free and never reads
+        // binary JFR, while this task always runs on a full JDK.
+        List<Path> classLoadLogs = net.exoego.uika.plugin.core.JfrEvidence.rewrite(
+                getClassLoadLogs().getFiles().stream().map(File::toPath).toList(),
+                getJfrWorkDir().get().getAsFile().toPath(),
+                getLogger()::lifecycle);
         Path draftExcludeFile = getDraftExcludeFile().isPresent()
                 ? getDraftExcludeFile().get().getAsFile().toPath()
                 : null;

@@ -1089,6 +1089,159 @@ fn a_real_jvm_emitted_class_load_log_promotes_the_violation() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The JFR cross-language contract, closed end to end: a REAL recording made by this
+/// test, converted by the REAL plugin-side converter (jvm-plugin-core's JfrEvidence,
+/// compiled here from its source), parsed by this crate's evidence reader, must promote
+/// the ⚠️ violation with a trigger composed from the JFR stack. The Java suites pin what
+/// the converter emits and the Rust unit tests pin what the parser accepts, but only a
+/// test running both halves fails when the two drift apart — and promote-only evidence
+/// would otherwise hide that drift as silently promoting nothing. Skipped without a JDK
+/// (javac is needed; the converter targets release 17) and on Windows like its -Xlog
+/// sibling.
+#[test]
+fn a_jfr_recording_converted_by_the_plugin_converter_promotes_the_violation() {
+    if cfg!(windows) {
+        eprintln!("skipping: classpath separators differ on Windows");
+        return;
+    }
+    let Some((java, feature)) = find_java() else {
+        eprintln!("skipping: no usable java on JAVA_HOME, PATH, or mise");
+        return;
+    };
+    if feature < 17 {
+        eprintln!("skipping: the converter is compiled for release 17 (found {feature})");
+        return;
+    }
+    // javac sits next to java (a bare "java" from PATH turns into a bare "javac").
+    let javac = java.with_file_name("javac");
+    if !std::process::Command::new(&javac)
+        .arg("--version")
+        .output()
+        .is_ok_and(|out| out.status.success())
+    {
+        eprintln!("skipping: no javac next to {}", java.display());
+        return;
+    }
+
+    let dir = std::env::temp_dir().join(format!("uika-jfr-contract-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |program: &std::path::Path, args: &[&str]| {
+        let out = std::process::Command::new(program)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{} {:?} failed:\n{}",
+            program.display(),
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+
+    // A real recording of the CURRENT (pre-upgrade) classpath loading BlockingAdapter.
+    let recorder = dir.join("RecordIt.java");
+    std::fs::write(
+        &recorder,
+        "import jdk.jfr.Recording;\n\
+         public class RecordIt {\n\
+         \x20   public static void main(String[] args) throws Exception {\n\
+         \x20       try (Recording r = new Recording()) {\n\
+         \x20           r.enable(\"jdk.ClassLoad\").withStackTrace().withoutThreshold();\n\
+         \x20           r.start();\n\
+         \x20           Class.forName(args[1], false, RecordIt.class.getClassLoader());\n\
+         \x20           r.stop();\n\
+         \x20           r.dump(java.nio.file.Path.of(args[0]));\n\
+         \x20       }\n\
+         \x20   }\n\
+         }\n",
+    )
+    .unwrap();
+    let classpath = [
+        fixture("ktor-io-jvm-2.3.13.jar"),
+        fixture("kotlin-stdlib-2.2.20.jar"),
+        fixture("kotlinx-coroutines-core-jvm-1.7.1.jar"),
+    ]
+    .iter()
+    .map(|p| p.display().to_string())
+    .collect::<Vec<_>>()
+    .join(":");
+    let jfr = dir.join("rec.jfr");
+    run(
+        &java,
+        &[
+            "-cp",
+            &classpath,
+            recorder.to_str().unwrap(),
+            jfr.to_str().unwrap(),
+            "io.ktor.utils.io.jvm.javaio.BlockingAdapter",
+        ],
+    );
+
+    // The REAL converter, compiled from the plugin-core source it ships as.
+    let converter_source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../jvm-plugin-core/src/main/java/net/exoego/uika/plugin/core/JfrEvidence.java");
+    let classes = dir.join("classes");
+    run(
+        &javac,
+        &[
+            "-d",
+            classes.to_str().unwrap(),
+            converter_source.to_str().unwrap(),
+        ],
+    );
+    let convert = dir.join("Convert.java");
+    std::fs::write(
+        &convert,
+        "public class Convert {\n\
+         \x20   public static void main(String[] args) throws Exception {\n\
+         \x20       long events = net.exoego.uika.plugin.core.JfrEvidence.convert(\n\
+         \x20               java.nio.file.Path.of(args[0]), java.nio.file.Path.of(args[1]));\n\
+         \x20       if (events == 0) {\n\
+         \x20           throw new IllegalStateException(\"no jdk.ClassLoad events converted\");\n\
+         \x20       }\n\
+         \x20   }\n\
+         }\n",
+    )
+    .unwrap();
+    let converted = dir.join("rec-converted.log");
+    run(
+        &java,
+        &[
+            "-cp",
+            classes.to_str().unwrap(),
+            convert.to_str().unwrap(),
+            jfr.to_str().unwrap(),
+            converted.to_str().unwrap(),
+        ],
+    );
+
+    let mut report = one_unproven_blocking_adapter_report();
+    let evidence = uika::evidence::load(std::slice::from_ref(&converted)).unwrap();
+    uika::evidence::apply(&mut report.violations, &evidence);
+    assert!(
+        report.violations[0].observed_loading,
+        "the converted recording did not register BlockingAdapter ({} distinct classes)",
+        evidence.distinct_classes()
+    );
+    let trigger = report.violations[0]
+        .load_trigger
+        .clone()
+        .unwrap_or_default();
+    assert!(
+        trigger.starts_with("java.lang.Class.forName") && trigger.contains(" from RecordIt.main("),
+        "unexpected trigger from the JFR stack: {trigger:?}"
+    );
+    let text = uika::report::check_text(&report);
+    assert!(text.contains("💥 1 reachable"), "not promoted:\n{text}");
+    assert!(
+        text.contains("⚡ observed loading at runtime (via java.lang.Class.forName"),
+        "missing the trigger in the report:\n{text}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The base-branch-artifact workflow end to end: a class-load log from a test run of the
 /// current build names BlockingAdapter, so the ⚠️ violation is promoted (observed loading,
 /// Breaks tier for the gate) and nothing is drafted for exclusion; without the log entry

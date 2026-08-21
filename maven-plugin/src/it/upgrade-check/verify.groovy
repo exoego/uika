@@ -21,11 +21,17 @@ assert log.isFile() : "invoker build log not found: $log"
 assert log.text.contains("[INFO] uika-stub: dependency changes: 0") :
     "CLI output did not go through the mojo logger"
 
-// -Duika.classLoadLog and -Duika.draftExcludeFile must reach the CLI, resolved against
+// -Duika.jfr and -Duika.draftExcludeFile must reach the CLI, resolved against
 // the project basedir like the other file properties.
 def classLoadDir = new File(basedir, "load-logs")
 assert args.text.contains("--class-load-log ${classLoadDir.absolutePath}") :
-    "-Duika.classLoadLog was not forwarded to the CLI: ${args.text}"
+    "-Duika.jfr was not forwarded to the CLI: ${args.text}"
 def draftFile = new File(basedir, "uika-draft.toml")
 assert args.text.contains("--draft-exclude-file ${draftFile.absolutePath}") :
     "-Duika.draftExcludeFile was not forwarded to the CLI: ${args.text}"
+
+// The recording inside the log directory must reach the CLI as converted text, never raw.
+assert args.text.contains("jfr-class-load") :
+    "the recording was not converted for the CLI: ${args.text}"
+assert !args.text.contains("rec.jfr") :
+    "the raw recording reached the CLI: ${args.text}"

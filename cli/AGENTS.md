@@ -426,13 +426,10 @@ pass-2 classes are typically below 0.1% of the scan.
   loader METHOD NAMES (loadClass/findClass/defineClass) on top of the JDK
   loader packages, because a custom loader (javac's source-launcher
   MemoryClassLoader, an app server's) sits in the delegation chain under its
-  own package and would otherwise be picked as the trigger. The class-load
-  guard test, `a_real_jvm_emitted_class_load_log_promotes_the_violation`,
-  feeds a log a real `java -Xlog` run EMITTED into the full report and skips
-  without a JVM (JAVA_HOME, PATH, or mise) — keep it, because promote-only
-  means parser-vs-format drift has no symptom besides silently promoting
-  nothing. Its `class+load+cause` half needs JDK 22+, above the pinned
-  toolchain, so run it against a newer JDK when touching the cause parsing.
+  own package and would otherwise be picked as the trigger. Real-format drift
+  is pinned by `a_real_jvm_emitted_class_load_log_promotes_the_violation`,
+  whose `class+load+cause` half needs JDK 22+, above the pinned toolchain —
+  run it against a newer JDK when touching the cause parsing.
 - Drafting groups by the referenced symbol because that is what an exclude rule
   matches: a symbol also broken by a reachable or observed class is never
   drafted, since the rule would waive the real break too. A member-less rule is
@@ -449,6 +446,19 @@ pass-2 classes are typically below 0.1% of the scan.
   errored run leaves a fresh placeholder, never a stale draft from an earlier
   run; quiet runs (no changes, empty plan) write the empty draft through the
   same `apply_evidence_and_draft` call as checked runs.
+- JFR recordings never reach this CLI: the build-tool plugins convert
+  `jdk.ClassLoad` events into this parser's own trusted text shapes
+  (`jvm-plugin-core/JfrEvidence`, invariants in the uika-jvm-plugins skill), so
+  the CLI stays JVM-free and JFR-ignorant. A binary `.jfr` inside a log
+  directory is skipped by name in the directory walk (recordings are large and
+  guaranteed residents of the evidence directory, so byte-scanning them for
+  newlines every run was pure waste); any other binary is still absorbed by the
+  bounded reader, and an explicitly passed `.jfr` path is still read line by
+  line. The converter-parser
+  contract is pinned by
+  `a_jfr_recording_converted_by_the_plugin_converter_promotes_the_violation`,
+  which compiles the real JfrEvidence from its source — the one deliberate
+  cross-component test dependency, like scenarios.tsv.
 
 ## SPI (ServiceLoader) provider breaks
 

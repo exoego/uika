@@ -3,6 +3,7 @@
 > prepareStubRepo
 $ touch before.json after.json
 $ mkdir load-logs
+> prepareJfr
 > uikaUpgradeCheck before.json after.json
 $ exists before.json.marker
 > checkCliOutputLogged
@@ -10,6 +11,7 @@ $ exists before.json.marker
 > checkExcludeFilesPassed
 > checkJdkReleasePassed
 > checkClassLoadLogPassed
+> checkJfrConverted
 > checkTestJavaOptionsInjected
 
 # Stub CLI exits 1 (violations found): the task must fail.

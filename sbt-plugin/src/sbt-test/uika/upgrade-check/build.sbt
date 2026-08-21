@@ -83,32 +83,58 @@ checkCliOutputLogged := {
 }
 
 // Declarative config in build.sbt: the directory must reach the CLI as --class-load-log,
-// the draft file as --draft-exclude-file, and forked Test JVMs must get the -Xlog flag
-// pointing into the same directory.
-ThisBuild / uikaClassLoadLog := Some(baseDirectory.value / "load-logs")
+// the draft file as --draft-exclude-file, and forked Test JVMs must get the
+// StartFlightRecording flag pointing into the same directory.
+ThisBuild / uikaJfr := Some(baseDirectory.value / "load-logs")
 ThisBuild / uikaDraftExcludeFile := Some(baseDirectory.value / "uika-draft.toml")
 
-lazy val checkClassLoadLogPassed = taskKey[Unit]("Asserts uikaClassLoadLog and uikaDraftExcludeFile reached the CLI")
+lazy val checkClassLoadLogPassed = taskKey[Unit]("Asserts uikaJfr and uikaDraftExcludeFile reached the CLI")
 
 checkClassLoadLogPassed := {
   val args = IO.read(baseDirectory.value / "before.json.args")
   val dir = (baseDirectory.value / "load-logs").getAbsolutePath
   if (!args.contains(s"--class-load-log $dir"))
-    sys.error(s"uikaClassLoadLog setting was not forwarded to the CLI: $args")
+    sys.error(s"uikaJfr setting was not forwarded to the CLI: $args")
   val draft = (baseDirectory.value / "uika-draft.toml").getAbsolutePath
   if (!args.contains(s"--draft-exclude-file $draft"))
     sys.error(s"uikaDraftExcludeFile setting was not forwarded to the CLI: $args")
 }
 
-lazy val checkTestJavaOptionsInjected = taskKey[Unit]("Asserts uikaClassLoadLog injected the -Xlog flag into Test/javaOptions")
+lazy val checkTestJavaOptionsInjected = taskKey[Unit]("Asserts uikaJfr injected the StartFlightRecording flag into Test/javaOptions")
 
 // The flag only reaches tests with Test/fork := true, but the injected option must be
-// there either way; %p keeps parallel forks from truncating each other's file. contains,
-// not endsWith: on a path with a colon (a Windows drive) the core helper quotes the file
-// value, so the option ends with a quote there.
+// there either way; JFR generates pid-unique file names for the directory value. contains,
+// not endsWith: the core helper quotes the value when the path carries a comma (the
+// StartFlightRecording option delimiter), so the option can end with a quote.
 checkTestJavaOptionsInjected := {
   val opts = (Test / javaOptions).value
   val dir = (baseDirectory.value / "load-logs").getAbsolutePath
-  if (!opts.exists(o => o.startsWith("-Xlog:class+load=info:file=") && o.contains(dir) && o.contains("-%p.log")))
-    sys.error(s"uikaClassLoadLog did not inject Test/javaOptions: $opts")
+  if (!opts.exists(o => o.startsWith("-XX:StartFlightRecording:jdk.ClassLoad#enabled=true") && o.contains(dir)))
+    sys.error(s"uikaJfr did not inject Test/javaOptions: $opts")
+}
+
+lazy val prepareJfr = taskKey[Unit]("Records a real JFR recording with jdk.ClassLoad into load-logs/rec.jfr")
+
+// A REAL recording inside the log directory: the task must convert it (JfrEvidence)
+// instead of handing binary JFR to the JVM-free CLI. Whatever classes load during the
+// window (JFR internals at least) give it content; checkJfrConverted asserts plumbing,
+// not specific classes.
+prepareJfr := {
+  val rec = new jdk.jfr.Recording()
+  rec.enable("jdk.ClassLoad").withStackTrace().withoutThreshold()
+  rec.start()
+  Class.forName("java.util.zip.Adler32", false, getClass.getClassLoader)
+  rec.stop()
+  rec.dump((baseDirectory.value / "load-logs" / "rec.jfr").toPath)
+  rec.close()
+}
+
+lazy val checkJfrConverted = taskKey[Unit]("Asserts the recording in the log directory reached the CLI as converted text, never raw")
+
+checkJfrConverted := {
+  val args = IO.read(baseDirectory.value / "before.json.args")
+  if (!args.contains("jfr-class-load"))
+    sys.error(s"the recording was not converted for the CLI: $args")
+  if (args.contains("rec.jfr"))
+    sys.error(s"the raw recording reached the CLI: $args")
 }
