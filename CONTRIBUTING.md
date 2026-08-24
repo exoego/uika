@@ -3,9 +3,9 @@
 ## Build and test
 
 ```console
-$ make check   # cargo fmt --check + cargo clippy + cargo test + Gradle/sbt/Maven plugin checks
-$ make test    # cargo test + Gradle/sbt/Maven plugin tests
-$ make build   # cargo build + Gradle/sbt/Maven plugin builds
+$ make check   # cargo fmt --check + cargo clippy + cargo test + Gradle/sbt/Maven/Mill plugin checks
+$ make test    # cargo test + Gradle/sbt/Maven/Mill plugin tests
+$ make build   # cargo build + Gradle/sbt/Maven/Mill plugin builds
 
 $ cargo build --release                       # for benchmarks
 $ cargo build --release --features memstats   # memory breakdown (counting allocator, slower)

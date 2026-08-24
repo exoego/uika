@@ -41,15 +41,26 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}-
 
-      - name: Cache sbt
+      # sbt and Mill share ~/.cache/coursier, so it is cached once here. A second entry over
+      # the same directory stores it twice against the repo's cache budget and the later
+      # restore unpacks over the earlier one. The Mill entry below keeps only its own path.
+      - name: Cache sbt and coursier
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             /tmp/uika-sbt
             ~/.cache/coursier
-          key: sbt-${{ runner.os }}-${{ hashFiles('sbt-plugin/build.sbt', 'sbt-plugin/project/build.properties') }}
+          key: sbt-${{ runner.os }}-${{ hashFiles('sbt-plugin/build.sbt', 'sbt-plugin/project/build.properties', 'mill-plugin/build.mill') }}
           restore-keys: |
             sbt-${{ runner.os }}-
+
+      - name: Cache Mill
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/mill
+          key: mill-${{ runner.os }}-${{ hashFiles('mill-plugin/build.mill', 'mill-plugin/mill') }}
+          restore-keys: |
+            mill-${{ runner.os }}-
 
       - name: Cache Maven
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

@@ -128,6 +128,7 @@ jobs:
             "set ThisBuild / version := \"$UIKA_VERSION\"" publish)
           mise exec -- mvn -f maven-plugin/pom.xml -B -Prelease -Drevision="$UIKA_VERSION" \
             -DskipTests -Dinvoker.skip=true deploy
+          (cd mill-plugin && UIKA_VERSION="$UIKA_VERSION" mise exec -- ./mill publishM2Local + stageChecksums)
 
       - name: Deploy to Maven Central and update the GitHub release
         run: mise exec -- jreleaser release

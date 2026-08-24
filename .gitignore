@@ -5,6 +5,7 @@
 **/.bsp/
 **/.flattened-pom.xml
 /out/
+mill-plugin/out/
 sbt-plugin/.idea/
 *.iml
 .mise.local.toml

@@ -1,6 +1,6 @@
 ---
 name: uika-jvm-plugins
-description: Invariants for the uika Gradle, sbt, and Maven build-tool plugins and the shared jvm-plugin-core - task shape, coordinate handling, CLI fetch and version defaulting, logger wiring, --jdk-release derivation, and how the tests stub the CLI. Load before changing anything under gradle-plugin/, sbt-plugin/, maven-plugin/, or jvm-plugin-core/.
+description: Invariants for the uika Gradle, sbt, Maven and Mill build-tool plugins and the shared jvm-plugin-core - task shape, coordinate handling, CLI fetch and version defaulting, logger wiring, --jdk-release derivation, and how the tests stub the CLI. Load before changing anything under gradle-plugin/, sbt-plugin/, maven-plugin/, mill-plugin/, or jvm-plugin-core/.
 ---
 
 # uika JVM Build-Tool Plugin Notes
@@ -50,7 +50,7 @@ description: Invariants for the uika Gradle, sbt, and Maven build-tool plugins a
   `configureEach` overrides); `platformClassifier()` is guarded there because
   wiring runs on any task realization (IDE sync, `gradle tasks`) and an
   unsupported platform must only fail the task action.
-- `DumpFormat` changes propagate to all three plugins via source inclusion from
+- `DumpFormat` changes propagate to all four plugins via source inclusion from
   `jvm-plugin-core/` — no core artifact to publish.
 - The upgrade-check tasks (`uikaUpgradeCheck`, Maven `uika:upgrade-check`)
   resolve `net.exoego.uika:uika-cli:<version>:<platform>@zip` through the build's own
@@ -136,7 +136,7 @@ description: Invariants for the uika Gradle, sbt, and Maven build-tool plugins a
   truncated or unreadable recording is logged and skipped, never fatal (a fork
   killed mid-dump must not cost the intact recordings' evidence), and stale
   `jfr-*.log` conversions are deleted from the workdir (`JfrEvidence.WORK_DIR_NAME`,
-  shared by all three plugins) before converting, since pid-unique recording
+  shared by all four plugins) before converting, since pid-unique recording
   names would otherwise accumulate orphans. Every conversion logs
   its event count because the event is disabled in the default JFC profile and
   an empty conversion is otherwise symptomless. Tests must record REAL
@@ -174,3 +174,23 @@ description: Invariants for the uika Gradle, sbt, and Maven build-tool plugins a
   coordinates are excluded from the version DIFF (they stay in the version
   maps on purpose -- suggest's file->coordinate attribution reads them).
 
+
+## Mill Plugin Notes
+
+Most Mill invariants live as comments at their point of use (`Uika.scala`,
+`UikaTestModule.scala`, `build.mill`) or are locked by tests in `UikaTests.scala`.
+This section keeps only what neither can hold.
+
+- `Task.ctx().workspace`, NEVER `BuildCtx.workspaceRoot`, for the default output
+  path and for resolving relative arguments. The latter is the launcher's root and
+  does not follow `UnitTester`, so the bug shows as tests that still pass while the
+  dump lands in the plugin's own tree.
+- The command macro lifts every statically visible `task()` call into an
+  UNCONDITIONAL edge, so a `defaultResolver()` in a dead fallback branch is still
+  built on every run. Tasks on runtime-valued modules cannot be lifted at all;
+  collect them with `Task.traverse(...)` outside the body.
+- `mill.api.ExternalModule.Alias` does NOT give a working short selector (`uika/`,
+  `uika.`, and `build.uika/` all fail to resolve). Do not document one.
+- No mise backend installs the Mill launcher (`ubi:`/`github:` find no matching
+  release asset). The committed `mill-plugin/mill` bootstrap script reads the
+  `//| mill-version:` header in `build.mill`, so mise only supplies the JVM.

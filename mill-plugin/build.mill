@@ -1,0 +1,105 @@
+//| mill-version: 1.1.8
+
+package build
+
+import mill.*
+import mill.api.BuildCtx
+import mill.scalalib.*
+import mill.scalalib.publish.*
+
+object `package` extends ScalaModule, PublishModule {
+  // Read from the daemon the header above bootstraps, so mill-libs and mill-testkit can never
+  // drift from it. (Never write the header's own key in a comment: the launcher greps the
+  // build script for it and takes every matching line.)
+  def millVersion = mill.api.BuildInfo.millVersion
+
+  // Must match the Scala version mill-libs is built against. An older compiler cannot read
+  // its TASTy at all, and the error names the version to use.
+  def scalaVersion = "3.8.2"
+
+  def artifactName = "mill-uika"
+
+  // Names the Mill major version the plugin is compiled for, the convention for Mill plugins.
+  def platformSuffix = "_mill1"
+
+  def mvnDeps = Seq(mvn"com.lihaoyi::mill-libs:$millVersion")
+
+  // mill-libs is not published per platform, so the platformSuffix warning does not apply.
+  def resolvedDepsWarnNonPlatform = false
+
+  // The dump format, the CLI launcher and the JFR converter are shared with the Gradle, sbt and
+  // Maven plugins by source inclusion, exactly as those three do it. There is no core artifact.
+  def sources = Task.Sources(
+    moduleDir / "src",
+    moduleDir / os.up / "jvm-plugin-core" / "src" / "main" / "java"
+  )
+
+  // CodeQL has no Scala extractor, so the compiler is this module's static analysis.
+  def scalacOptions = Seq("-deprecation", "-feature", "-unchecked", "-Werror", "-release", "17")
+
+  // The same release-17 floor Gradle and Maven put on the shared jvm-plugin-core sources.
+  // Without it javac targets whatever JDK .mise.toml pins and the jar dies with
+  // UnsupportedClassVersionError on any older Mill daemon. 17 is the true minimum: the core
+  // uses arrow switch and pattern `instanceof`.
+  def javacOptions = Seq("--release", "17")
+
+  // upgradeCheck defaults the CLI version to the plugin's own version, read from here.
+  def manifest = Task { super.manifest().add("Implementation-Version" -> publishVersion()) }
+
+  // The released version is stamped in by the release workflow, exactly as -PuikaVersion and
+  // -Drevision do for the other plugins. cli/Cargo.toml keeps its 0.0.0-dev placeholder, so
+  // there is no in-tree version to read.
+  def publishVersion = Task.Input { Task.env.getOrElse("UIKA_VERSION", "0.1.0") }
+
+  // Central requires the doc jar to exist, not to have content. See PUBLISHING.md for why the
+  // other plugins publish it empty; the same namespace quota applies here.
+  def docSources = Task.Sources()
+
+  def pomSettings = PomSettings(
+    description = "Mill plugin for writing uika resolved classpath dumps and running upgrade checks",
+    organization = "net.exoego.uika",
+    url = "https://github.com/exoego/uika",
+    licenses = Seq(License.`Apache-2.0`),
+    versionControl = VersionControl.github("exoego", "uika"),
+    developers = Seq(Developer("exoego", "TATSUNO Yasuhiro", "https://github.com/exoego"))
+  )
+
+  /** Local staging directory; JReleaser signs and uploads it (see jreleaser.yml). */
+  override def publishM2LocalRepoPath: Task[os.Path] = Task.Input {
+    Task.env.get("UIKA_STAGING_DIR")
+      .map(os.Path(_, BuildCtx.workspaceRoot))
+      .getOrElse(moduleDir / "out" / "staging-deploy")
+  }
+
+  /**
+   * Writes the md5 and sha1 Maven Central expects next to every staged artifact.
+   *
+   * Mill's M2 publisher writes no checksums, while Gradle, sbt and Maven all stage exactly that
+   * pair, and JReleaser's own checksum step is deliberately off (it would add sha256 and sha512
+   * against Central's monthly file-count limit). Run it after `publishM2Local`, which stages
+   * into the same directory: `./mill publishM2Local + stageChecksums`.
+   */
+  def stageChecksums() = Task.Command(exclusive = true) {
+    val repo = publishM2LocalRepoPath()
+    if (!os.exists(repo)) {
+      Task.fail(s"uika: $repo does not exist; run publishM2Local first")
+    }
+    val staged = os.walk(repo).filter(os.isFile)
+      .filterNot(f => f.last.endsWith(".md5") || f.last.endsWith(".sha1"))
+    for (file <- staged) {
+      val bytes = os.read.bytes(file)
+      for ((algorithm, extension) <- Seq("MD5" -> "md5", "SHA-1" -> "sha1")) {
+        val digest = java.security.MessageDigest.getInstance(algorithm).digest(bytes)
+        os.write.over(os.Path(s"$file.$extension"), java.util.HexFormat.of().formatHex(digest))
+      }
+    }
+    Task.log.info(s"uika: checksummed ${staged.size} staged artifacts under $repo")
+  }
+
+  object test extends ScalaTests, TestModule.Utest {
+    def mvnDeps = Seq(
+      mvn"com.lihaoyi::mill-testkit:$millVersion",
+      mvn"com.lihaoyi::utest:0.9.1"
+    )
+  }
+}

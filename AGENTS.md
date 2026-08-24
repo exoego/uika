@@ -102,7 +102,7 @@ not be relearned by experiment.
   despite the 98 public -> protected constructor narrowings in that pair (the
   subclass-aware access check absorbs them).
 - The dump records the writing JVM's feature version (`jdkRelease`, additive, from
-  `DumpFormat.buildJvmRelease()` in the one shared v2 writer, so all three plugins
+  `DumpFormat.buildJvmRelease()` in the one shared v2 writer, so all four plugins
   get it at once). `upgrade-check` turns a before/after disagreement into ONE extra
   run over the whole after universe — not one per module, since every module runs on
   the same JVM — appended by `plan_module_runs` with `jdk_pair` set and both jar
@@ -149,9 +149,10 @@ an agent whose harness does not auto-load it can just read the path.
 - `.claude/skills/uika-performance/SKILL.md` — benchmark workloads and expected
   numbers, optimization history, rejected approaches; before profiling or
   touching the hot path.
-- `.claude/skills/uika-jvm-plugins/SKILL.md` — Gradle/sbt/Maven plugin and
+- `.claude/skills/uika-jvm-plugins/SKILL.md` — Gradle/sbt/Maven/Mill plugin and
   `jvm-plugin-core` invariants; before changing anything under
-  `gradle-plugin/`, `sbt-plugin/`, `maven-plugin/`, or `jvm-plugin-core/`.
+  `gradle-plugin/`, `sbt-plugin/`, `maven-plugin/`, `mill-plugin/`, or
+  `jvm-plugin-core/`.
 
 Module layout is not documented here on purpose: `ls cli/src/` plus the
 "How it works" section of README.md is the current answer, and a hand-kept

@@ -3,7 +3,8 @@
 Everything under the `net.exoego.uika` group is published to Maven Central in
 one shot when a GitHub release is published: the native CLI ZIPs (`uika-cli`
 with classifiers `linux-x86_64`, `macos-aarch64`, `macos-x86_64`,
-`windows-x86_64`), the Gradle plugin, the sbt plugin, and the Maven plugin.
+`windows-x86_64`), the Gradle plugin, the sbt plugin, the Maven plugin, and the Mill
+plugin.
 
 ## Release procedure
 
@@ -32,10 +33,10 @@ and where `net.exoego` stands are in the
 source. The free tier is roughly the 90th percentile of all publishers, about
 1,167 files, 78 MB, and 7 releases per month.
 
-One `vX.Y.Z` tag is one deployment carrying five components (`uika-cli`,
+One `vX.Y.Z` tag is one deployment carrying six components (`uika-cli`,
 `uika-gradle-plugin`, the `net.exoego.uika.gradle.plugin` marker,
-`sbt-uika_2.12_1.0`, `uika-maven-plugin`). That is 76 files and about 3 MB per
-tag, so for uika alone Release Count is the binding metric, not file count or
+`sbt-uika_2.12_1.0`, `uika-maven-plugin`, `mill-uika_mill1_3`). That is 92 files
+and about 3 MB per tag, so for uika alone Release Count is the binding metric, not file count or
 size. July 2026 shipped eight tags and tripped the release-count limit.
 
 All three metrics are metered per organization, so the quota is shared with
@@ -51,7 +52,7 @@ explicitly tolerated by Sonatype and is not a reason to delay one.
 Keep the deployment small. Two things hold it at 3 MB instead of 6.2 MB, and
 reverting either without a replacement gives the bytes back. `[profile.release]`
 in the workspace `Cargo.toml` is tuned for size over speed, deliberately, and
-its comment carries the measurements. The three plugins publish an empty
+its comment carries the measurements. The four plugins publish an empty
 javadoc jar, because Central requires that jar to exist but not to have
 content, and readers have the sources jar; each build file comments how.
 
@@ -59,11 +60,14 @@ Do not add files to the deployment without checking the cost. Every artifact
 carries a `.md5`, a `.sha1`, and an `.asc`, so one new artifact is four files
 per release. `jreleaser.yml` sets `checksums: false` on the deployer because
 `applyMavenCentralRules` otherwise adds `.sha256` and `.sha512` to every
-artifact, which Central accepts but does not require. Each build tool already
-stages md5 and sha1 itself, and the two Gradle builds carry a
+artifact, which Central accepts but does not require. Gradle, sbt and Maven stage
+md5 and sha1 themselves (Mill's M2 publisher writes none, so `mill-plugin/build.mill`
+has a `stageChecksums` command the release step chains after `publishM2Local`), and
+the two Gradle builds carry a
 `gradle.properties` with `systemProp.org.gradle.internal.publish.checksums.insecure=true`
 so they stop at those two. Dropping the optional pair cut the bundle from 114
-files to 76. Verify both metrics after any publishing change:
+files to 76, measured before the Mill plugin added its four artifacts. Verify
+both metrics after any publishing change:
 
 ```console
 $ unzip -Z1 out/jreleaser/deploy/mavenCentral/uika/*-bundle.zip | wc -l

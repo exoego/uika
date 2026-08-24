@@ -64,3 +64,4 @@ deploy:
           - gradle-plugin/build/staging-deploy
           - sbt-plugin/target/staging-deploy
           - maven-plugin/target/staging-deploy
+          - mill-plugin/out/staging-deploy
