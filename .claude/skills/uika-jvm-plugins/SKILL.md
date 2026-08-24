@@ -5,6 +5,21 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
 
 # uika JVM Build-Tool Plugin Notes
 
+## Any Build That Compiles jvm-plugin-core
+
+- It MUST set an explicit javac release floor of 17, and guard it. Gradle uses
+  `options.release`, Maven `maven.compiler.release`, Mill and sbt
+  `javacOptions ++= Seq("--release", "17")`. Without one javac targets whatever JDK
+  runs the build, and the plugin jar dies with UnsupportedClassVersionError on every
+  older build daemon -- the released sbt 0.8.0 shipped `UikaCli.class` as class-file
+  major 65, needing a JDK 21 sbt, while Gradle and Maven ran fine on 17. Nothing in a
+  new build catches this by itself, which is why it is written here and not only in
+  the build files. Mill guards it with a unit test reading the class-file major
+  version; sbt with a `checkClassFileVersions` task, because that build has no test
+  source set (its tests are scripted builds, which could only inspect a resolved jar).
+- 17 is the true floor, not a convention: the core uses arrow switch and pattern
+  `instanceof`. Raising it means raising the floor every plugin advertises.
+
 ## Gradle Plugin Notes
 
 - Keep the module-task + root-merge shape (`uikaDumpModuleClasspath` per

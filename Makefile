@@ -106,7 +106,7 @@ sbt-compile:
 	cd $(SBT_PLUGIN_DIR) && $(SBT) $(SBT_FLAGS) compile
 
 sbt-scripted:
-	cd $(SBT_PLUGIN_DIR) && $(SBT) $(SBT_FLAGS) scripted
+	cd $(SBT_PLUGIN_DIR) && $(SBT) $(SBT_FLAGS) checkClassFileVersions scripted
 
 sbt-clean:
 	cd $(SBT_PLUGIN_DIR) && $(SBT) $(SBT_FLAGS) clean
