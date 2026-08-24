@@ -8,33 +8,61 @@
   (:require [clojure.java.io :as io]
             [exoego.uika.core :as core]
             [leiningen.core.classpath :as lein-cp]
+            [leiningen.core.eval :as eval]
             [leiningen.core.main :as main]
             [leiningen.core.project :as project])
-  (:import (java.util Properties)))
+  (:import (java.io File)
+           (java.util Properties)))
 
 (defn- runtime-project
-  "The project as it ships: without the :base/:user/:dev additions (lein injects
-  nrepl through :base into every dev task) and without :provided, which an uberjar
-  excludes. This is the lein spelling of dumping runtimeClasspath, not
-  compileClasspath."
+  "The project as it ships: without the :default profiles, which are exactly the
+  development-only ones (:base injects nrepl into every dev task, :system and :user
+  add machine- and developer-wide deps, :provided is what an uberjar leaves out).
+  This is the lein spelling of dumping runtimeClasspath, not compileClasspath.
+  Unmerging the composite rather than a hand-written list also keeps a profile the
+  caller asked for explicitly, as in `lein with-profile +prod uika dump-classpath`.
+
+  Repository config is merged back on top. :repositories, :mirrors and :local-repo
+  conventionally live in ~/.lein/profiles.clj, so they arrive through :user, and
+  get-dependencies reads them straight off the project map -- without this, the dump
+  would be the one lein task that bypasses a corporate mirror or a relocated local
+  repo. leiningen.uberjar does the same dance with project/whitelist-keys; the list
+  below is get-dependencies' own select-keys, which whitelist-keys does not cover."
   [project]
-  (project/unmerge-profiles project [:base :user :dev :provided]))
+  (merge (project/unmerge-profiles project [:default])
+         (select-keys project [:repositories :mirrors :local-repo
+                               :offline? :checksum :update])))
+
+(defn- jar-or-zip?
+  "The filter leiningen.core.classpath/resolve-managed-dependencies applies one layer
+  above get-dependencies. A `:extension \"pom\"` BOM resolves to a .pom that lein
+  never puts on the classpath and that the CLI cannot open (`not a zip/jar`, exit 2)."
+  [^File file]
+  (boolean (and file (re-find #"\.(jar|zip)$" (.getName file)))))
 
 (defn- dump-classpath [project args]
-  ;; Build outputs first, like the sbt plugin compiling as a side effect: an :aot
-  ;; project's compiled interop lands in :compile-path and gets scanned.
-  (main/apply-task "compile" project [])
-  (let [project (runtime-project project)
-        graph (lein-cp/get-dependencies :dependencies :managed-dependencies project)
+  ;; eval/prep, not `lein compile`: compile short-circuits when :aot yields no stale
+  ;; namespace, so it never reaches prep -- the only thing that runs :prep-tasks. A
+  ;; :java-source-paths project with no :aot would otherwise never run javac and would
+  ;; dump none of its own classes. Like the sbt plugin compiling as a side effect.
+  (eval/prep project)
+  (let [runtime (runtime-project project)
+        graph (lein-cp/get-dependencies :dependencies :managed-dependencies runtime)
         artifacts (vec (for [coordinate (keys graph)
                              :let [[lib version] coordinate
                                    file (:file (meta coordinate))]
-                             :when file]
+                             :when (jar-or-zip? file)]
                          (core/lib->artifact lib version file)))
-        class-dirs (into [] (comp (filter some?)
-                                  (distinct)
+        ;; :compile-path and :target-path come from the ORIGINAL project, the one
+        ;; eval/prep just built into. Unmerging re-runs profile-scope-target-path and
+        ;; re-derives :compile-path from :target-path, so a profile that sets either
+        ;; key (or a "%s" in :target-path, if the unmerged set is ever narrowed back
+        ;; to a hand-written list) makes the runtime project name a directory nothing
+        ;; compiled into -- which .isDirectory would then drop without a word.
+        class-dirs (into [] (comp (distinct)
                                   (filter #(.isDirectory (io/file ^String %))))
-                         (concat (:source-paths project)
+                         (concat (:source-paths runtime)
+                                 (:resource-paths runtime)
                                  [(:compile-path project)]))
         out (io/file (or (first args)
                          (io/file (:target-path project) "uika" "classpath.json")))]
@@ -50,10 +78,20 @@
       (let [props (doto (Properties.) (.load in))]
         (.getProperty props "version")))))
 
+(def ^:private option-keys
+  "Every key the :uika map accepts. Destructuring drops what it does not name, so
+  without an explicit check a misspelling -- :class-load-log, the Clojure tool's
+  singular spelling, or :exclude-file -- would silently disable the flag instead of
+  failing, and the check would run on CLI defaults with nothing said."
+  #{:fail-on :exclude-files :jdk-release :class-load-logs :cli-version :cli-path})
+
 (defn- upgrade-check [project [before after]]
   (when-not (and before after)
     (main/abort "usage: lein uika upgrade-check <before.json> <after.json>"))
   (let [{:keys [fail-on exclude-files jdk-release class-load-logs] :as opts} (:uika project)]
+    (when-let [unknown (seq (sort (remove option-keys (keys opts))))]
+      (main/abort (str "uika: unknown :uika option(s) " (pr-str (vec unknown))
+                       "; known: " (pr-str (vec (sort option-keys))))))
     ;; Binary resolution sits INSIDE the try: an unsupported platform, a zip missing
     ;; the binary and a failed download all throw from here, and lein answers any
     ;; exception without :exit-code with a full cause trace. IOException is caught
@@ -70,7 +108,10 @@
       (catch clojure.lang.ExceptionInfo e
         (main/abort (ex-message e)))
       (catch java.io.IOException e
-        (main/abort (str "uika: " (.getMessage e)))))))
+        ;; With the class name: FileNotFoundException from a URL carries the URL as
+        ;; its entire message, which alone does not separate a 404 from a proxy
+        ;; rejection, a DNS failure or a full disk.
+        (main/abort (str "uika: " (.getSimpleName (class e)) ": " (.getMessage e)))))))
 
 (defn uika
   "Write uika classpath dumps and run upgrade checks.

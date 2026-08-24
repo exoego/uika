@@ -3,8 +3,8 @@
 Everything under the `net.exoego.uika` group is published to Maven Central in
 one shot when a GitHub release is published: the native CLI ZIPs (`uika-cli`
 with classifiers `linux-x86_64`, `macos-aarch64`, `macos-x86_64`,
-`windows-x86_64`), the Gradle plugin, the sbt plugin, the Maven plugin, and the Mill
-plugin.
+`windows-x86_64`), the Gradle plugin, the sbt plugin, the Maven plugin, the Mill
+plugin, and the Leiningen plugin.
 
 ## Release procedure
 
@@ -64,10 +64,10 @@ Do not add files to the deployment without checking the cost. Every artifact
 carries a `.md5`, a `.sha1`, and an `.asc`, so one new artifact is four files
 per release. `jreleaser.yml` sets `checksums: false` on the deployer because
 `applyMavenCentralRules` otherwise adds `.sha256` and `.sha512` to every
-artifact, which Central accepts but does not require. Gradle, sbt and Maven stage
-md5 and sha1 themselves (Mill's M2 publisher writes none, so `mill-plugin/build.mill`
-has a `stageChecksums` command the release step chains after `publishM2Local`), and
-the two Gradle builds carry a
+artifact, which Central accepts but does not require. Gradle, sbt, Maven and lein
+stage md5 and sha1 themselves (Mill's M2 publisher writes none, so
+`mill-plugin/build.mill` has a `stageChecksums` command the release step chains after
+`publishM2Local`), and the two Gradle builds carry a
 `gradle.properties` with `systemProp.org.gradle.internal.publish.checksums.insecure=true`
 so they stop at those two. Dropping the optional pair cut the bundle from 114
 files to 76, measured before the Mill plugin added its four artifacts. Verify

@@ -6,6 +6,10 @@
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 : "${UIKA_BIN:?set UIKA_BIN to the uika binary (make lein-test does)}"
+# lein-plugin/project.clj reads UIKA_VERSION, the fixture pins "0.0.0-dev", and make
+# exports command-line overrides. Without this, `make check UIKA_VERSION=x` installs
+# x and the fixture silently resolves whatever stale 0.0.0-dev sits in ~/.m2.
+unset UIKA_VERSION
 
 (cd "$here/.." && lein install </dev/null)
 
@@ -17,9 +21,21 @@ lein uika dump-classpath target/after.json
 
 grep -q '"version":"3.4"' target/before.json
 grep -q '"version":"3.20.0"' target/after.json
+# The fixture is Java with no :aot, so `lein compile` alone runs no javac. Its
+# :target-path also carries a "%s", which the profile unmerge would re-format into a
+# directory nothing compiled into. Both faults end the same way -- classesDirs
+# without the classes -- so assert the dump names the dir javac actually wrote.
+if [ ! -f target/classes/example/Consumer.class ]; then
+  echo "FAIL: javac did not run (:prep-tasks skipped?)" >&2; exit 1
+fi
+# tr: data.json escapes every / as \/, so unescape before matching paths.
+if ! tr -d '\\' < target/before.json | grep -q '"path":"[^"]*/target/classes"'; then
+  echo "FAIL: compiled classes missing from classesDirs" >&2
+  cat target/before.json >&2; exit 1
+fi
 # Dev-only dependencies must not ship in the dump: lein injects nREPL through
 # the :base profile into every dev task, and commons-io is :dev-scoped above.
-# This locks the [:base :user :dev :provided] unmerge.
+# This locks the :default unmerge.
 if grep -q 'nrepl' target/before.json; then
   echo "FAIL: nREPL (a :base-profile injection) leaked into the dump" >&2; exit 1
 fi
@@ -33,6 +49,11 @@ out="$(UIKA_CLI_PATH="$UIKA_BIN" lein uika upgrade-check target/before.json targ
 echo "$out"
 echo "$out" | grep -q "CHANGED org.apache.commons:commons-lang3 3.4 -> 3.20.0"
 echo "$out" | grep -q "scanned"
+# The application class must be a reachability root, or `:fail-on "reachable"` gates
+# on nothing and every assertion above it passes with an empty classesDirs.
+if echo "$out" | grep -q "no application root matched"; then
+  echo "FAIL: the dump gave the CLI no application classes to root from" >&2; exit 1
+fi
 
 # Stub CLI recording its argv: every :uika option must reach the CLI spelled as
 # the real flag. The stub sits where --before points so the args land nearby.
@@ -52,10 +73,21 @@ case "$args" in
   *) echo "FAIL: jdk-release not forwarded (run via make lein-test): $args" >&2; exit 1;;
 esac
 
-# A CLI that found violations (exit 1) must fail the task.
+# A misspelt :uika key must abort, not vanish: destructuring drops what it does not
+# name, so a silently-ignored key is a silently-disabled flag.
+if err="$(UIKA_CLI_PATH="$stub" lein update-in :uika assoc :exclude-file '["x.toml"]' \
+            -- uika upgrade-check target/before.json target/after.json 2>&1)"; then
+  echo "FAIL: an unknown :uika key was accepted" >&2; exit 1
+fi
+case "$err" in *"unknown :uika option"*) ;; *) echo "FAIL: wrong abort: $err" >&2; exit 1;; esac
+
+# A CLI that found violations (exit 1) must fail the task -- and fail for THAT
+# reason, so a broken UIKA_CLI_PATH or a missing dump cannot pass this case by
+# failing for its own.
 printf '#!/bin/sh\nexit 1\n' > "$stub"
-if UIKA_CLI_PATH="$stub" lein uika upgrade-check target/before.json target/after.json 2>/dev/null; then
+if err="$(UIKA_CLI_PATH="$stub" lein uika upgrade-check target/before.json target/after.json 2>&1)"; then
   echo "FAIL: exit 1 from the CLI did not fail lein uika" >&2; exit 1
 fi
+case "$err" in *"found broken references"*) ;; *) echo "FAIL: wrong failure: $err" >&2; exit 1;; esac
 
 echo "lein-uika integration: OK"

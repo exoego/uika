@@ -28,14 +28,6 @@
     (deps/create-basis (cond-> {:user nil :project "deps.edn"}
                          (seq aliases) (assoc :aliases (mapv keyword aliases))))))
 
-(defn- lib->artifacts
-  "Dump artifact maps for one resolved lib. A lib can contribute several paths, and
-  git and :local/root deps have no version, which core/dump-json turns into a
-  coordinate-less entry like the other plugins' project/file dependencies."
-  [lib {:mvn/keys [version] :keys [paths]}]
-  (for [path paths]
-    (core/lib->artifact lib version path)))
-
 (defn dump-classpath
   "Writes the project's resolved classpath as a uika v2 dump.
 
@@ -55,8 +47,10 @@
                                           (filter #(.isDirectory (io/file ^String %))))
                                  (:paths basis))
                      class-dir (conj (str (io/file dir ^String class-dir))))
-        artifacts (vec (mapcat (fn [[lib coord]] (lib->artifacts lib coord))
-                               (sort-by key (:libs basis))))
+        ;; One lib can contribute several paths, so this is a nested for, not a map.
+        artifacts (vec (for [[lib {:mvn/keys [version] :keys [paths]}] (sort-by key (:libs basis))
+                             path paths]
+                         (core/lib->artifact lib version path)))
         out (let [f (io/file (or output "target/uika/classpath.json"))]
               (if (.isAbsolute f) f (io/file dir (str f))))]
     (io/make-parents out)

@@ -143,14 +143,15 @@ lein-test: cargo-build
 lein-clean:
 	rm -rf $(LEIN_PLUGIN_DIR)/target $(LEIN_PLUGIN_DIR)/it/test-project/target $(LEIN_PLUGIN_DIR)/pom.xml
 
-# Central requires sources and javadoc jars next to the main artifact; lein deploy
-# stages only jar+pom, so the pair (sources real, javadoc empty like every other
-# uika plugin -- see PUBLISHING.md) is added here with the md5/sha1 Central needs.
+# update-in :repositories empty: lein emits <repositories> into the pom, which
+# PomChecker rejects ("The <repositories> block should not be present") and
+# jreleaser.yml's applyMavenCentralRules turns into a failed release. Emptying the
+# key on the project map instead of in project.clj keeps resolution working, because
+# :eval-in-leiningen has already put the plugin's own deps on the classpath by the
+# time update-in rewrites the map. Sources and javadoc jars come from :classifiers.
 lein-stage:
-	# </dev/null: lein deploy blocks reading a piped stdin (credentials probe);
-	# with stdin closed it either proceeds or fails visibly, never hangs.
-	cd $(LEIN_PLUGIN_DIR) && UIKA_VERSION=$(UIKA_VERSION) $(LEIN) deploy staging </dev/null
-	python3 tools/lein-stage-extras.py $(LEIN_PLUGIN_DIR) $(UIKA_VERSION)
+	cd $(LEIN_PLUGIN_DIR) && UIKA_VERSION=$(UIKA_VERSION) $(LEIN) \
+		update-in :repositories empty -- deploy staging
 
 native-publish-local:
 	$(GRADLE) -p binary-publishing publishToMavenLocal -PuikaVersion=$(UIKA_VERSION)

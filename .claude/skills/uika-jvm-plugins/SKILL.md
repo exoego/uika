@@ -224,22 +224,24 @@ Same rule as the Mill section: point-of-use comments and the tests in
 Point-of-use comments and `lein-plugin/it/run.sh` hold the invariants; only the
 experiment-only lessons live here.
 
-- `exoego.uika.core` (in `clojure-tool/src-core/`) is shared into the lein jar by
-  `:source-paths` inclusion and is deliberately free of tools.deps: Leiningen
-  resolves with its own Aether, and the dump must come from
-  `leiningen.core.classpath/get-dependencies` (coordinates + files in one graph, key
-  metadata carries `:file`) so it cannot disagree with the classpath lein runs.
-- Dump from the project UNMERGED of `[:base :user :dev :provided]`. lein injects
-  nREPL through `:base` into every dev-profile task, and `:provided` is not in an
-  uberjar; without the unmerge the dump claims dev-only jars ship.
-- `lein deploy` can block forever reading a piped stdin (credentials probe) even for
-  a `file:` repo with `:sign-releases false` -- it worked twice, then hung twice, on
-  identical invocations. The Makefile runs it `</dev/null` so it proceeds or fails
-  visibly, never hangs.
-- Central validation needs `<developers>` and `<scm><connection>`; lein has no
-  first-class key for developers, so project.clj uses `:pom-addition`. lein stages
-  jar+pom+md5/sha1 but no sources/javadoc jars -- `tools/lein-stage-extras.py` adds
-  them (javadoc empty, like every uika plugin) and deletes lein's
-  maven-metadata.xml, which JReleaser must not upload.
+- The staged pom must not carry `<repositories>`: PomChecker rejects it outright
+  ("The <repositories> block should not be present"), so `jreleaser release` aborts
+  the whole all-or-nothing deployment, and nothing before the release run executes
+  that path. `:repositories ^:replace []` in project.clj is NOT the fix -- it also
+  empties the map lein resolves the plugin's own deps from, which fails on the cold
+  `~/.m2` a release runner always has. `lein update-in :repositories empty -- deploy
+  staging` works because `:eval-in-leiningen` has already put those deps on the
+  classpath before update-in rewrites the map.
+- `lein deploy` prompts for credentials unless the repo URL matches
+  `#"(file|scp|scpexe)://"` -- note the DOUBLE slash, which `file:target/...` does not
+  have. That is why it "worked twice, then hung twice" on identical invocations:
+  the prompt always fires, only the blocking depends on the stdin shape. `:no-auth
+  true` is the fix. Spelling the URL `file://target/...` is not: `target` becomes the
+  URI authority and the deploy lands in `/staging-deploy`.
+- `lein compile` is NOT enough to build the outputs a dump should record. It
+  short-circuits when `:aot` yields no stale namespace and so never reaches
+  `eval/prep`, the only thing that runs `:prep-tasks` -- a `:java-source-paths`
+  project would never run javac. `leiningen.core.eval/prep` is the task-agnostic
+  entry point and subsumes the compile call.
 - mise's leiningen `2.13.0` package is broken (its script 404s on a
   `2.12.1-SNAPSHOT` standalone jar); `.mise.toml` pins 2.12.0 and says why.

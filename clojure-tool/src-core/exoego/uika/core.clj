@@ -12,28 +12,22 @@
 (set! *warn-on-reflection* true)
 
 (defn lib->artifact
-  "Artifact map for one resolved lib. A bare symbol means group = name, the Clojure
-  convention (commons-io/commons-io is written commons-io). A nil version is fine:
-  dump-json collapses coordinate-less maps to path-only."
+  "One v2 dump artifact entry for a resolved lib. A bare symbol means group = name,
+  the Clojure convention (commons-io/commons-io is written commons-io). A nil version
+  collapses the entry to path-only: that is what git, :local/root and file
+  dependencies are, nothing the version diff compares."
   [lib version path]
-  {:group (or (namespace lib) (name lib))
-   :name (name lib)
-   :version version
-   :path (str path)})
+  (if version
+    {"group" (or (namespace lib) (name lib)) "name" (name lib) "version" version
+     "root" 0 "path" (str path)}
+    {"root" 0 "path" (str path)}))
 
 (defn dump-json
   "The v2 dump as a string: one module, one empty root (paths stay absolute).
-  `artifacts` are maps with :group :name :version and :path; pass the coordinate keys
-  freely, because a map with no :version collapses to path-only right here. That is
-  what git, :local/root and file dependencies are: nothing the version diff compares.
-  jdkRelease is this JVM's feature release, same as DumpFormat.buildJvmRelease."
+  `artifacts` are lib->artifact entries. jdkRelease is this JVM's feature release,
+  same as DumpFormat.buildJvmRelease."
   [module-name artifacts class-dirs]
-  (let [artifact-maps (mapv (fn [{:keys [group name version path]}]
-                              (if version
-                                {"group" group "name" name "version" version
-                                 "root" 0 "path" path}
-                                {"root" 0 "path" path}))
-                            artifacts)
+  (let [artifact-maps (vec artifacts)
         module {"module" module-name
                 "classesDirs" (mapv (fn [^String p] {"root" 0 "path" p}) class-dirs)
                 "artifactRefs" (vec (range (count artifact-maps)))}]
@@ -42,6 +36,15 @@
                      "roots" [""]
                      "artifacts" artifact-maps
                      "modules" [module]})))
+
+(defn- env
+  "An environment variable, treating blank as unset. A CI `env:` block whose value
+  interpolates an unset input exports the empty string, which is truthy in Clojure:
+  UIKA_CLI_PATH= would exec \"\" and UIKA_CLI_VERSION= would build a Central URL with
+  an empty version segment. The Java side guards the same way (UikaCli's isBlank)."
+  [name]
+  (let [value (System/getenv name)]
+    (when-not (str/blank? value) value)))
 
 (defn- platform-classifier
   "Port of UikaCli.platformClassifier; keep the two in sync."
@@ -72,7 +75,7 @@
         binary (io/file cache-dir binary-name)]
     (when-not (.isFile binary)
       (.mkdirs cache-dir)
-      (let [url (or (System/getenv "UIKA_CLI_URL")
+      (let [url (or (env "UIKA_CLI_URL")
                     (str "https://repo1.maven.org/maven2/net/exoego/uika/uika-cli/"
                          version "/uika-cli-" version "-" classifier ".zip"))
             ;; Invocation-unique, deleted below: a fixed name in the shared cache
@@ -83,7 +86,8 @@
         (println "uika: fetching" url)
         (try
           (with-open [in (io/input-stream url)]
-            (io/copy in zip-file))
+            ;; 64 KiB, not io/copy's 1 KiB default: the zip is multi-MB.
+            (io/copy in zip-file :buffer-size 65536))
           (with-open [zf (ZipFile. ^java.io.File zip-file)]
             (let [entry (or (->> (enumeration-seq (.entries zf))
                                  (remove #(.isDirectory ^java.util.zip.ZipEntry %))
@@ -95,13 +99,19 @@
                   ;; temp + move, so a concurrent invocation never sees a partial binary
                   tmp (Files/createTempFile (.toPath cache-dir) "uika" ".tmp"
                                             (make-array java.nio.file.attribute.FileAttribute 0))]
-              (with-open [in (.getInputStream zf entry)]
-                (Files/copy ^java.io.InputStream in ^Path tmp
-                            ^"[Ljava.nio.file.CopyOption;"
-                            (into-array java.nio.file.CopyOption [StandardCopyOption/REPLACE_EXISTING])))
-              (.setExecutable (.toFile ^Path tmp) true false)
-              (Files/move tmp (.toPath binary)
-                          (into-array java.nio.file.CopyOption [StandardCopyOption/REPLACE_EXISTING]))))
+              (try
+                (with-open [in (.getInputStream zf entry)]
+                  (Files/copy ^java.io.InputStream in ^Path tmp
+                              ^"[Ljava.nio.file.CopyOption;"
+                              (into-array java.nio.file.CopyOption [StandardCopyOption/REPLACE_EXISTING])))
+                (.setExecutable (.toFile ^Path tmp) true false)
+                (Files/move tmp (.toPath binary)
+                            (into-array java.nio.file.CopyOption [StandardCopyOption/REPLACE_EXISTING]))
+                (finally
+                  ;; A truncated entry or a full disk between createTempFile and the
+                  ;; move would otherwise orphan a binary-sized .tmp in the shared
+                  ;; cache on every retry, and nothing ever reaps it.
+                  (Files/deleteIfExists tmp)))))
           (finally
             (.delete ^java.io.File zip-file)))))
     binary))
@@ -117,10 +127,10 @@
   used to be read only by the Leiningen plugin, where the positional argv has no
   room for the per-run override that `-T` expresses as :cli-path."
   [{:keys [cli-path cli-version]} default-version-fn usage-hint]
-  (if-let [path (or cli-path (System/getenv "UIKA_CLI_PATH"))]
+  (if-let [path (or cli-path (env "UIKA_CLI_PATH"))]
     (io/file (str path))
     (fetch-cli (str (or cli-version
-                        (System/getenv "UIKA_CLI_VERSION")
+                        (env "UIKA_CLI_VERSION")
                         (default-version-fn)
                         (throw (ex-info usage-hint {})))))))
 
@@ -131,17 +141,16 @@
   natural spelling next to :fail-on \"reachable\". A bare (long \"11\") throws a
   ClassCastException no caller catches, so lein answers it with a full cause trace."
   [target]
-  (cond
-    (nil? target) nil
-    (number? target) (long target)
-    (string? target) (try
-                       (Long/parseLong (str/trim target))
-                       (catch NumberFormatException _
-                         (throw (ex-info (str "uika: :jdk-release must be a number, got "
-                                              (pr-str target))
-                                         {:jdk-release target}))))
-    :else (throw (ex-info (str "uika: :jdk-release must be a number, got " (pr-str target))
-                          {:jdk-release target}))))
+  (let [reject #(throw (ex-info (str "uika: :jdk-release must be a number, got "
+                                     (pr-str target))
+                                {:jdk-release target}))]
+    (cond
+      (nil? target) nil
+      (number? target) (long target)
+      (string? target) (try
+                         (Long/parseLong (str/trim target))
+                         (catch NumberFormatException _ (reject)))
+      :else (reject))))
 
 (defn- effective-jdk-release
   "Port of UikaCli.effectiveJdkRelease: clamp to the build JVM's ct.sym ceiling,

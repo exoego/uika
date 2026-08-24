@@ -424,7 +424,10 @@ The upgrade-check task fetches the CLI itself as
 `net.exoego.uika:uika-cli:<version>:<platform>@zip` through the build's own
 dependency resolution, reusing its repositories, credentials, and cache, so
 there is no separate install step. The version defaults to the plugin's own, so
-one coordinate bump updates both.
+one coordinate bump updates both. The Leiningen plugin and the Clojure CLI tool
+are the exception: neither resolver handles a zip-packaged artifact, so they
+download it straight from Maven Central (`UIKA_CLI_URL` to override the URL,
+`UIKA_CLI_PATH` to point at a binary you already have and skip the download).
 
 The settings shown per tool below also have command-line forms:
 [`failOn`](#violation-tiers-and---fail-on) (`-PuikaFailOn=`, `set uikaFailOn
@@ -601,8 +604,8 @@ $ clojure -Tuika upgrade-check :before '"/tmp/before.json"' :after '"/tmp/after.
 The dump records the resolved Maven coordinates from the project's own
 `deps.edn` basis (`:local/root` and git deps are coordinate-less, like the other
 tools' project dependencies), and `upgrade-check` downloads the platform binary
-from Maven Central (`UIKA_CLI_URL` to override) with the version taken from the
-installed tool's own `:git/tag`.
+from Maven Central (`UIKA_CLI_URL` to override the URL, `UIKA_CLI_PATH` to skip
+the download) with the version taken from the installed tool's own `:git/tag`.
 
 Two Clojure-specific caveats. Interop calls without type hints go through
 runtime reflection and leave no reference in the constant pool, so uika sees
@@ -633,15 +636,21 @@ records nothing.
 ```
 
 ```console
-$ lein uika dump-classpath                       # writes target/uika/classpath.json
+$ lein uika dump-classpath                       # writes <:target-path>/uika/classpath.json
 $ lein uika dump-classpath /tmp/after.json
-$ lein uika upgrade-check /tmp/before.json /tmp/after.json   # :cli-version to override
+$ lein uika upgrade-check /tmp/before.json /tmp/after.json
 ```
 
-The dump excludes what only development pulls in (the `:base`/`:user`/`:dev`
-profiles, so no nREPL, and `:provided`, which an uberjar leaves out) and runs
-`lein compile` first so an `:aot` project's classes are scanned. The Clojure
-detection caveats above apply here unchanged.
+The whole `:uika` map is `:fail-on`, `:exclude-files`, `:jdk-release` (0 disables),
+`:class-load-logs` (text format), `:cli-version` and `:cli-path`. Any other key is
+an error rather than a silent no-op, so a misspelling cannot quietly disable a flag.
+
+The dump excludes what only development pulls in (the `:base`/`:system`/`:user`/`:dev`
+profiles, so no nREPL, and `:provided`, which an uberjar leaves out) and runs the
+project's `:prep-tasks` first, so both `:aot` classes and `:java-source-paths` output
+are scanned. The reflection caveat above applies here too; `:class-dir` does not,
+because the dump takes its class directories from `:compile-path` and the project's
+own source and resource paths.
 
 ## How it works
 
