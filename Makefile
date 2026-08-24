@@ -122,8 +122,11 @@ mill-test:
 mill-clean:
 	cd $(MILL_PLUGIN_DIR) && $(MILL) clean
 
-clojure-test:
-	cd $(CLOJURE_TOOL_DIR) && $(CLOJURE) -M:test
+# cargo-build supplies the real binary for the round-trip integration test:
+# the tool writes v2 JSON by hand instead of sharing DumpFormat, so only a run
+# against the real CLI can catch the two drifting apart.
+clojure-test: cargo-build
+	cd $(CLOJURE_TOOL_DIR) && UIKA_BIN=$(abspath target/debug/uika) $(CLOJURE) -M:test
 
 clojure-clean:
 	rm -rf $(CLOJURE_TOOL_DIR)/.cpcache
