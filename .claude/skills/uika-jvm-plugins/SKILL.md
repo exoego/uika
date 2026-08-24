@@ -7,6 +7,13 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
 
 ## Any Build That Compiles jvm-plugin-core
 
+- No `record` in these sources, and nothing else newer than the sbt plugin's Scala
+  can parse. sbt compiles them through zinc, and Scala 2.12's Java source parser
+  does not understand record declarations. The symptom is not a syntax error: the
+  declaration is skipped and the first USE fails with "not found: type X", which
+  reads like a missing import. Plain final classes with explicit accessors, as
+  `ClasspathDump.Artifact` and `UikaCli.JdkSource` do it.
+
 - It MUST set an explicit javac release floor of 17, and guard it. Gradle uses
   `options.release`, Maven `maven.compiler.release`, Mill and sbt
   `javacOptions ++= Seq("--release", "17")`. Without one javac targets whatever JDK
@@ -79,13 +86,23 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   Gradle daemon, sbt server, or mvnd the report silently disappears.
 - The upgrade-check tasks pass `--jdk-release` by default (the CLI keeps it
   opt-in; the plugins run on a JVM, which is exactly the environment where a
-  default is safe). Derivation: Gradle root toolchain/targetCompatibility,
-  Maven `maven.compiler.release`/`.target` (1.x values skipped), sbt the build
-  JVM; all clamped by `UikaCli.effectiveJdkRelease` to the build JVM's ct.sym
-  ceiling (feature - 1) and skipped with a log line when no ct.sym exists.
-  Clamping down is the conservative direction (missing-on-both-sides stays
-  unreported). The build JVM's home is exported as UIKA_JDK so the child CLI
-  never depends on the caller's JAVA_HOME. Opt out with 0.
+  default is safe). It is derived from what the MODULES compile for, never the
+  build JVM alone, and from the LOWEST across them: Gradle toolchain else
+  targetCompatibility over `getAllprojects`, Maven
+  `maven.compiler.release`/`.target` (1.x skipped) over `getAllProjects`,
+  `javacOptions` for sbt and Mill. Lowest because `--jdk-release` is ONE
+  process-global flag for a run that checks every module, so a mixed-toolchain
+  build has no single right answer; under-claiming turns a member into NotFound
+  on both sides and it stays unreported as Unknown, while over-claiming makes a
+  member the runtime lacks resolve cleanly and loses the finding with nothing
+  to show. Reading only the root/aggregator was the old bug: a multi-module root
+  usually declares no target at all and fell straight through to the build JVM.
+  Per-module releases need the dump to carry one each -- a format change, issue
+  #128. The result is clamped by `UikaCli.effectiveJdkRelease` to the ct.sym
+  ceiling of the `JdkSource` passed in (feature - 1) and skipped with a log line
+  when that JDK has no ct.sym; that same JdkSource's home is exported as
+  UIKA_JDK, and the two must never be split, or the flag claims a release the
+  CLI's ct.sym cannot serve. Opt out with 0.
 - Runtime load evidence is ONE knob per tool pointed at one directory, serving
   both phases (collect on the base branch's test run, consume on the PR's
   check): Gradle `-PuikaJfr` (bare value defaults to `build/uika/jfr`; the

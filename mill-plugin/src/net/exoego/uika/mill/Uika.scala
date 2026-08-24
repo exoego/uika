@@ -88,7 +88,8 @@ object Uika extends ExternalModule {
     // on a shared trait in practice. Failing rather than falling back to this ExternalModule's
     // own resolver keeps that promise -- a `defaultResolver()` call here would be lifted into
     // an unconditional task edge by the command macro and evaluated even on the Some branch.
-    val resolver = javaModules(ev).headOption match {
+    val modules = javaModules(ev)
+    val resolver = modules.headOption match {
       case Some(m) => ev.execute(Seq(m.defaultResolver)).values.get.head
       case None => Task.fail("uika: no JavaModule found in this build")
     }
@@ -100,14 +101,28 @@ object Uika extends ExternalModule {
       (Task.dest / JfrEvidence.WORK_DIR_NAME).toNIO,
       log
     )
-    val wantedRelease = if (jdkRelease < 0) Runtime.version().feature() else jdkRelease
+    // The LOWEST release any module compiles for, because one flag serves a run that checks
+    // every module: under-claiming only costs Unknowns, while over-claiming makes a member
+    // the runtime lacks resolve cleanly and loses the finding with nothing to show. A build
+    // declaring nothing falls back to the JVM, the only evidence left. Issue #128 tracks
+    // carrying a release per module in the dump instead.
+    val jdk = UikaCli.JdkSource.current()
+    val wantedRelease =
+      if (jdkRelease >= 0) jdkRelease
+      else {
+        val declared = ev.execute(modules.map(_.javacOptions)).values.get
+          .collect { case options: Seq[?] => options.map(_.toString) }
+          .flatMap(releaseOf)
+        if (declared.isEmpty) Runtime.version().feature() else declared.min
+      }
     val exit = UikaCli.runUpgradeCheck(
       binary,
       os.Path(before, workspace).toNIO,
       os.Path(after, workspace).toNIO,
       failOn,
       excludeFile.map(os.Path(_, workspace).toNIO).asJava,
-      UikaCli.effectiveJdkRelease(wantedRelease, log),
+      UikaCli.effectiveJdkRelease(wantedRelease, jdk, log),
+      jdk,
       classLoadLogs,
       Option(draftExcludeFile).filter(_.nonEmpty).map(os.Path(_, workspace).toNIO).orNull,
       log
@@ -221,6 +236,17 @@ object Uika extends ExternalModule {
         artifacts.asJava
       )
     }
+  }
+
+  /** The release a javacOptions list compiles for: `--release N`/`-release N`, else `-target N`. */
+  private def releaseOf(options: Seq[String]): Option[Int] = {
+    def after(flags: Set[String]): Option[String] =
+      options.sliding(2).collectFirst { case Seq(flag, value) if flags(flag) => value }
+    // "1.8" and friends sit below the layer's floor, so they are no evidence of a target.
+    after(Set("--release", "-release"))
+      .orElse(after(Set("-target")))
+      .filterNot(_.startsWith("1."))
+      .flatMap(value => scala.util.Try(value.trim.toInt).toOption)
   }
 
   /** `:foo:bar`, the `:path` shape the dump format uses for Gradle and Maven modules too. */

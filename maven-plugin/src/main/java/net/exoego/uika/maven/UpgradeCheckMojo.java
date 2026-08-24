@@ -9,6 +9,7 @@ import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
+import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.DefaultArtifact;
@@ -119,8 +120,9 @@ public final class UpgradeCheckMojo extends AbstractMojo {
         int exit;
         try {
             Path binary = UikaCli.extractBinary(zip.toPath(), installDir);
+            UikaCli.JdkSource jdk = UikaCli.JdkSource.current();
             Integer effectiveJdkRelease = UikaCli.effectiveJdkRelease(
-                    jdkRelease != null ? jdkRelease : defaultJdkRelease(),
+                    jdkRelease != null ? jdkRelease : defaultJdkRelease(), jdk,
                     line -> getLog().info(line));
             // Recordings (a .jfr value, or recordings inside the directory) are converted
             // to the CLI's text format here: the CLI is JVM-free and never reads binary
@@ -131,7 +133,7 @@ public final class UpgradeCheckMojo extends AbstractMojo {
                             JfrEvidence.WORK_DIR_NAME),
                     line -> getLog().info(line));
             exit = UikaCli.runUpgradeCheck(binary, before.toPath(), after.toPath(), failOn,
-                    excludeFilePaths, effectiveJdkRelease,
+                    excludeFilePaths, effectiveJdkRelease, jdk,
                     classLoadLogs,
                     draftExcludeFile != null ? draftExcludeFile.toPath() : null,
                     line -> getLog().info(line));
@@ -150,13 +152,31 @@ public final class UpgradeCheckMojo extends AbstractMojo {
     }
 
     /**
-     * The JDK API release the checked application most plausibly runs on:
+     * The JDK API release the checked application runs on: the LOWEST
      * {@code maven.compiler.release}, else {@code maven.compiler.target} (skipping "1.x"
-     * pre-9 values, which are below the layer's floor anyway), else the JVM running the
-     * build. {@link UikaCli#effectiveJdkRelease} clamps the result at execution time.
+     * pre-9 values, which are below the layer's floor anyway), across every project in the
+     * reactor. {@link UikaCli#effectiveJdkRelease} clamps the result at execution time.
+     *
+     * <p>The whole reactor, not just the top-level project: a module is free to override the
+     * property, and reading only the aggregator reported a release no module compiles
+     * against. The lowest of them, because one flag serves a run that checks every module and
+     * under-claiming only costs Unknowns while over-claiming loses findings silently. Issue
+     * #128 tracks carrying a release per module in the dump instead.
      */
     private int defaultJdkRelease() {
-        var properties = session.getTopLevelProject().getProperties();
+        Integer lowest = null;
+        for (MavenProject project : session.getAllProjects()) {
+            Integer release = declaredRelease(project);
+            if (release != null) {
+                lowest = lowest == null ? release : Math.min(lowest, release);
+            }
+        }
+        return lowest == null ? Runtime.version().feature() : lowest;
+    }
+
+    /** {@code maven.compiler.release}, else {@code .target}, of one project; null when unset. */
+    private static Integer declaredRelease(MavenProject project) {
+        var properties = project.getProperties();
         for (String name : List.of("maven.compiler.release", "maven.compiler.target")) {
             String value = properties.getProperty(name);
             if (value != null && !value.isBlank() && !value.startsWith("1.")) {
@@ -167,6 +187,6 @@ public final class UpgradeCheckMojo extends AbstractMojo {
                 }
             }
         }
-        return Runtime.version().feature();
+        return null;
     }
 }

@@ -436,11 +436,15 @@ The settings shown per tool below also have command-line forms:
 (`-PuikaExcludeFile=` for a single file, `--excludeFile` repeated).
 
 [`--jdk-release`](#how-it-works) needs no setting at all. The build runs on a
-JVM, so the release is derived from the Gradle toolchain,
-`maven.compiler.release`/`target`, or the sbt or Mill build JVM, clamped to what
-that JVM's `ct.sym` serves. Override with `jdkRelease` / `uikaJdkRelease` /
-`<jdkRelease>` (`-PuikaJdkRelease=`, `-Duika.jdkRelease=`,
-`--jdkRelease`), or set 0 to disable it.
+JVM, so the release is derived from what the modules compile for: the Gradle
+toolchain or target compatibility, `maven.compiler.release`/`target`, or
+`javacOptions` for sbt and Mill. A build with several modules contributes the
+LOWEST of them, because one flag serves a run that checks all of them and
+under-claiming only costs unverified references while over-claiming drops
+findings. The result is clamped to what the build JVM's `ct.sym` serves.
+Override with `jdkRelease` / `uikaJdkRelease` / `<jdkRelease>`
+(`-PuikaJdkRelease=`, `-Duika.jdkRelease=`, `--jdkRelease`), or set 0 to disable
+it.
 
 [Runtime load evidence](#runtime-load-evidence-jfr---class-load-log) is one
 knob per tool, pointed at one directory for both phases (collect on the base

@@ -424,6 +424,60 @@ final class UpgradeCheckTaskIntegrationTest {
     }
 
     @Test
+    void jdkReleaseIsTheLowestAnySubprojectTargets() throws Exception {
+        // A multi-module root usually applies no java plugin at all, which used to fall
+        // straight through to the JVM running the build and report a release no module
+        // compiles against. One flag serves the whole run, so the lowest target wins.
+        // Gradle refuses to configure a subproject whose directory does not exist.
+        Files.createDirectories(projectDir.resolve("older"));
+        Files.createDirectories(projectDir.resolve("newer"));
+        write(projectDir.resolve("settings.gradle.kts"), """
+                rootProject.name = "root"
+                include("older", "newer")
+                """);
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    id("net.exoego.uika")
+                }
+
+                subprojects {
+                    apply(plugin = "java")
+                    repositories {
+                        maven {
+                            url = uri("%s")
+                            metadataSources { artifact() }
+                        }
+                    }
+                }
+
+                project(":older") {
+                    extensions.configure<JavaPluginExtension> {
+                        targetCompatibility = JavaVersion.VERSION_11
+                    }
+                }
+                project(":newer") {
+                    extensions.configure<JavaPluginExtension> {
+                        targetCompatibility = JavaVersion.VERSION_17
+                    }
+                }
+
+                repositories {
+                    maven {
+                        url = uri("%s")
+                        metadataSources { artifact() }
+                    }
+                }
+                """.formatted(repoDir.toUri(), repoDir.toUri()));
+
+        runner(CLEAN_VERSION).build();
+
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(args.contains("--jdk-release 11"),
+                () -> "expected the lowest subproject target (11), not 17 or the build JVM: "
+                        + args);
+    }
+
+    @Test
     void jdkReleasePropertyOverridesAndZeroDisables() throws Exception {
         runner(CLEAN_VERSION)
                 .withArguments(

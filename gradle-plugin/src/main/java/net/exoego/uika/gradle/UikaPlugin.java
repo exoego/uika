@@ -34,20 +34,37 @@ import java.io.File;
  */
 public class UikaPlugin implements Plugin<Project> {
     /**
-     * The JDK API release the checked application most plausibly runs on: the root project's
-     * toolchain language version when configured, else its target compatibility, else the JVM
-     * running the build (a multi-module root often has no java plugin at all).
+     * The JDK API release the checked application runs on: the LOWEST release any project in
+     * the build targets, from its toolchain language version when configured, else its target
+     * compatibility.
+     *
+     * <p>The lowest, because {@code --jdk-release} is one flag for a run that checks every
+     * module, and a mixed-toolchain build has no single right answer. Under-claiming turns a
+     * member that exists at runtime into NotFound on both sides, which stays unreported as an
+     * Unknown; over-claiming makes a member the runtime does not have resolve cleanly and
+     * loses the finding with nothing to show for it. Per-module releases would need the dump
+     * to carry one each, which is a format change (issue #128).
+     *
+     * <p>The root project alone is not enough: a multi-module root usually has no java plugin,
+     * which used to fall straight through to the JVM running the build.
      */
     static Integer defaultJdkRelease(Project root) {
-        JavaPluginExtension java = root.getExtensions().findByType(JavaPluginExtension.class);
-        if (java != null) {
-            var languageVersion = java.getToolchain().getLanguageVersion();
-            if (languageVersion.isPresent()) {
-                return languageVersion.get().asInt();
+        Integer lowest = null;
+        for (Project project : root.getAllprojects()) {
+            JavaPluginExtension java =
+                    project.getExtensions().findByType(JavaPluginExtension.class);
+            if (java == null) {
+                continue;
             }
-            return Integer.parseInt(java.getTargetCompatibility().getMajorVersion());
+            var languageVersion = java.getToolchain().getLanguageVersion();
+            int release = languageVersion.isPresent()
+                    ? languageVersion.get().asInt()
+                    : Integer.parseInt(java.getTargetCompatibility().getMajorVersion());
+            lowest = lowest == null ? release : Math.min(lowest, release);
         }
-        return Runtime.version().feature();
+        // No java plugin anywhere: nothing declares a target, so the build JVM is the only
+        // evidence there is.
+        return lowest == null ? Runtime.version().feature() : lowest;
     }
 
     /** One non-transitive detached configuration for a single notation. Detached because the
@@ -176,8 +193,9 @@ public class UikaPlugin implements Plugin<Project> {
                         task.getJdkRelease().set(Integer.parseInt(jdkRelease.toString()));
                     } else {
                         // The build knows its JDK, so the JDK API layer defaults ON here (the bare
-                        // CLI keeps it opt-in): toolchain, else target compatibility, else the JVM
-                        // running the build. UikaCli.effectiveJdkRelease clamps at execution time.
+                        // CLI keeps it opt-in): the lowest release any project targets, else the
+                        // JVM running the build. UikaCli.effectiveJdkRelease clamps at execution
+                        // time to what the build JVM's ct.sym can actually serve.
                         // The provider is an @Input, so the configuration cache evaluates it while
                         // the project is still available.
                         task.getJdkRelease().convention(

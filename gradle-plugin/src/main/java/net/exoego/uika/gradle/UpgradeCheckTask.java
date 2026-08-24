@@ -127,8 +127,12 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         List<Path> excludeFiles = getExcludeFiles().getFiles().stream()
                 .map(File::toPath)
                 .toList();
-        Integer jdkRelease =
-                UikaCli.effectiveJdkRelease(getJdkRelease().getOrNull(), getLogger()::lifecycle);
+        // The build JVM supplies ct.sym: Gradle can name a module's toolchain but resolving it
+        // to an installation would provision a JDK the build never asked for, so a release
+        // above what this JVM serves is clamped down rather than chased.
+        UikaCli.JdkSource jdk = UikaCli.JdkSource.current();
+        Integer jdkRelease = UikaCli.effectiveJdkRelease(
+                getJdkRelease().getOrNull(), jdk, getLogger()::lifecycle);
         // JFR recordings on the knob (a .jfr value, or recordings inside a directory) are
         // converted to the CLI's text format here: the CLI is JVM-free and never reads
         // binary JFR, while this task always runs on a full JDK.
@@ -145,6 +149,7 @@ public abstract class UpgradeCheckTask extends DefaultTask {
                 getFailOn().getOrElse("any"),
                 excludeFiles,
                 jdkRelease,
+                jdk,
                 classLoadLogs,
                 draftExcludeFile,
                 getLogger()::lifecycle);

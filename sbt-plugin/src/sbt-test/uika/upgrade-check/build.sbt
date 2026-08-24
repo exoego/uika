@@ -14,6 +14,20 @@ ThisBuild / uikaExcludeFiles := Seq(baseDirectory.value / "uika-exclude.toml")
 // must reach the CLI as --jdk-release.
 ThisBuild / uikaJdkRelease := 11
 
+// Two subprojects compiling for different releases. With uikaJdkRelease at its derive
+// default the LOWEST of them must reach the CLI: one flag serves a run that checks every
+// module, and reading only the build JVM reported a release nothing compiles against.
+lazy val older = project.settings(javacOptions ++= Seq("--release", "11"))
+lazy val newer = project.settings(javacOptions ++= Seq("--release", "17"))
+
+lazy val checkJdkReleaseDerived = taskKey[Unit]("Asserts the lowest subproject release reached the CLI")
+
+checkJdkReleaseDerived := {
+  val args = IO.read(baseDirectory.value / "before.json.args")
+  if (!args.contains("--jdk-release 11"))
+    sys.error(s"expected the lowest subproject release (11), not 17 or the build JVM: $args")
+}
+
 resolvers += "uika-stub" at (baseDirectory.value / "repo").toURI.toString
 
 lazy val prepareStubRepo = taskKey[Unit]("Writes stub uika-cli ZIPs into the file-based test repository")
