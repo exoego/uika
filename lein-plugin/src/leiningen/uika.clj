@@ -53,17 +53,11 @@
     (if (= (str cmd) (str (io/file (:home fallback) "bin" "java")))
       fallback
       (try
-        (let [{:keys [exit err]} (apply shell/sh [(str cmd) "-XshowSettings:properties"
-                                                  "-version"])
-              value (fn [key]
-                      (second (re-find (re-pattern (str key #"\s*=\s*(\S+)")) (str err))))
-              home (value "java.home")
-              spec (value "java.specification.version")]
-          (if (and (zero? (long exit)) home spec)
-            {:home home :feature (Long/parseLong spec)}
-            (do (main/warn (str "uika: could not read the version of " cmd
-                                "; falling back to lein's own JVM"))
-                fallback)))
+        (let [{:keys [exit err]} (shell/sh (str cmd) "-XshowSettings:properties" "-version")]
+          (or (when (zero? (long exit)) (core/parse-jvm-properties err))
+              (do (main/warn (str "uika: could not read the version of " cmd
+                                  "; falling back to lein's own JVM"))
+                  fallback)))
         (catch Exception e
           (main/warn (str "uika: could not run " cmd " (" (.getMessage e)
                           "); falling back to lein's own JVM"))

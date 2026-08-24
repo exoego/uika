@@ -161,6 +161,27 @@
                          (catch NumberFormatException _ (reject)))
       :else (reject))))
 
+(defn parse-jvm-properties
+  "java.home and the feature release out of `java -XshowSettings:properties -version`
+  output, or nil when either is missing.
+
+  The value runs to END OF LINE, never `\\S+`: a java.home with a space in it
+  (`C:\\Program Files\\...` is the common one, and macOS allows it too) would be
+  truncated at the space, the ct.sym probe would then miss, and the JDK API layer
+  would silently switch off with a message blaming a missing ct.sym."
+  [output]
+  (let [value (fn [key]
+                (some-> (re-find (re-pattern (str key "\\s*=\\s*(.*)")) (str output))
+                        second
+                        str/trim
+                        not-empty))
+        home (value "java\\.home")
+        spec (value "java\\.specification\\.version")]
+    (when (and home spec)
+      (try
+        {:home home :feature (Long/parseLong spec)}
+        (catch NumberFormatException _ nil)))))
+
 (defn this-jvm
   "The JVM running this code, in the shape effective-jdk-release and the UIKA_JDK
   export want. The `-T` tool runs project code on the same JVM, so this is its

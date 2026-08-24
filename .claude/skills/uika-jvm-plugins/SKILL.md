@@ -250,5 +250,12 @@ experiment-only lessons live here.
   Measured before the fix, with `:java-cmd` on a 25 and lein on a 21: the dump said
   21 and the flag came out 20 instead of 24. The ct.sym ceiling and the `UIKA_JDK`
   export must come from that same JVM, since UIKA_JDK is the ct.sym the CLI reads.
+  All of that holds while the probe SUCCEEDS; a JVM that cannot be run or whose
+  output carries no `java.home` falls back to lein's own with a warning, because a
+  failed probe must not fail the check. The parse lives in
+  `core/parse-jvm-properties` so it can be unit-tested: values run to end of line,
+  since a `java.home` containing a space (`C:\Program Files\...`) truncated at the
+  space makes the ct.sym probe miss and the layer switch off blaming a missing
+  ct.sym.
 - mise's leiningen `2.13.0` package is broken (its script 404s on a
   `2.12.1-SNAPSHOT` standalone jar); `.mise.toml` pins 2.12.0 and says why.
