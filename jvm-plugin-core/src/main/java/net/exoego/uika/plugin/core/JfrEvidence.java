@@ -38,7 +38,7 @@ public final class JfrEvidence {
 
     /**
      * The leaf name of the directory conversions are written into, below each build
-     * tool's own build/target space. Shared so the three plugins cannot drift apart on
+     * tool's own build/target space. Shared so the four plugins cannot drift apart on
      * where converted evidence lands.
      */
     public static final String WORK_DIR_NAME = "jfr-class-load";
@@ -66,8 +66,8 @@ public final class JfrEvidence {
 
     /**
      * Whether a knob VALUE names a recording (consumption-only) rather than a recording
-     * directory. Shared by the Gradle and sbt plugins so their injection-skip decisions
-     * cannot drift. Unlike {@link #isRecording} this classifies intent, not content: a
+     * directory. Shared by the Gradle, sbt and Mill plugins so their injection-skip
+     * decisions cannot drift. Unlike {@link #isRecording} this classifies intent, not content: a
      * path that does not exist yet keeps the suffix's meaning (it cannot be sniffed, and
      * the check may create or download it later), while a DIRECTORY named {@code x.jfr}
      * is still a directory and keeps Test-JVM injection.

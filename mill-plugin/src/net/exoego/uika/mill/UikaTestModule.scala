@@ -16,19 +16,32 @@ import net.exoego.uika.plugin.core.{JfrEvidence, UikaCli}
  *
  * The knob is the `UIKA_JFR` environment variable rather than a task argument, because collection
  * happens on the base branch's ordinary test run and consumption on the PR's check. One value
- * exported once serves both, which is the flow the CI recipe is built around.
+ * exported once covers the collect side of that flow, which is what the CI recipe is built around.
+ *
+ * Mix this in LAST, and append to `super.forkArgs()` in any override of your own. `forkArgs` is a
+ * plain list, so a `def forkArgs = Seq(...)` further down the linearization drops the injected flag
+ * and the collect run records nothing. Mill has no provider-style escape from that (the Gradle
+ * plugin uses `jvmArgumentProviders` for the same reason). `./mill testLocal` does not fork and so
+ * never records either.
  *
  * Test JVMs need JDK 17+ for the event-settings syntax.
  */
 trait UikaTestModule extends TestModule {
 
-  /** The directory forked test JVMs record into, or a `.jfr` recording to consume only. */
-  def uikaJfr: T[Option[String]] = Task.Input { Task.env.get("UIKA_JFR").filter(_.nonEmpty) }
-
   override def forkArgs: T[Seq[String]] = Task { super.forkArgs() ++ uikaJfrArgs() }
 
-  private def uikaJfrArgs: T[Seq[String]] = Task {
-    uikaJfr() match {
+  /**
+   * The recording flag for forked test JVMs, empty when `UIKA_JFR` is unset or names a
+   * recording to consume.
+   *
+   * `Task.Input`, and reading the environment here rather than through a task of its own,
+   * because the `os.makeDir.all` below has to run on EVERY invocation. A cached `Task` keyed
+   * on an unchanged `UIKA_JFR` replays its stored value and skips the body, so a directory
+   * deleted between two runs would never be recreated. The Gradle plugin puts the same mkdir
+   * in `test.doFirst` for the same reason.
+   */
+  def uikaJfrArgs: T[Seq[String]] = Task.Input {
+    Task.env.get("UIKA_JFR").filter(_.nonEmpty) match {
       case None => Seq.empty[String]
       case Some(value) =>
         val dir = os.Path(value, Task.ctx().workspace)

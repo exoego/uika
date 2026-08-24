@@ -102,7 +102,7 @@ not be relearned by experiment.
   despite the 98 public -> protected constructor narrowings in that pair (the
   subclass-aware access check absorbs them).
 - The dump records the writing JVM's feature version (`jdkRelease`, additive, from
-  `DumpFormat.buildJvmRelease()` in the one shared v2 writer, so all three plugins
+  `DumpFormat.buildJvmRelease()` in the one shared v2 writer, so all four plugins
   get it at once). `upgrade-check` turns a before/after disagreement into ONE extra
   run over the whole after universe — not one per module, since every module runs on
   the same JVM — appended by `plan_module_runs` with `jdk_pair` set and both jar

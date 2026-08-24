@@ -122,9 +122,9 @@ public final class UikaCli {
      * (the JVM strips the quotes; verified against a real StartFlightRecording run). The
      * event settings syntax needs JDK 17+, the project's build floor. {@code stackTrace}
      * is spelled out because the triggers ({@code via ... from ...}) come from those
-     * stacks and a custom JFC could have disabled the default. The Gradle and sbt plugins
-     * compose the argument here so those two cannot drift; Maven users hand-write an
-     * argLine (no mojo can inject into surefire), so its documented recipe must be kept
+     * stacks and a custom JFC could have disabled the default. The Gradle, sbt and Mill
+     * plugins compose the argument here so those three cannot drift. Maven users hand-write
+     * an argLine (no mojo can inject into surefire), so its documented recipe must be kept
      * in sync with this format by hand.
      */
     public static String jfrClassLoadJvmArg(Path dir) {

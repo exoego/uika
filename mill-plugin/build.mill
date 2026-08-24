@@ -8,7 +8,11 @@ import mill.scalalib.*
 import mill.scalalib.publish.*
 
 object `package` extends ScalaModule, PublishModule {
-  def millVersion = "1.1.8"
+  // Read, not repeated: mill-libs and mill-testkit have to be the version of the daemon the
+  // header above bootstraps, or the plugin compiles against one API surface and the tests
+  // drive another. (Do not spell the header's own key in a comment -- the launcher greps for
+  // it and takes every matching line.)
+  def millVersion = mill.api.BuildInfo.millVersion
 
   // Must match the Scala version mill-libs is built against. An older compiler cannot read
   // its TASTy at all, and the error names the version to use.
@@ -32,7 +36,14 @@ object `package` extends ScalaModule, PublishModule {
   )
 
   // CodeQL has no Scala extractor, so the compiler is this module's static analysis.
-  def scalacOptions = Seq("-deprecation", "-feature", "-unchecked", "-Werror")
+  def scalacOptions = Seq("-deprecation", "-feature", "-unchecked", "-Werror", "-release", "17")
+
+  // The same floor the Gradle plugin (`options.release = 17`) and the Maven plugin
+  // (`maven.compiler.release`) put on these shared jvm-plugin-core sources. Without it javac
+  // targets whatever JDK .mise.toml pins, and a plugin jar holding class-file major 65 dies
+  // with UnsupportedClassVersionError on every Mill daemon below JDK 21. 17 is the real
+  // minimum: the core uses arrow switch and pattern `instanceof`.
+  def javacOptions = Seq("--release", "17")
 
   // upgradeCheck defaults the CLI version to the plugin's own version, read from here.
   def manifest = Task { super.manifest().add("Implementation-Version" -> publishVersion()) }
@@ -72,11 +83,17 @@ object `package` extends ScalaModule, PublishModule {
    */
   def stageChecksums() = Task.Command(exclusive = true) {
     val repo = publishM2LocalRepoPath()
+    if (!os.exists(repo)) {
+      Task.fail(s"uika: $repo does not exist; run publishM2Local first")
+    }
     val staged = os.walk(repo).filter(os.isFile)
       .filterNot(f => f.last.endsWith(".md5") || f.last.endsWith(".sha1"))
-    for (file <- staged; (algorithm, extension) <- Seq("MD5" -> "md5", "SHA-1" -> "sha1")) {
-      val digest = java.security.MessageDigest.getInstance(algorithm).digest(os.read.bytes(file))
-      os.write.over(os.Path(s"$file.$extension"), digest.map(b => f"${b & 0xff}%02x").mkString)
+    for (file <- staged) {
+      val bytes = os.read.bytes(file)
+      for ((algorithm, extension) <- Seq("MD5" -> "md5", "SHA-1" -> "sha1")) {
+        val digest = java.security.MessageDigest.getInstance(algorithm).digest(bytes)
+        os.write.over(os.Path(s"$file.$extension"), java.util.HexFormat.of().formatHex(digest))
+      }
     }
     Task.log.info(s"uika: checksummed ${staged.size} staged artifacts under $repo")
   }
@@ -86,6 +103,5 @@ object `package` extends ScalaModule, PublishModule {
       mvn"com.lihaoyi::mill-testkit:$millVersion",
       mvn"com.lihaoyi::utest:0.9.1"
     )
-    def resolvedDepsWarnNonPlatform = false
   }
 }

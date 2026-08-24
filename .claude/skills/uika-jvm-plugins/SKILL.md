@@ -50,7 +50,7 @@ description: Invariants for the uika Gradle, sbt, Maven and Mill build-tool plug
   `configureEach` overrides); `platformClassifier()` is guarded there because
   wiring runs on any task realization (IDE sync, `gradle tasks`) and an
   unsupported platform must only fail the task action.
-- `DumpFormat` changes propagate to all three plugins via source inclusion from
+- `DumpFormat` changes propagate to all four plugins via source inclusion from
   `jvm-plugin-core/` — no core artifact to publish.
 - The upgrade-check tasks (`uikaUpgradeCheck`, Maven `uika:upgrade-check`)
   resolve `net.exoego.uika:uika-cli:<version>:<platform>@zip` through the build's own
@@ -136,7 +136,7 @@ description: Invariants for the uika Gradle, sbt, Maven and Mill build-tool plug
   truncated or unreadable recording is logged and skipped, never fatal (a fork
   killed mid-dump must not cost the intact recordings' evidence), and stale
   `jfr-*.log` conversions are deleted from the workdir (`JfrEvidence.WORK_DIR_NAME`,
-  shared by all three plugins) before converting, since pid-unique recording
+  shared by all four plugins) before converting, since pid-unique recording
   names would otherwise accumulate orphans. Every conversion logs
   its event count because the event is disabled in the default JFC profile and
   an empty conversion is otherwise symptomless. Tests must record REAL
@@ -184,7 +184,17 @@ description: Invariants for the uika Gradle, sbt, Maven and Mill build-tool plug
   (`!m.isInstanceOf[TestModule]`) because uika checks what ships. The one thing this
   shape cannot reach is `forkArgs`, a task on the test module itself, so JFR
   collection is the one part that does need a mixin (`UikaTestModule`, driven by the
-  `UIKA_JFR` env var so one exported value serves collect and consume).
+  `UIKA_JFR` env var so the collect run needs no task argument). Consumption is still
+  explicit: `upgradeCheck` reads `--jfr`, never the env var.
+- `uikaJfrArgs` is a `Task.Input` reading `Task.env` directly, NOT a cached `Task` over
+  `uikaJfr()`. The `os.makeDir.all` in it has to run on every invocation -- a cached task
+  keyed on an unchanged `UIKA_JFR` replays its value and skips the body, so a directory
+  deleted between runs is never recreated and JFR then records every fork into one
+  clobbered FILE. Gradle puts the same mkdir in `test.doFirst` for the same reason.
+- `override def forkArgs` is a wipeable list, the Mill counterpart of the Gradle
+  `jvmArgs`-vs-`jvmArgumentProviders` lesson. A user's own `override def forkArgs =
+  Seq(...)` drops the JFR flag silently, and `./mill testLocal` does not read `forkArgs`
+  at all. Mill has no provider-style escape, so this only gets documented, not fixed.
 - `Task.ctx().workspace`, NEVER `BuildCtx.workspaceRoot`, for the default output path
   and for resolving relative arguments. `BuildCtx.workspaceRoot` is the launcher's
   root and does not follow `UnitTester`, so the dump landed in the plugin's own tree
@@ -196,10 +206,24 @@ description: Invariants for the uika Gradle, sbt, Maven and Mill build-tool plug
   still builds the dependency exactly that way, hence the `@nowarn`). Module deps are
   synthetic coursier projects with no publications, so they never appear there; they are
   attributed from `recursiveRunModuleDeps` and land as coordinate-less artifacts with a
-  `project` key. Membership comes from `runClasspath()` so the dump cannot drift from
-  what the module actually runs on, minus `localClasspath()` so a module never lists its
-  own output twice, minus non-existent paths (`localClasspath` names resource
-  directories whether or not they were created).
+  `project` key. The VERSION is the resolved one, looked up in
+  `resolution.projectCache0`: `dep.versionConstraint.asString` is what was DECLARED, so a
+  range would be written verbatim and two dumps either side of a real upgrade would carry
+  the same string and diff to no change. Membership comes from `runClasspath()` so the
+  dump cannot drift from what the module actually runs on, minus `localRunClasspath()`
+  and `compileResources()` so a module never lists its own output twice, minus
+  non-existent paths (a module names its resource directories whether or not they were
+  created). NOT minus `localClasspath()` -- that also holds `unmanagedClasspath()`, and
+  subtracting it dropped a module's vendored jars from the dump entirely. The same rule
+  bounds `projectOf`: only a dep's `localRunClasspath` carries its `project` label,
+  because that key licenses uika to substitute the module's classesDirs.
+- The CLI-zip `Dep` is `.exclude("*" -> "*")`, matching sbt's `.intransitive()` and
+  Gradle's `setTransitive(false)`. `upgradeCheck` is `persistent = true` so `Task.dest`
+  survives: Mill wipes a non-persistent dest before every run, which defeats both
+  `UikaCli.extractBinary`'s skip-if-present and `JfrEvidence.rewrite`'s stale sweep.
+- No `defaultResolver()` fallback in a command body. The command macro lifts every
+  `task()` call into an UNCONDITIONAL edge regardless of the branch it sits in, so an
+  `ExternalModule` fallback would be built on every run. Use `Task.fail` instead.
 - `Task.traverse(modules)(_.someTask)` outside the task body, never `dep.someTask()`
   inside it: Mill's task macro can only lift statically known calls into edges, and the
   dependency list is only known at runtime.
@@ -221,13 +245,17 @@ description: Invariants for the uika Gradle, sbt, Maven and Mill build-tool plug
   `uika.`, and `build.uika/` all fail to resolve against an alias object. Do not
   document one.
 - The CLI ZIP is resolved through a build module's own `defaultResolver()`, not the
-  ExternalModule's, so the build's `repositories` apply. Any module will do; the
-  ExternalModule fallback only covers a build with no `JavaModule`, which has nothing
-  to check either.
+  ExternalModule's, so the build's `repositories` apply. Any module will do, and a build
+  with no `JavaModule` fails rather than falling back, since it has nothing to check
+  either. The head module's repositories decide, so a build that declares its mirror per
+  module rather than on a shared trait can resolve the CLI through the wrong one.
 - Mill's M2 publisher writes no checksums, while the other three stage md5 and sha1
-  and jreleaser.yml deliberately turns its own checksum step off. `stageForRelease`
-  writes the pair by hand after `publishM2LocalCached`; without it the Central
-  deployment would be missing them for this plugin alone.
+  and jreleaser.yml deliberately turns its own checksum step off. The
+  `stageChecksums` command writes the pair by hand and the release step chains it
+  (`./mill publishM2Local + stageChecksums`). Without the second selector the Central
+  deployment would be missing them for this plugin alone. It cannot be folded into the
+  publish: `publishM2LocalCached` is not a `Command`, and Mill's filesystem checker
+  rejects a non-command task writing outside its own `Task.dest`.
 - No mise backend installs the Mill launcher (`ubi:`/`github:` find no matching
   release asset). The committed `mill-plugin/mill` bootstrap script reads the
   `//| mill-version:` header in `build.mill`, so mise only supplies the JVM.

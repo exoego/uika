@@ -18,6 +18,13 @@ object UikaTests extends TestSuite {
     object app extends JavaModule {
       override def moduleDeps = Seq(core)
       override def mvnDeps = Seq(mvn"org.apache.commons:commons-lang3:3.20.0")
+      // A test module with a dependency of its own, so the dump can be asserted to carry
+      // neither. uika checks what ships, and a test-only jar is never on the runtime
+      // classpath the check compares.
+      object test extends JavaTests {
+        override def testFramework = "com.novocode.junit.JUnitFramework"
+        override def mvnDeps = Seq(mvn"org.apache.commons:commons-collections4:4.5.0")
+      }
     }
     lazy val millDiscover: Discover = Discover[this.type]
   }
@@ -108,6 +115,11 @@ object UikaTests extends TestSuite {
         fullPath(a) == coreClasses
       })
 
+      // Test modules are dropped, and so is everything only they pull in.
+      val labels = json("modules").arr.map(_("module").str)
+      assert(!labels.contains(":app:test"))
+      assert(!artifacts.exists(a => a.obj.get("name").map(_.str).contains("commons-collections4")))
+
       // :core is dumped as a module in its own right, and no module lists its own output twice.
       val core = json("modules").arr.find(_("module").str == ":core").get
       assert(core("classesDirs").arr.map(fullPath).contains(coreClasses))
@@ -135,9 +147,12 @@ object UikaTests extends TestSuite {
       val before = stubCliBuild.moduleDir / "before.json"
       val after = stubCliBuild.moduleDir / "after.json"
       val exclude = stubCliBuild.moduleDir / "uika-exclude.toml"
+      val jfr = stubCliBuild.moduleDir / "jfr-logs"
+      val draft = stubCliBuild.moduleDir / "draft-exclude.toml"
       os.write.over(before, "{}", createFolders = true)
       os.write.over(after, "{}")
       os.write.over(exclude, "")
+      os.makeDir.all(jfr)
 
       value(tester(Uika.upgradeCheck(
         tester.evaluator,
@@ -146,6 +161,8 @@ object UikaTests extends TestSuite {
         failOn = "reachable",
         excludeFile = Seq(exclude.toString),
         jdkRelease = 11,
+        jfr = jfr.toString,
+        draftExcludeFile = draft.toString,
         cliVersion = "9.9.9"
       )))
 
@@ -153,6 +170,9 @@ object UikaTests extends TestSuite {
       assert(args.contains("--fail-on reachable"))
       assert(args.contains(s"--exclude-file $exclude"))
       assert(args.contains("--jdk-release 11"))
+      // A directory of evidence is forwarded as-is. Only recordings inside it are converted.
+      assert(args.contains(s"--class-load-log $jfr"))
+      assert(args.contains(s"--draft-exclude-file $draft"))
 
       // A CLI that found violations must fail the command, not pass silently.
       val failed = tester(Uika.upgradeCheck(
@@ -166,17 +186,26 @@ object UikaTests extends TestSuite {
     }
 
     test("UikaTestModule injects the JFR flag into forked test JVMs") {
-      val jfrDir = os.temp.dir(prefix = "uika-jfr")
+      // A leaf that does not exist yet, and deleted again between the two evaluations: JFR
+      // silently records to a single clobbered FILE when the leaf is missing under an
+      // existing parent, so the mkdir has to happen on EVERY run and not once per cache miss.
+      val jfrDir = os.temp.dir(prefix = "uika-jfr") / "recordings"
       Using.resource(UnitTester(
         stubCliBuild,
         null,
         env = systemEnv + ("UIKA_JFR" -> jfrDir.toString)
       )) { tester =>
-        val forkArgs = value(tester(stubCliBuild.testJvm.test.forkArgs))
+        def evaluate(): Seq[String] = value(tester(stubCliBuild.testJvm.test.forkArgs))
+        val forkArgs = evaluate()
         assert(forkArgs.exists { arg =>
           arg.startsWith("-XX:StartFlightRecording:jdk.ClassLoad#enabled=true") &&
           arg.contains(jfrDir.toString)
         })
+        assert(os.isDir(jfrDir))
+
+        os.remove.all(jfrDir)
+        evaluate()
+        assert(os.isDir(jfrDir))
       }
     }
   }

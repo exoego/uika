@@ -17,7 +17,7 @@ import scala.jdk.CollectionConverters.*
  * `Evaluator` themselves. The one thing this shape cannot reach is a test JVM's `forkArgs`, so
  * JFR class-load collection is the one part that does need a mixin ([[UikaTestModule]]).
  */
-object Uika extends ExternalModule with CoursierModule {
+object Uika extends ExternalModule {
 
   /**
    * Writes every non-test module's resolved runtime classpath as a uika v2 dump.
@@ -70,7 +70,10 @@ object Uika extends ExternalModule with CoursierModule {
       jfr: String = "",
       draftExcludeFile: String = "",
       cliVersion: String = ""
-  ) = Task.Command(exclusive = true) {
+  // persistent so `Task.dest` survives: Mill wipes a non-persistent dest before every run,
+  // which would defeat both UikaCli.extractBinary's skip-if-present and JfrEvidence.rewrite's
+  // stale-conversion sweep. The other three plugins extract into their build directory.
+  ) = Task.Command(exclusive = true, persistent = true) {
     val version = cliVersion match {
       case "" =>
         Option(getClass.getPackage.getImplementationVersion).filter(_.nonEmpty).getOrElse(
@@ -82,11 +85,12 @@ object Uika extends ExternalModule with CoursierModule {
     val log: java.util.function.Consumer[String] = line => Task.log.info(line)
     // The CLI ZIP goes through a build module's own resolver, so custom `repositories`,
     // mirrors and credentials are the build's. Any module will do: repositories are declared
-    // on a shared trait in practice, and the fallback only applies to a build with no
-    // JavaModule at all, which has nothing to check either.
+    // on a shared trait in practice. Failing rather than falling back to this ExternalModule's
+    // own resolver keeps that promise -- a `defaultResolver()` call here would be lifted into
+    // an unconditional task edge by the command macro and evaluated even on the Some branch.
     val resolver = javaModules(ev).headOption match {
       case Some(m) => ev.execute(Seq(m.defaultResolver)).values.get.head
-      case None => defaultResolver()
+      case None => Task.fail("uika: no JavaModule found in this build")
     }
     val binary = extractCli(resolver, version, Task.dest)
     // Recordings are converted here, never handed to the CLI: the CLI is JVM-free and must
@@ -126,9 +130,11 @@ object Uika extends ExternalModule with CoursierModule {
       dest: os.Path
   )(using mill.api.TaskCtx): java.nio.file.Path = {
     val classifier = UikaCli.platformClassifier()
+    // Intransitive, as in all three sibling plugins: the distribution is a native binary, and
+    // anything the POM ever gains would be downloaded and could win the zip pick below.
     val dep = Dep.parse(
       s"${UikaCli.GROUP}:${UikaCli.ARTIFACT}:$version;classifier=$classifier;type=zip"
-    )
+    ).exclude("*" -> "*")
     val resolved =
       resolver.classpath(Seq(dep), artifactTypes = Some(Set(coursier.Type("zip")))).map(_.path)
     val zip = resolved.find(_.last.endsWith(".zip")).getOrElse(
@@ -149,47 +155,61 @@ object Uika extends ExternalModule with CoursierModule {
   /**
    * One module's dump entry.
    *
-   * `Task.traverse` rather than calling `dep.localClasspath()` in the body: the dependency list
+   * `Task.traverse` rather than calling `dep.localRunClasspath()` in the body: the dependency list
    * is only known at runtime, and Mill's task macro can only lift statically known task calls
    * into edges.
    */
-  // withConfiguration is deprecated in coursier 2.1.25, but JavaModule.resolvedRunMvnDeps
-  // still builds the runtime dependency exactly this way. Following it verbatim is the point:
-  // the coordinates have to describe the same resolution the module actually runs on.
-  @nowarn("cat=deprecation")
   private def moduleDumpTask(m: JavaModule): Task[ClasspathDump.Module] = {
     val depModules = m.recursiveRunModuleDeps
-    val depLocalClasspaths = Task.traverse(depModules)(_.localClasspath)
+    val depOutputs = Task.traverse(depModules)(_.localRunClasspath)
     Task.Anon {
-      val classesDirs = m.localRunClasspath().map(_.path).filter(os.exists)
+      val ownOutput = m.localRunClasspath().map(_.path)
+      val classesDirs = ownOutput.filter(os.exists)
 
       // Coordinates come from the resolution, never from file paths. Mill models module deps as
       // synthetic coursier projects with no publications, so this yields external artifacts only
-      // and the internal ones are attributed from `depLocalClasspaths` below.
-      val resolved = m.millResolver().fetchArtifacts(Seq(
-        BoundDep(
-          m.coursierDependencyTask().withConfiguration(cs.Configuration.runtime),
-          force = false
+      // and the internal ones are attributed from `depOutputs` below.
+      //
+      // withConfiguration is deprecated in coursier 2.1.25, but JavaModule.resolvedRunMvnDeps
+      // still builds the runtime dependency exactly this way. Following it verbatim is the point:
+      // the coordinates have to describe the same resolution the module actually runs on. The
+      // annotation is on the one call, not the method, so -Werror still sees the rest.
+      val runtimeDep: cs.Dependency =
+        m.coursierDependencyTask().withConfiguration(cs.Configuration.runtime): @nowarn(
+          "cat=deprecation"
         )
-      ))
+      val resolved = m.millResolver().fetchArtifacts(Seq(BoundDep(runtimeDep, force = false)))
+      // The RESOLVED version, not `dep.versionConstraint.asString`: a declared range or a
+      // dynamic version would otherwise be written verbatim, and two dumps taken either side
+      // of a real upgrade would carry the same constraint string and diff to no change.
+      val resolvedVersions = resolved.resolution.projectCache0.map {
+        case (key, (_, project)) => key -> project.version0.asString
+      }
       val coordinates = resolved.fullDetailedArtifacts0.collect {
         case (dep, _, _, Some(file)) =>
           os.Path(file) -> (
             dep.module.organization.value,
             dep.module.name.value,
-            dep.versionConstraint.asString
+            resolvedVersions.getOrElse(
+              (dep.module, dep.versionConstraint),
+              dep.versionConstraint.asString
+            )
           )
       }.toMap
 
-      val projectOf = depModules.zip(depLocalClasspaths()).flatMap { case (dep, entries) =>
+      // Only a dep module's own OUTPUT carries its `project` label: the key tells uika it may
+      // substitute that module's classesDirs when the file is missing, which is a lie for a
+      // jar the dep merely puts on the classpath (`unmanagedClasspath`, `compileResources`).
+      val projectOf = depModules.zip(depOutputs()).flatMap { case (dep, entries) =>
         entries.map(_.path -> moduleLabel(dep))
       }.toMap
 
-      // localClasspath is a superset of localRunClasspath, so nothing of the module's own
-      // output can leak into the artifact list and be counted twice.
-      // `os.exists` because a module's localClasspath names its resource directories whether or
-      // not they were ever created, and an entry pointing at nothing is noise in every report.
-      val own = m.localClasspath().map(_.path).toSet
+      // Subtract exactly what this module produces, and NOT `localClasspath()` -- that also
+      // holds `unmanagedClasspath()`, so subtracting it dropped a module's vendored jars from
+      // the dump altogether even though they are on the classpath it runs on.
+      // `os.exists` because a module names its resource directories whether or not they were
+      // ever created, and an entry pointing at nothing is noise in every report.
+      val own = (ownOutput ++ m.compileResources().map(_.path)).toSet
       val entries = m.runClasspath().map(_.path).distinct.filterNot(own).filter(os.exists)
       val artifacts = entries.map { path =>
         val (group, name, version) = coordinates.getOrElse(path, (null, null, null))
