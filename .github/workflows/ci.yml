@@ -73,7 +73,10 @@ jobs:
             maven-${{ runner.os }}-
 
       - name: Check
-        run: make check
+        # UIKA_IT_ALT_JAVA gives the lein integration test a second JDK, so it can
+        # prove jdkRelease follows the project's :java-cmd and not lein's own JVM.
+        # mise pins temurin-21 for the build; the runner image ships others.
+        run: make check UIKA_IT_ALT_JAVA="${JAVA_HOME_17_X64:-}/bin/java"
 
       - name: Probe fixture verdicts against a real JVM
         run: make probe

@@ -33,6 +33,21 @@ if ! tr -d '\\' < target/before.json | grep -q '"path":"[^"]*/target/classes"'; 
   echo "FAIL: compiled classes missing from classesDirs" >&2
   cat target/before.json >&2; exit 1
 fi
+# jdkRelease and the derived --jdk-release must describe the JVM the PROJECT runs
+# on, not the one lein runs on: :eval-in-leiningen pins the plugin to lein's. Probe
+# with a second JDK when one is around; UIKA_IT_ALT_JAVA names it.
+if [ -n "${UIKA_IT_ALT_JAVA:-}" ] && [ -x "${UIKA_IT_ALT_JAVA:-}" ]; then
+  alt_feature="$("$UIKA_IT_ALT_JAVA" -XshowSettings:properties -version 2>&1 \
+    | sed -n 's/.*java\.specification\.version = \([0-9][0-9]*\).*/\1/p')"
+  lein update-in : assoc :java-cmd "\"$UIKA_IT_ALT_JAVA\"" \
+    -- uika dump-classpath target/altjvm.json >/dev/null
+  got="$(tr -d ' ' < target/altjvm.json | sed -n 's/.*"jdkRelease":\([0-9]*\).*/\1/p')"
+  if [ "$got" != "$alt_feature" ]; then
+    echo "FAIL: jdkRelease $got is lein's JVM, not the project's $alt_feature" >&2; exit 1
+  fi
+  echo "project-JVM probe: jdkRelease $got matches :java-cmd"
+fi
+
 # Dev-only dependencies must not ship in the dump: lein injects nREPL through
 # the :base profile into every dev task, and commons-io is :dev-scoped above.
 # This locks the :default unmerge.

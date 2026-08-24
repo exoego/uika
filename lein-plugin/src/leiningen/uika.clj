@@ -10,7 +10,8 @@
             [leiningen.core.classpath :as lein-cp]
             [leiningen.core.eval :as eval]
             [leiningen.core.main :as main]
-            [leiningen.core.project :as project])
+            [leiningen.core.project :as project]
+            [clojure.java.shell :as shell])
   (:import (java.io File)
            (java.util Properties)))
 
@@ -32,6 +33,41 @@
   (merge (project/unmerge-profiles project [:default])
          (select-keys project [:repositories :mirrors :local-repo
                                :offline? :checksum :update])))
+
+(defn- project-jvm
+  "The JVM the project's own code runs on, probed for the two things uika needs of
+  it: its java.home (whose ct.sym the CLI reads through UIKA_JDK) and its feature
+  release. The command is the one leiningen.core.eval picks at eval.clj:254,
+  `(or (:java-cmd project) JAVA_CMD \"java\")`, which is NOT the JVM this plugin
+  runs on -- :eval-in-leiningen pins that to lein's own launcher. Measured on a
+  project with :java-cmd on a 25 while lein ran on a 21: the dump claimed 21 and
+  --jdk-release came out 20 instead of 24, resolving escapes against a JDK four
+  releases off.
+
+  -XshowSettings:properties writes both values to stderr in one cheap start-up. A
+  JVM that cannot be probed (not on PATH, or not a HotSpot-family launcher) falls
+  back to this JVM with a warning rather than failing the task."
+  [project]
+  (let [cmd (or (:java-cmd project) (System/getenv "JAVA_CMD") "java")
+        fallback (core/this-jvm)]
+    (if (= (str cmd) (str (io/file (:home fallback) "bin" "java")))
+      fallback
+      (try
+        (let [{:keys [exit err]} (apply shell/sh [(str cmd) "-XshowSettings:properties"
+                                                  "-version"])
+              value (fn [key]
+                      (second (re-find (re-pattern (str key #"\s*=\s*(\S+)")) (str err))))
+              home (value "java.home")
+              spec (value "java.specification.version")]
+          (if (and (zero? (long exit)) home spec)
+            {:home home :feature (Long/parseLong spec)}
+            (do (main/warn (str "uika: could not read the version of " cmd
+                                "; falling back to lein's own JVM"))
+                fallback)))
+        (catch Exception e
+          (main/warn (str "uika: could not run " cmd " (" (.getMessage e)
+                          "); falling back to lein's own JVM"))
+          fallback)))))
 
 (defn- jar-or-zip?
   "The filter leiningen.core.classpath/resolve-managed-dependencies applies one layer
@@ -67,7 +103,8 @@
         out (io/file (or (first args)
                          (io/file (:target-path project) "uika" "classpath.json")))]
     (io/make-parents out)
-    (spit out (core/dump-json (str ":" (:name project)) artifacts class-dirs))
+    (spit out (core/dump-json (str ":" (:name project)) artifacts class-dirs
+                              (:feature (project-jvm project))))
     (main/info "uika classpath dump:" (str out))))
 
 (defn- own-version
@@ -104,7 +141,8 @@
         :fail-on fail-on
         :exclude-file exclude-files
         :jdk-release jdk-release
-        :class-load-log class-load-logs})
+        :class-load-log class-load-logs
+        :jvm (project-jvm project)})
       (catch clojure.lang.ExceptionInfo e
         (main/abort (ex-message e)))
       (catch java.io.IOException e

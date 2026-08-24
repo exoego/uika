@@ -24,18 +24,25 @@
 
 (defn dump-json
   "The v2 dump as a string: one module, one empty root (paths stay absolute).
-  `artifacts` are lib->artifact entries. jdkRelease is this JVM's feature release,
-  same as DumpFormat.buildJvmRelease."
-  [module-name artifacts class-dirs]
-  (let [artifact-maps (vec artifacts)
-        module {"module" module-name
-                "classesDirs" (mapv (fn [^String p] {"root" 0 "path" p}) class-dirs)
-                "artifactRefs" (vec (range (count artifact-maps)))}]
-    (json/write-str {"version" 2
-                     "jdkRelease" (.feature (Runtime/version))
-                     "roots" [""]
-                     "artifacts" artifact-maps
-                     "modules" [module]})))
+  `artifacts` are lib->artifact entries.
+
+  jdkRelease is the feature release of the JVM the PROJECT runs on, which for the
+  `-T` tool is this one but for the Leiningen plugin is not: :eval-in-leiningen
+  pins the plugin to lein's own JVM while project code runs under :java-cmd. The
+  field exists so upgrade-check can spot a JDK move between two dumps, so it has
+  to track the runtime, not whoever happened to write the file."
+  ([module-name artifacts class-dirs]
+   (dump-json module-name artifacts class-dirs (.feature (Runtime/version))))
+  ([module-name artifacts class-dirs jdk-release]
+   (let [artifact-maps (vec artifacts)
+         module {"module" module-name
+                 "classesDirs" (mapv (fn [^String p] {"root" 0 "path" p}) class-dirs)
+                 "artifactRefs" (vec (range (count artifact-maps)))}]
+     (json/write-str {"version" 2
+                      "jdkRelease" jdk-release
+                      "roots" [""]
+                      "artifacts" artifact-maps
+                      "modules" [module]}))))
 
 (defn- env
   "An environment variable, treating blank as unset. A CI `env:` block whose value
@@ -152,16 +159,28 @@
                          (catch NumberFormatException _ (reject)))
       :else (reject))))
 
+(defn this-jvm
+  "The JVM running this code, in the shape effective-jdk-release and the UIKA_JDK
+  export want. The `-T` tool runs project code on the same JVM, so this is its
+  answer; the Leiningen plugin overrides it with the project's :java-cmd JVM."
+  []
+  {:home (System/getProperty "java.home")
+   :feature (.feature (Runtime/version))})
+
 (defn- effective-jdk-release
-  "Port of UikaCli.effectiveJdkRelease: clamp to the build JVM's ct.sym ceiling,
-  nil disables. The plugins run on a JVM, so the layer defaults ON."
-  [target']
+  "Port of UikaCli.effectiveJdkRelease: clamp to the ct.sym ceiling of `jvm`,
+  nil disables. The plugins run on a JVM, so the layer defaults ON.
+
+  `jvm` is the project's runtime JVM, not necessarily the one evaluating this: its
+  ct.sym is what the CLI reads (it is exported as UIKA_JDK), so the ceiling and the
+  file check have to come from the same JVM the flag is about."
+  [target' {:keys [home feature]}]
   (when-let [target (release-number target')]
     (when (pos? target)
-      (let [ct-sym-max (dec (.feature (Runtime/version)))
+      (let [ct-sym-max (dec (long feature))
             effective (min target ct-sym-max)]
         (if (or (< effective 8)
-                (not (.isFile (io/file (System/getProperty "java.home") "lib" "ct.sym"))))
+                (not (.isFile (io/file home "lib" "ct.sym"))))
           (do (println "uika: skipping the JDK API layer (no usable ct.sym in the build JVM)")
               nil)
           (do (when (< effective target)
@@ -173,8 +192,9 @@
   "Runs the binary and throws on a non-zero exit. Output is streamed line by line,
   not inherited: the caller may sit under a wrapper that captures stdout, the same
   reason the JVM plugins route through a logger."
-  [binary {:keys [before after fail-on exclude-file jdk-release class-load-log]}]
-  (let [release (effective-jdk-release (or jdk-release (.feature (Runtime/version))))
+  [binary {:keys [before after fail-on exclude-file jdk-release class-load-log jvm]}]
+  (let [jvm (or jvm (this-jvm))
+        release (effective-jdk-release (or jdk-release (:feature jvm)) jvm)
         ->vec #(cond (nil? %) [] (sequential? %) (mapv str %) :else [(str %)])
         command (-> [(str binary) "upgrade-check" "--before" (str before) "--after" (str after)]
                     (into (when fail-on ["--fail-on" (name fail-on)]))
@@ -183,10 +203,10 @@
                     (into (mapcat #(vector "--class-load-log" %) (->vec class-load-log))))
         builder (doto (ProcessBuilder. ^java.util.List command)
                   (.redirectErrorStream true))]
-    ;; UIKA_JDK, like the JVM plugins: the child reads this JVM's ct.sym regardless
-    ;; of the caller's JAVA_HOME.
+    ;; UIKA_JDK, like the JVM plugins: the child reads the PROJECT JVM's ct.sym
+    ;; regardless of the caller's JAVA_HOME.
     (when release
-      (.put (.environment builder) "UIKA_JDK" (System/getProperty "java.home")))
+      (.put (.environment builder) "UIKA_JDK" (:home jvm)))
     (let [process (.start builder)]
       (with-open [rdr (io/reader (.getInputStream process))]
         (doseq [line (line-seq rdr)]

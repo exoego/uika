@@ -138,7 +138,8 @@ clojure-clean:
 # Real-CLI round trip, same reason as clojure-test: the dump JSON is hand-written.
 # mise exec puts lein itself on PATH for the script.
 lein-test: cargo-build
-	UIKA_BIN=$(abspath target/debug/uika) mise exec -- sh $(LEIN_PLUGIN_DIR)/it/run.sh
+	UIKA_BIN=$(abspath target/debug/uika) UIKA_IT_ALT_JAVA=$(UIKA_IT_ALT_JAVA) \
+		mise exec -- sh $(LEIN_PLUGIN_DIR)/it/run.sh
 
 lein-clean:
 	rm -rf $(LEIN_PLUGIN_DIR)/target $(LEIN_PLUGIN_DIR)/it/test-project/target $(LEIN_PLUGIN_DIR)/pom.xml

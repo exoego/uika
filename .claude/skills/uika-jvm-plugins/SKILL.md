@@ -243,5 +243,12 @@ experiment-only lessons live here.
   `eval/prep`, the only thing that runs `:prep-tasks` -- a `:java-source-paths`
   project would never run javac. `leiningen.core.eval/prep` is the task-agnostic
   entry point and subsumes the compile call.
+- `:eval-in-leiningen` pins the plugin to LEIN's JVM, while project code runs on
+  `(or (:java-cmd project) JAVA_CMD "java")` (leiningen.core.eval, eval.clj:254).
+  Both the dump's `jdkRelease` and the `--jdk-release` default have to describe the
+  latter, so the plugin probes it with `-XshowSettings:properties -version`.
+  Measured before the fix, with `:java-cmd` on a 25 and lein on a 21: the dump said
+  21 and the flag came out 20 instead of 24. The ct.sym ceiling and the `UIKA_JDK`
+  export must come from that same JVM, since UIKA_JDK is the ct.sym the CLI reads.
 - mise's leiningen `2.13.0` package is broken (its script 404s on a
   `2.12.1-SNAPSHOT` standalone jar); `.mise.toml` pins 2.12.0 and says why.
