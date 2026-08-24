@@ -17,6 +17,13 @@ ThisBuild / scalacOptions ++= Seq(
   "-Ywarn-unused:imports,privates,locals"
 )
 
+// Guards the javacOptions floor below. sbt-plugin has no unit-test source set --
+// its tests are scripted builds -- and a scripted test could only see the version
+// of a jar it resolved, so the check reads the compile output directly. `make
+// sbt-scripted` runs it before scripted.
+lazy val checkClassFileVersions = taskKey[Unit](
+  "Fails when any compiled class needs a newer JVM than the release floor")
+
 lazy val root = (project in file("."))
   .enablePlugins(SbtPlugin)
   .settings(
@@ -32,6 +39,15 @@ lazy val root = (project in file("."))
       ScmInfo(url("https://github.com/exoego/uika"), "scm:git:https://github.com/exoego/uika.git")
     ),
     Compile / unmanagedSourceDirectories += baseDirectory.value.getParentFile / "jvm-plugin-core" / "src" / "main" / "java",
+    // The same release floor the Gradle (options.release), Maven
+    // (maven.compiler.release) and Mill (javacOptions) builds put on these shared
+    // jvm-plugin-core sources. Without it javac targets whatever JDK is running sbt,
+    // and the plugin jar dies with UnsupportedClassVersionError on every older sbt
+    // JVM -- the released 0.8.0 shipped UikaCli.class as class-file major 65, so it
+    // needed a JDK 21 sbt while Gradle and Maven were both fine on 17. 17 is the real
+    // minimum: the core uses arrow switch and pattern `instanceof`. The Scala side
+    // stays at its 2.12 default (major 52), which loads anywhere.
+    Compile / javacOptions ++= Seq("--release", "17"),
     // uikaUpgradeCheck defaults the CLI version to the plugin's own version, read from here.
     Compile / packageBin / packageOptions += Package.ManifestAttributes("Implementation-Version" -> version.value),
     scriptedLaunchOpts ++= {
@@ -39,6 +55,30 @@ lazy val root = (project in file("."))
         sys.props.get(name).map(value => s"-D$name=$value")
       }
       inherited :+ s"-Dplugin.version=${version.value}"
+    },
+    checkClassFileVersions := {
+      val maxMajor = 61 // JDK 17
+      val log = streams.value.log
+      val offenders = (Compile / compile).value match {
+        case _ =>
+          val classes = ((Compile / classDirectory).value ** "*.class").get
+          if (classes.isEmpty) sys.error("no compiled classes found to check")
+          classes.flatMap { file =>
+            val in = new java.io.DataInputStream(new java.io.FileInputStream(file))
+            try {
+              in.readInt()   // 0xCAFEBABE
+              in.readShort() // minor
+              val major = in.readShort().toInt
+              if (major > maxMajor) Some(file.getName -> major) else None
+            } finally in.close()
+          }
+      }
+      if (offenders.nonEmpty) {
+        sys.error(
+          s"class-file major version above $maxMajor (JDK 17): " +
+            offenders.map { case (name, major) => s"$name=$major" }.mkString(", "))
+      }
+      log.info(s"class-file versions: all ${((Compile / classDirectory).value ** "*.class").get.size} classes <= $maxMajor")
     },
     scriptedBufferLog := false,
     // Central requires the doc jar to exist, not to have content. Scaladoc put
