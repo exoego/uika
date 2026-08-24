@@ -185,6 +185,19 @@ object UikaTests extends TestSuite {
       }
     }
 
+    test("the plugin is compiled to the JDK 17 floor, not the build JVM") {
+      // Guards build.mill's `--release 17` (javac) and `-release 17` (scalac). Without them
+      // the jar carries the mise-pinned JDK's class-file version and dies with
+      // UnsupportedClassVersionError on any older Mill daemon -- exactly how the released
+      // sbt 0.8.0 jar shipped major 65.
+      for (cls <- Seq(classOf[UikaCli], Uika.getClass)) {
+        val in = cls.getResourceAsStream(cls.getName.split('.').last + ".class")
+        val header = try in.readNBytes(8) finally in.close()
+        val major = ((header(6) & 0xff) << 8) | (header(7) & 0xff)
+        assert(major <= 61) // 61 = JDK 17
+      }
+    }
+
     test("UikaTestModule injects the JFR flag into forked test JVMs") {
       // A leaf that does not exist yet, and deleted again between the two evaluations: JFR
       // silently records to a single clobbered FILE when the leaf is missing under an

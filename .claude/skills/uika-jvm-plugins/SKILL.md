@@ -177,92 +177,20 @@ description: Invariants for the uika Gradle, sbt, Maven and Mill build-tool plug
 
 ## Mill Plugin Notes
 
-- The plugin is an `ExternalModule` (`net.exoego.uika.mill.Uika`), not a trait users
-  mix in, so `//| mvnDeps` alone wires up a build of any size: the commands take an
-  `Evaluator` and find the modules with
-  `resolveModulesOrTasks(Seq("__"), SelectMode.Multi)`. Test modules are dropped
-  (`!m.isInstanceOf[TestModule]`) because uika checks what ships. The one thing this
-  shape cannot reach is `forkArgs`, a task on the test module itself, so JFR
-  collection is the one part that does need a mixin (`UikaTestModule`, driven by the
-  `UIKA_JFR` env var so the collect run needs no task argument). Consumption is still
-  explicit: `upgradeCheck` reads `--jfr`, never the env var.
-- `uikaJfrArgs` is a `Task.Input` reading `Task.env` directly, NOT a cached `Task` over
-  `uikaJfr()`. The `os.makeDir.all` in it has to run on every invocation -- a cached task
-  keyed on an unchanged `UIKA_JFR` replays its value and skips the body, so a directory
-  deleted between runs is never recreated and JFR then records every fork into one
-  clobbered FILE. Gradle puts the same mkdir in `test.doFirst` for the same reason.
-- `override def forkArgs` is a wipeable list, the Mill counterpart of the Gradle
-  `jvmArgs`-vs-`jvmArgumentProviders` lesson. A user's own `override def forkArgs =
-  Seq(...)` drops the JFR flag silently, and `./mill testLocal` does not read `forkArgs`
-  at all. Mill has no provider-style escape, so this only gets documented, not fixed.
-- `Task.ctx().workspace`, NEVER `BuildCtx.workspaceRoot`, for the default output path
-  and for resolving relative arguments. `BuildCtx.workspaceRoot` is the launcher's
-  root and does not follow `UnitTester`, so the dump landed in the plugin's own tree
-  during tests while the assertions still passed off the returned path.
-- Coordinates come from
-  `millResolver().fetchArtifacts(BoundDep(coursierDependencyTask().withConfiguration(runtime)))`
-  and its `fullDetailedArtifacts0`, the shape Mill's own CycloneDX SBOM contrib uses
-  (`withConfiguration` is deprecated in coursier 2.1.25, but `JavaModule.resolvedRunMvnDeps`
-  still builds the dependency exactly that way, hence the `@nowarn`). Module deps are
-  synthetic coursier projects with no publications, so they never appear there; they are
-  attributed from `recursiveRunModuleDeps` and land as coordinate-less artifacts with a
-  `project` key. The VERSION is the resolved one, looked up in
-  `resolution.projectCache0`: `dep.versionConstraint.asString` is what was DECLARED, so a
-  range would be written verbatim and two dumps either side of a real upgrade would carry
-  the same string and diff to no change. Membership comes from `runClasspath()` so the
-  dump cannot drift from what the module actually runs on, minus `localRunClasspath()`
-  and `compileResources()` so a module never lists its own output twice, minus
-  non-existent paths (a module names its resource directories whether or not they were
-  created). NOT minus `localClasspath()` -- that also holds `unmanagedClasspath()`, and
-  subtracting it dropped a module's vendored jars from the dump entirely. The same rule
-  bounds `projectOf`: only a dep's `localRunClasspath` carries its `project` label,
-  because that key licenses uika to substitute the module's classesDirs.
-- The CLI-zip `Dep` is `.exclude("*" -> "*")`, matching sbt's `.intransitive()` and
-  Gradle's `setTransitive(false)`. `upgradeCheck` is `persistent = true` so `Task.dest`
-  survives: Mill wipes a non-persistent dest before every run, which defeats both
-  `UikaCli.extractBinary`'s skip-if-present and `JfrEvidence.rewrite`'s stale sweep.
-- No `defaultResolver()` fallback in a command body. The command macro lifts every
-  `task()` call into an UNCONDITIONAL edge regardless of the branch it sits in, so an
-  `ExternalModule` fallback would be built on every run. Use `Task.fail` instead.
-- `Task.traverse(modules)(_.someTask)` outside the task body, never `dep.someTask()`
-  inside it: Mill's task macro can only lift statically known calls into edges, and the
-  dependency list is only known at runtime.
-- `scalaVersion` must match the Scala version `mill-libs` is built against (3.8.2 for
-  Mill 1.1.8). An older compiler cannot read its TASTy at all; the error names the
-  version to use. `millVersion` is read from `mill.api.BuildInfo`, so the one version to
-  bump is the `//| mill-version:` header -- and bumping it means checking `mill-libs`'
-  `scala-library` dependency again.
-- Every build compiling the shared core needs an explicit release floor: Gradle
-  `options.release = 17`, Maven `maven.compiler.release`, Mill
-  `javacOptions = Seq("--release", "17")` plus `-release 17` on scalac. Without one,
-  javac targets the mise-pinned JDK and the jar dies with UnsupportedClassVersionError
-  on older build daemons. The released sbt 0.8.0 jar shipped class-file major 65 for
-  exactly this omission (fix pending in its own PR).
-- Mill's build-file compiler inserts `override` for you; plain `.scala` sources under
-  `src/` and `test/src/` do not get that, so every `def mvnDeps` / `def moduleDeps` /
-  `def repositories` in the tests needs it spelled out.
-- `UnitTester` is `AutoCloseable` and asserts on construction that no classloader
-  leaked, so each test wraps its tester in `Using.resource`. Two testers alive at once
-  fails the second one before its body runs.
-- Command arguments are mainargs and camelCase (`--failOn`, `--excludeFile`,
-  `--jdkRelease`, `--cliVersion`), and positional arguments are NOT accepted by
-  default, so `upgradeCheck` needs `--before` and `--after` spelled out. The README's
-  Mill recipe must keep using those exact spellings.
-- `mill.api.ExternalModule.Alias` does NOT give a working short selector: `uika/`,
-  `uika.`, and `build.uika/` all fail to resolve against an alias object. Do not
-  document one.
-- The CLI ZIP is resolved through a build module's own `defaultResolver()`, not the
-  ExternalModule's, so the build's `repositories` apply. Any module will do, and a build
-  with no `JavaModule` fails rather than falling back, since it has nothing to check
-  either. The head module's repositories decide, so a build that declares its mirror per
-  module rather than on a shared trait can resolve the CLI through the wrong one.
-- Mill's M2 publisher writes no checksums, while the other three stage md5 and sha1
-  and jreleaser.yml deliberately turns its own checksum step off. The
-  `stageChecksums` command writes the pair by hand and the release step chains it
-  (`./mill publishM2Local + stageChecksums`). Without the second selector the Central
-  deployment would be missing them for this plugin alone. It cannot be folded into the
-  publish: `publishM2LocalCached` is not a `Command`, and Mill's filesystem checker
-  rejects a non-command task writing outside its own `Task.dest`.
+Most Mill invariants live as comments at their point of use (`Uika.scala`,
+`UikaTestModule.scala`, `build.mill`) or are locked by tests in `UikaTests.scala`.
+This section keeps only what neither can hold.
+
+- `Task.ctx().workspace`, NEVER `BuildCtx.workspaceRoot`, for the default output
+  path and for resolving relative arguments. The latter is the launcher's root and
+  does not follow `UnitTester`, so the bug shows as tests that still pass while the
+  dump lands in the plugin's own tree.
+- The command macro lifts every statically visible `task()` call into an
+  UNCONDITIONAL edge, so a `defaultResolver()` in a dead fallback branch is still
+  built on every run. Tasks on runtime-valued modules cannot be lifted at all;
+  collect them with `Task.traverse(...)` outside the body.
+- `mill.api.ExternalModule.Alias` does NOT give a working short selector (`uika/`,
+  `uika.`, and `build.uika/` all fail to resolve). Do not document one.
 - No mise backend installs the Mill launcher (`ubi:`/`github:` find no matching
   release asset). The committed `mill-plugin/mill` bootstrap script reads the
   `//| mill-version:` header in `build.mill`, so mise only supplies the JVM.
