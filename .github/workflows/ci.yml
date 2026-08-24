@@ -73,7 +73,21 @@ jobs:
             maven-${{ runner.os }}-
 
       - name: Check
-        run: make check
+        # UIKA_IT_ALT_JAVA gives the lein integration test a second JDK, so it can
+        # prove jdkRelease follows the project's :java-cmd and not lein's own JVM.
+        # mise pins temurin-21 for the build, so any OTHER release the runner ships
+        # will do. Resolved rather than hardcoded, and fatal when none is found: an
+        # unset variable would expand to /bin/java and the assertion would skip
+        # itself, which is how a regression test quietly stops testing.
+        run: |
+          set -euo pipefail
+          alt=""
+          for home in "${JAVA_HOME_17_X64:-}" "${JAVA_HOME_11_X64:-}" "${JAVA_HOME_25_X64:-}"; do
+            if [ -n "$home" ] && [ -x "$home/bin/java" ]; then alt="$home/bin/java"; break; fi
+          done
+          test -n "$alt" || { echo "no alternate JDK on this runner; JAVA_HOME_* are: $(env | grep -c '^JAVA_HOME_')" >&2; exit 1; }
+          echo "alternate JVM for the lein probe: $alt"
+          make check UIKA_IT_ALT_JAVA="$alt"
 
       - name: Probe fixture verdicts against a real JVM
         run: make probe

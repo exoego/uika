@@ -1,4 +1,4 @@
-{:paths ["src"]
+{:paths ["src" "src-core"]
  :deps {org.clojure/clojure {:mvn/version "1.12.4"}
         ;; The same resolver the project itself uses, so the dump can never disagree
         ;; with what `clojure -M`/`-X` actually puts on the classpath.

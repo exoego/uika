@@ -65,3 +65,4 @@ deploy:
           - sbt-plugin/target/staging-deploy
           - maven-plugin/target/staging-deploy
           - mill-plugin/out/staging-deploy
+          - lein-plugin/target/staging-deploy

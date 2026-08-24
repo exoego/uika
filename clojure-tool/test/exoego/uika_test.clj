@@ -3,7 +3,8 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [exoego.uika :as uika])
+            [exoego.uika :as uika]
+            [exoego.uika.core :as uika.core])
   (:import (java.nio.file Files)
            (java.nio.file.attribute FileAttribute)))
 
@@ -35,6 +36,20 @@
     ;; The project's own source dirs are the module's classesDirs.
     (is (some #(str/ends-with? (get % "path") "src")
               (get module "classesDirs")))))
+
+(deftest jvm-properties-survive-a-spaced-java-home
+  ;; `C:\Program Files\...` is the everyday case. A \S+ capture truncates at the
+  ;; space, the ct.sym probe then misses, and the JDK API layer switches itself off
+  ;; blaming a missing ct.sym -- silent, and wrong about the reason.
+  (let [output (str "    java.home = /Library/Java/My JDK/Contents/Home\n"
+                    "    java.specification.version = 21\n")]
+    (is (= {:home "/Library/Java/My JDK/Contents/Home" :feature 21}
+           (uika.core/parse-jvm-properties output))))
+  (testing "a probe that produced nothing usable is nil, so callers can fall back"
+    (is (nil? (uika.core/parse-jvm-properties "")))
+    (is (nil? (uika.core/parse-jvm-properties "java.home = /x\n")))
+    (is (nil? (uika.core/parse-jvm-properties
+               "java.home = /x\njava.specification.version = twenty\n")))))
 
 (deftest upgrade-check-forwards-flags-and-fails-on-violations
   (let [dir (temp-dir)

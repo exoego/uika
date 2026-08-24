@@ -15,6 +15,9 @@
     "**/node_modules/**",
     "**/src/it/**",
     "**/src/sbt-test/**",
+    // The lein fixture has no src/ segment, and its project.clj is a file the
+    // leiningen manager matches by name anywhere in the tree.
+    "lein-plugin/it/**",
   ],
   lockFileMaintenance: {
     enabled: true,

@@ -53,8 +53,8 @@ tools on the same inputs (wall time, peak memory, and what each one reports).
 
 ## Usage
 
-Every recipe below drives the Gradle, sbt, Maven or Mill plugin, or the
-Clojure CLI tool, so declare it in your build first: see
+Every recipe below drives the Gradle, sbt, Maven, Mill or Leiningen plugin,
+or the Clojure CLI tool, so declare it in your build first: see
 [Build-tool plugins](#build-tool-plugins).
 
 ### PR gate on GitHub Actions (the main use case)
@@ -408,7 +408,7 @@ delete what you cannot justify before committing the file. Requires
 
 ## Build-tool plugins
 
-The Gradle, sbt, Maven and Mill plugins and the Clojure CLI tool write the same dump format: every module's resolved runtime
+The Gradle, sbt, Maven, Mill and Leiningen plugins and the Clojure CLI tool write the same dump format: every module's resolved runtime
 classpath as coordinate-annotated JSON, kept per module so `upgrade-check` can
 [check each against its own resolution](#per-module-checking-upgrade-check).
 Feed two dumps to `uika upgrade-check`, or one to `uika check
@@ -424,7 +424,10 @@ The upgrade-check task fetches the CLI itself as
 `net.exoego.uika:uika-cli:<version>:<platform>@zip` through the build's own
 dependency resolution, reusing its repositories, credentials, and cache, so
 there is no separate install step. The version defaults to the plugin's own, so
-one coordinate bump updates both.
+one coordinate bump updates both. The Leiningen plugin and the Clojure CLI tool
+are the exception: neither resolver handles a zip-packaged artifact, so they
+download it straight from Maven Central (`UIKA_CLI_URL` to override the URL,
+`UIKA_CLI_PATH` to point at a binary you already have and skip the download).
 
 The settings shown per tool below also have command-line forms:
 [`failOn`](#violation-tiers-and---fail-on) (`-PuikaFailOn=`, `set uikaFailOn
@@ -601,8 +604,8 @@ $ clojure -Tuika upgrade-check :before '"/tmp/before.json"' :after '"/tmp/after.
 The dump records the resolved Maven coordinates from the project's own
 `deps.edn` basis (`:local/root` and git deps are coordinate-less, like the other
 tools' project dependencies), and `upgrade-check` downloads the platform binary
-from Maven Central (`UIKA_CLI_URL` to override) with the version taken from the
-installed tool's own `:git/tag`.
+from Maven Central (`UIKA_CLI_URL` to override the URL, `UIKA_CLI_PATH` to skip
+the download) with the version taken from the installed tool's own `:git/tag`.
 
 Two Clojure-specific caveats. Interop calls without type hints go through
 runtime reflection and leave no reference in the constant pool, so uika sees
@@ -621,6 +624,35 @@ object test extends JavaTests, TestModule.Junit5, net.exoego.uika.mill.UikaTestM
 Your own `override def forkArgs = Seq(...)` replaces the list and drops the injected
 flag. Append to `super.forkArgs()` instead. `./mill testLocal` does not fork, so it
 records nothing.
+
+### Leiningen (`lein-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Flein-uika%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/lein-uika)
+
+```clojure
+;; project.clj
+:plugins [[net.exoego.uika/lein-uika "VERSION_PLACEHOLDER"]]
+;; Optional: gate only on reachable violations, and suppress known false positives.
+:uika {:fail-on "reachable"
+       :exclude-files ["uika-exclude.toml"]
+       ;; Defaults to the plugin's own version; there is no command-line override.
+       :cli-version "VERSION_PLACEHOLDER"}
+```
+
+```console
+$ lein uika dump-classpath                       # writes <:target-path>/uika/classpath.json
+$ lein uika dump-classpath /tmp/after.json
+$ lein uika upgrade-check /tmp/before.json /tmp/after.json
+```
+
+The whole `:uika` map is `:fail-on`, `:exclude-files`, `:jdk-release` (0 disables),
+`:class-load-logs` (text format), `:cli-version` and `:cli-path`. Any other key is
+an error rather than a silent no-op, so a misspelling cannot quietly disable a flag.
+
+The dump excludes what only development pulls in (the `:base`/`:system`/`:user`/`:dev`
+profiles, so no nREPL, and `:provided`, which an uberjar leaves out) and runs the
+project's `:prep-tasks` first, so both `:aot` classes and `:java-source-paths` output
+are scanned. The reflection caveat above applies here too; `:class-dir` does not,
+because the dump takes its class directories from `:compile-path` and the project's
+own source and resource paths.
 
 ## How it works
 
