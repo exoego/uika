@@ -53,8 +53,8 @@ tools on the same inputs (wall time, peak memory, and what each one reports).
 
 ## Usage
 
-Every recipe below drives the Gradle, sbt, or Maven plugin, so declare it in
-your build first: see [Build-tool plugins](#build-tool-plugins).
+Every recipe below drives the Gradle, sbt, Maven or Mill plugin, so declare it
+in your build first: see [Build-tool plugins](#build-tool-plugins).
 
 ### PR gate on GitHub Actions (the main use case)
 
