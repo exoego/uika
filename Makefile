@@ -4,6 +4,7 @@
 	sbt-compile sbt-scripted sbt-clean \
 	maven-verify maven-clean \
 	mill-compile mill-test mill-clean \
+	clojure-test clojure-clean \
 	native-publish-local stage-all
 
 CARGO ?= cargo
@@ -14,10 +15,12 @@ MAVEN ?= mise exec -- mvn
 # Mill bootstraps its own distribution from the //| mill-version header, so mise only
 # has to supply the JVM the launcher script runs on.
 MILL ?= mise exec -- ./mill
+CLOJURE ?= mise exec -- clojure
 GRADLE_PLUGIN_DIR ?= gradle-plugin
 SBT_PLUGIN_DIR ?= sbt-plugin
 MAVEN_PLUGIN_DIR ?= maven-plugin
 MILL_PLUGIN_DIR ?= mill-plugin
+CLOJURE_TOOL_DIR ?= clojure-tool
 UIKA_VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' cli/Cargo.toml | head -1)
 TMPDIR ?= /tmp
 SBT_CACHE_DIR ?= $(TMPDIR)/uika-sbt
@@ -43,20 +46,21 @@ help:
 		'  make sbt-scripted' \
 		'  make maven-verify' \
 		'  make mill-test' \
+		'  make clojure-test' \
 		'  make native-publish-local UIKA_VERSION=0.1.0' \
 		'  make stage-all UIKA_VERSION=0.1.0'
 
 build: cargo-build gradle-build sbt-compile maven-verify mill-compile
 
-check: cargo-fmt-check cargo-clippy cargo-test gradle-check sbt-scripted maven-verify mill-test
+check: cargo-fmt-check cargo-clippy cargo-test gradle-check sbt-scripted maven-verify mill-test clojure-test
 
-test: cargo-test gradle-test sbt-scripted maven-verify mill-test
+test: cargo-test gradle-test sbt-scripted maven-verify mill-test clojure-test
 
 fmt: cargo-fmt
 
 fmt-check: cargo-fmt-check
 
-clean: gradle-clean sbt-clean maven-clean mill-clean
+clean: gradle-clean sbt-clean maven-clean mill-clean clojure-clean
 	$(CARGO) clean
 
 cargo-build:
@@ -117,6 +121,15 @@ mill-test:
 
 mill-clean:
 	cd $(MILL_PLUGIN_DIR) && $(MILL) clean
+
+# cargo-build supplies the real binary for the round-trip integration test:
+# the tool writes v2 JSON by hand instead of sharing DumpFormat, so only a run
+# against the real CLI can catch the two drifting apart.
+clojure-test: cargo-build
+	cd $(CLOJURE_TOOL_DIR) && UIKA_BIN=$(abspath target/debug/uika) $(CLOJURE) -M:test
+
+clojure-clean:
+	rm -rf $(CLOJURE_TOOL_DIR)/.cpcache
 
 native-publish-local:
 	$(GRADLE) -p binary-publishing publishToMavenLocal -PuikaVersion=$(UIKA_VERSION)

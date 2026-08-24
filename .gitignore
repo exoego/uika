@@ -6,6 +6,7 @@
 **/.flattened-pom.xml
 /out/
 mill-plugin/out/
+.cpcache/
 sbt-plugin/.idea/
 *.iml
 .mise.local.toml
