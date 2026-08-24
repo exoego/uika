@@ -632,7 +632,9 @@ records nothing.
 :plugins [[net.exoego.uika/lein-uika "VERSION_PLACEHOLDER"]]
 ;; Optional: gate only on reachable violations, and suppress known false positives.
 :uika {:fail-on "reachable"
-       :exclude-files ["uika-exclude.toml"]}
+       :exclude-files ["uika-exclude.toml"]
+       ;; Defaults to the plugin's own version; there is no command-line override.
+       :cli-version "VERSION_PLACEHOLDER"}
 ```
 
 ```console

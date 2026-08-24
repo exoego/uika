@@ -48,6 +48,14 @@ if [ -n "${UIKA_IT_ALT_JAVA:-}" ] && [ -x "${UIKA_IT_ALT_JAVA:-}" ]; then
   echo "project-JVM probe: jdkRelease $got matches :java-cmd"
 fi
 
+# :provided is compile-scope: the fixture's Java source imports javax.servlet, so
+# javac only succeeds because prep runs on the FULL project. Prepping the unmerged
+# one (which drops :provided) fails with "package javax.servlet does not exist".
+# The dump must still leave it out, since an uberjar does.
+if grep -q 'servlet' target/before.json; then
+  echo "FAIL: a :provided dependency shipped in the dump" >&2; exit 1
+fi
+
 # Dev-only dependencies must not ship in the dump: lein injects nREPL through
 # the :base profile into every dev task, and commons-io is :dev-scoped above.
 # This locks the :default unmerge.

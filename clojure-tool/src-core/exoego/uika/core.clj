@@ -153,7 +153,9 @@
                                 {:jdk-release target}))]
     (cond
       (nil? target) nil
-      (number? target) (long target)
+      ;; Integral only: (long 11.9) truncates to 11 without a word, while the string
+    ;; "11.9" is rejected -- the same typo should not land two different ways.
+    (and (number? target) (== target (long target))) (long target)
       (string? target) (try
                          (Long/parseLong (str/trim target))
                          (catch NumberFormatException _ (reject)))

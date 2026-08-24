@@ -4,7 +4,8 @@
                  [org.apache.commons/commons-lang3 #=(eval (or (System/getenv "COMMONS_LANG3_VERSION") "3.20.0"))]]
   ;; A dev-only dependency the dump must NOT contain: the dump is taken from the
   ;; project unmerged of the :default profiles (run.sh asserts absence).
-  :profiles {:dev {:dependencies [[commons-io "2.20.0"]]}}
+  :profiles {:provided {:dependencies [[javax.servlet/javax.servlet-api "4.0.1"]]}
+             :dev {:dependencies [[commons-io "2.20.0"]]}}
   ;; Java, no :aot: `lein compile` alone would not run javac here, so this locks the
   ;; dump on eval/prep rather than the compile task.
   :java-source-paths ["java"]
