@@ -128,11 +128,16 @@
       (let [url (or (System/getenv "UIKA_CLI_URL")
                     (str "https://repo1.maven.org/maven2/net/exoego/uika/uika-cli/"
                          version "/uika-cli-" version "-" classifier ".zip"))
-            zip-file (io/file cache-dir "cli.zip")]
+            ;; Invocation-unique, deleted below: a fixed name in the shared cache
+            ;; would let two cold-cache invocations read each other's half-written
+            ;; download. The binary itself is already temp-file + atomic move.
+            zip-file (.toFile (Files/createTempFile (.toPath cache-dir) "cli" ".zip"
+                                                    (make-array java.nio.file.attribute.FileAttribute 0)))]
         (println "uika: fetching" url)
-        (with-open [in (io/input-stream url)]
-          (io/copy in zip-file))
-        (with-open [zf (ZipFile. zip-file)]
+        (try
+          (with-open [in (io/input-stream url)]
+            (io/copy in zip-file))
+          (with-open [zf (ZipFile. ^java.io.File zip-file)]
           (let [entry (or (->> (enumeration-seq (.entries zf))
                                (remove #(.isDirectory ^java.util.zip.ZipEntry %))
                                (filter #(let [n (.getName ^java.util.zip.ZipEntry %)]
@@ -150,7 +155,8 @@
             (.setExecutable (.toFile ^Path tmp) true false)
             (Files/move tmp (.toPath binary)
                         (into-array java.nio.file.CopyOption [StandardCopyOption/REPLACE_EXISTING]))))
-        (.delete zip-file)))
+          (finally
+            (.delete ^java.io.File zip-file)))))
     binary))
 
 (defn- effective-jdk-release

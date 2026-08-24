@@ -58,10 +58,9 @@
       (is (str/includes? args (str "--exclude-file " exclude)))
       (is (str/includes? args "--jdk-release 11")))
     (testing "a CLI that found violations fails the command"
-      (is (thrown-with-msg? Exception #"broken references"
-            (with-redefs [uika/upgrade-check uika/upgrade-check]
-              (let [env-stub (io/file dir "uika-fail")]
-                (spit env-stub "#!/bin/sh\nexit 1\n")
-                (.setExecutable env-stub true false)
-                (uika/upgrade-check {:before (str before) :after (str after)
-                                     :cli-path (str env-stub)}))))))))
+      (let [failing-stub (io/file dir "uika-fail")]
+        (spit failing-stub "#!/bin/sh\nexit 1\n")
+        (.setExecutable failing-stub true false)
+        (is (thrown-with-msg? Exception #"broken references"
+              (uika/upgrade-check {:before (str before) :after (str after)
+                                   :cli-path (str failing-stub)})))))))

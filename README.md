@@ -581,8 +581,10 @@ $ ./mill net.exoego.uika.mill.Uika/upgradeCheck \
 
 ### Clojure CLI (`clojure-tool/`)
 
-Distributed as a git dependency, so there is nothing to fetch from Maven Central
-and the repo tag pins both the tool and the CLI version it runs:
+The tool itself is distributed as a git dependency, so it adds nothing to
+uika's Maven Central deployment, and the repo tag pins both the tool and the
+CLI version it runs. Its own dependencies and the uika-cli binary still
+resolve from Maven Central as usual:
 
 ```console
 $ clojure -Ttools install io.github.exoego/uika \
