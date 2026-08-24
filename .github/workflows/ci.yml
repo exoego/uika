@@ -51,6 +51,16 @@ jobs:
           restore-keys: |
             sbt-${{ runner.os }}-
 
+      - name: Cache Mill
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/mill
+            ~/.cache/coursier
+          key: mill-${{ runner.os }}-${{ hashFiles('mill-plugin/build.mill', 'mill-plugin/mill') }}
+          restore-keys: |
+            mill-${{ runner.os }}-
+
       - name: Cache Maven
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

@@ -1,6 +1,6 @@
 ---
 name: uika-jvm-plugins
-description: Invariants for the uika Gradle, sbt, and Maven build-tool plugins and the shared jvm-plugin-core - task shape, coordinate handling, CLI fetch and version defaulting, logger wiring, --jdk-release derivation, and how the tests stub the CLI. Load before changing anything under gradle-plugin/, sbt-plugin/, maven-plugin/, or jvm-plugin-core/.
+description: Invariants for the uika Gradle, sbt, Maven and Mill build-tool plugins and the shared jvm-plugin-core - task shape, coordinate handling, CLI fetch and version defaulting, logger wiring, --jdk-release derivation, and how the tests stub the CLI. Load before changing anything under gradle-plugin/, sbt-plugin/, maven-plugin/, mill-plugin/, or jvm-plugin-core/.
 ---
 
 # uika JVM Build-Tool Plugin Notes
@@ -174,3 +174,60 @@ description: Invariants for the uika Gradle, sbt, and Maven build-tool plugins a
   coordinates are excluded from the version DIFF (they stay in the version
   maps on purpose -- suggest's file->coordinate attribution reads them).
 
+
+## Mill Plugin Notes
+
+- The plugin is an `ExternalModule` (`net.exoego.uika.mill.Uika`), not a trait users
+  mix in, so `//| mvnDeps` alone wires up a build of any size: the commands take an
+  `Evaluator` and find the modules with
+  `resolveModulesOrTasks(Seq("__"), SelectMode.Multi)`. Test modules are dropped
+  (`!m.isInstanceOf[TestModule]`) because uika checks what ships. The one thing this
+  shape cannot reach is `forkArgs`, a task on the test module itself, so JFR
+  collection is the one part that does need a mixin (`UikaTestModule`, driven by the
+  `UIKA_JFR` env var so one exported value serves collect and consume).
+- `Task.ctx().workspace`, NEVER `BuildCtx.workspaceRoot`, for the default output path
+  and for resolving relative arguments. `BuildCtx.workspaceRoot` is the launcher's
+  root and does not follow `UnitTester`, so the dump landed in the plugin's own tree
+  during tests while the assertions still passed off the returned path.
+- Coordinates come from
+  `millResolver().fetchArtifacts(BoundDep(coursierDependencyTask().withConfiguration(runtime)))`
+  and its `fullDetailedArtifacts0`, the shape Mill's own CycloneDX SBOM contrib uses
+  (`withConfiguration` is deprecated in coursier 2.1.25, but `JavaModule.resolvedRunMvnDeps`
+  still builds the dependency exactly that way, hence the `@nowarn`). Module deps are
+  synthetic coursier projects with no publications, so they never appear there; they are
+  attributed from `recursiveRunModuleDeps` and land as coordinate-less artifacts with a
+  `project` key. Membership comes from `runClasspath()` so the dump cannot drift from
+  what the module actually runs on, minus `localClasspath()` so a module never lists its
+  own output twice, minus non-existent paths (`localClasspath` names resource
+  directories whether or not they were created).
+- `Task.traverse(modules)(_.someTask)` outside the task body, never `dep.someTask()`
+  inside it: Mill's task macro can only lift statically known calls into edges, and the
+  dependency list is only known at runtime.
+- `scalaVersion` must match the Scala version `mill-libs` is built against (3.8.2 for
+  Mill 1.1.8). An older compiler cannot read its TASTy at all; the error names the
+  version to use. Bumping `millVersion` means checking `mill-libs`' `scala-library`
+  dependency again.
+- Mill's build-file compiler inserts `override` for you; plain `.scala` sources under
+  `src/` and `test/src/` do not get that, so every `def mvnDeps` / `def moduleDeps` /
+  `def repositories` in the tests needs it spelled out.
+- `UnitTester` is `AutoCloseable` and asserts on construction that no classloader
+  leaked, so each test wraps its tester in `Using.resource`. Two testers alive at once
+  fails the second one before its body runs.
+- Command arguments are mainargs and camelCase (`--failOn`, `--excludeFile`,
+  `--jdkRelease`, `--cliVersion`), and positional arguments are NOT accepted by
+  default, so `upgradeCheck` needs `--before` and `--after` spelled out. The README's
+  Mill recipe must keep using those exact spellings.
+- `mill.api.ExternalModule.Alias` does NOT give a working short selector: `uika/`,
+  `uika.`, and `build.uika/` all fail to resolve against an alias object. Do not
+  document one.
+- The CLI ZIP is resolved through a build module's own `defaultResolver()`, not the
+  ExternalModule's, so the build's `repositories` apply. Any module will do; the
+  ExternalModule fallback only covers a build with no `JavaModule`, which has nothing
+  to check either.
+- Mill's M2 publisher writes no checksums, while the other three stage md5 and sha1
+  and jreleaser.yml deliberately turns its own checksum step off. `stageForRelease`
+  writes the pair by hand after `publishM2LocalCached`; without it the Central
+  deployment would be missing them for this plugin alone.
+- No mise backend installs the Mill launcher (`ubi:`/`github:` find no matching
+  release asset). The committed `mill-plugin/mill` bootstrap script reads the
+  `//| mill-version:` header in `build.mill`, so mise only supplies the JVM.

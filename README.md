@@ -93,13 +93,13 @@ jobs:
         run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
 ```
 
-sbt and Maven use the same three steps with different commands.
+sbt, Maven and Mill use the same three steps with different commands.
 
-| Step | sbt | Maven |
-| --- | --- | --- |
-| Baseline dump | `sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/before.json` | `mvn -q uika:dump-classpath -Duika.output=/tmp/before.json` |
-| PR dump | `sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json` | `mvn -q compile uika:dump-classpath -Duika.output=/tmp/after.json` |
-| Check | `sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"` | `mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json` |
+| Step | sbt | Maven | Mill |
+| --- | --- | --- | --- |
+| Baseline dump | `sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/before.json` | `mvn -q uika:dump-classpath -Duika.output=/tmp/before.json` | `./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/before.json` |
+| PR dump | `sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json` | `mvn -q compile uika:dump-classpath -Duika.output=/tmp/after.json` | `./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/after.json` |
+| Check | `sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"` | `mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json` | `./mill net.exoego.uika.mill.Uika/upgradeCheck --before /tmp/before.json --after /tmp/after.json` |
 
 To keep the base-branch resolution off the PR's critical path, dump the
 baseline once per push instead and cache it as an artifact keyed by SHA:
@@ -129,7 +129,7 @@ and in the PR job, after downloading the artifact into `/tmp/uika-jfr`:
       - run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json -PuikaJfr=/tmp/uika-jfr
 ```
 
-The [per-tool knobs](#build-tool-plugins) cover sbt and Maven.
+The [per-tool knobs](#build-tool-plugins) cover sbt, Maven and Mill.
 
 ## Command reference
 
@@ -407,7 +407,7 @@ delete what you cannot justify before committing the file. Requires
 
 ## Build-tool plugins
 
-The Gradle, sbt, and Maven plugins write the same dump format: every module's resolved runtime
+The Gradle, sbt, Maven and Mill plugins write the same dump format: every module's resolved runtime
 classpath as coordinate-annotated JSON, kept per module so `upgrade-check` can
 [check each against its own resolution](#per-module-checking-upgrade-check).
 Feed two dumps to `uika upgrade-check`, or one to `uika check
@@ -415,8 +415,8 @@ Feed two dumps to `uika upgrade-check`, or one to `uika check
 unverified references).
 
 A dump also refers to build outputs, so the Gradle task builds them by default
-(`-PuikaBuildOutputs=false` for a resolution-only dump); sbt compiles as a side
-effect of the dump task, and Maven needs a `compile` phase in the same
+(`-PuikaBuildOutputs=false` for a resolution-only dump); sbt and Mill compile as
+a side effect of the dump task, and Maven needs a `compile` phase in the same
 invocation.
 
 The upgrade-check task fetches the CLI itself as
@@ -427,16 +427,16 @@ one coordinate bump updates both.
 
 The settings shown per tool below also have command-line forms:
 [`failOn`](#violation-tiers-and---fail-on) (`-PuikaFailOn=`, `set uikaFailOn
-:=`, `-Duika.failOn=`) and
+:=`, `-Duika.failOn=`, `--failOn`) and
 [`excludeFiles`](#excluding-known-false-positives---exclude-file)
-(`-PuikaExcludeFile=` for a single file).
+(`-PuikaExcludeFile=` for a single file, `--excludeFile` repeated).
 
 [`--jdk-release`](#how-it-works) needs no setting at all. The build runs on a
 JVM, so the release is derived from the Gradle toolchain,
-`maven.compiler.release`/`target`, or the sbt build JVM, clamped to what that
-JVM's `ct.sym` serves. Override with `jdkRelease` / `uikaJdkRelease` /
-`<jdkRelease>` (`-PuikaJdkRelease=`, `-Duika.jdkRelease=`), or set 0 to disable
-it.
+`maven.compiler.release`/`target`, or the sbt or Mill build JVM, clamped to what
+that JVM's `ct.sym` serves. Override with `jdkRelease` / `uikaJdkRelease` /
+`<jdkRelease>` (`-PuikaJdkRelease=`, `-Duika.jdkRelease=`,
+`--jdkRelease`), or set 0 to disable it.
 
 [Runtime load evidence](#runtime-load-evidence-jfr---class-load-log) is one
 knob per tool, pointed at one directory for both phases (collect on the base
@@ -461,6 +461,10 @@ branch, consume on the PR):
   goal against the execution root. A command-line `-DargLine` replaces any
   POM-configured argLine (jacoco's agent included) — append to the POM's
   argLine instead when one exists.
+- Mill: mix `UikaTestModule` into the test modules and export `UIKA_JFR=<dir>`
+  for the test run, then pass `--jfr <dir>` to `upgradeCheck`. The mixin is
+  needed because `forkArgs` is a task on the test module itself, out of reach of
+  a command that finds the modules through the evaluator.
 
 JFR generates pid-unique recording names for a directory value, so parallel
 test JVMs never collide, and the injected flag needs JDK 17+ test JVMs (the
@@ -469,7 +473,7 @@ value instead of a directory — a production recording, say — is
 consumption-only: the check converts it, test JVMs are left untouched.
 [`--draft-exclude-file`](#runtime-load-evidence-jfr---class-load-log)
 maps to `-PuikaDraftExcludeFile=` / `uikaDraftExcludeFile :=` /
-`-Duika.draftExcludeFile=`.
+`-Duika.draftExcludeFile=` / `--draftExcludeFile`.
 
 ### Gradle (`gradle-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-gradle-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-gradle-plugin)
 
@@ -549,6 +553,34 @@ $ sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"   # uikaCliVersion set
 $ mvn uika:dump-classpath -Duika.output=/tmp/classpath.json
 $ mvn uika:upgrade-check \
       -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json   # -Duika.cliVersion to override
+```
+
+### Mill (`mill-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fmill-uika_mill1_3%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/mill-uika_mill1_3)
+
+Mill 1.x. One header line wires up a build of any size: the commands find every
+non-test `JavaModule` themselves, so there is nothing to mix into the modules.
+
+```scala
+//| mvnDeps: ["net.exoego.uika::mill-uika::VERSION_PLACEHOLDER"]
+
+package build
+
+import mill.*, javalib.*
+```
+
+```console
+$ ./mill net.exoego.uika.mill.Uika/dumpClasspath                 # writes out/uika/classpath.json
+$ ./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/after.json
+$ ./mill net.exoego.uika.mill.Uika/upgradeCheck \
+      --before /tmp/before.json --after /tmp/after.json \
+      --failOn reachable --excludeFile uika-exclude.toml         # --cliVersion to override
+```
+
+To collect [runtime load evidence](#runtime-load-evidence-jfr---class-load-log),
+mix `UikaTestModule` into the test modules:
+
+```scala
+object test extends JavaTests, TestModule.Junit5, net.exoego.uika.mill.UikaTestModule
 ```
 
 ## How it works

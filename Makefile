@@ -3,6 +3,7 @@
 	gradle-build gradle-check gradle-test gradle-clean \
 	sbt-compile sbt-scripted sbt-clean \
 	maven-verify maven-clean \
+	mill-compile mill-test mill-clean \
 	native-publish-local stage-all
 
 CARGO ?= cargo
@@ -10,9 +11,13 @@ JAVA ?= mise exec -- java
 GRADLE ?= mise exec -- gradle
 SBT ?= mise exec -- sbt
 MAVEN ?= mise exec -- mvn
+# Mill bootstraps its own distribution from the //| mill-version header, so mise only
+# has to supply the JVM the launcher script runs on.
+MILL ?= mise exec -- ./mill
 GRADLE_PLUGIN_DIR ?= gradle-plugin
 SBT_PLUGIN_DIR ?= sbt-plugin
 MAVEN_PLUGIN_DIR ?= maven-plugin
+MILL_PLUGIN_DIR ?= mill-plugin
 UIKA_VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' cli/Cargo.toml | head -1)
 TMPDIR ?= /tmp
 SBT_CACHE_DIR ?= $(TMPDIR)/uika-sbt
@@ -37,20 +42,21 @@ help:
 		'  make gradle-check' \
 		'  make sbt-scripted' \
 		'  make maven-verify' \
+		'  make mill-test' \
 		'  make native-publish-local UIKA_VERSION=0.1.0' \
 		'  make stage-all UIKA_VERSION=0.1.0'
 
-build: cargo-build gradle-build sbt-compile maven-verify
+build: cargo-build gradle-build sbt-compile maven-verify mill-compile
 
-check: cargo-fmt-check cargo-clippy cargo-test gradle-check sbt-scripted maven-verify
+check: cargo-fmt-check cargo-clippy cargo-test gradle-check sbt-scripted maven-verify mill-test
 
-test: cargo-test gradle-test sbt-scripted maven-verify
+test: cargo-test gradle-test sbt-scripted maven-verify mill-test
 
 fmt: cargo-fmt
 
 fmt-check: cargo-fmt-check
 
-clean: gradle-clean sbt-clean maven-clean
+clean: gradle-clean sbt-clean maven-clean mill-clean
 	$(CARGO) clean
 
 cargo-build:
@@ -103,6 +109,15 @@ maven-verify:
 maven-clean:
 	$(MAVEN) -f $(MAVEN_PLUGIN_DIR)/pom.xml -B clean
 
+mill-compile:
+	cd $(MILL_PLUGIN_DIR) && $(MILL) compile
+
+mill-test:
+	cd $(MILL_PLUGIN_DIR) && $(MILL) test
+
+mill-clean:
+	cd $(MILL_PLUGIN_DIR) && $(MILL) clean
+
 native-publish-local:
 	$(GRADLE) -p binary-publishing publishToMavenLocal -PuikaVersion=$(UIKA_VERSION)
 
@@ -113,3 +128,4 @@ stage-all:
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) publishAllPublicationsToStagingRepository -PuikaVersion=$(UIKA_VERSION)
 	cd $(SBT_PLUGIN_DIR) && $(SBT) $(SBT_FLAGS) 'set ThisBuild / version := "$(UIKA_VERSION)"' publish
 	$(MAVEN) -f $(MAVEN_PLUGIN_DIR)/pom.xml -B -Prelease -Drevision=$(UIKA_VERSION) -DskipTests -Dinvoker.skip=true deploy
+	cd $(MILL_PLUGIN_DIR) && UIKA_VERSION=$(UIKA_VERSION) $(MILL) publishM2Local + stageChecksums

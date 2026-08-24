@@ -149,9 +149,10 @@ an agent whose harness does not auto-load it can just read the path.
 - `.claude/skills/uika-performance/SKILL.md` — benchmark workloads and expected
   numbers, optimization history, rejected approaches; before profiling or
   touching the hot path.
-- `.claude/skills/uika-jvm-plugins/SKILL.md` — Gradle/sbt/Maven plugin and
+- `.claude/skills/uika-jvm-plugins/SKILL.md` — Gradle/sbt/Maven/Mill plugin and
   `jvm-plugin-core` invariants; before changing anything under
-  `gradle-plugin/`, `sbt-plugin/`, `maven-plugin/`, or `jvm-plugin-core/`.
+  `gradle-plugin/`, `sbt-plugin/`, `maven-plugin/`, `mill-plugin/`, or
+  `jvm-plugin-core/`.
 
 Module layout is not documented here on purpose: `ls cli/src/` plus the
 "How it works" section of README.md is the current answer, and a hand-kept
