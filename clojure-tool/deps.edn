@@ -1,5 +1,5 @@
 {:paths ["src" "src-core"]
- :deps {org.clojure/clojure {:mvn/version "1.12.4"}
+ :deps {org.clojure/clojure {:mvn/version "1.12.5"}
         ;; The same resolver the project itself uses, so the dump can never disagree
         ;; with what `clojure -M`/`-X` actually puts on the classpath.
         org.clojure/tools.deps {:mvn/version "0.31.1642"}
