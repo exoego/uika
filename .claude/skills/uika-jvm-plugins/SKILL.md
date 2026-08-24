@@ -1,6 +1,6 @@
 ---
 name: uika-jvm-plugins
-description: Invariants for the uika Gradle, sbt, Maven and Mill build-tool plugins, the Clojure CLI tool, and the shared jvm-plugin-core - task shape, coordinate handling, CLI fetch and version defaulting, logger wiring, --jdk-release derivation, and how the tests stub the CLI. Load before changing anything under gradle-plugin/, sbt-plugin/, maven-plugin/, mill-plugin/, clojure-tool/, or jvm-plugin-core/.
+description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen build-tool plugins, the Clojure CLI tool, and the shared jvm-plugin-core - task shape, coordinate handling, CLI fetch and version defaulting, logger wiring, --jdk-release derivation, and how the tests stub the CLI. Load before changing anything under gradle-plugin/, sbt-plugin/, maven-plugin/, mill-plugin/, clojure-tool/, lein-plugin/, or jvm-plugin-core/.
 ---
 
 # uika JVM Build-Tool Plugin Notes
@@ -218,3 +218,28 @@ Same rule as the Mill section: point-of-use comments and the tests in
   prep step would burden every consumer, so the small ports (classifier, ct.sym clamp,
   extract) live in the ns with "keep in sync" markers. JFR conversion is deliberately
   absent until that changes.
+
+## Leiningen Plugin Notes
+
+Point-of-use comments and `lein-plugin/it/run.sh` hold the invariants; only the
+experiment-only lessons live here.
+
+- `exoego.uika.core` (in `clojure-tool/src-core/`) is shared into the lein jar by
+  `:source-paths` inclusion and is deliberately free of tools.deps: Leiningen
+  resolves with its own Aether, and the dump must come from
+  `leiningen.core.classpath/get-dependencies` (coordinates + files in one graph, key
+  metadata carries `:file`) so it cannot disagree with the classpath lein runs.
+- Dump from the project UNMERGED of `[:base :user :dev :provided]`. lein injects
+  nREPL through `:base` into every dev-profile task, and `:provided` is not in an
+  uberjar; without the unmerge the dump claims dev-only jars ship.
+- `lein deploy` can block forever reading a piped stdin (credentials probe) even for
+  a `file:` repo with `:sign-releases false` -- it worked twice, then hung twice, on
+  identical invocations. The Makefile runs it `</dev/null` so it proceeds or fails
+  visibly, never hangs.
+- Central validation needs `<developers>` and `<scm><connection>`; lein has no
+  first-class key for developers, so project.clj uses `:pom-addition`. lein stages
+  jar+pom+md5/sha1 but no sources/javadoc jars -- `tools/lein-stage-extras.py` adds
+  them (javadoc empty, like every uika plugin) and deletes lein's
+  maven-metadata.xml, which JReleaser must not upload.
+- mise's leiningen `2.13.0` package is broken (its script 404s on a
+  `2.12.1-SNAPSHOT` standalone jar); `.mise.toml` pins 2.12.0 and says why.

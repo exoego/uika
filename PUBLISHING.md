@@ -37,10 +37,10 @@ The Clojure CLI tool is not part of the deployment at all: it ships as a git
 dependency resolved straight from the repo tag, so it adds zero files and zero
 releases to the metrics below.
 
-One `vX.Y.Z` tag is one deployment carrying six components (`uika-cli`,
+One `vX.Y.Z` tag is one deployment carrying seven components (`uika-cli`,
 `uika-gradle-plugin`, the `net.exoego.uika.gradle.plugin` marker,
-`sbt-uika_2.12_1.0`, `uika-maven-plugin`, `mill-uika_mill1_3`). That is 92 files
-and about 3 MB per tag, so for uika alone Release Count is the binding metric, not file count or
+`sbt-uika_2.12_1.0`, `uika-maven-plugin`, `mill-uika_mill1_3`, `lein-uika`).
+That is 108 files and about 3 MB per tag, so for uika alone Release Count is the binding metric, not file count or
 size. July 2026 shipped eight tags and tripped the release-count limit.
 
 All three metrics are metered per organization, so the quota is shared with
@@ -56,7 +56,7 @@ explicitly tolerated by Sonatype and is not a reason to delay one.
 Keep the deployment small. Two things hold it at 3 MB instead of 6.2 MB, and
 reverting either without a replacement gives the bytes back. `[profile.release]`
 in the workspace `Cargo.toml` is tuned for size over speed, deliberately, and
-its comment carries the measurements. The four plugins publish an empty
+its comment carries the measurements. The plugins publish an empty
 javadoc jar, because Central requires that jar to exist but not to have
 content, and readers have the sources jar; each build file comments how.
 

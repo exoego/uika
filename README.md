@@ -53,8 +53,8 @@ tools on the same inputs (wall time, peak memory, and what each one reports).
 
 ## Usage
 
-Every recipe below drives the Gradle, sbt, Maven or Mill plugin, or the
-Clojure CLI tool, so declare it in your build first: see
+Every recipe below drives the Gradle, sbt, Maven, Mill or Leiningen plugin,
+or the Clojure CLI tool, so declare it in your build first: see
 [Build-tool plugins](#build-tool-plugins).
 
 ### PR gate on GitHub Actions (the main use case)
@@ -408,7 +408,7 @@ delete what you cannot justify before committing the file. Requires
 
 ## Build-tool plugins
 
-The Gradle, sbt, Maven and Mill plugins and the Clojure CLI tool write the same dump format: every module's resolved runtime
+The Gradle, sbt, Maven, Mill and Leiningen plugins and the Clojure CLI tool write the same dump format: every module's resolved runtime
 classpath as coordinate-annotated JSON, kept per module so `upgrade-check` can
 [check each against its own resolution](#per-module-checking-upgrade-check).
 Feed two dumps to `uika upgrade-check`, or one to `uika check
@@ -621,6 +621,27 @@ object test extends JavaTests, TestModule.Junit5, net.exoego.uika.mill.UikaTestM
 Your own `override def forkArgs = Seq(...)` replaces the list and drops the injected
 flag. Append to `super.forkArgs()` instead. `./mill testLocal` does not fork, so it
 records nothing.
+
+### Leiningen (`lein-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Flein-uika%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/lein-uika)
+
+```clojure
+;; project.clj
+:plugins [[net.exoego.uika/lein-uika "VERSION_PLACEHOLDER"]]
+;; Optional: gate only on reachable violations, and suppress known false positives.
+:uika {:fail-on "reachable"
+       :exclude-files ["uika-exclude.toml"]}
+```
+
+```console
+$ lein uika dump-classpath                       # writes target/uika/classpath.json
+$ lein uika dump-classpath /tmp/after.json
+$ lein uika upgrade-check /tmp/before.json /tmp/after.json   # :cli-version to override
+```
+
+The dump excludes what only development pulls in (the `:base`/`:user`/`:dev`
+profiles, so no nREPL, and `:provided`, which an uberjar leaves out) and runs
+`lein compile` first so an `:aot` project's classes are scanned. The Clojure
+detection caveats above apply here unchanged.
 
 ## How it works
 

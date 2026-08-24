@@ -5,6 +5,7 @@
 	maven-verify maven-clean \
 	mill-compile mill-test mill-clean \
 	clojure-test clojure-clean \
+	lein-test lein-clean lein-stage \
 	native-publish-local stage-all
 
 CARGO ?= cargo
@@ -16,11 +17,13 @@ MAVEN ?= mise exec -- mvn
 # has to supply the JVM the launcher script runs on.
 MILL ?= mise exec -- ./mill
 CLOJURE ?= mise exec -- clojure
+LEIN ?= mise exec -- lein
 GRADLE_PLUGIN_DIR ?= gradle-plugin
 SBT_PLUGIN_DIR ?= sbt-plugin
 MAVEN_PLUGIN_DIR ?= maven-plugin
 MILL_PLUGIN_DIR ?= mill-plugin
 CLOJURE_TOOL_DIR ?= clojure-tool
+LEIN_PLUGIN_DIR ?= lein-plugin
 UIKA_VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' cli/Cargo.toml | head -1)
 TMPDIR ?= /tmp
 SBT_CACHE_DIR ?= $(TMPDIR)/uika-sbt
@@ -47,20 +50,21 @@ help:
 		'  make maven-verify' \
 		'  make mill-test' \
 		'  make clojure-test' \
+		'  make lein-test' \
 		'  make native-publish-local UIKA_VERSION=0.1.0' \
 		'  make stage-all UIKA_VERSION=0.1.0'
 
 build: cargo-build gradle-build sbt-compile maven-verify mill-compile
 
-check: cargo-fmt-check cargo-clippy cargo-test gradle-check sbt-scripted maven-verify mill-test clojure-test
+check: cargo-fmt-check cargo-clippy cargo-test gradle-check sbt-scripted maven-verify mill-test clojure-test lein-test
 
-test: cargo-test gradle-test sbt-scripted maven-verify mill-test clojure-test
+test: cargo-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test
 
 fmt: cargo-fmt
 
 fmt-check: cargo-fmt-check
 
-clean: gradle-clean sbt-clean maven-clean mill-clean clojure-clean
+clean: gradle-clean sbt-clean maven-clean mill-clean clojure-clean lein-clean
 	$(CARGO) clean
 
 cargo-build:
@@ -131,6 +135,23 @@ clojure-test: cargo-build
 clojure-clean:
 	rm -rf $(CLOJURE_TOOL_DIR)/.cpcache
 
+# Real-CLI round trip, same reason as clojure-test: the dump JSON is hand-written.
+# mise exec puts lein itself on PATH for the script.
+lein-test: cargo-build
+	UIKA_BIN=$(abspath target/debug/uika) mise exec -- sh $(LEIN_PLUGIN_DIR)/it/run.sh
+
+lein-clean:
+	rm -rf $(LEIN_PLUGIN_DIR)/target $(LEIN_PLUGIN_DIR)/it/test-project/target $(LEIN_PLUGIN_DIR)/pom.xml
+
+# Central requires sources and javadoc jars next to the main artifact; lein deploy
+# stages only jar+pom, so the pair (sources real, javadoc empty like every other
+# uika plugin -- see PUBLISHING.md) is added here with the md5/sha1 Central needs.
+lein-stage:
+	# </dev/null: lein deploy blocks reading a piped stdin (credentials probe);
+	# with stdin closed it either proceeds or fails visibly, never hangs.
+	cd $(LEIN_PLUGIN_DIR) && UIKA_VERSION=$(UIKA_VERSION) $(LEIN) deploy staging </dev/null
+	python3 tools/lein-stage-extras.py $(LEIN_PLUGIN_DIR) $(UIKA_VERSION)
+
 native-publish-local:
 	$(GRADLE) -p binary-publishing publishToMavenLocal -PuikaVersion=$(UIKA_VERSION)
 
@@ -142,3 +163,4 @@ stage-all:
 	cd $(SBT_PLUGIN_DIR) && $(SBT) $(SBT_FLAGS) 'set ThisBuild / version := "$(UIKA_VERSION)"' publish
 	$(MAVEN) -f $(MAVEN_PLUGIN_DIR)/pom.xml -B -Prelease -Drevision=$(UIKA_VERSION) -DskipTests -Dinvoker.skip=true deploy
 	cd $(MILL_PLUGIN_DIR) && UIKA_VERSION=$(UIKA_VERSION) $(MILL) publishM2Local + stageChecksums
+	$(MAKE) lein-stage UIKA_VERSION=$(UIKA_VERSION)
