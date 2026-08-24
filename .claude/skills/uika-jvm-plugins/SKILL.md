@@ -229,8 +229,15 @@ description: Invariants for the uika Gradle, sbt, Maven and Mill build-tool plug
   dependency list is only known at runtime.
 - `scalaVersion` must match the Scala version `mill-libs` is built against (3.8.2 for
   Mill 1.1.8). An older compiler cannot read its TASTy at all; the error names the
-  version to use. Bumping `millVersion` means checking `mill-libs`' `scala-library`
-  dependency again.
+  version to use. `millVersion` is read from `mill.api.BuildInfo`, so the one version to
+  bump is the `//| mill-version:` header -- and bumping it means checking `mill-libs`'
+  `scala-library` dependency again.
+- Every build compiling the shared core needs an explicit release floor: Gradle
+  `options.release = 17`, Maven `maven.compiler.release`, Mill
+  `javacOptions = Seq("--release", "17")` plus `-release 17` on scalac. Without one,
+  javac targets the mise-pinned JDK and the jar dies with UnsupportedClassVersionError
+  on older build daemons. The released sbt 0.8.0 jar shipped class-file major 65 for
+  exactly this omission (fix pending in its own PR).
 - Mill's build-file compiler inserts `override` for you; plain `.scala` sources under
   `src/` and `test/src/` do not get that, so every `def mvnDeps` / `def moduleDeps` /
   `def repositories` in the tests needs it spelled out.

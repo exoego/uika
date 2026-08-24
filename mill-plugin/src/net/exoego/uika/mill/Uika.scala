@@ -171,9 +171,8 @@ object Uika extends ExternalModule {
       // and the internal ones are attributed from `depOutputs` below.
       //
       // withConfiguration is deprecated in coursier 2.1.25, but JavaModule.resolvedRunMvnDeps
-      // still builds the runtime dependency exactly this way. Following it verbatim is the point:
-      // the coordinates have to describe the same resolution the module actually runs on. The
-      // annotation is on the one call, not the method, so -Werror still sees the rest.
+      // still builds the runtime dependency exactly this way, and matching it verbatim is the
+      // point: the coordinates must describe the resolution the module actually runs on.
       val runtimeDep: cs.Dependency =
         m.coursierDependencyTask().withConfiguration(cs.Configuration.runtime): @nowarn(
           "cat=deprecation"

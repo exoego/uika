@@ -8,10 +8,9 @@ import mill.scalalib.*
 import mill.scalalib.publish.*
 
 object `package` extends ScalaModule, PublishModule {
-  // Read, not repeated: mill-libs and mill-testkit have to be the version of the daemon the
-  // header above bootstraps, or the plugin compiles against one API surface and the tests
-  // drive another. (Do not spell the header's own key in a comment -- the launcher greps for
-  // it and takes every matching line.)
+  // Read from the daemon the header above bootstraps, so mill-libs and mill-testkit can never
+  // drift from it. (Never write the header's own key in a comment: the launcher greps the
+  // build script for it and takes every matching line.)
   def millVersion = mill.api.BuildInfo.millVersion
 
   // Must match the Scala version mill-libs is built against. An older compiler cannot read
@@ -38,11 +37,10 @@ object `package` extends ScalaModule, PublishModule {
   // CodeQL has no Scala extractor, so the compiler is this module's static analysis.
   def scalacOptions = Seq("-deprecation", "-feature", "-unchecked", "-Werror", "-release", "17")
 
-  // The same floor the Gradle plugin (`options.release = 17`) and the Maven plugin
-  // (`maven.compiler.release`) put on these shared jvm-plugin-core sources. Without it javac
-  // targets whatever JDK .mise.toml pins, and a plugin jar holding class-file major 65 dies
-  // with UnsupportedClassVersionError on every Mill daemon below JDK 21. 17 is the real
-  // minimum: the core uses arrow switch and pattern `instanceof`.
+  // The same release-17 floor Gradle and Maven put on the shared jvm-plugin-core sources.
+  // Without it javac targets whatever JDK .mise.toml pins and the jar dies with
+  // UnsupportedClassVersionError on any older Mill daemon. 17 is the true minimum: the core
+  // uses arrow switch and pattern `instanceof`.
   def javacOptions = Seq("--release", "17")
 
   // upgradeCheck defaults the CLI version to the plugin's own version, read from here.
