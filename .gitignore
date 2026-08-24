@@ -8,6 +8,8 @@
 mill-plugin/out/
 .cpcache/
 lein-plugin/pom.xml
+# run.sh writes it; tracking an empty file would just drift
+lein-plugin/it/test-project/uika-exclude.toml
 sbt-plugin/.idea/
 *.iml
 .mise.local.toml

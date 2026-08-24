@@ -11,9 +11,21 @@
 
 (set! *warn-on-reflection* true)
 
+(defn lib->artifact
+  "Artifact map for one resolved lib. A bare symbol means group = name, the Clojure
+  convention (commons-io/commons-io is written commons-io). A nil version is fine:
+  dump-json collapses coordinate-less maps to path-only."
+  [lib version path]
+  {:group (or (namespace lib) (name lib))
+   :name (name lib)
+   :version version
+   :path (str path)})
+
 (defn dump-json
   "The v2 dump as a string: one module, one empty root (paths stay absolute).
-  `artifacts` are maps with :group :name :version (all optional together) and :path.
+  `artifacts` are maps with :group :name :version and :path; pass the coordinate keys
+  freely, because a map with no :version collapses to path-only right here. That is
+  what git, :local/root and file dependencies are: nothing the version diff compares.
   jdkRelease is this JVM's feature release, same as DumpFormat.buildJvmRelease."
   [module-name artifacts class-dirs]
   (let [artifact-maps (mapv (fn [{:keys [group name version path]}]
@@ -31,7 +43,7 @@
                      "artifacts" artifact-maps
                      "modules" [module]})))
 
-(defn platform-classifier
+(defn- platform-classifier
   "Port of UikaCli.platformClassifier; keep the two in sync."
   []
   (let [os (str/lower-case (System/getProperty "os.name" ""))
@@ -94,21 +106,59 @@
             (.delete ^java.io.File zip-file)))))
     binary))
 
-(defn effective-jdk-release
+(defn resolve-binary
+  "The uika binary to run. An explicit path wins (:cli-path, else UIKA_CLI_PATH);
+  otherwise the first known version of :cli-version, UIKA_CLI_VERSION, or
+  `default-version-fn` is fetched. Config beats environment for BOTH knobs: an
+  ambient UIKA_CLI_PATH must not silently defeat a path written in project.clj,
+  which is how the version knob already behaved.
+
+  Shared so the two frontends cannot drift, and so UIKA_CLI_PATH works in both. It
+  used to be read only by the Leiningen plugin, where the positional argv has no
+  room for the per-run override that `-T` expresses as :cli-path."
+  [{:keys [cli-path cli-version]} default-version-fn usage-hint]
+  (if-let [path (or cli-path (System/getenv "UIKA_CLI_PATH"))]
+    (io/file (str path))
+    (fetch-cli (str (or cli-version
+                        (System/getenv "UIKA_CLI_VERSION")
+                        (default-version-fn)
+                        (throw (ex-info usage-hint {})))))))
+
+(defn- release-number
+  "The knob as a long. Deliberately NOT part of the UikaCli.effectiveJdkRelease port:
+  the Java side takes an int from typed plugin config, while both Clojure frontends
+  take whatever the user wrote in project.clj or :exec-args, where a string is the
+  natural spelling next to :fail-on \"reachable\". A bare (long \"11\") throws a
+  ClassCastException no caller catches, so lein answers it with a full cause trace."
+  [target]
+  (cond
+    (nil? target) nil
+    (number? target) (long target)
+    (string? target) (try
+                       (Long/parseLong (str/trim target))
+                       (catch NumberFormatException _
+                         (throw (ex-info (str "uika: :jdk-release must be a number, got "
+                                              (pr-str target))
+                                         {:jdk-release target}))))
+    :else (throw (ex-info (str "uika: :jdk-release must be a number, got " (pr-str target))
+                          {:jdk-release target}))))
+
+(defn- effective-jdk-release
   "Port of UikaCli.effectiveJdkRelease: clamp to the build JVM's ct.sym ceiling,
   nil disables. The plugins run on a JVM, so the layer defaults ON."
-  [target]
-  (when (and target (pos? (long target)))
-    (let [ct-sym-max (dec (.feature (Runtime/version)))
-          effective (min (long target) ct-sym-max)]
-      (if (or (< effective 8)
-              (not (.isFile (io/file (System/getProperty "java.home") "lib" "ct.sym"))))
-        (do (println "uika: skipping the JDK API layer (no usable ct.sym in the build JVM)")
-            nil)
-        (do (when (< effective (long target))
-              (println (str "uika: JDK API layer clamped to release " effective
-                            " (the build JVM's ct.sym has no release " target ")")))
-            effective)))))
+  [target']
+  (when-let [target (release-number target')]
+    (when (pos? target)
+      (let [ct-sym-max (dec (.feature (Runtime/version)))
+            effective (min target ct-sym-max)]
+        (if (or (< effective 8)
+                (not (.isFile (io/file (System/getProperty "java.home") "lib" "ct.sym"))))
+          (do (println "uika: skipping the JDK API layer (no usable ct.sym in the build JVM)")
+              nil)
+          (do (when (< effective target)
+                (println (str "uika: JDK API layer clamped to release " effective
+                              " (the build JVM's ct.sym has no release " target ")")))
+              effective))))))
 
 (defn run-upgrade-check
   "Runs the binary and throws on a non-zero exit. Output is streamed line by line,

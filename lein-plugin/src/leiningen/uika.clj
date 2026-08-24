@@ -30,10 +30,7 @@
                              :let [[lib version] coordinate
                                    file (:file (meta coordinate))]
                              :when file]
-                         {:group (or (namespace lib) (name lib))
-                          :name (name lib)
-                          :version version
-                          :path (str file)}))
+                         (core/lib->artifact lib version file)))
         class-dirs (into [] (comp (filter some?)
                                   (distinct)
                                   (filter #(.isDirectory (io/file ^String %))))
@@ -56,23 +53,24 @@
 (defn- upgrade-check [project [before after]]
   (when-not (and before after)
     (main/abort "usage: lein uika upgrade-check <before.json> <after.json>"))
-  (let [{:keys [fail-on exclude-files jdk-release class-load-logs
-                cli-version cli-path]} (:uika project)
-        cli-path (or (System/getenv "UIKA_CLI_PATH") cli-path)
-        binary (if cli-path
-                 (io/file (str cli-path))
-                 (core/fetch-cli (str (or cli-version
-                                          (System/getenv "UIKA_CLI_VERSION")
-                                          (own-version)
-                                          (main/abort "uika-cli version is unknown; set :uika {:cli-version \"...\"}")))))]
+  (let [{:keys [fail-on exclude-files jdk-release class-load-logs] :as opts} (:uika project)]
+    ;; Binary resolution sits INSIDE the try: an unsupported platform, a zip missing
+    ;; the binary and a failed download all throw from here, and lein answers any
+    ;; exception without :exit-code with a full cause trace. IOException is caught
+    ;; alongside ex-info because a download failure is not an ex-info at all.
     (try
-      (core/run-upgrade-check binary {:before before :after after
-                                      :fail-on fail-on
-                                      :exclude-file exclude-files
-                                      :jdk-release jdk-release
-                                      :class-load-log class-load-logs})
+      (core/run-upgrade-check
+       (core/resolve-binary opts own-version
+                            "uika-cli version is unknown; set :uika {:cli-version \"...\"}")
+       {:before before :after after
+        :fail-on fail-on
+        :exclude-file exclude-files
+        :jdk-release jdk-release
+        :class-load-log class-load-logs})
       (catch clojure.lang.ExceptionInfo e
-        (main/abort (ex-message e))))))
+        (main/abort (ex-message e)))
+      (catch java.io.IOException e
+        (main/abort (str "uika: " (.getMessage e)))))))
 
 (defn uika
   "Write uika classpath dumps and run upgrade checks.

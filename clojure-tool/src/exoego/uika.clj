@@ -29,16 +29,12 @@
                          (seq aliases) (assoc :aliases (mapv keyword aliases))))))
 
 (defn- lib->artifacts
-  "Dump artifact maps for one resolved lib. Maven libs carry coordinates; git and
-  local deps have none that the version diff could compare, so they are emitted
-  coordinate-less like the other plugins' project/file dependencies."
+  "Dump artifact maps for one resolved lib. A lib can contribute several paths, and
+  git and :local/root deps have no version, which core/dump-json turns into a
+  coordinate-less entry like the other plugins' project/file dependencies."
   [lib {:mvn/keys [version] :keys [paths]}]
-  (let [group (or (namespace lib) (name lib))
-        artifact (name lib)]
-    (for [path paths]
-      (if version
-        {:group group :name artifact :version version :path path}
-        {:path path}))))
+  (for [path paths]
+    (core/lib->artifact lib version path)))
 
 (defn dump-classpath
   "Writes the project's resolved classpath as a uika v2 dump.
@@ -87,14 +83,12 @@
   :class-load-log    one path or a vector: runtime class-load evidence in the CLI's
                      text format (JFR conversion is not implemented in this tool yet)
   :cli-version       uika-cli version; defaults to this tool's own git tag
-  :cli-path          existing uika binary, skipping the download entirely"
-  [{:keys [before after cli-version cli-path] :as args}]
+                     (UIKA_CLI_VERSION is consulted in between)
+  :cli-path          existing uika binary, skipping the download entirely
+                     (UIKA_CLI_PATH does the same from the environment)"
+  [{:keys [before after] :as args}]
   (when-not (and before after)
     (throw (ex-info "usage: clojure -Tuika upgrade-check :before <a.json> :after <b.json>" {})))
-  (let [binary (if cli-path
-                 (io/file (str cli-path))
-                 (core/fetch-cli (str (or cli-version
-                                          (System/getenv "UIKA_CLI_VERSION")
-                                          (own-git-tag)
-                                          (throw (ex-info "uika-cli version is unknown; pass :cli-version" {}))))))]
-    (core/run-upgrade-check binary args)))
+  (core/run-upgrade-check
+   (core/resolve-binary args own-git-tag "uika-cli version is unknown; pass :cli-version")
+   args))
