@@ -1,6 +1,6 @@
 ---
 name: uika-jvm-plugins
-description: Invariants for the uika Gradle, sbt, Maven and Mill build-tool plugins and the shared jvm-plugin-core - task shape, coordinate handling, CLI fetch and version defaulting, logger wiring, --jdk-release derivation, and how the tests stub the CLI. Load before changing anything under gradle-plugin/, sbt-plugin/, maven-plugin/, mill-plugin/, or jvm-plugin-core/.
+description: Invariants for the uika Gradle, sbt, Maven and Mill build-tool plugins, the Clojure CLI tool, and the shared jvm-plugin-core - task shape, coordinate handling, CLI fetch and version defaulting, logger wiring, --jdk-release derivation, and how the tests stub the CLI. Load before changing anything under gradle-plugin/, sbt-plugin/, maven-plugin/, mill-plugin/, clojure-tool/, or jvm-plugin-core/.
 ---
 
 # uika JVM Build-Tool Plugin Notes
@@ -194,3 +194,27 @@ This section keeps only what neither can hold.
 - No mise backend installs the Mill launcher (`ubi:`/`github:` find no matching
   release asset). The committed `mill-plugin/mill` bootstrap script reads the
   `//| mill-version:` header in `build.mill`, so mise only supplies the JVM.
+
+## Clojure Tool Notes
+
+Same rule as the Mill section: point-of-use comments and the tests in
+`clojure-tool/test/` hold the invariants. Only the experiment-only lessons live here.
+
+- To resolve ANOTHER project's basis, wrap `create-basis` in
+  `clojure.tools.deps.util.dir/with-dir` and keep `:project "deps.edn"` bare. Every
+  relative path resolves against `*the-dir*` -- a dir-joined `:project` resolves twice
+  and silently falls back to the root deps (org.clojure/clojure alone in the dump is
+  the symptom). Relative `:local/root` entries need the same binding.
+- tools.deps resolves jar artifacts only; a zip-packaged classifier artifact like the
+  uika-cli distribution cannot go through it. The tool downloads from Maven Central
+  directly (`UIKA_CLI_URL` overrides), unlike the JVM plugins which reuse the build's
+  resolver.
+- The tool is distributed as a git dep (`:deps/root "clojure-tool"`), costing nothing
+  against the Central release quota. The CLI version default comes from the tool's own
+  `:git/tag` in `clojure.java.basis/current-basis` -- a tool installed from a tag knows
+  the matching CLI release with no stamping step. A `:local/root` install has no tag,
+  hence `:cli-version` / `UIKA_CLI_VERSION`.
+- jvm-plugin-core is NOT shared here: tools.deps does not compile Java sources and a
+  prep step would burden every consumer, so the small ports (classifier, ct.sym clamp,
+  extract) live in the ns with "keep in sync" markers. JFR conversion is deliberately
+  absent until that changes.

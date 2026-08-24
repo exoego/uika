@@ -53,8 +53,9 @@ tools on the same inputs (wall time, peak memory, and what each one reports).
 
 ## Usage
 
-Every recipe below drives the Gradle, sbt, Maven or Mill plugin, so declare it
-in your build first: see [Build-tool plugins](#build-tool-plugins).
+Every recipe below drives the Gradle, sbt, Maven or Mill plugin, or the
+Clojure CLI tool, so declare it in your build first: see
+[Build-tool plugins](#build-tool-plugins).
 
 ### PR gate on GitHub Actions (the main use case)
 
@@ -407,7 +408,7 @@ delete what you cannot justify before committing the file. Requires
 
 ## Build-tool plugins
 
-The Gradle, sbt, Maven and Mill plugins write the same dump format: every module's resolved runtime
+The Gradle, sbt, Maven and Mill plugins and the Clojure CLI tool write the same dump format: every module's resolved runtime
 classpath as coordinate-annotated JSON, kept per module so `upgrade-check` can
 [check each against its own resolution](#per-module-checking-upgrade-check).
 Feed two dumps to `uika upgrade-check`, or one to `uika check
@@ -577,6 +578,36 @@ $ ./mill net.exoego.uika.mill.Uika/upgradeCheck \
       --before /tmp/before.json --after /tmp/after.json \
       --failOn reachable --excludeFile uika-exclude.toml         # --cliVersion to override
 ```
+
+### Clojure CLI (`clojure-tool/`)
+
+Distributed as a git dependency, so there is nothing to fetch from Maven Central
+and the repo tag pins both the tool and the CLI version it runs:
+
+```console
+$ clojure -Ttools install io.github.exoego/uika \
+      '{:git/tag "vVERSION_PLACEHOLDER" :deps/root "clojure-tool"}' :as uika
+```
+
+```console
+$ clojure -Tuika dump-classpath                        # writes target/uika/classpath.json
+$ clojure -Tuika dump-classpath :output '"/tmp/after.json"' :aliases '[:prod]'
+$ clojure -Tuika upgrade-check :before '"/tmp/before.json"' :after '"/tmp/after.json"' \
+      :fail-on reachable :exclude-file '"uika-exclude.toml"'   # :cli-version to override
+```
+
+The dump records the resolved Maven coordinates from the project's own
+`deps.edn` basis (`:local/root` and git deps are coordinate-less, like the other
+tools' project dependencies), and `upgrade-check` downloads the platform binary
+from Maven Central (`UIKA_CLI_URL` to override) with the version taken from the
+installed tool's own `:git/tag`.
+
+Two Clojure-specific caveats. Interop calls without type hints go through
+runtime reflection and leave no reference in the constant pool, so uika sees
+the Java dependencies on the classpath at full strength but only the
+type-hinted, AOT-compiled part of the Clojure code itself; point `:class-dir`
+at the tools.build `compile-clj` output to include it. JFR recordings are not
+converted by this tool yet; pass text logs to `:class-load-log`.
 
 To collect [runtime load evidence](#runtime-load-evidence-jfr---class-load-log),
 mix `UikaTestModule` into the test modules, last so its `forkArgs` wins:

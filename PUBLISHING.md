@@ -33,6 +33,10 @@ and where `net.exoego` stands are in the
 source. The free tier is roughly the 90th percentile of all publishers, about
 1,167 files, 78 MB, and 7 releases per month.
 
+The Clojure CLI tool is not part of the deployment at all: it ships as a git
+dependency resolved straight from the repo tag, so it adds zero files and zero
+releases to the metrics below.
+
 One `vX.Y.Z` tag is one deployment carrying six components (`uika-cli`,
 `uika-gradle-plugin`, the `net.exoego.uika.gradle.plugin` marker,
 `sbt-uika_2.12_1.0`, `uika-maven-plugin`, `mill-uika_mill1_3`). That is 92 files

@@ -1,0 +1,3 @@
+{:paths ["src"]
+ :deps {org.apache.commons/commons-lang3 {:mvn/version "3.20.0"}
+        shared/shared {:local/root "shared"}}}
