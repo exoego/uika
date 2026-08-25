@@ -187,6 +187,20 @@
         {:home home :feature (Long/parseLong spec)}
         (catch NumberFormatException _ nil)))))
 
+(defn override-release
+  "Port of UikaCli.overrideRelease; keep the two in sync. The release an explicit
+  :jdk-release names for the DUMP, or nil when it names none.
+
+  The knob answers two questions at once, and this is the second one: which release the
+  application runs on. It is the escape hatch for what the derivation cannot see, a project
+  that ships on a JVM newer than anything it declares. Zero is not that statement, it means
+  \"switch the API layer off\", so the dump keeps its derived value rather than taking JDK
+  move detection down with the layer. Below 8 is dropped for a harder reason: a dump naming
+  it sends upgrade-check to ask ct.sym for a release it has never carried, failing the run."
+  [value]
+  (when-let [release (release-number value)]
+    (when (>= (long release) 8) (long release))))
+
 (defn this-jvm
   "The JVM running this code, in the shape effective-jdk-release and the UIKA_JDK
   export want. The `-T` tool runs project code on the same JVM, so this is its

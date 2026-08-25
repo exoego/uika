@@ -112,7 +112,13 @@ not be relearned by experiment.
   compiles against whatever JDK runs the build, so for it the build JVM IS the
   application's release. The CLI applies the dump-level value as each module's fallback
   at load time (`gradle.rs`), so `ModuleUniverse::jdk_release` always has the one
-  answer.
+  answer. The derivation cannot see a runtime that differs from what the build
+  declares, so the plugins' existing release knob doubles as the escape hatch:
+  `UikaCli.overrideRelease` (ported as `core/override-release`) replaces every module's
+  value with an explicit positive one. Zero stays "switch the API layer off" and leaves
+  the recorded release derived, since going silent there would take JDK-move detection
+  down with the layer, and anything below `MIN_RELEASE` is dropped because a dump
+  naming it sends `jdk::release_index` after a release ct.sym never carried.
 - `upgrade-check` turns a before/after disagreement into extra runs appended by
   `plan_jdk_runs` with `jdk_pair` set and both jar lists empty: ONE PER DISTINCT MOVE,
   over the union of the targets of the modules that made it. Per module because a build
@@ -123,8 +129,12 @@ not be relearned by experiment.
   dependency run into the JDK run's broken count. `release_change` requires BOTH sides
   to name a release, so a dump predating the field, or a module the before dump does
   not have, never manufactures a JDK move. The runs are excluded from the "N of M
-  modules changed" count (`ModuleOutcome.jdk`); they are not the dump's modules. Merged
-  mode has no per-module data and compares the dump-level values instead. Gradle
+  modules changed" count (`ModuleOutcome.jdk`); they are not the dump's modules. They
+  are also printed in their OWN section rather than as more rows of the per-module
+  table, with `ModuleOutcome.jdk_modules` naming the modules that moved: a JDK run
+  compares two releases of the JDK while a module row compares two versions of a jar, so
+  side by side their broken counts read as parts of one total that does not add up.
+  Merged mode has no per-module data and compares the dump-level values instead. Gradle
   rehydration carries the input dump's values forward instead of stamping the
   rehydrating JVM.
 - Tuning knobs: `UIKA_CHUNK` (paths processed concurrently in pass 1; default =

@@ -37,6 +37,19 @@
     (is (some #(str/ends-with? (get % "path") "src")
               (get module "classesDirs")))))
 
+(deftest jdk-release-option-overrides-the-running-jvm
+  ;; The tool runs project code on its own JVM, so that is the right default, but a
+  ;; project built here and shipped on another release can only say so by hand. 0 keeps
+  ;; its "switch the API layer off" meaning and leaves the recorded release derived.
+  (let [release (fn [args]
+                  (let [out (str (io/file (temp-dir) "dump.json"))]
+                    (uika/dump-classpath (merge {:dir fixture :output out} args))
+                    (json/read-str (slurp out))))]
+    (let [dump (release {:jdk-release 11})]
+      (is (= 11 (get dump "jdkRelease")))
+      (is (= 11 (get (first (get dump "modules")) "jdkRelease"))))
+    (is (= (.feature (Runtime/version)) (get (release {:jdk-release 0}) "jdkRelease")))))
+
 (deftest jvm-properties-survive-a-spaced-java-home
   ;; `C:\Program Files\...` is the everyday case. A \S+ capture truncates at the
   ;; space, the ct.sym probe then misses, and the JDK API layer switches itself off

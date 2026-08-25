@@ -108,6 +108,15 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   module it dumps (`getTargetCompatibility()` falls back to the toolchain, so a Java
   project always names one); the Clojure frontends write the same number on their
   single module and on the dump.
+- Each tool's release knob (`jdkRelease` / `uikaJdkRelease` / `<jdkRelease>` /
+  `:jdk-release`) feeds the DUMP as well as the flag, through
+  `UikaCli.overrideRelease` (`core/override-release` in Clojure). It is the only way a
+  build can state a runtime the derivation cannot see, such as compiling `--release 11`
+  and shipping on 21, and it replaces every module's value rather than sitting beside
+  them because it is a statement about the whole build. Zero keeps its old meaning of
+  switching the API layer off and leaves the dump derived, so do not fold the two
+  meanings together. Mill and the Clojure tool take it on the dump command itself
+  (`--jdkRelease`, `:jdk-release`), since neither has a build-wide setting to read.
 - Each plugin reads the spelling that pins the API, never the one that names the
   COMPILER. Gradle takes `compileJava`'s `options.release` else
   `targetCompatibility`, over `getAllprojects`, and deliberately NOT the

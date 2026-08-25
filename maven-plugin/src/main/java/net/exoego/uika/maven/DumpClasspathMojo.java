@@ -2,6 +2,7 @@ package net.exoego.uika.maven;
 
 import net.exoego.uika.plugin.core.ClasspathDump;
 import net.exoego.uika.plugin.core.DumpFormat;
+import net.exoego.uika.plugin.core.UikaCli;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
@@ -34,6 +35,15 @@ public final class DumpClasspathMojo extends AbstractMojo {
 
     @Parameter(property = "uika.output", defaultValue = "${session.executionRootDirectory}/target/uika/classpath.json")
     private File outputFile;
+
+    /**
+     * The release the application runs on, recorded on every module instead of what each one
+     * compiles for. The same parameter the upgrade-check goal takes, because a build has one
+     * answer to give. Set it for the case the derivation cannot see: a reactor compiling
+     * {@code maven.compiler.release} 11 that ships on a 21 runtime.
+     */
+    @Parameter(property = "uika.jdkRelease")
+    private Integer jdkRelease;
 
     @Override
     public void execute() throws MojoExecutionException {
@@ -125,8 +135,9 @@ public final class DumpClasspathMojo extends AbstractMojo {
             }
         }
 
+        Integer override = UikaCli.overrideRelease(jdkRelease);
         return new ClasspathDump.Module(moduleNames.get(reactorProject), classesDirs, artifacts,
-                JdkReleases.declaredRelease(reactorProject));
+                override != null ? override : JdkReleases.declaredRelease(reactorProject));
     }
 
     private static String gav(MavenProject project) {

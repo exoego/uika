@@ -665,6 +665,9 @@ struct ModuleRunPlan {
     /// modules of a build can name different releases, and the modules that share a move
     /// share its run over the union of their targets.
     jdk_pair: Option<(u32, u32)>,
+    /// For a JDK run, the modules that made the move. `names` cannot hold them (it is the
+    /// attribution key), so the report takes the real names from here.
+    jdk_modules: Vec<String>,
 }
 
 struct ModulePlan {
@@ -729,6 +732,7 @@ fn plan_jdk_runs(
         let mut seen = std::collections::BTreeSet::new();
         let mut targets = Vec::new();
         let mut app_roots = Vec::new();
+        let names: Vec<String> = modules.iter().map(|m| m.name.clone()).collect();
         for module in modules {
             // First-seen order, as in a single module's list: the JVM resolves a duplicated
             // class from the first classpath entry that carries it, and a scan that listed
@@ -755,6 +759,7 @@ fn plan_jdk_runs(
             targets,
             app_roots,
             jdk_pair: Some(pair),
+            jdk_modules: names,
         });
     }
 }
@@ -924,6 +929,7 @@ fn plan_dependency_runs(
                 targets,
                 app_roots: module.classes_dirs.clone(),
                 jdk_pair: None,
+                jdk_modules: Vec::new(),
             }),
         }
     }
@@ -952,6 +958,7 @@ fn reachable_rank(reachable: Option<bool>) -> u8 {
 struct RunOutcome {
     names: Vec<String>,
     jdk: bool,
+    jdk_modules: Vec<String>,
     scanned_classes: usize,
     unknown_refs: usize,
     app_roots_matched: Option<bool>,
@@ -1086,6 +1093,7 @@ fn upgrade_check_per_module(
             run_outcomes.push(RunOutcome {
                 names: run.names.clone(),
                 jdk: run.jdk_pair.is_some(),
+                jdk_modules: run.jdk_modules.clone(),
                 scanned_classes: result.scanned_classes,
                 unknown_refs: result.unknown_refs,
                 app_roots_matched: result.app_roots_matched,
@@ -1186,6 +1194,7 @@ fn module_outcomes(
         .map(|outcome| report::ModuleOutcome {
             modules: outcome.names.clone(),
             jdk: outcome.jdk,
+            jdk_modules: outcome.jdk_modules.clone(),
             scanned_classes: outcome.scanned_classes,
             broken: run_violations(merged, &outcome.names).count(),
             unknown_refs: outcome.unknown_refs,

@@ -255,6 +255,18 @@ object UikaTests extends TestSuite {
       }
     }
 
+    test("--jdkRelease overrides what the modules declare in the dump") {
+      // The derivation only sees what the build declares, so a build compiling for 11 and
+      // shipping on 21 has no other way to say so. The override is a statement about the
+      // whole build, so it replaces every module's own value.
+      Using.resource(UnitTester(stubCliBuild, null, env = systemEnv)) { tester =>
+        val out = os.Path(value(tester(Uika.dumpClasspath(tester.evaluator, jdkRelease = 21))))
+        val json = ujson.read(os.read(out))
+        assert(json("jdkRelease").num.toInt == 21)
+        assert(json("modules").arr.forall(_.obj.get("jdkRelease").map(_.num.toInt).contains(21)))
+      }
+    }
+
     test("UikaTestModule injects the JFR flag into forked test JVMs") {
       // A leaf that does not exist yet, and deleted again between the two evaluations: JFR
       // silently records to a single clobbered FILE when the leaf is missing under an

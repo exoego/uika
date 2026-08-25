@@ -110,23 +110,7 @@ final class UikaPluginIntegrationTest {
     @Test
     void recordsTheReleaseEachModuleCompilesFor() throws Exception {
         Path output = projectDir.resolve("classpath.json");
-        Files.createDirectories(projectDir.resolve("older"));
-        Files.createDirectories(projectDir.resolve("newer"));
-        write(projectDir.resolve("settings.gradle.kts"), """
-                rootProject.name = "mixed"
-                include("older", "newer")
-                """);
-        write(projectDir.resolve("build.gradle.kts"), """
-                plugins { id("net.exoego.uika") }
-                """);
-        write(projectDir.resolve("older/build.gradle.kts"), """
-                plugins { java }
-                tasks.withType<JavaCompile>().configureEach { options.release = 11 }
-                """);
-        write(projectDir.resolve("newer/build.gradle.kts"), """
-                plugins { java }
-                java { targetCompatibility = JavaVersion.VERSION_17 }
-                """);
+        writeMixedReleaseProject();
 
         runDump(output);
 
@@ -142,6 +126,32 @@ final class UikaPluginIntegrationTest {
         // target even when the build script does not name one.
         assertTrue(moduleReleases(doc).values().stream().allMatch(Objects::nonNull),
                 () -> "a dumped module carries no release: " + moduleReleases(doc));
+    }
+
+    /// The derivation only sees what the build declares, so a project compiling for 11 and
+    /// shipping on 21 has no other way to say so. -PuikaJdkRelease replaces what every
+    /// module declares, because it is a statement about the whole build.
+    @Test
+    void jdkReleasePropertyOverridesWhatTheModulesDeclare() throws Exception {
+        Path output = projectDir.resolve("classpath.json");
+        writeMixedReleaseProject();
+
+        runDump(output, "-PuikaJdkRelease=21");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        assertEquals(21, ((Number) doc.get("jdkRelease")).intValue());
+        assertEquals(Map.of(":older", 21, ":newer", 21), moduleReleases(doc));
+
+        // 0 only switches the JDK API layer off. Recording nothing would take JDK move
+        // detection down with it, which is a different feature.
+        Files.delete(output);
+        runDump(output, "-PuikaJdkRelease=0");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> derived = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        assertEquals(11, ((Number) derived.get("jdkRelease")).intValue());
+        assertEquals(Map.of(":older", 11, ":newer", 17), moduleReleases(derived));
     }
 
     @SuppressWarnings("unchecked")
@@ -163,6 +173,28 @@ final class UikaPluginIntegrationTest {
                 .findFirst()
                 .orElseThrow(() -> new AssertionError(modulePath + " is missing from " + modules));
         return module.get("jdkRelease") instanceof Number n ? n.intValue() : null;
+    }
+
+    /// Two subprojects targeting different releases, each through a different mechanism,
+    /// and a root that applies no java plugin and so declares nothing.
+    private void writeMixedReleaseProject() throws IOException {
+        Files.createDirectories(projectDir.resolve("older"));
+        Files.createDirectories(projectDir.resolve("newer"));
+        write(projectDir.resolve("settings.gradle.kts"), """
+                rootProject.name = "mixed"
+                include("older", "newer")
+                """);
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins { id("net.exoego.uika") }
+                """);
+        write(projectDir.resolve("older/build.gradle.kts"), """
+                plugins { java }
+                tasks.withType<JavaCompile>().configureEach { options.release = 11 }
+                """);
+        write(projectDir.resolve("newer/build.gradle.kts"), """
+                plugins { java }
+                java { targetCompatibility = JavaVersion.VERSION_17 }
+                """);
     }
 
     @Test

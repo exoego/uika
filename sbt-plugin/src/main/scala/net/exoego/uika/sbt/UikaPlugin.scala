@@ -19,7 +19,7 @@ object UikaPlugin extends AutoPlugin {
     val uikaCliVersion = settingKey[String]("uika-cli version for uikaUpgradeCheck (defaults to the plugin's own version)")
     val uikaFailOn = settingKey[String]("When uikaUpgradeCheck fails the build: never, reachable, or any (default)")
     val uikaExcludeFiles = settingKey[Seq[File]]("TOML files of known false positives to suppress, passed as repeated --exclude-file")
-    val uikaJdkRelease = settingKey[Int]("JDK API release for --jdk-release (0 disables; a negative value, the default, derives the lowest release any subproject compiles for from its javacOptions and scalacOptions, else the build JVM's, clamped to what its ct.sym serves)")
+    val uikaJdkRelease = settingKey[Int]("JDK API release for --jdk-release, and the release the dump records the application as running on (0 disables the layer but leaves the dump derived; a negative value, the default, derives the lowest release any subproject compiles for from its javacOptions and scalacOptions, else the build JVM's, clamped to what its ct.sym serves)")
     val uikaJfr = settingKey[Option[File]]("JFR class-load evidence location: a directory makes forked Test JVMs record jdk.ClassLoad there (pid-unique file names; needs Test/fork := true and a JDK 17+ test JVM) and uikaUpgradeCheck converts and reads it back; a .jfr file is consumed only. Set it bare in build.sbt or at ThisBuild; a per-subproject value reaches only that project's tests, not the check")
     val uikaDraftExcludeFile = settingKey[Option[File]]("File for uikaUpgradeCheck to write draft exclude rules to (--draft-exclude-file); only meaningful with uikaJfr. Set it bare in build.sbt or at ThisBuild")
     val uikaUpgradeCheck = inputKey[Unit]("Runs uika upgrade-check: uikaUpgradeCheck <before.json> <after.json>")
@@ -197,11 +197,18 @@ object UikaPlugin extends AutoPlugin {
         scalacOptions.value,
         (Compile / scalacOptions).value
       ).flatMap(options => Option(UikaCli.declaredRelease(options.asJava)))
+      // uikaJdkRelease replaces every module's own value when it is set, because it is a
+      // statement about the whole build. LocalRootProject for the reason uikaUpgradeCheck
+      // gives: read bare from here it would resolve this subproject, not the root override.
+      val declaredOverride =
+        UikaCli.overrideRelease(Int.box((LocalRootProject / uikaJdkRelease).value))
       new ClasspathDump.Module(
         ":" + modulePath,
         classDirs.asJava,
         (internalArtifacts ++ artifacts).asJava,
-        if (declared.isEmpty) null else declared.minBy(_.intValue)
+        if (declaredOverride != null) declaredOverride
+        else if (declared.isEmpty) null
+        else declared.minBy(_.intValue)
       )
     },
     uikaDumpClasspath := {
