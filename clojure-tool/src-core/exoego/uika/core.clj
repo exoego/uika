@@ -224,16 +224,29 @@
 (defn run-upgrade-check
   "Runs the binary and throws on a non-zero exit. Output is streamed line by line,
   not inherited: the caller may sit under a wrapper that captures stdout, the same
-  reason the JVM plugins route through a logger."
-  [binary {:keys [before after fail-on exclude-file jdk-release class-load-log jvm]}]
+  reason the JVM plugins route through a logger.
+
+  Port of UikaCli.runUpgradeCheck's command building. Keep the two in sync. A flag
+  added there also needs the key here and, for Leiningen, in `option-keys`."
+  [binary {:keys [before after fail-on exclude-file jdk-release class-load-log
+                  draft-exclude-file jvm]}]
   (let [jvm (or jvm (this-jvm))
         release (effective-jdk-release (or jdk-release (:feature jvm)) jvm)
-        ->vec #(cond (nil? %) [] (sequential? %) (mapv str %) :else [(str %)])
+        ;; Blank drops out for the reason `env` gives above, since a CI-templated
+        ;; project.clj interpolating an unset input yields "" rather than nil.
+        ->vec #(into [] (comp (map str) (remove str/blank?))
+                     (cond (nil? %) [] (sequential? %) % :else [%]))
         command (-> [(str binary) "upgrade-check" "--before" (str before) "--after" (str after)]
                     (into (when fail-on ["--fail-on" (name fail-on)]))
                     (into (mapcat #(vector "--exclude-file" %) (->vec exclude-file)))
                     (into (when release ["--jdk-release" (str release)]))
-                    (into (mapcat #(vector "--class-load-log" %) (->vec class-load-log))))
+                    (into (mapcat #(vector "--class-load-log" %) (->vec class-load-log)))
+                    ;; ->vec even for this single-valued flag. Its lein neighbours are
+                    ;; vectors, and a bare (str ["x.toml"]) is a legal filename, so the
+                    ;; draft would land in `["x.toml"]` with the run still exiting 0.
+                    ;; No pairing check needed. The CLI's error names --class-load-log.
+                    (into (mapcat #(vector "--draft-exclude-file" %)
+                                  (->vec draft-exclude-file))))
         builder (doto (ProcessBuilder. ^java.util.List command)
                   (.redirectErrorStream true))]
     ;; UIKA_JDK, like the JVM plugins: the child reads the PROJECT JVM's ct.sym

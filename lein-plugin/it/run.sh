@@ -16,6 +16,9 @@ unset UIKA_VERSION
 cd "$here/test-project"
 rm -rf target
 : > uika-exclude.toml
+# The evidence file :class-load-logs points at. The real CLI reads it, so it has to
+# exist before the run that is not stubbed.
+: > loads.log
 COMMONS_LANG3_VERSION=3.4 lein uika dump-classpath target/before.json
 lein uika dump-classpath target/after.json
 
@@ -87,6 +90,8 @@ UIKA_CLI_PATH="$stub" lein uika upgrade-check target/before.json target/after.js
 args="$(cat target/before.json.args)"
 case "$args" in *"--fail-on reachable"*) ;; *) echo "FAIL: fail-on not forwarded: $args" >&2; exit 1;; esac
 case "$args" in *"--exclude-file uika-exclude.toml"*) ;; *) echo "FAIL: exclude-files not forwarded: $args" >&2; exit 1;; esac
+case "$args" in *"--class-load-log loads.log"*) ;; *) echo "FAIL: class-load-logs not forwarded: $args" >&2; exit 1;; esac
+case "$args" in *"--draft-exclude-file uika-draft.toml"*) ;; *) echo "FAIL: draft-exclude-file not forwarded: $args" >&2; exit 1;; esac
 # Presence, not the exact 11: effective-jdk-release clamps to the JVM's ct.sym
 # ceiling, so a pre-12 lein JVM would legitimately send a lower number and a JRE
 # none at all. .mise.toml pins temurin-21, which passes 11 through unclamped.
