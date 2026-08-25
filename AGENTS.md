@@ -126,9 +126,12 @@ not be relearned by experiment.
   17 -> 21 move. And a run is the unit the report counts and the `--fail-on` gate
   decides on, so only a module-shaped run can give a module its own scanned, broken and
   unverified numbers. The cost is that a jar on several modules' classpaths is scanned
-  once per module, which an earlier per-pair union avoided. That is the cost model the
-  dependency runs already have, and `cached_jdk_pair` keeps the expensive half, reading
-  a release out of ct.sym, down to once per distinct pair.
+  once per module, which an earlier per-pair union avoided. Measured and accepted, with
+  the numbers in the uika-performance skill: the union is flat in module count and per
+  module is linear, so a large monorepo pays minutes. It pays them only on a PR that
+  moves a JDK release, since `release_change` plans nothing otherwise, and
+  `cached_jdk_pair` already keeps the other half of the cost, reading a release out of
+  ct.sym, down to once per distinct pair.
 - A JDK run is named `:app (JDK 11 -> 17)`, module AND pair. That string is the key
   violations are attributed by, so a bare module name would fold the module's dependency
   run into the JDK run's broken count, and a bare pair would lose the attribution

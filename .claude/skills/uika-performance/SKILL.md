@@ -106,6 +106,52 @@ Rust on CPU time (the `experiments/` comparison, since removed). Rust's real
 advantages here: memory footprint, startup time for short CLI runs, and static
 binary distribution.
 
+## Deliberate Costs
+
+- Per-module JDK runs (`plan_jdk_runs`) scan each moved module's whole classpath, so a
+  jar shared by N modules is inflated and parsed N times. Measured on a synthetic
+  monorepo worst case, every module carrying the same classpath, 11 -> 17, no dependency
+  changes so the numbers are the JDK runs alone:
+
+  | modules x jars | union, one run per pair | per module |
+  |----------------|------------------------:|-----------:|
+  | 1 x 300        |         0.27s / 149MB   | 0.29s / 151MB |
+  | 10 x 300       |         0.27s / 141MB   |  1.6s / 262MB |
+  | 25 x 300       |         0.29s / 149MB   |  4.7s / 336MB |
+  | 50 x 300       |         0.29s / 170MB   | 7.7-9.8s / 348MB |
+  | 10 x 1000      |         1.15s / 418MB   | 12.0s / 548MB |
+
+  One session, both binaries back to back on the same dumps. Do not compare these
+  absolutes against a later session: a `find | head -300` over the Gradle cache picks a
+  different 300 jars once anything downloads, which moved the same 1 x 300 point from
+  0.29s to 0.61s. The ratios and the shape are what hold.
+
+  The union is flat in module count and per module is linear, so a 50-module build on a
+  2000-jar classpath extrapolates to minutes. User time confirms the work is genuinely
+  redundant rather than an overhead artifact: 3.96s at 1 module and 191s at 50, a factor
+  of 48. Accepted on purpose. A run is the unit the report counts and the `--fail-on`
+  gate decides on, so only a module-shaped run gives a module its own scanned, broken
+  and unverified numbers, and the cost lands only on a PR that moves a JDK release,
+  never on a dependency upgrade. Real builds are cheaper than this table because their
+  module classpaths are not identical.
+
+  Where the remaining headroom is, measured rather than guessed:
+
+  - NOT in cross-run parallelism. One run already reaches user/real 6.5x on 12 cores and
+    50 sequential runs reach 6.8x, so running runs concurrently is worth under 2x wall
+    and multiplies peak RSS by the concurrency.
+  - `cached_jdk_pair` already removes the other half, reading a release out of ct.sym,
+    which would otherwise repeat per module.
+  - Sharing the SCAN across runs would mean composing `ScanResult` arenas per path, and
+    `representative_offsets` plus `parse_targets` both resolve duplicate classes
+    first-wins in path order WITHIN a run, so per-path pieces are not independent.
+  - Unmeasured and the most promising: pass 1's owner filter is `old.class_name_set()`,
+    i.e. for a JDK run the ENTIRE old JDK API, so every reference to `java.lang.String`
+    becomes a reference record. Narrowing it to the classes whose API actually differs
+    between the two releases would shrink every JDK run, union or per module. It changes
+    what pass 1 records, so it needs golden validation and a check that hierarchy-escape
+    Unknown counts do not move.
+
 ## Rejected Approaches
 
 - `jclassfile` crate: full attribute parsing cost too much CPU and temporary
