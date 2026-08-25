@@ -68,6 +68,14 @@ jobs:
           path: |
             ~/.m2/repository
             ~/.gitlibs
+            # The invoker ITs resolve into their OWN local repository
+            # (maven-plugin/pom.xml sets localRepositoryPath to target/it-repo), so
+            # ~/.m2 never covered them and every run refetched ~47 artifacts from
+            # Central cold. That is what tripped a 429 once a third IT was added.
+            # Safe to carry across runs: the invoker's install goal rewrites
+            # uika-maven-plugin each time, and the prebuilds delete the uika-cli
+            # entry so an edited stub is never shadowed.
+            maven-plugin/target/it-repo
           key: maven-${{ runner.os }}-${{ hashFiles('maven-plugin/pom.xml', 'maven-plugin/src/it/**/*.xml', 'clojure-tool/deps.edn') }}
           restore-keys: |
             maven-${{ runner.os }}-
