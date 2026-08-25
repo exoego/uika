@@ -30,6 +30,8 @@ struct ModuleDump {
     classes_dirs: Vec<PathBuf>,
     #[serde(default)]
     artifacts: Vec<ArtifactDump>,
+    #[serde(default)]
+    jdk_release: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -65,9 +67,10 @@ pub struct Universe {
     /// Also emptied when any v2 module lacks a name: pairing unnamed modules positionally
     /// would diff unrelated classpaths against each other.
     pub modules: Vec<ModuleUniverse>,
-    /// Feature version of the JVM the dump was taken on. `None` for dumps written before
-    /// the plugins recorded it, which is what keeps an old before-dump from claiming a
-    /// JDK change against a fresh after-dump.
+    /// The API release the dumped application runs on: the lowest any module declares, else
+    /// the JVM that wrote the dump. Compared between dumps only in merged mode; per-module
+    /// mode uses [`ModuleUniverse::jdk_release`], for which this is the per-module fallback.
+    /// `None` for dumps written before the plugins recorded it.
     pub jdk_release: Option<u32>,
 }
 
@@ -79,6 +82,11 @@ pub struct ModuleUniverse {
     pub classes_dirs: Vec<PathBuf>,
     /// Resolved classpath entries in resolution order.
     pub artifacts: Vec<ModuleArtifact>,
+    /// The API release THIS module compiles for, falling back to the dump's when the module
+    /// declares none (the fallback is applied here so every consumer sees one answer). `None`
+    /// only for a dump written before the plugins recorded any release, which is what keeps
+    /// an old before-dump from claiming a JDK change against a fresh after-dump.
+    pub jdk_release: Option<u32>,
 }
 
 /// One classpath entry of a module.
@@ -180,6 +188,8 @@ struct ModuleV2 {
     classes_dirs: Vec<RootedPath>,
     #[serde(default)]
     artifact_refs: Vec<usize>,
+    #[serde(default)]
+    jdk_release: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -238,6 +248,7 @@ fn from_v1(dump: ClasspathDump) -> Universe {
             name: module.module,
             classes_dirs: module.classes_dirs,
             artifacts: module_artifacts,
+            jdk_release: module.jdk_release.or(dump.jdk_release),
         });
     }
     Universe {
@@ -311,6 +322,7 @@ fn from_v2(dump: DumpV2) -> Result<Universe> {
             name,
             classes_dirs,
             artifacts,
+            jdk_release: module.jdk_release.or(dump.jdk_release),
         });
     }
     if unnamed_module {

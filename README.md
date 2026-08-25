@@ -462,6 +462,13 @@ Override with `jdkRelease` / `uikaJdkRelease` / `<jdkRelease>`
 (`-PuikaJdkRelease=`, `-Duika.jdkRelease=`, `--jdkRelease`), or set 0 to disable
 it.
 
+Each dump also records the release next to every module it lists, read the same
+way. That is what lets `upgrade-check` notice that the application's own JDK
+moved between the two dumps and check that move too, scoped to the modules that
+made it — a module left on an older release is not checked against a sibling's
+upgrade. A module that declares no target is recorded as running on the build's
+own JVM, which is what it compiles against.
+
 [Runtime load evidence](#runtime-load-evidence-jfr---class-load-log) is one
 knob per tool, pointed at one directory for both phases (collect on the base
 branch, consume on the PR):

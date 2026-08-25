@@ -30,12 +30,17 @@
   `-T` tool is this one but for the Leiningen plugin is not: :eval-in-leiningen
   pins the plugin to lein's own JVM while project code runs under :java-cmd. The
   field exists so upgrade-check can spot a JDK move between two dumps, so it has
-  to track the runtime, not whoever happened to write the file."
+  to track the runtime, not whoever happened to write the file.
+
+  It is written on the module as well as on the dump, the shape the JVM plugins
+  emit for builds that mix releases across modules. Neither frontend has more than
+  one module, so here the two are always the same number."
   ([module-name artifacts class-dirs]
    (dump-json module-name artifacts class-dirs (.feature (Runtime/version))))
   ([module-name artifacts class-dirs jdk-release]
    (let [artifact-maps (vec artifacts)
          module {"module" module-name
+                 "jdkRelease" jdk-release
                  "classesDirs" (mapv (fn [^String p] {"root" 0 "path" p}) class-dirs)
                  "artifactRefs" (vec (range (count artifact-maps)))}]
      (json/write-str {"version" 2

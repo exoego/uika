@@ -48,7 +48,7 @@ public final class DumpClasspathMojo extends AbstractMojo {
         }
 
         String root = session.getExecutionRootDirectory();
-        String json = DumpFormat.writeV2(modules, List.of(root), DumpFormat.buildJvmRelease());
+        String json = DumpFormat.writeV2(modules, List.of(root), DumpFormat.dumpRelease(modules));
         File parent = outputFile.getParentFile();
         if (parent != null) {
             parent.mkdirs();
@@ -125,7 +125,8 @@ public final class DumpClasspathMojo extends AbstractMojo {
             }
         }
 
-        return new ClasspathDump.Module(moduleNames.get(reactorProject), classesDirs, artifacts);
+        return new ClasspathDump.Module(moduleNames.get(reactorProject), classesDirs, artifacts,
+                JdkReleases.declaredRelease(reactorProject));
     }
 
     private static String gav(MavenProject project) {

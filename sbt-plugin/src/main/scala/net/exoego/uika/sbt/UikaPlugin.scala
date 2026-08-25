@@ -73,8 +73,9 @@ object UikaPlugin extends AutoPlugin {
       // The LOWEST release any subproject compiles for, because one flag serves a run that
       // checks every module. Under-claiming only costs Unknowns, while over-claiming makes a
       // member the runtime lacks resolve cleanly and loses the finding with nothing to show.
-      // A build declaring nothing falls back to the JVM, the only evidence left. Issue #128
-      // tracks carrying a release per module in the dump instead.
+      // A build declaring nothing falls back to the JVM, the only evidence left. The dump
+      // keeps each module's own release next to it (uikaModuleClasspath below); the flag
+      // stays one value because the layer it switches on is process-wide.
       //
       // Four reads, because missing any one of them falls through to the build JVM, the
       // over-claiming direction this default exists to avoid. ScopeFilter leaves the
@@ -186,10 +187,21 @@ object UikaPlugin extends AutoPlugin {
               )
           }
         }
+      // What THIS module compiles for, in the dump next to it, so upgrade-check can scope a
+      // JDK move to the modules that made it. Both axes and both compilers, for the reason
+      // uikaUpgradeCheck spells out above: sbt delegates Compile to Zero and never the
+      // reverse, and a Scala module states its target in scalacOptions alone.
+      val declared = Seq(
+        javacOptions.value,
+        (Compile / javacOptions).value,
+        scalacOptions.value,
+        (Compile / scalacOptions).value
+      ).flatMap(options => Option(UikaCli.declaredRelease(options.asJava)))
       new ClasspathDump.Module(
         ":" + modulePath,
         classDirs.asJava,
-        (internalArtifacts ++ artifacts).asJava
+        (internalArtifacts ++ artifacts).asJava,
+        if (declared.isEmpty) null else declared.minBy(_.intValue)
       )
     },
     uikaDumpClasspath := {
@@ -201,7 +213,7 @@ object UikaPlugin extends AutoPlugin {
         DumpFormat.writeV2(
           modules.asJava,
           List(baseDirectory.value.getAbsolutePath).asJava,
-          DumpFormat.buildJvmRelease()
+          DumpFormat.dumpRelease(modules.asJava)
         )
       )
       streams.value.log.info(s"uika classpath dump: $out")

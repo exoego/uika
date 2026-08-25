@@ -101,16 +101,32 @@ not be relearned by experiment.
   11 -> 17, while a subclass of java.awt.event.ComponentAdapter reports nothing
   despite the 98 public -> protected constructor narrowings in that pair (the
   subclass-aware access check absorbs them).
-- The dump records the writing JVM's feature version (`jdkRelease`, additive, from
-  `DumpFormat.buildJvmRelease()` in the one shared v2 writer, so all four plugins
-  get it at once). `upgrade-check` turns a before/after disagreement into ONE extra
-  run over the whole after universe — not one per module, since every module runs on
-  the same JVM — appended by `plan_module_runs` with `jdk_pair` set and both jar
-  lists empty. `jdk_change` requires BOTH sides to name a release, so a dump
-  predating the field never manufactures a JDK move. The run is excluded from the
-  "N of M modules changed" count (`ModuleOutcome.jdk`); it is not one of the dump's
-  modules. Gradle rehydration carries the input dump's value forward instead of
-  stamping the rehydrating JVM.
+- The dump records `jdkRelease` (additive) TWICE: once per module, once for the dump.
+  Both name the API release the checked application runs on, never the JVM that wrote
+  the file — that was issue #128, where a build-image JDK bump manufactured a JDK-pair
+  run the application never had while a real application JDK upgrade went unseen. A
+  module's is what it compiles for (the same per-tool derivation `--jdk-release`
+  defaults from, so the two cannot disagree), absent when it declares nothing; the
+  dump's is `DumpFormat.dumpRelease`, the lowest across the modules, else
+  `buildJvmRelease()`. That fallback is not a compromise: a module declaring no target
+  compiles against whatever JDK runs the build, so for it the build JVM IS the
+  application's release. The CLI applies the dump-level value as each module's fallback
+  at load time (`gradle.rs`), so `ModuleUniverse::jdk_release` always has the one
+  answer.
+- `upgrade-check` turns a before/after disagreement into extra runs appended by
+  `plan_jdk_runs` with `jdk_pair` set and both jar lists empty: ONE PER DISTINCT MOVE,
+  over the union of the targets of the modules that made it. Per module because a build
+  may mix releases, and a module still on 11 must not be checked against a sibling's
+  17 -> 21 move; a build that moved as a whole still plans exactly one run. The run's
+  name is the pair (`JDK 11 -> 17`), not the module names, because that string is also
+  the key violations are attributed by and the real names would fold a module's
+  dependency run into the JDK run's broken count. `release_change` requires BOTH sides
+  to name a release, so a dump predating the field, or a module the before dump does
+  not have, never manufactures a JDK move. The runs are excluded from the "N of M
+  modules changed" count (`ModuleOutcome.jdk`); they are not the dump's modules. Merged
+  mode has no per-module data and compares the dump-level values instead. Gradle
+  rehydration carries the input dump's values forward instead of stamping the
+  rehydrating JVM.
 - Tuning knobs: `UIKA_CHUNK` (paths processed concurrently in pass 1; default =
   16x rayon threads, rationale in `check.rs::scan_target_paths`), `UIKA_WINDOW`
   (fallback zip-reader window size; default 1 MiB, two windows).

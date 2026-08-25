@@ -54,7 +54,7 @@ public abstract class MergeClasspathTask extends DefaultTask {
                 DumpFormat.writeV2(
                         modules,
                         List.of(getRootDirPath().get()),
-                        DumpFormat.buildJvmRelease());
+                        DumpFormat.dumpRelease(modules));
         File out = getOutputFile().get().getAsFile();
         File parent = out.getParentFile();
         if (parent != null) {

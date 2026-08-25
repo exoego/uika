@@ -43,7 +43,7 @@ object Uika extends ExternalModule {
       DumpFormat.writeV2(
         dumps.asJava,
         Seq(workspace.toString).asJava,
-        DumpFormat.buildJvmRelease()
+        DumpFormat.dumpRelease(dumps.asJava)
       )
     )
     Task.log.info(s"uika classpath dump: $out")
@@ -105,8 +105,9 @@ object Uika extends ExternalModule {
     // The LOWEST release any module compiles for, because one flag serves a run that checks
     // every module. Under-claiming only costs Unknowns, while over-claiming makes a member
     // the runtime lacks resolve cleanly and loses the finding with nothing to show. A build
-    // declaring nothing falls back to the JVM, the only evidence left. Issue #128 tracks
-    // carrying a release per module in the dump instead.
+    // declaring nothing falls back to the JVM, the only evidence left. The dump keeps each
+    // module's own release next to it (moduleDumpTask); the flag stays one value because the
+    // layer it switches on is process-wide.
     //
     // mandatoryJavacOptions as well as javacOptions, since Mill compiles with both and a
     // trait that pins the release commonly does it there.
@@ -234,10 +235,16 @@ object Uika extends ExternalModule {
         new ClasspathDump.Artifact(group, name, version, path.toString, projectOf.get(path).orNull)
       }
 
+      // What THIS module compiles for, in the dump next to it, so upgrade-check can scope a
+      // JDK move to the modules that made it. mandatoryJavacOptions as well as javacOptions,
+      // for the reason upgradeCheck spells out: Mill compiles with both.
+      val declared = Seq(m.javacOptions(), m.mandatoryJavacOptions())
+        .flatMap(options => Option(UikaCli.declaredRelease(options.asJava)))
       new ClasspathDump.Module(
         moduleLabel(m),
         classesDirs.map(_.toString).asJava,
-        artifacts.asJava
+        artifacts.asJava,
+        if (declared.isEmpty) null else declared.minBy(_.intValue)
       )
     }
   }

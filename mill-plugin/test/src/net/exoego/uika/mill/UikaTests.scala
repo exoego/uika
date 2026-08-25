@@ -231,6 +231,30 @@ object UikaTests extends TestSuite {
       }
     }
 
+    test("the dump records the release each module compiles for") {
+      // Same mixed build as the flag test above. The flag can only carry the lowest, but the
+      // dump keeps every module's own, which is what lets upgrade-check scope a JDK move to
+      // the modules that made it.
+      Using.resource(UnitTester(stubCliBuild, null, env = systemEnv)) { tester =>
+        val out = os.Path(value(tester(Uika.dumpClasspath(tester.evaluator))))
+        val json = ujson.read(os.read(out))
+        def release(module: String): Option[Int] =
+          json("modules").arr
+            .find(_("module").str == module)
+            .get
+            .obj
+            .get("jdkRelease")
+            .map(_.num.toInt)
+
+        assert(release(":older").contains(11))
+        assert(release(":newer").contains(17))
+        // Declares no target of its own, so it falls back to the dump-level release, which
+        // is the lowest any module declares.
+        assert(release(":app").isEmpty)
+        assert(json("jdkRelease").num.toInt == 11)
+      }
+    }
+
     test("UikaTestModule injects the JFR flag into forked test JVMs") {
       // A leaf that does not exist yet, and deleted again between the two evaluations: JFR
       // silently records to a single clobbered FILE when the leaf is missing under an

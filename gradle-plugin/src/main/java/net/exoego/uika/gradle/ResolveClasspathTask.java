@@ -127,8 +127,9 @@ public abstract class ResolveClasspathTask extends DefaultTask {
         File input = getInputFile().get().getAsFile();
         String inputJson = Files.readString(input.toPath(), StandardCharsets.UTF_8);
         List<Module> modules = parseModules(inputJson);
-        // Rehydration only fetches missing files; the release stays the one that produced
-        // the dump, not the JVM doing the fetching.
+        // Rehydration only fetches missing files; the releases stay the ones that produced
+        // the dump, not the JVM doing the fetching. Each module's own carries forward with
+        // it below, and this is the dump-level one.
         Integer jdkRelease = parseJdkRelease(inputJson);
 
         Set<String> wanted = wantedNotations(modules);
@@ -168,7 +169,8 @@ public abstract class ResolveClasspathTask extends DefaultTask {
                 }
                 artifacts.add(artifact);
             }
-            rewrittenModules.add(new Module(module.path(), module.classesDirs(), artifacts));
+            rewrittenModules.add(new Module(module.path(), module.classesDirs(), artifacts,
+                    module.jdkRelease()));
         }
 
         String json =

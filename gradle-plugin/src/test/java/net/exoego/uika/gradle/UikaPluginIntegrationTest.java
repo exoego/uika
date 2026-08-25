@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -77,10 +78,11 @@ final class UikaPluginIntegrationTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
         assertEquals(2, ((Number) doc.get("version")).intValue());
-        // upgrade-check compares this across the before/after dumps to check the JDK move too.
+        // upgrade-check compares this across the before/after dumps to check the JDK move
+        // too. This project declares no target, so what it compiles against IS the build JVM.
         assertEquals(Runtime.version().feature(),
                 ((Number) doc.get("jdkRelease")).intValue(),
-                "dump must record the build JVM's release");
+                "dump must record the release the application runs on");
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> modules = (List<Map<String, Object>>) doc.get("modules");
@@ -99,6 +101,68 @@ final class UikaPluginIntegrationTest {
         assertTrue(firstClassesDir.endsWith(expectedSuffix),
                 () -> "expected classes dir to end with " + expectedSuffix
                         + ", got " + firstClassesDir);
+    }
+
+    /// The dump records the release each module compiles for, not one value for the build:
+    /// upgrade-check pairs them module by module, so a build that mixes releases gets its
+    /// JDK move scoped to the modules that made it. The dump-level value is the lowest of
+    /// them, the fallback for a module that declares nothing (like the root here).
+    @Test
+    void recordsTheReleaseEachModuleCompilesFor() throws Exception {
+        Path output = projectDir.resolve("classpath.json");
+        Files.createDirectories(projectDir.resolve("older"));
+        Files.createDirectories(projectDir.resolve("newer"));
+        write(projectDir.resolve("settings.gradle.kts"), """
+                rootProject.name = "mixed"
+                include("older", "newer")
+                """);
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins { id("net.exoego.uika") }
+                """);
+        write(projectDir.resolve("older/build.gradle.kts"), """
+                plugins { java }
+                tasks.withType<JavaCompile>().configureEach { options.release = 11 }
+                """);
+        write(projectDir.resolve("newer/build.gradle.kts"), """
+                plugins { java }
+                java { targetCompatibility = JavaVersion.VERSION_17 }
+                """);
+
+        runDump(output);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        assertEquals(11, ((Number) doc.get("jdkRelease")).intValue(),
+                "the dump-level release must be the lowest any module declares");
+        assertEquals(11, moduleRelease(doc, ":older"));
+        assertEquals(17, moduleRelease(doc, ":newer"));
+        // The root applies no java plugin, so it dumps nothing at all and contributes no
+        // release. Every module that IS dumped carries one: getTargetCompatibility() falls
+        // back to the toolchain's language version, so a Java project always declares a
+        // target even when the build script does not name one.
+        assertTrue(moduleReleases(doc).values().stream().allMatch(Objects::nonNull),
+                () -> "a dumped module carries no release: " + moduleReleases(doc));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Integer> moduleReleases(Map<String, Object> doc) {
+        List<Map<String, Object>> modules = (List<Map<String, Object>>) doc.get("modules");
+        Map<String, Integer> releases = new LinkedHashMap<>();
+        for (Map<String, Object> module : modules) {
+            releases.put((String) module.get("module"),
+                    module.get("jdkRelease") instanceof Number n ? n.intValue() : null);
+        }
+        return releases;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Integer moduleRelease(Map<String, Object> doc, String modulePath) {
+        List<Map<String, Object>> modules = (List<Map<String, Object>>) doc.get("modules");
+        Map<String, Object> module = modules.stream()
+                .filter(m -> Objects.equals(modulePath, m.get("module")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(modulePath + " is missing from " + modules));
+        return module.get("jdkRelease") instanceof Number n ? n.intValue() : null;
     }
 
     @Test

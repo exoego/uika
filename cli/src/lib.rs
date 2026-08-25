@@ -661,8 +661,9 @@ struct ModuleRunPlan {
     targets: Vec<PathBuf>,
     app_roots: Vec<PathBuf>,
     /// This run compares JDK releases rather than JARs, so its indexes come from
-    /// `jdk::release_index` and its jar lists stay empty. One such run covers every module:
-    /// the JDK is the same for all of them, unlike their resolved dependency versions.
+    /// `jdk::release_index` and its jar lists stay empty. One run per distinct move: the
+    /// modules of a build can name different releases, and the modules that share a move
+    /// share its run over the union of their targets.
     jdk_pair: Option<(u32, u32)>,
 }
 
@@ -681,45 +682,174 @@ struct ModulePlan {
 /// Decide which modules need a check and with what inputs. A module is checked only when its
 /// own resolution lost a version (same gate as the merged mode's old_jars, per module) — an
 /// unchanged module cannot break from the upgrade and is skipped, which also keeps the cost
-/// proportional to the change, not the repository.
+/// proportional to the change, not the repository. A module whose JDK release moved is
+/// checked for that too, on the same principle: only the modules that moved, and only
+/// against the move they made.
 fn plan_module_runs(before: &gradle::Universe, after: &gradle::Universe) -> ModulePlan {
-    let mut plan = plan_dependency_runs(before, after);
-    // One run for the whole universe rather than one per module: every module runs on the
-    // same JVM, so a per-module split would rescan the same classpath for the same answer.
-    if let Some((old, new)) = jdk_change(before, after) {
+    let mut notes = TargetNotes::default();
+    let mut plan = plan_dependency_runs(before, after, &mut notes);
+    plan_jdk_runs(before, after, &mut plan, &mut notes);
+    notes.report();
+    plan
+}
+
+/// Add one run per distinct JDK move, over the union of the targets of the modules that made
+/// it. Per module rather than once for the whole universe: the dump records the release each
+/// module compiles for, and a build is free to mix them, so a module still on 11 must not be
+/// checked against the 17 -> 21 move its sibling made. A build where every module moved
+/// together — the common case — still plans exactly one run, just with the same targets the
+/// universe-wide run used.
+fn plan_jdk_runs(
+    before: &gradle::Universe,
+    after: &gradle::Universe,
+    plan: &mut ModulePlan,
+    notes: &mut TargetNotes,
+) {
+    // Grouped before any run is built so each pair's targets are deduplicated across its
+    // modules in one pass; sorted, so the run order does not depend on dump order.
+    let mut moves: std::collections::BTreeMap<(u32, u32), Vec<&gradle::ModuleUniverse>> =
+        std::collections::BTreeMap::new();
+    let mut seen_names = std::collections::BTreeSet::new();
+    for module in &after.modules {
+        // Duplicate names are warned about (and skipped) by the dependency planner already.
+        if !seen_names.insert(module.name.clone()) {
+            continue;
+        }
+        // A module missing from the before dump has no release to compare with, the same
+        // both-sides rule that keeps a dump predating the field from inventing a move.
+        let Some(before_module) = before.module(&module.name) else {
+            continue;
+        };
+        if let Some(pair) = release_change(before_module.jdk_release, module.jdk_release) {
+            moves.entry(pair).or_default().push(module);
+        }
+    }
+
+    for (pair, modules) in moves {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut targets = Vec::new();
+        let mut app_roots = Vec::new();
+        for module in modules {
+            // First-seen order, as in a single module's list: the JVM resolves a duplicated
+            // class from the first classpath entry that carries it, and a scan that listed
+            // the same jar twice would also inflate the run's scanned-class count.
+            for target in module_targets(module, after, notes) {
+                if seen.insert(target.clone()) {
+                    targets.push(target);
+                }
+            }
+            for dir in &module.classes_dirs {
+                if !app_roots.contains(dir) {
+                    app_roots.push(dir.clone());
+                }
+            }
+        }
         plan.runs.push(ModuleRunPlan {
-            names: vec![format!("JDK {old} -> {new}")],
+            // The pair, not the module names: this pseudo-name is also the key each
+            // violation is attributed by, and reusing the real names would fold the
+            // modules' dependency runs into this run's broken count.
+            names: vec![format!("JDK {} -> {}", pair.0, pair.1)],
             changes: Vec::new(),
             old_jars: Vec::new(),
             new_jars: Vec::new(),
-            targets: after.scan_targets.clone(),
-            app_roots: after.app_roots.clone(),
-            jdk_pair: Some((old, new)),
+            targets,
+            app_roots,
+            jdk_pair: Some(pair),
         });
     }
-    plan
 }
 
 /// The JDK releases to compare, when both dumps recorded one and they differ. A dump
 /// written before the plugins recorded it reads `None`, which is why an old before-dump
 /// never manufactures a JDK change against a fresh after-dump.
 fn jdk_change(before: &gradle::Universe, after: &gradle::Universe) -> Option<(u32, u32)> {
-    let (b, a) = (before.jdk_release?, after.jdk_release?);
+    release_change(before.jdk_release, after.jdk_release)
+}
+
+/// Same rule for a dump-level pair (merged mode) and a per-module pair.
+fn release_change(before: Option<u32>, after: Option<u32>) -> Option<(u32, u32)> {
+    let (b, a) = (before?, after?);
     (b != a).then_some((b, a))
 }
 
-fn plan_dependency_runs(before: &gradle::Universe, after: &gradle::Universe) -> ModulePlan {
+/// Scan-target bookkeeping shared by both planners, reported once after planning rather
+/// than once per module that hit the same file.
+#[derive(Default)]
+struct TargetNotes {
+    /// file -> modules that needed it.
+    missing: std::collections::BTreeMap<PathBuf, std::collections::BTreeSet<String>>,
+    substituted: std::collections::BTreeMap<PathBuf, String>,
+}
+
+impl TargetNotes {
+    fn report(&self) {
+        for (file, project) in &self.substituted {
+            eprintln!(
+                "note: {} is not built; scanning module {}'s classesDirs instead",
+                file.display(),
+                project
+            );
+        }
+        for (file, modules) in &self.missing {
+            eprintln!(
+                "warning: scan target not found, skipping: {} (needed by {})",
+                file.display(),
+                modules.iter().cloned().collect::<Vec<_>>().join(", ")
+            );
+        }
+    }
+}
+
+/// One module's scan targets: its own outputs first (JVM order: application classes precede
+/// dependencies), then the resolved classpath in resolution order. A project-dependency
+/// artifact that was never built falls back to the producing module's classesDirs from the
+/// same dump.
+fn module_targets(
+    module: &gradle::ModuleUniverse,
+    after: &gradle::Universe,
+    notes: &mut TargetNotes,
+) -> Vec<PathBuf> {
+    let mut targets = module.classes_dirs.clone();
+    for artifact in &module.artifacts {
+        if artifact.file.exists() {
+            targets.push(artifact.file.clone());
+            continue;
+        }
+        let producer = artifact
+            .project
+            .as_deref()
+            .and_then(|p| after.module(p))
+            .filter(|m| !m.classes_dirs.is_empty());
+        match producer {
+            Some(producer) => {
+                notes
+                    .substituted
+                    .insert(artifact.file.clone(), producer.name.clone());
+                targets.extend(producer.classes_dirs.iter().cloned());
+            }
+            None => {
+                notes
+                    .missing
+                    .entry(artifact.file.clone())
+                    .or_default()
+                    .insert(module.name.clone());
+            }
+        }
+    }
+    targets
+}
+
+fn plan_dependency_runs(
+    before: &gradle::Universe,
+    after: &gradle::Universe,
+    notes: &mut TargetNotes,
+) -> ModulePlan {
     let project_coords = gradle::project_coords_union(before, after);
     let mut runs: Vec<ModuleRunPlan> = Vec::new();
     let mut seen_names = std::collections::BTreeSet::new();
     let mut unchanged = 0usize;
     let mut new_modules = 0usize;
     let mut incomplete_modules = 0usize;
-    // file -> modules that needed it: warned once after planning, not once per module.
-    let mut missing: std::collections::BTreeMap<PathBuf, std::collections::BTreeSet<String>> =
-        std::collections::BTreeMap::new();
-    let mut substituted: std::collections::BTreeMap<PathBuf, String> =
-        std::collections::BTreeMap::new();
 
     for module in &after.modules {
         if !seen_names.insert(module.name.clone()) {
@@ -777,33 +907,7 @@ fn plan_dependency_runs(before: &gradle::Universe, after: &gradle::Universe) -> 
             continue;
         }
 
-        // The module's own outputs first (JVM order: application classes precede dependencies),
-        // then the resolved classpath in resolution order. A project-dependency artifact that
-        // was never built falls back to the producing module's classesDirs from the same dump.
-        let mut targets = module.classes_dirs.clone();
-        for artifact in &module.artifacts {
-            if artifact.file.exists() {
-                targets.push(artifact.file.clone());
-                continue;
-            }
-            let producer = artifact
-                .project
-                .as_deref()
-                .and_then(|p| after.module(p))
-                .filter(|m| !m.classes_dirs.is_empty());
-            match producer {
-                Some(producer) => {
-                    substituted.insert(artifact.file.clone(), producer.name.clone());
-                    targets.extend(producer.classes_dirs.iter().cloned());
-                }
-                None => {
-                    missing
-                        .entry(artifact.file.clone())
-                        .or_default()
-                        .insert(module.name.clone());
-                }
-            }
-        }
+        let targets = module_targets(module, after, notes);
 
         match runs.iter_mut().find(|r| {
             r.old_jars == module_changes.old_jars
@@ -822,21 +926,6 @@ fn plan_dependency_runs(before: &gradle::Universe, after: &gradle::Universe) -> 
                 jdk_pair: None,
             }),
         }
-    }
-
-    for (file, project) in &substituted {
-        eprintln!(
-            "note: {} is not built; scanning module {}'s classesDirs instead",
-            file.display(),
-            project
-        );
-    }
-    for (file, modules) in &missing {
-        eprintln!(
-            "warning: scan target not found, skipping: {} (needed by {})",
-            file.display(),
-            modules.iter().cloned().collect::<Vec<_>>().join(", ")
-        );
     }
 
     ModulePlan {
@@ -964,8 +1053,9 @@ fn upgrade_check_per_module(
             if let Some(w) = verdict_writer.as_mut() {
                 w.set_module(Some(run.names.join(",")));
             }
-            // A JDK run's pair comes from ct.sym/jmods, not from jars, and is built once
-            // here rather than per run because the plan holds at most one.
+            // A JDK run's pair comes from ct.sym/jmods, not from jars, so it bypasses the
+            // per-side jar-index caches. One build per run, which is also one per distinct
+            // move: two runs sharing a pair are merged at planning time.
             let jdk_indexes = match run.jdk_pair {
                 Some(pair) => Some(jdk_release_pair(pair)?),
                 None => None,
@@ -1196,7 +1286,7 @@ fn flags_str(access: u16) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{FailOn, jdk_change, should_fail};
+    use super::{FailOn, jdk_change, plan_module_runs, should_fail};
     use crate::intern::intern;
     use crate::model::{Reason, RefKind, SymbolRef, Violation};
 
@@ -1224,6 +1314,129 @@ mod tests {
         assert_eq!(jdk_change(&universe(None), &universe(Some(21))), None);
         assert_eq!(jdk_change(&universe(Some(17)), &universe(None)), None);
         assert_eq!(jdk_change(&universe(None), &universe(None)), None);
+    }
+
+    fn module(name: &str, jdk_release: Option<u32>) -> crate::gradle::ModuleUniverse {
+        module_with_dirs(name, jdk_release, &[&format!("/build{name}/classes")])
+    }
+
+    fn module_with_dirs(
+        name: &str,
+        jdk_release: Option<u32>,
+        dirs: &[&str],
+    ) -> crate::gradle::ModuleUniverse {
+        crate::gradle::ModuleUniverse {
+            name: name.to_string(),
+            classes_dirs: dirs.iter().map(std::path::PathBuf::from).collect(),
+            artifacts: Vec::new(),
+            jdk_release,
+        }
+    }
+
+    fn modular(modules: Vec<crate::gradle::ModuleUniverse>) -> crate::gradle::Universe {
+        crate::gradle::Universe {
+            modules,
+            ..universe(None)
+        }
+    }
+
+    /// The pair and the targets of every planned JDK run, which is what decides both what is
+    /// compared and which code it is compared over.
+    fn jdk_runs(
+        before: &crate::gradle::Universe,
+        after: &crate::gradle::Universe,
+    ) -> Vec<((u32, u32), Vec<String>)> {
+        plan_module_runs(before, after)
+            .runs
+            .iter()
+            .filter_map(|run| {
+                Some((
+                    run.jdk_pair?,
+                    run.targets
+                        .iter()
+                        .map(|t| t.display().to_string())
+                        .collect(),
+                ))
+            })
+            .collect()
+    }
+
+    /// A module that stayed on its release must not be scanned against a move its sibling
+    /// made: the JDK 17 removals a `:app` upgrade has to answer for are not breakage in a
+    /// `:legacy` still compiled for 8.
+    #[test]
+    fn a_jdk_move_is_scoped_to_the_modules_that_made_it() {
+        let before = modular(vec![module(":app", Some(11)), module(":legacy", Some(8))]);
+        let after = modular(vec![module(":app", Some(17)), module(":legacy", Some(8))]);
+        assert_eq!(
+            jdk_runs(&before, &after),
+            vec![((11, 17), vec!["/build:app/classes".to_string()])]
+        );
+    }
+
+    /// Modules moving together share one run over the union of their targets, so the common
+    /// build — every module on one release — still plans exactly one JDK run.
+    #[test]
+    fn modules_sharing_a_move_share_one_run() {
+        let before = modular(vec![module(":app", Some(11)), module(":web", Some(11))]);
+        let after = modular(vec![module(":app", Some(17)), module(":web", Some(17))]);
+        assert_eq!(
+            jdk_runs(&before, &after),
+            vec![(
+                (11, 17),
+                vec![
+                    "/build:app/classes".to_string(),
+                    "/build:web/classes".to_string()
+                ]
+            )]
+        );
+    }
+
+    /// Merging two modules into one run must not list a shared target twice: the JVM
+    /// resolves a duplicated class from the first entry that carries it, and the second copy
+    /// would only inflate the run's scanned-class count.
+    #[test]
+    fn a_target_two_modules_share_is_scanned_once() {
+        let dirs = ["/build/shared", "/build/own"];
+        let before = vec![
+            module_with_dirs(":app", Some(11), &dirs),
+            module_with_dirs(":web", Some(11), &dirs),
+        ];
+        let after = vec![
+            module_with_dirs(":app", Some(17), &dirs),
+            module_with_dirs(":web", Some(17), &dirs),
+        ];
+        assert_eq!(
+            jdk_runs(&modular(before), &modular(after)),
+            vec![(
+                (11, 17),
+                vec!["/build/shared".to_string(), "/build/own".to_string()]
+            )]
+        );
+    }
+
+    /// Different moves are different comparisons and cannot share an index, so they get a
+    /// run each.
+    #[test]
+    fn distinct_moves_get_a_run_each() {
+        let before = modular(vec![module(":app", Some(11)), module(":web", Some(17))]);
+        let after = modular(vec![module(":app", Some(17)), module(":web", Some(21))]);
+        assert_eq!(
+            jdk_runs(&before, &after)
+                .into_iter()
+                .map(|(pair, _)| pair)
+                .collect::<Vec<_>>(),
+            vec![(11, 17), (17, 21)]
+        );
+    }
+
+    /// The both-sides rule, per module: a module the before dump does not have (renamed or
+    /// new) has no release to compare with, and one that predates the field reads None.
+    #[test]
+    fn a_module_missing_a_release_on_either_side_plans_no_jdk_run() {
+        let before = modular(vec![module(":app", Some(11)), module(":gone", Some(11))]);
+        let after = modular(vec![module(":new", Some(17)), module(":app", None)]);
+        assert_eq!(jdk_runs(&before, &after), Vec::new());
     }
 
     fn violation(reachable: Option<bool>, invocation_found: Option<bool>) -> Violation {

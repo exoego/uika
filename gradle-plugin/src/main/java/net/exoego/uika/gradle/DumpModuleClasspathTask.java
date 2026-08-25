@@ -13,6 +13,7 @@ import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.Internal;
+import org.gradle.api.tasks.Optional;
 import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.TaskAction;
@@ -64,6 +65,12 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
     /** This module's project path, e.g. ":app". */
     @Input
     public abstract Property<String> getModulePath();
+
+    /** The API release this module compiles for, unset when it declares none. Wired in by
+     * {@link UikaPlugin} at configuration time, where the project is still available. */
+    @Input
+    @Optional
+    public abstract Property<Integer> getJdkRelease();
 
     /** True when the module has neither a Java-family plugin nor the configuration; the dump
      * is an empty file the merge side skips. */
@@ -134,6 +141,10 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
 
         StringBuilder json = new StringBuilder();
         json.append("{\"module\":").append(quote(getModulePath().get()));
+        Integer jdkRelease = getJdkRelease().getOrNull();
+        if (jdkRelease != null) {
+            json.append(",\"jdkRelease\":").append(jdkRelease.intValue());
+        }
 
         json.append(",\"classesDirs\":[");
         boolean first = true;

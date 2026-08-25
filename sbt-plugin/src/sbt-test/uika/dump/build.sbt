@@ -2,6 +2,9 @@ ThisBuild / scalaVersion := "2.12.21"
 
 lazy val core = (project in file("core"))
   .settings(
+    // On the Compile axis on purpose: sbt delegates Compile to Zero and never the reverse,
+    // so a derivation reading the project axis alone would miss this, the idiomatic spelling.
+    Compile / javacOptions := Seq("--release", "11"),
     Compile / sourceGenerators += Def.task {
       val out = (Compile / sourceManaged).value / "example" / "Core.scala"
       IO.write(
@@ -20,6 +23,7 @@ lazy val core = (project in file("core"))
 lazy val app = (project in file("app"))
   .dependsOn(core)
   .settings(
+    javacOptions := Seq("--release", "17"),
     libraryDependencies += "org.apache.commons" % "commons-lang3" % "3.20.0",
     Compile / sourceGenerators += Def.task {
       val out = (Compile / sourceManaged).value / "example" / "App.scala"
@@ -73,6 +77,11 @@ checkDump := {
       roots(artifact("root").asInstanceOf[Double].toInt) + artifact("path") == coreClassesDir
   }, s"no internal-dependency entry for $coreClassesDir in $module")
 
+  // Each module records the release IT compiles for, so upgrade-check can scope a JDK
+  // move to the modules that made it; the dump-level value is the lowest of them.
+  assert(module("jdkRelease") == 17.0, module)
+  assert(json("jdkRelease") == 11.0, json)
+
   // :core itself is dumped as a module with its own classesDirs.
   val coreModule = json("modules")
     .asInstanceOf[List[Map[String, Any]]]
@@ -81,4 +90,5 @@ checkDump := {
   assert(coreModule("classesDirs").asInstanceOf[List[Map[String, Any]]].exists { dir =>
     roots(dir("root").asInstanceOf[Double].toInt) + dir("path") == coreClassesDir
   }, coreModule)
+  assert(coreModule("jdkRelease") == 11.0, coreModule)
 }
