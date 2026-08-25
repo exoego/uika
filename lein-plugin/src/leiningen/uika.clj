@@ -2,10 +2,10 @@
   "lein uika dump-classpath [output] / lein uika upgrade-check <before> <after>.
 
   Options come from a {:uika {...}} map in project.clj: :fail-on, :exclude-files,
-  :jdk-release (0 disables), :class-load-logs (text format), :draft-exclude-file,
-  :cli-version,
-  :cli-path. The CLI version defaults to this plugin's own, read from the jar's
-  pom.properties, so one version bump updates both."
+  :jdk-release (0 disables), :class-load-logs (text format), :draft-exclude-file
+  (needs :class-load-logs, and the CLI's own error names the singular CLI flag this
+  map rejects), :cli-version, :cli-path. The CLI version defaults to this plugin's
+  own, read from the jar's pom.properties, so one version bump updates both."
   (:require [clojure.java.io :as io]
             [exoego.uika.core :as core]
             [leiningen.core.classpath :as lein-cp]

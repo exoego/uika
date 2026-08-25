@@ -16,9 +16,7 @@
   :plugins [[net.exoego.uika/lein-uika "0.0.0-dev"]]
   :uika {:fail-on "reachable"
          :exclude-files ["uika-exclude.toml"]
-         ;; The drafting half of the evidence workflow. The CLI rejects
-         ;; --draft-exclude-file without at least one --class-load-log, so the pair
-         ;; is configured and asserted together.
+         ;; Paired because the CLI rejects --draft-exclude-file on its own.
          :class-load-logs ["loads.log"]
          :draft-exclude-file "uika-draft.toml"
          :jdk-release 11})

@@ -75,9 +75,23 @@
       (is (str/includes? args (str "--exclude-file " exclude)))
       (is (str/includes? args "--jdk-release 11"))
       (is (str/includes? args (str "--class-load-log " dir "/loads.log")))
-      ;; The drafting half of the evidence workflow: the CLI rejects the flag without
-      ;; at least one --class-load-log, so the two are asserted together.
       (is (str/includes? args (str "--draft-exclude-file " dir "/draft.toml"))))
+    (testing "a vector value is unwrapped, and blank is unset"
+      ;; (str ["x"]) is a legal filename, so the draft would land in ["x"] with exit 0.
+      ;; The lein keys next to this one are vectors, which is how it gets written.
+      (uika/upgrade-check {:before (str before) :after (str after)
+                           :class-load-log [(str dir "/loads.log")]
+                           :draft-exclude-file [(str dir "/draft.toml")]
+                           :cli-path (str stub)})
+      (is (str/includes? (slurp (str before ".args"))
+                         (str "--draft-exclude-file " dir "/draft.toml")))
+      (uika/upgrade-check {:before (str before) :after (str after)
+                           :class-load-log ""
+                           :draft-exclude-file ""
+                           :cli-path (str stub)})
+      (let [args (slurp (str before ".args"))]
+        (is (not (str/includes? args "--draft-exclude-file")))
+        (is (not (str/includes? args "--class-load-log")))))
     (testing "a CLI that found violations fails the command"
       (let [failing-stub (io/file dir "uika-fail")]
         (spit failing-stub "#!/bin/sh\nexit 1\n")

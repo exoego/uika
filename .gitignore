@@ -8,8 +8,11 @@
 mill-plugin/out/
 .cpcache/
 lein-plugin/pom.xml
-# run.sh writes it; tracking an empty file would just drift
+# run.sh writes these, so tracking them would just drift. uika-draft.toml is CLI
+# output, rewritten twice per run (placeholder first, then the drafted rules).
 lein-plugin/it/test-project/uika-exclude.toml
+lein-plugin/it/test-project/loads.log
+lein-plugin/it/test-project/uika-draft.toml
 sbt-plugin/.idea/
 *.iml
 .mise.local.toml

@@ -486,7 +486,8 @@ value instead of a directory — a production recording, say — is
 consumption-only: the check converts it, test JVMs are left untouched.
 [`--draft-exclude-file`](#runtime-load-evidence-jfr---class-load-log)
 maps to `-PuikaDraftExcludeFile=` / `uikaDraftExcludeFile :=` /
-`-Duika.draftExcludeFile=` / `--draftExcludeFile` / `:draft-exclude-file`.
+`-Duika.draftExcludeFile=` / `--draftExcludeFile` / `:draft-exclude-file` (both
+Clojure frontends, which take text logs rather than JFR).
 
 ### Gradle (`gradle-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-gradle-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-gradle-plugin)
 
@@ -590,6 +591,17 @@ $ ./mill net.exoego.uika.mill.Uika/upgradeCheck \
       --failOn reachable --excludeFile uika-exclude.toml         # --cliVersion to override
 ```
 
+To collect [runtime load evidence](#runtime-load-evidence-jfr---class-load-log),
+mix `UikaTestModule` into the test modules, last so its `forkArgs` wins:
+
+```scala
+object test extends JavaTests, TestModule.Junit5, net.exoego.uika.mill.UikaTestModule
+```
+
+Your own `override def forkArgs = Seq(...)` replaces the list and drops the injected
+flag. Append to `super.forkArgs()` instead. `./mill testLocal` does not fork, so it
+records nothing.
+
 ### Clojure CLI (`clojure-tool/`)
 
 The tool itself is distributed as a git dependency, so it adds nothing to
@@ -623,17 +635,6 @@ at the tools.build `compile-clj` output to include it. JFR recordings are not
 converted by this tool yet; pass text logs to `:class-load-log`, and
 `:draft-exclude-file` alongside it to draft an exclude file.
 
-To collect [runtime load evidence](#runtime-load-evidence-jfr---class-load-log),
-mix `UikaTestModule` into the test modules, last so its `forkArgs` wins:
-
-```scala
-object test extends JavaTests, TestModule.Junit5, net.exoego.uika.mill.UikaTestModule
-```
-
-Your own `override def forkArgs = Seq(...)` replaces the list and drops the injected
-flag. Append to `super.forkArgs()` instead. `./mill testLocal` does not fork, so it
-records nothing.
-
 ### Leiningen (`lein-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Flein-uika%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/lein-uika)
 
 ```clojure
@@ -653,9 +654,11 @@ $ lein uika upgrade-check /tmp/before.json /tmp/after.json
 ```
 
 The whole `:uika` map is `:fail-on`, `:exclude-files`, `:jdk-release` (0 disables),
-`:class-load-logs` (text format), `:draft-exclude-file`, `:cli-version` and
-`:cli-path`. Any other key is
-an error rather than a silent no-op, so a misspelling cannot quietly disable a flag.
+`:class-load-logs` (text format), `:draft-exclude-file` (needs `:class-load-logs`),
+`:cli-version` and `:cli-path`. Any other key is an error rather than a silent
+no-op, so a misspelling cannot quietly disable a flag. The CLI answers a lone
+`:draft-exclude-file` by naming `--class-load-log`, whose keyword form this map
+rejects as unknown.
 
 The dump excludes what only development pulls in (the `:base`/`:system`/`:user`/`:dev`
 profiles, so no nREPL, and `:provided`, which an uberjar leaves out) and runs the
