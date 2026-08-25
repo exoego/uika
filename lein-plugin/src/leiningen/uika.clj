@@ -2,7 +2,8 @@
   "lein uika dump-classpath [output] / lein uika upgrade-check <before> <after>.
 
   Options come from a {:uika {...}} map in project.clj: :fail-on, :exclude-files,
-  :jdk-release (0 disables), :class-load-logs (text format), :cli-version,
+  :jdk-release (0 disables), :class-load-logs (text format), :draft-exclude-file,
+  :cli-version,
   :cli-path. The CLI version defaults to this plugin's own, read from the jar's
   pom.properties, so one version bump updates both."
   (:require [clojure.java.io :as io]
@@ -114,12 +115,14 @@
   without an explicit check a misspelling -- :class-load-log, the Clojure tool's
   singular spelling, or :exclude-file -- would silently disable the flag instead of
   failing, and the check would run on CLI defaults with nothing said."
-  #{:fail-on :exclude-files :jdk-release :class-load-logs :cli-version :cli-path})
+  #{:fail-on :exclude-files :jdk-release :class-load-logs :draft-exclude-file
+    :cli-version :cli-path})
 
 (defn- upgrade-check [project [before after]]
   (when-not (and before after)
     (main/abort "usage: lein uika upgrade-check <before.json> <after.json>"))
-  (let [{:keys [fail-on exclude-files jdk-release class-load-logs] :as opts} (:uika project)]
+  (let [{:keys [fail-on exclude-files jdk-release class-load-logs draft-exclude-file]
+         :as opts} (:uika project)]
     (when-let [unknown (seq (sort (remove option-keys (keys opts))))]
       (main/abort (str "uika: unknown :uika option(s) " (pr-str (vec unknown))
                        "; known: " (pr-str (vec (sort option-keys))))))
@@ -136,6 +139,7 @@
         :exclude-file exclude-files
         :jdk-release jdk-release
         :class-load-log class-load-logs
+        :draft-exclude-file draft-exclude-file
         :jvm (project-jvm project)})
       (catch clojure.lang.ExceptionInfo e
         (main/abort (ex-message e)))

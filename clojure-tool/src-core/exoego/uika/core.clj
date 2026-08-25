@@ -225,7 +225,8 @@
   "Runs the binary and throws on a non-zero exit. Output is streamed line by line,
   not inherited: the caller may sit under a wrapper that captures stdout, the same
   reason the JVM plugins route through a logger."
-  [binary {:keys [before after fail-on exclude-file jdk-release class-load-log jvm]}]
+  [binary {:keys [before after fail-on exclude-file jdk-release class-load-log
+                  draft-exclude-file jvm]}]
   (let [jvm (or jvm (this-jvm))
         release (effective-jdk-release (or jdk-release (:feature jvm)) jvm)
         ->vec #(cond (nil? %) [] (sequential? %) (mapv str %) :else [(str %)])
@@ -233,7 +234,11 @@
                     (into (when fail-on ["--fail-on" (name fail-on)]))
                     (into (mapcat #(vector "--exclude-file" %) (->vec exclude-file)))
                     (into (when release ["--jdk-release" (str release)]))
-                    (into (mapcat #(vector "--class-load-log" %) (->vec class-load-log))))
+                    (into (mapcat #(vector "--class-load-log" %) (->vec class-load-log)))
+                    ;; The CLI rejects this without at least one --class-load-log, so the
+                    ;; pairing needs no check here: its error names the missing flag.
+                    (into (when draft-exclude-file
+                            ["--draft-exclude-file" (str draft-exclude-file)])))
         builder (doto (ProcessBuilder. ^java.util.List command)
                   (.redirectErrorStream true))]
     ;; UIKA_JDK, like the JVM plugins: the child reads the PROJECT JVM's ct.sym

@@ -486,7 +486,7 @@ value instead of a directory — a production recording, say — is
 consumption-only: the check converts it, test JVMs are left untouched.
 [`--draft-exclude-file`](#runtime-load-evidence-jfr---class-load-log)
 maps to `-PuikaDraftExcludeFile=` / `uikaDraftExcludeFile :=` /
-`-Duika.draftExcludeFile=` / `--draftExcludeFile`.
+`-Duika.draftExcludeFile=` / `--draftExcludeFile` / `:draft-exclude-file`.
 
 ### Gradle (`gradle-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-gradle-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-gradle-plugin)
 
@@ -620,7 +620,8 @@ runtime reflection and leave no reference in the constant pool, so uika sees
 the Java dependencies on the classpath at full strength but only the
 type-hinted, AOT-compiled part of the Clojure code itself; point `:class-dir`
 at the tools.build `compile-clj` output to include it. JFR recordings are not
-converted by this tool yet; pass text logs to `:class-load-log`.
+converted by this tool yet; pass text logs to `:class-load-log`, and
+`:draft-exclude-file` alongside it to draft an exclude file.
 
 To collect [runtime load evidence](#runtime-load-evidence-jfr---class-load-log),
 mix `UikaTestModule` into the test modules, last so its `forkArgs` wins:
@@ -652,7 +653,8 @@ $ lein uika upgrade-check /tmp/before.json /tmp/after.json
 ```
 
 The whole `:uika` map is `:fail-on`, `:exclude-files`, `:jdk-release` (0 disables),
-`:class-load-logs` (text format), `:cli-version` and `:cli-path`. Any other key is
+`:class-load-logs` (text format), `:draft-exclude-file`, `:cli-version` and
+`:cli-path`. Any other key is
 an error rather than a silent no-op, so a misspelling cannot quietly disable a flag.
 
 The dump excludes what only development pulls in (the `:base`/`:system`/`:user`/`:dev`

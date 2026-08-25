@@ -67,11 +67,17 @@
                          :fail-on "reachable"
                          :exclude-file [(str exclude)]
                          :jdk-release 11
+                         :class-load-log [(str dir "/loads.log")]
+                         :draft-exclude-file (str dir "/draft.toml")
                          :cli-path (str stub)})
     (let [args (slurp (str before ".args"))]
       (is (str/includes? args "--fail-on reachable"))
       (is (str/includes? args (str "--exclude-file " exclude)))
-      (is (str/includes? args "--jdk-release 11")))
+      (is (str/includes? args "--jdk-release 11"))
+      (is (str/includes? args (str "--class-load-log " dir "/loads.log")))
+      ;; The drafting half of the evidence workflow: the CLI rejects the flag without
+      ;; at least one --class-load-log, so the two are asserted together.
+      (is (str/includes? args (str "--draft-exclude-file " dir "/draft.toml"))))
     (testing "a CLI that found violations fails the command"
       (let [failing-stub (io/file dir "uika-fail")]
         (spit failing-stub "#!/bin/sh\nexit 1\n")

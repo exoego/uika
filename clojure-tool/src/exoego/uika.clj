@@ -76,6 +76,8 @@
   :jdk-release       JDK API release; 0 disables, default is the running JVM's
   :class-load-log    one path or a vector: runtime class-load evidence in the CLI's
                      text format (JFR conversion is not implemented in this tool yet)
+  :draft-exclude-file  where the CLI writes draft exclude rules for symbols never
+                     observed loading; needs :class-load-log
   :cli-version       uika-cli version; defaults to this tool's own git tag
                      (UIKA_CLI_VERSION is consulted in between)
   :cli-path          existing uika binary, skipping the download entirely
