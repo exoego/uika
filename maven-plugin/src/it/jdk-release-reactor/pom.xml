@@ -15,6 +15,7 @@
     <module>bom</module>
     <module>older</module>
     <module>newer</module>
+    <module>overridden</module>
   </modules>
 
   <properties>

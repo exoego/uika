@@ -206,34 +206,52 @@ public final class UpgradeCheckMojo extends AbstractMojo {
     }
 
     /**
-     * The lowest release maven-compiler-plugin is configured with, across the plugin-level
-     * configuration and every execution, or null when it names none. Executions count because
-     * a module that compiles one source root at 8 and another at 17 runs on 8.
+     * The lowest release maven-compiler-plugin actually compiles with, or null when it names
+     * none. Executions count because a module that compiles one source root at 8 and another
+     * at 17 runs on 8.
+     *
+     * <p>The plugin-level configuration is NOT one more candidate to minimize over. Maven
+     * merges it into each execution with the execution winning, so it is a default, and a
+     * value every execution overrides is never compiled with. Treating it as a candidate made
+     * {@code <release>8</release>} at plugin level lose to nothing when both default-compile
+     * and default-testCompile said 17, reporting 8 for a module that only ever compiles at 17.
      */
     private static Integer compilerPluginRelease(MavenProject project) {
         Plugin compiler = project.getPlugin("org.apache.maven.plugins:maven-compiler-plugin");
         if (compiler == null) {
             return null;
         }
-        List<Object> configurations = new ArrayList<>();
-        configurations.add(compiler.getConfiguration());
-        for (PluginExecution execution : compiler.getExecutions()) {
-            configurations.add(execution.getConfiguration());
-        }
+        Integer pluginLevel = configuredRelease(compiler.getConfiguration());
         Integer lowest = null;
-        for (Object configuration : configurations) {
-            if (!(configuration instanceof Xpp3Dom dom)) {
+        boolean anyExecution = false;
+        for (PluginExecution execution : compiler.getExecutions()) {
+            Integer effective = configuredRelease(execution.getConfiguration());
+            if (effective == null) {
+                effective = pluginLevel;
+            }
+            if (effective == null) {
                 continue;
             }
-            for (String name : List.of("release", "target")) {
-                Xpp3Dom child = dom.getChild(name);
-                Integer release = child == null ? null : UikaCli.parseRelease(child.getValue());
-                if (release != null) {
-                    lowest = lowest == null ? release : Math.min(lowest, release);
-                    break;
-                }
+            anyExecution = true;
+            lowest = lowest == null ? effective : Math.min(lowest, effective);
+        }
+        // No execution declares one: the plugin-level value is what the default lifecycle
+        // executions would inherit, so it stands on its own.
+        return anyExecution ? lowest : pluginLevel;
+    }
+
+    /** {@code <release>}, else {@code <target>}, of one configuration block. */
+    private static Integer configuredRelease(Object configuration) {
+        if (!(configuration instanceof Xpp3Dom dom)) {
+            return null;
+        }
+        for (String name : List.of("release", "target")) {
+            Xpp3Dom child = dom.getChild(name);
+            Integer release = child == null ? null : UikaCli.parseRelease(child.getValue());
+            if (release != null) {
+                return release;
             }
         }
-        return lowest;
+        return null;
     }
 }
