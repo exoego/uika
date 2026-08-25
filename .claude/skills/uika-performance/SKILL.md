@@ -84,11 +84,35 @@ Traps already hit in this repository:
 | ~60% of scanned classes are byte-identical duplicates bundled across JARs, all inflated and parsed only to lose first-wins | `representative_offsets` picks one entry per (name, CRC) from central directories in path order; the scan inflates only those. |
 | Pass-1 chunking (`UIKA_CHUNK`, one rayon barrier per chunk) defaulted to 1x thread count, parking workers at every boundary where paths finished unevenly | Default raised to 16x thread count (`check.rs::scan_target_paths`): ~8% less wall (sys 2.4s -> 1.6s), ~+12% peak RSS, output byte-identical across chunk sizes. No knee — 8x captures most, 32x still improves. A `sample` profile's parked-thread share suggested ~half the wall was reclaimable; trust the wall-clock diff, not the parking share. Rejected alongside: name-only dedup in `representative_offsets` (vs (name, CRC)) would drop invocation evidence a losing duplicate's distinct bytecode carries — CRC-keyed skipping is safe only because byte-identical copies carry identical evidence. |
 
-| Pass 1's owner filter was every class in `old`, so a JDK-pair check recorded a reference for every mention of `java/lang/String` | `index::breakable_class_names`: the classes whose entry differs between the sides, plus their subtype closure. Measured: stress user 11.13s -> 10.85s (-2.3%), wall and RSS unchanged; a 50-module JDK run 75.2s -> 69.9s user (-7.1%), 13.3s -> 11.5s wall. Kept for detection rather than speed — unverified dropped 269 -> 253 on the stress workload, 16 -> 0 on guava-selenium and 14 -> 10 on jetty, with every violation byte-identical. The hypothesis that reference-record volume dominates pass 1 was WRONG; inflate of the surviving entries still is, as the paragraph above already said. |
-
 Not helpful, measured and rejected: `lto`/`codegen-units=1` (inflate is the wall
 and lives in a self-contained crate, so cross-crate inlining gained nothing while
 tripling release build time).
+
+Also measured and rejected: narrowing pass 1's owner filter from
+`old.class_name_set()` to the classes whose entry differs between the compared sides
+plus their subtype closure. The premise was that a JDK-pair check records a reference
+for every mention of `java/lang/String`, so most of pass 1's records are for classes the
+upgrade never touched. Implemented and validated: every violation stayed byte-identical
+across all ten goldens, `make probe` still found no false-positive candidates, and
+unverified dropped because the escapes it removed were provably harmless (guava-selenium
+16 -> 0, all sixteen being `ImmutableList.get/size` and `ImmutableSet.stream`, inherited
+from `java.util` through a hierarchy identical in 22.0 and 23.0-rc1). Three reasons it
+was dropped anyway:
+
+- The premise was wrong. Stress user time went 11.13s -> 10.85s (-2.3%) and a 50-module
+  JDK run 75.2s -> 69.9s (-7.1%), because inflate of the surviving entries is the wall,
+  exactly as the pass-1 paragraph above already says. It does not touch the linear factor
+  it was meant to fix.
+- It costs the safety net that would catch it being wrong. The `--verdicts-json` stream
+  for guava-selenium went from 528 records to 13 (ok 509 -> 10), so `make probe`
+  answer-checks 13 references where it used to check 528. A filter whose soundness rests
+  on a hand-argued case analysis should not also shrink the evidence for that analysis.
+- `unverified` is documented as a completeness signal that a fuller `--classpath` or
+  `--jdk-release` reduces, by ANSWERING more. This reduced it by ASKING less, so the
+  number and the guidance around it stop lining up.
+
+Revisiting it means arguing it as a detection-semantics change, with the README
+definition and Known limitations rewritten, not as an optimization.
 
 Invocation evidence for the latent tier (`extract_invocation_evidence`, issue
 81) adds a second constant-pool sweep per scanned class. Measured on the stress
@@ -147,9 +171,9 @@ binary distribution.
   - Sharing the SCAN across runs would mean composing `ScanResult` arenas per path, and
     `representative_offsets` plus `parse_targets` both resolve duplicate classes
     first-wins in path order WITHIN a run, so per-path pieces are not independent.
-  - Narrowing pass 1's owner filter was tried and kept, but it is not the answer here.
-    See the history table below: about 7% of a JDK run's user time, which does not touch
-    the linear scaling.
+  - Narrowing pass 1's owner filter looked promising and was tried in full. Measured and
+    rejected, see below. Nothing else on this list is worth more than the linear factor
+    itself.
 
 ## Rejected Approaches
 

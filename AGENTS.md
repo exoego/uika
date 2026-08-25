@@ -28,9 +28,7 @@ not be relearned by experiment.
 - `check --verdicts-json <path>` (also on upgrade-check) streams every
   reference verdict (ok/unknown/broken) as JSON Lines for evaluation. The
   stream carries the raw constant-pool reference (never the collapsed Class
-  ref a "class removed" violation reports), covers only owners
-  `index::breakable_class_names` accepts (a class the upgrade left untouched is
-  never recorded, so it cannot appear), is written before --exclude-file
+  ref a "class removed" violation reports), is written before --exclude-file
   filtering, and does not include graph-walk violations (class/method became
   final, extends final class, class/interface kind flips, class became sealed,
   method became abstract, conflicting default methods) or the META-INF/services
@@ -83,10 +81,7 @@ not be relearned by experiment.
   broken counts unchanged, and the probe links every converted verdict.
   kotlin/* and spring/* escapes correctly stay Unknown. On the stress workload
   unverified went 294→0 and 106 real removals surfaced (owners whose hierarchy
-  escapes into java.util.concurrent). Those fixture numbers predate
-  `breakable_class_names`, which removed the escapes that were never at risk:
-  guava-selenium now reads 0 unverified with no layer at all, and jetty starts at
-  10 rather than 14.
+  escapes into java.util.concurrent).
 - `--jdk-release-old N --jdk-release-new M` (check) makes the JDK upgrade the
   compared pair instead of layering one release under both sides. clap REJECTS
   `--old`/`--new` alongside it rather than accepting and ignoring them: only one
@@ -157,16 +152,6 @@ not be relearned by experiment.
   their version from the `UIKA_VERSION` env var embedded at compile time
   (`option_env!` in `cli/src/cli.rs`). Never bump the placeholder for a
   release or compare it against tags.
-
-- Pass 1 records a reference only when its owner is in `index::breakable_class_names`,
-  the classes whose entry differs between the compared sides plus every subtype of one
-  (an inherited member can be removed from a supertype while the referenced class itself
-  is untouched). A class identical on both sides resolves identically on both sides, so
-  such references could only ever verdict Ok or Unknown. Dropping them removes unverified
-  noise: guava-selenium went 16 unverified to 0 and jetty 14 to 10, with every violation
-  byte-identical across all ten goldens. The closure runs DOWNWARD over a parent-to-children
-  map rather than as a memoized walk upward, because a memo filled in hash-map iteration
-  order would make the accepted set, and the output, depend on that order.
 
 ## Memory and Speed Rules
 

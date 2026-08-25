@@ -1543,24 +1543,19 @@ fn find_ct_sym_for_test() -> Option<std::path::PathBuf> {
     uika::jdk::ct_sym_in(home.trim())
 }
 
-/// The opt-in JDK API layer (--jdk-release): jetty-util's types extend java.util and
-/// java.lang ones, so the jetty-http scenario leaves hierarchy-escape references
-/// unverified. With the layer, every escape concludes and the broken verdicts stay
-/// identical: no detection is lost and no new violation appears from ct.sym data.
-///
-/// Jetty rather than the guava/selenium pair this used to use. Narrowing pass 1's owner
-/// filter to the classes that can actually break (`breakable_class_names`) took that
-/// scenario to zero escapes on its own, since every escaping reference was to a guava
-/// class whose API is identical in 22.0 and 23.0-rc1.
+/// The opt-in JDK API layer (--jdk-release): guava's collections extend java.util
+/// types, so the selenium scenario leaves hierarchy-escape references unverified.
+/// With the layer, every escape concludes and the broken verdicts stay identical:
+/// no detection is lost and no new violation appears from ct.sym data.
 #[test]
 fn jdk_layer_resolves_hierarchy_escapes_without_changing_verdicts() {
     let Some(ct_sym) = find_ct_sym_for_test() else {
         eprintln!("skipping: no JDK with ct.sym found (JAVA_HOME/UIKA_JDK/mise)");
         return;
     };
-    let old_jar = fixture("jetty-util-9.3.26.v20190403.jar");
-    let new_jar = fixture("jetty-util-10.0.26.jar");
-    let selenium = fixture("jetty-http-9.4.49.v20220914.jar");
+    let old_jar = fixture("guava-22.0.jar");
+    let new_jar = fixture("guava-23.0-rc1.jar");
+    let selenium = fixture("selenium-remote-driver-3.4.0.jar");
 
     let (old_index, _) = ApiIndex::from_classes(&load(&old_jar).unwrap());
     let new_classes = load(&new_jar).unwrap();
@@ -1588,7 +1583,7 @@ fn jdk_layer_resolves_hierarchy_escapes_without_changing_verdicts() {
     assert!(baseline.unknown_refs > 0, "expected hierarchy escapes");
 
     // The found JDK may be older than 18 (its own release is not in its
-    // ct.sym), so walk down a ladder instead of panicking; the jetty escapes
+    // ct.sym), so walk down a ladder instead of panicking; the guava escapes
     // are java.util/java.lang types present since release 8, so the
     // assertions hold on every rung (verified for 8, 11, and 17).
     let Some(mut indexer) = [17, 11, 8]
