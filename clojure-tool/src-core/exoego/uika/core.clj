@@ -202,13 +202,23 @@
     (when (pos? target)
       (let [ct-sym-max (dec (long feature))
             effective (min target ct-sym-max)]
-        (if (or (< effective 8)
-                (not (.isFile (io/file home "lib" "ct.sym"))))
-          (do (println "uika: skipping the JDK API layer (no usable ct.sym in the build JVM)")
+        ;; The messages name `home`, never "the build JVM". For the Leiningen plugin the two
+        ;; differ by design, and blaming lein's own JVM sends the user to inspect a ct.sym
+        ;; that was never consulted. Two reasons, two messages, for the same reason.
+        (cond
+          (< effective 8)
+          (do (println (str "uika: skipping the JDK API layer (release " effective
+                            " is below the lowest release ct.sym serves, 8)"))
               nil)
+
+          (not (.isFile (io/file home "lib" "ct.sym")))
+          (do (println (str "uika: skipping the JDK API layer (no usable ct.sym in " home ")"))
+              nil)
+
+          :else
           (do (when (< effective target)
                 (println (str "uika: JDK API layer clamped to release " effective
-                              " (the build JVM's ct.sym has no release " target ")")))
+                              " (the ct.sym in " home " has no release " target ")")))
               effective))))))
 
 (defn run-upgrade-check

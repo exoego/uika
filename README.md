@@ -436,11 +436,19 @@ The settings shown per tool below also have command-line forms:
 (`-PuikaExcludeFile=` for a single file, `--excludeFile` repeated).
 
 [`--jdk-release`](#how-it-works) needs no setting at all. The build runs on a
-JVM, so the release is derived from the Gradle toolchain,
-`maven.compiler.release`/`target`, or the sbt or Mill build JVM, clamped to what
-that JVM's `ct.sym` serves. Override with `jdkRelease` / `uikaJdkRelease` /
-`<jdkRelease>` (`-PuikaJdkRelease=`, `-Duika.jdkRelease=`,
-`--jdkRelease`), or set 0 to disable it.
+JVM, so Gradle, Maven, sbt and Mill derive the release from what the modules
+compile for. Gradle reads `compileJava`'s `options.release` else target
+compatibility, Maven reads maven-compiler-plugin's `<release>`/`<target>` else
+`maven.compiler.release`/`maven.compiler.target`, and sbt and Mill read `javacOptions` and
+`scalacOptions`. A build with several modules contributes the LOWEST of them,
+because one flag serves a run that checks all of them and under-claiming only
+costs unverified references while over-claiming drops findings. The result is
+clamped to what the selected JDK's `ct.sym` serves, which is the same JDK the
+CLI reads through `UIKA_JDK`. Leiningen and the Clojure tool
+have no module model to read, so they use the project's own JVM release.
+Override with `jdkRelease` / `uikaJdkRelease` / `<jdkRelease>`
+(`-PuikaJdkRelease=`, `-Duika.jdkRelease=`, `--jdkRelease`), or set 0 to disable
+it.
 
 [Runtime load evidence](#runtime-load-evidence-jfr---class-load-log) is one
 knob per tool, pointed at one directory for both phases (collect on the base

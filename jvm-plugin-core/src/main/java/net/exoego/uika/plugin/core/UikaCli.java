@@ -80,31 +80,154 @@ public final class UikaCli {
     }
 
     /**
-     * Clamps a wanted {@code --jdk-release} value to what the build JVM's ct.sym can serve,
+     * The JDK whose {@code ct.sym} backs the API layer, and whose home is exported as
+     * {@code UIKA_JDK}.
+     *
+     * <p>A plain class, not a record: the sbt plugin compiles these shared sources through
+     * zinc, and Scala 2.12's Java source parser does not understand record declarations --
+     * the symptom is "not found: type JdkSource" at the first USE, which reads like a missing
+     * import rather than an unparsed declaration.
+     *
+     * <p>Not necessarily the JVM running the build. A module targeting a release NEWER than
+     * the build JVM cannot be served by the build JVM's ct.sym at all (a JDK's ct.sym stops
+     * one release below its own), so a plugin that can name the module's actual JDK should
+     * pass it instead of accepting the clamp. Whatever is passed here has to be the same JDK
+     * the release is measured against: the ceiling, the ct.sym existence check and the
+     * UIKA_JDK export are one decision, and splitting them claims a release the CLI's ct.sym
+     * cannot serve.
+     */
+    public static final class JdkSource {
+        private final Path home;
+        private final int feature;
+
+        public JdkSource(Path home, int feature) {
+            this.home = home;
+            this.feature = feature;
+        }
+
+        /** The JVM running this code, which is what a plugin with no better answer has. */
+        public static JdkSource current() {
+            return new JdkSource(
+                    Path.of(System.getProperty("java.home")), Runtime.version().feature());
+        }
+
+        public Path home() {
+            return home;
+        }
+
+        public int feature() {
+            return feature;
+        }
+    }
+
+    /** The lowest release the JDK API layer can serve, since ct.sym carries no older stubs. */
+    public static final int MIN_RELEASE = 8;
+
+    /**
+     * The API release a compiler-option list targets, or null when it declares none.
+     *
+     * <p>Shared by every plugin that has only the raw option list to go on, so one parser
+     * covers the spellings javac and scalac actually accept. Both the space-separated and the
+     * {@code --release=17} forms, since javac takes either. {@code -release} alone is scalac's
+     * spelling, and {@code -java-output-version} is its Scala 3 name. Legacy {@code 1.8} and
+     * {@code jvm-1.8} values name release 8, which the layer CAN serve, so they are
+     * normalized rather than dropped.
+     *
+     * <p>Anything below {@link #MIN_RELEASE} is reported as no declaration at all. It cannot
+     * be represented, and treating it as a data point would drag a whole build's minimum
+     * under the floor and switch the layer off for every module.
+     */
+    public static Integer declaredRelease(List<String> options) {
+        Integer target = null;
+        for (int i = 0; i < options.size(); i++) {
+            String option = options.get(i);
+            int separator = firstSeparator(option);
+            String flag = separator < 0 ? option : option.substring(0, separator);
+            String value = separator < 0
+                    ? (i + 1 < options.size() ? options.get(i + 1) : null)
+                    : option.substring(separator + 1);
+            Integer release = parseRelease(value);
+            if (release == null) {
+                continue;
+            }
+            if (flag.equals("--release") || flag.equals("-release")
+                    || flag.equals("--java-output-version") || flag.equals("-java-output-version")) {
+                return release;
+            }
+            if (target == null && (flag.equals("-target") || flag.equals("--target"))) {
+                target = release;
+            }
+        }
+        return target;
+    }
+
+    private static int firstSeparator(String option) {
+        int equals = option.indexOf('=');
+        int colon = option.indexOf(':');
+        if (equals < 0) {
+            return colon;
+        }
+        return colon < 0 ? equals : Math.min(equals, colon);
+    }
+
+    /**
+     * A release number written any of the ways the JVM toolchains spell it ({@code 17},
+     * {@code 1.8}, scalac's {@code jvm-1.8}), or null when it is not one or sits below
+     * {@link #MIN_RELEASE}.
+     */
+    public static Integer parseRelease(String value) {
+        if (value == null) {
+            return null;
+        }
+        String text = value.trim();
+        if (text.startsWith("jvm-")) {
+            text = text.substring("jvm-".length());
+        }
+        if (text.startsWith("1.")) {
+            text = text.substring("1.".length());
+        }
+        try {
+            int release = Integer.parseInt(text);
+            return release < MIN_RELEASE ? null : release;
+        } catch (NumberFormatException notARelease) {
+            return null;
+        }
+    }
+
+    /**
+     * Clamps a wanted {@code --jdk-release} value to what {@code jdk}'s ct.sym can serve,
      * logging the decision through {@code log}. The plugins run on a JVM by definition, so the
      * JDK API layer defaults ON there (unlike the opt-in CLI flag): the build knows its JDK
      * authoritatively. A JDK's ct.sym does not contain its own release, so the highest servable
-     * release is the build JVM's feature release minus one; clamping DOWN is the conservative
+     * release is that JDK's feature release minus one; clamping DOWN is the conservative
      * direction (members added after the clamped release resolve NotFound on both sides of the
-     * check and stay unreported, the same direction as Unknown).
+     * check and stay unreported, the same direction as Unknown). Over-claiming is the direction
+     * that loses findings silently, which is why nothing here ever rounds up.
      *
      * @param target the wanted release, or null/&lt;=0 to disable the layer
+     * @param jdk the JDK supplying ct.sym, normally {@link JdkSource#current()}
      * @return the release to pass as {@code --jdk-release}, or null to omit the flag
      */
-    public static Integer effectiveJdkRelease(Integer target, Consumer<String> log) {
+    public static Integer effectiveJdkRelease(Integer target, JdkSource jdk, Consumer<String> log) {
         if (target == null || target <= 0) {
             return null;
         }
-        int ctSymMax = Runtime.version().feature() - 1;
+        int ctSymMax = jdk.feature() - 1;
         int effective = Math.min(target, ctSymMax);
-        if (effective < 8
-                || !Files.isRegularFile(Path.of(System.getProperty("java.home"), "lib", "ct.sym"))) {
-            log.accept("uika: skipping the JDK API layer (no usable ct.sym in the build JVM)");
+        // Two different reasons, two different messages. Folding them made a below-floor
+        // release report a missing ct.sym, sending the user to inspect a JDK that was fine.
+        if (effective < MIN_RELEASE) {
+            log.accept("uika: skipping the JDK API layer (release " + effective
+                    + " is below the lowest release ct.sym serves, " + MIN_RELEASE + ")");
+            return null;
+        }
+        if (!Files.isRegularFile(jdk.home().resolve("lib").resolve("ct.sym"))) {
+            log.accept("uika: skipping the JDK API layer (no usable ct.sym in " + jdk.home() + ")");
             return null;
         }
         if (effective < target) {
             log.accept("uika: JDK API layer clamped to release " + effective
-                    + " (the build JVM's ct.sym has no release " + target + ")");
+                    + " (the ct.sym in " + jdk.home() + " has no release " + target + ")");
         }
         return effective;
     }
@@ -148,9 +271,10 @@ public final class UikaCli {
      * @param excludeFiles TOML files of known false positives to suppress, passed through as
      *     repeated {@code --exclude-file} flags. Null or empty adds nothing.
      * @param jdkRelease resolve JDK hierarchy escapes against this API release (pass a value
-     *     from {@link #effectiveJdkRelease}); null omits the flag. The build JVM's home is
-     *     exported as UIKA_JDK so the CLI reads that JDK's ct.sym regardless of the caller's
-     *     JAVA_HOME.
+     *     from {@link #effectiveJdkRelease}); null omits the flag.
+     * @param jdk the JDK whose home is exported as UIKA_JDK, so the CLI reads that JDK's
+     *     ct.sym regardless of the caller's JAVA_HOME. Must be the one the release was
+     *     clamped against.
      * @param classLoadLogs runtime class-load logs (files or directories) from a test run of
      *     the current, not yet upgraded build, passed through as repeated
      *     {@code --class-load-log} flags. Null or empty adds nothing.
@@ -159,7 +283,7 @@ public final class UikaCli {
      *     rejects it without at least one class-load log.
      */
     public static int runUpgradeCheck(Path binary, Path before, Path after, String failOn,
-            List<Path> excludeFiles, Integer jdkRelease, List<Path> classLoadLogs,
+            List<Path> excludeFiles, Integer jdkRelease, JdkSource jdk, List<Path> classLoadLogs,
             Path draftExcludeFile, Consumer<String> output)
             throws IOException, InterruptedException {
         List<String> command = new ArrayList<>(List.of(
@@ -192,7 +316,7 @@ public final class UikaCli {
         }
         ProcessBuilder builder = new ProcessBuilder(command);
         if (jdkRelease != null) {
-            builder.environment().put("UIKA_JDK", System.getProperty("java.home"));
+            builder.environment().put("UIKA_JDK", jdk.home().toString());
         }
         builder.redirectErrorStream(true);
         Process process = builder.start();

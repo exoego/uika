@@ -35,6 +35,18 @@ object UikaTests extends TestSuite {
       // repository list has to be an Input rather than a literal.
       override def repositories = Task.Input { Task.env.get("UIKA_TEST_REPO").toSeq }
     }
+    // Two modules compiling for different releases, with jdkRelease left to derive: the
+    // LOWEST must reach the CLI. One flag serves a run that checks every module, and
+    // reading only the build JVM reported a release nothing compiles against. `older` states
+    // it through mandatoryJavacOptions, which is half of what Mill actually compiles with and
+    // where a shared trait usually pins it, and in the single-token `--release=N` spelling
+    // javac also accepts.
+    object older extends JavaModule {
+      override def mandatoryJavacOptions = Seq("--release=11")
+    }
+    object newer extends JavaModule {
+      override def javacOptions = Seq("--release", "17")
+    }
     object testJvm extends JavaModule {
       object test extends JavaTests, UikaTestModule {
         override def testFramework = "com.novocode.junit.JUnitFramework"
@@ -195,6 +207,27 @@ object UikaTests extends TestSuite {
         val header = try in.readNBytes(8) finally in.close()
         val major = ((header(6) & 0xff) << 8) | (header(7) & 0xff)
         assert(major <= 61) // 61 = JDK 17
+      }
+    }
+
+    test("jdk-release is derived from the lowest module target, not the build JVM") {
+      val repo = os.temp.dir(prefix = "uika-stub-repo")
+      publishStubCli(repo, "9.9.9", "#!/bin/sh\necho \"$@\" > \"$3.args\"\nexit 0\n")
+      Using.resource(UnitTester(
+        stubCliBuild,
+        null,
+        env = systemEnv + ("UIKA_TEST_REPO" -> repo.toNIO.toUri.toASCIIString)
+      )) { tester =>
+        val before = stubCliBuild.moduleDir / "before.json"
+        val after = stubCliBuild.moduleDir / "after.json"
+        os.write.over(before, "{}", createFolders = true)
+        os.write.over(after, "{}")
+
+        value(tester(Uika.upgradeCheck(
+          tester.evaluator, before.toString, after.toString, cliVersion = "9.9.9")))
+
+        val args = os.read(os.Path(s"$before.args"))
+        assert(args.contains("--jdk-release 11"))
       }
     }
 

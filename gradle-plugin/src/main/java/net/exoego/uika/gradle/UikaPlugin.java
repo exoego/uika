@@ -3,11 +3,14 @@ package net.exoego.uika.gradle;
 import net.exoego.uika.plugin.core.UikaCli;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
+import org.gradle.api.Task;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.ModuleDependency;
+import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.TaskProvider;
+import org.gradle.api.tasks.compile.JavaCompile;
 
 import java.io.File;
 
@@ -34,20 +37,59 @@ import java.io.File;
  */
 public class UikaPlugin implements Plugin<Project> {
     /**
-     * The JDK API release the checked application most plausibly runs on: the root project's
-     * toolchain language version when configured, else its target compatibility, else the JVM
-     * running the build (a multi-module root often has no java plugin at all).
+     * The JDK API release the checked application runs on, the LOWEST any project in the
+     * build targets.
+     *
+     * <p>The lowest, because {@code --jdk-release} is one flag for a run that checks every
+     * module, and a mixed-toolchain build has no single right answer. Under-claiming turns a
+     * member that exists at runtime into NotFound on both sides, which stays unreported as an
+     * Unknown. Over-claiming makes a member the runtime does not have resolve cleanly and
+     * loses the finding with nothing to show for it. Per-module releases would need the dump
+     * to carry one each, which is a format change (issue #128).
+     *
+     * <p>The root project alone is not enough. A multi-module root usually has no java plugin,
+     * which used to fall straight through to the JVM running the build.
      */
     static Integer defaultJdkRelease(Project root) {
-        JavaPluginExtension java = root.getExtensions().findByType(JavaPluginExtension.class);
-        if (java != null) {
-            var languageVersion = java.getToolchain().getLanguageVersion();
-            if (languageVersion.isPresent()) {
-                return languageVersion.get().asInt();
+        Integer lowest = null;
+        for (Project project : root.getAllprojects()) {
+            Integer release = declaredRelease(project);
+            if (release != null) {
+                lowest = lowest == null ? release : Math.min(lowest, release);
             }
-            return Integer.parseInt(java.getTargetCompatibility().getMajorVersion());
         }
-        return Runtime.version().feature();
+        // No project declares a servable target, so the build JVM is the only evidence there is.
+        return lowest == null ? Runtime.version().feature() : lowest;
+    }
+
+    /**
+     * What one project's bytecode runs on, or null when it declares nothing servable.
+     *
+     * <p>{@code options.release} first, because it is the only one of the three that Gradle
+     * documents as pinning the API, and the toolchain is deliberately not consulted at all.
+     * The toolchain is the COMPILER JDK: Gradle's own recommended shape pairs a 21 toolchain
+     * with an 11 target, and reading the toolchain there claimed 21 for bytecode that runs on
+     * 11. {@code getTargetCompatibility()} already falls back to the toolchain's language
+     * version when nothing else is set, so dropping the toolchain branch loses no case, and
+     * it never forces toolchain provisioning the way the compile task's own
+     * {@code targetCompatibility} would.
+     */
+    private static Integer declaredRelease(Project project) {
+        JavaPluginExtension java =
+                project.getExtensions().findByType(JavaPluginExtension.class);
+        if (java == null) {
+            return null;
+        }
+        Task compile = project.getTasks().findByName(JavaPlugin.COMPILE_JAVA_TASK_NAME);
+        if (compile instanceof JavaCompile javaCompile) {
+            Integer release = javaCompile.getOptions().getRelease().getOrNull();
+            if (release != null) {
+                return UikaCli.parseRelease(release.toString());
+            }
+        }
+        // getMajorVersion() has already normalized VERSION_1_8 to "8", so unlike the other
+        // plugins there is no "1.x" spelling left to filter. The floor check does that job.
+        return UikaCli.parseRelease(java.getTargetCompatibility().getMajorVersion());
     }
 
     /** One non-transitive detached configuration for a single notation. Detached because the
@@ -176,8 +218,9 @@ public class UikaPlugin implements Plugin<Project> {
                         task.getJdkRelease().set(Integer.parseInt(jdkRelease.toString()));
                     } else {
                         // The build knows its JDK, so the JDK API layer defaults ON here (the bare
-                        // CLI keeps it opt-in): toolchain, else target compatibility, else the JVM
-                        // running the build. UikaCli.effectiveJdkRelease clamps at execution time.
+                        // CLI keeps it opt-in): the lowest release any project targets, else the
+                        // JVM running the build. UikaCli.effectiveJdkRelease clamps at execution
+                        // time to what the build JVM's ct.sym can actually serve.
                         // The provider is an @Input, so the configuration cache evaluates it while
                         // the project is still available.
                         task.getJdkRelease().convention(

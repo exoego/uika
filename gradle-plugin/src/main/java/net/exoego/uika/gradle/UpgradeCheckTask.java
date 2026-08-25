@@ -65,9 +65,10 @@ public abstract class UpgradeCheckTask extends DefaultTask {
 
     /**
      * JDK API release for the CLI's {@code --jdk-release} (resolves JDK hierarchy escapes
-     * instead of counting them unverified). Defaults to the root project's Java toolchain or
-     * target compatibility, else the build JVM; clamped to what the build JVM's ct.sym can
-     * serve. Set 0 to disable the layer.
+     * instead of counting them unverified). Defaults to the lowest release any project in the
+     * build compiles for, from {@code compileJava}'s {@code options.release} else its target
+     * compatibility, and to the build JVM when no project declares one. Clamped to what the
+     * build JVM's ct.sym can serve. Set 0 to disable the layer.
      */
     @Input
     @Optional
@@ -127,8 +128,12 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         List<Path> excludeFiles = getExcludeFiles().getFiles().stream()
                 .map(File::toPath)
                 .toList();
-        Integer jdkRelease =
-                UikaCli.effectiveJdkRelease(getJdkRelease().getOrNull(), getLogger()::lifecycle);
+        // The build JVM supplies ct.sym: Gradle can name a module's toolchain but resolving it
+        // to an installation would provision a JDK the build never asked for, so a release
+        // above what this JVM serves is clamped down rather than chased.
+        UikaCli.JdkSource jdk = UikaCli.JdkSource.current();
+        Integer jdkRelease = UikaCli.effectiveJdkRelease(
+                getJdkRelease().getOrNull(), jdk, getLogger()::lifecycle);
         // JFR recordings on the knob (a .jfr value, or recordings inside a directory) are
         // converted to the CLI's text format here: the CLI is JVM-free and never reads
         // binary JFR, while this task always runs on a full JDK.
@@ -145,6 +150,7 @@ public abstract class UpgradeCheckTask extends DefaultTask {
                 getFailOn().getOrElse("any"),
                 excludeFiles,
                 jdkRelease,
+                jdk,
                 classLoadLogs,
                 draftExcludeFile,
                 getLogger()::lifecycle);

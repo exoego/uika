@@ -55,7 +55,8 @@ object Uika extends ExternalModule {
    * `net.exoego.uika:uika-cli:<version>:<platform>@zip` through Mill's own resolution.
    *
    * @param jdkRelease resolve JDK hierarchy escapes against this API release; 0 disables the
-   *                   layer and a negative value means "the build JVM's own release", clamped by
+   *                   layer and a negative value, the default, derives the lowest release any
+   *                   module compiles for, else the build JVM's, clamped by
    *                   [[UikaCli.effectiveJdkRelease]] to what its ct.sym serves
    * @param jfr        a directory of JFR recordings from a test run of the current, not yet
    *                   upgraded build, or a single `.jfr` recording
@@ -88,7 +89,8 @@ object Uika extends ExternalModule {
     // on a shared trait in practice. Failing rather than falling back to this ExternalModule's
     // own resolver keeps that promise -- a `defaultResolver()` call here would be lifted into
     // an unconditional task edge by the command macro and evaluated even on the Some branch.
-    val resolver = javaModules(ev).headOption match {
+    val modules = javaModules(ev)
+    val resolver = modules.headOption match {
       case Some(m) => ev.execute(Seq(m.defaultResolver)).values.get.head
       case None => Task.fail("uika: no JavaModule found in this build")
     }
@@ -100,14 +102,31 @@ object Uika extends ExternalModule {
       (Task.dest / JfrEvidence.WORK_DIR_NAME).toNIO,
       log
     )
-    val wantedRelease = if (jdkRelease < 0) Runtime.version().feature() else jdkRelease
+    // The LOWEST release any module compiles for, because one flag serves a run that checks
+    // every module. Under-claiming only costs Unknowns, while over-claiming makes a member
+    // the runtime lacks resolve cleanly and loses the finding with nothing to show. A build
+    // declaring nothing falls back to the JVM, the only evidence left. Issue #128 tracks
+    // carrying a release per module in the dump instead.
+    //
+    // mandatoryJavacOptions as well as javacOptions, since Mill compiles with both and a
+    // trait that pins the release commonly does it there.
+    val jdk = UikaCli.JdkSource.current()
+    val wantedRelease =
+      if (jdkRelease >= 0) jdkRelease
+      else {
+        val optionTasks = modules.map(_.javacOptions) ++ modules.map(_.mandatoryJavacOptions)
+        val declared = ev.execute(optionTasks).values.get
+          .flatMap(options => Option(UikaCli.declaredRelease(options.asJava)).map(_.intValue))
+        if (declared.isEmpty) Runtime.version().feature() else declared.min
+      }
     val exit = UikaCli.runUpgradeCheck(
       binary,
       os.Path(before, workspace).toNIO,
       os.Path(after, workspace).toNIO,
       failOn,
       excludeFile.map(os.Path(_, workspace).toNIO).asJava,
-      UikaCli.effectiveJdkRelease(wantedRelease, log),
+      UikaCli.effectiveJdkRelease(wantedRelease, jdk, log),
+      jdk,
       classLoadLogs,
       Option(draftExcludeFile).filter(_.nonEmpty).map(os.Path(_, workspace).toNIO).orNull,
       log

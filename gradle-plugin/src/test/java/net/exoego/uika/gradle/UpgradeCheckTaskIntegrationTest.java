@@ -392,8 +392,11 @@ final class UpgradeCheckTaskIntegrationTest {
                 () -> "expected derived --jdk-release " + expected + " in CLI invocation: " + args);
         // The CLI must read ct.sym from the build JVM, not whatever JAVA_HOME the
         // environment happens to export.
+        // The release and UIKA_JDK are one decision, so the exported home has to be the JDK
+        // the release was clamped against, not merely non-empty.
         String env = Files.readString(Path.of(before + ".env")).trim();
-        assertTrue(!env.isEmpty(), "UIKA_JDK was not exported to the CLI process");
+        assertEquals(System.getProperty("java.home"), env,
+                "UIKA_JDK must be the JDK whose ct.sym the release was clamped against");
     }
 
     @Test
@@ -421,6 +424,63 @@ final class UpgradeCheckTaskIntegrationTest {
         String args = Files.readString(Path.of(before + ".args"));
         assertTrue(args.contains("--jdk-release 11"),
                 () -> "expected --jdk-release 11 from targetCompatibility: " + args);
+    }
+
+    @Test
+    void jdkReleaseIsTheLowestAnySubprojectTargets() throws Exception {
+        // A multi-module root usually applies no java plugin at all, which used to fall
+        // straight through to the JVM running the build and report a release no module
+        // compiles against. One flag serves the whole run, so the lowest target wins.
+        // Each subproject declares its release in its OWN build script, and through a
+        // different mechanism: `options.release` is what Gradle documents as pinning the API,
+        // and the toolchain next to it is the COMPILER JDK, which must not be mistaken for
+        // the release the bytecode runs on. Gradle refuses to configure a subproject whose
+        // directory does not exist.
+        Files.createDirectories(projectDir.resolve("older"));
+        Files.createDirectories(projectDir.resolve("newer"));
+        write(projectDir.resolve("settings.gradle.kts"), """
+                rootProject.name = "root"
+                include("older", "newer")
+                """);
+        write(projectDir.resolve("older/build.gradle.kts"), """
+                plugins { java }
+                java { toolchain { languageVersion = JavaLanguageVersion.of(%d) } }
+                tasks.withType<JavaCompile>().configureEach { options.release = 11 }
+                """.formatted(Runtime.version().feature()));
+        write(projectDir.resolve("newer/build.gradle.kts"), """
+                plugins { java }
+                java { targetCompatibility = JavaVersion.VERSION_17 }
+                """);
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    id("net.exoego.uika")
+                }
+
+                repositories {
+                    maven {
+                        url = uri("%s")
+                        metadataSources { artifact() }
+                    }
+                }
+                """.formatted(repoDir.toUri()));
+
+        // With the configuration cache on, because deriving this reads other projects'
+        // extensions and realizes their compileJava from a task input provider, and that is
+        // exactly what a cache entry has to survive.
+        runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--configuration-cache",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION)
+                .build();
+
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(args.contains("--jdk-release 11"),
+                () -> "expected the lowest subproject release (11), not 17, the toolchain, "
+                        + "or the build JVM: " + args);
     }
 
     @Test

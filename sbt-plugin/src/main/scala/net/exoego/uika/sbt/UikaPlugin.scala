@@ -19,7 +19,7 @@ object UikaPlugin extends AutoPlugin {
     val uikaCliVersion = settingKey[String]("uika-cli version for uikaUpgradeCheck (defaults to the plugin's own version)")
     val uikaFailOn = settingKey[String]("When uikaUpgradeCheck fails the build: never, reachable, or any (default)")
     val uikaExcludeFiles = settingKey[Seq[File]]("TOML files of known false positives to suppress, passed as repeated --exclude-file")
-    val uikaJdkRelease = settingKey[Int]("JDK API release for --jdk-release (0 disables; defaults to the build JVM's feature release, clamped to what its ct.sym serves)")
+    val uikaJdkRelease = settingKey[Int]("JDK API release for --jdk-release (0 disables; a negative value, the default, derives the lowest release any subproject compiles for from its javacOptions and scalacOptions, else the build JVM's, clamped to what its ct.sym serves)")
     val uikaJfr = settingKey[Option[File]]("JFR class-load evidence location: a directory makes forked Test JVMs record jdk.ClassLoad there (pid-unique file names; needs Test/fork := true and a JDK 17+ test JVM) and uikaUpgradeCheck converts and reads it back; a .jfr file is consumed only. Set it bare in build.sbt or at ThisBuild; a per-subproject value reaches only that project's tests, not the check")
     val uikaDraftExcludeFile = settingKey[Option[File]]("File for uikaUpgradeCheck to write draft exclude rules to (--draft-exclude-file); only meaningful with uikaJfr. Set it bare in build.sbt or at ThisBuild")
     val uikaUpgradeCheck = inputKey[Unit]("Runs uika upgrade-check: uikaUpgradeCheck <before.json> <after.json>")
@@ -36,10 +36,17 @@ object UikaPlugin extends AutoPlugin {
     uikaFailOn := "any",
     uikaExcludeFiles := Seq.empty,
     // The build runs on a JVM, so the JDK API layer defaults ON (the bare CLI keeps it
-    // opt-in); UikaCli.effectiveJdkRelease clamps to what the build JVM's ct.sym serves.
-    uikaJdkRelease := java.lang.Runtime.version().feature(),
+    // opt-in), and UikaCli.effectiveJdkRelease clamps to what the build JVM's ct.sym serves.
+    // Negative means "derive", and that happens in the task below because javacOptions is a
+    // TASK and a setting cannot depend on one.
+    uikaJdkRelease := -1,
     uikaJfr := None,
     uikaDraftExcludeFile := None,
+    // One check per BUILD, not per project. Every value the task reads is ThisBuild- or
+    // root-scoped and the dumps already cover the whole build, so aggregating it just spawns
+    // N identical CLI runs in parallel, racing on the shared retrieve directory and on the
+    // JFR work directory whose stale-conversion sweep deletes a sibling's fresh output.
+    uikaUpgradeCheck / aggregate := false,
     uikaUpgradeCheck := {
       val args = Def.spaceDelimited("<before.json> <after.json>").parsed
       if (args.length != 2) sys.error("usage: uikaUpgradeCheck <before.json> <after.json>")
@@ -62,7 +69,37 @@ object UikaPlugin extends AutoPlugin {
         .getOrElse(sys.error(s"uika-cli zip not found among ${files.mkString(", ")}"))
       val binary = UikaCli.extractBinary(zip.toPath, (uikaDir / s"cli-$version-$classifier").toPath)
       val excludeFiles = uikaExcludeFiles.value.map(_.toPath).asJava
-      val jdkRelease = UikaCli.effectiveJdkRelease(uikaJdkRelease.value, (line: String) => log.info(line))
+      val jdk = UikaCli.JdkSource.current()
+      // The LOWEST release any subproject compiles for, because one flag serves a run that
+      // checks every module. Under-claiming only costs Unknowns, while over-claiming makes a
+      // member the runtime lacks resolve cleanly and loses the finding with nothing to show.
+      // A build declaring nothing falls back to the JVM, the only evidence left. Issue #128
+      // tracks carrying a release per module in the dump instead.
+      //
+      // Four reads, because missing any one of them falls through to the build JVM, the
+      // over-claiming direction this default exists to avoid. ScopeFilter leaves the
+      // configuration axis at Zero and sbt delegates Compile to Zero and never the reverse,
+      // so the idiomatic `Compile / javacOptions` is invisible to the bare filter alone. A
+      // Scala module has no javacOptions at all and states its target in scalacOptions.
+      // Above the branch that uses it, since sbt's task macro lifts every `.value` into the
+      // dependency graph and putting them inside the branch would only hide that they are
+      // evaluated even when uikaJdkRelease is explicit. Each filter is spelled out at its
+      // call because a local `val` holding one cannot be lifted ("Could not find proxy for
+      // val ...").
+      val declared = (javacOptions.all(ScopeFilter(inAnyProject)).value
+        ++ javacOptions.all(ScopeFilter(inAnyProject, inConfigurations(Compile))).value
+        ++ scalacOptions.all(ScopeFilter(inAnyProject)).value
+        ++ scalacOptions.all(ScopeFilter(inAnyProject, inConfigurations(Compile))).value)
+        .flatMap(options => Option(UikaCli.declaredRelease(options.asJava)).map(_.intValue))
+      // LocalRootProject scope for the same reason uikaJfr uses it below: read bare, a
+      // buildSettings task sees ThisBuild only, and a root-scoped override in build.sbt would
+      // be silently replaced by the derived value.
+      val wantedRelease = (LocalRootProject / uikaJdkRelease).value match {
+        case explicit if explicit >= 0 => explicit
+        case _ if declared.isEmpty => java.lang.Runtime.version().feature()
+        case _ => declared.min
+      }
+      val jdkRelease = UikaCli.effectiveJdkRelease(wantedRelease, jdk, (line: String) => log.info(line))
       // LocalRootProject scope, not bare: this task lives in buildSettings, and a bare
       // read resolves ThisBuild only — the README's plain `uikaJfr := Some(...)` in
       // build.sbt is root-project-scoped, and missing it here silently ran the check
@@ -78,7 +115,7 @@ object UikaPlugin extends AutoPlugin {
       )
       val draftExcludeFile =
         (LocalRootProject / uikaDraftExcludeFile).value.map(_.getAbsoluteFile.toPath).orNull
-      UikaCli.runUpgradeCheck(binary, file(args.head).toPath, file(args(1)).toPath, uikaFailOn.value, excludeFiles, jdkRelease, classLoadLogs, draftExcludeFile, (line: String) => log.info(line)) match {
+      UikaCli.runUpgradeCheck(binary, file(args.head).toPath, file(args(1)).toPath, uikaFailOn.value, excludeFiles, jdkRelease, jdk, classLoadLogs, draftExcludeFile, (line: String) => log.info(line)) match {
         case 0 => ()
         case 1 => sys.error("uika upgrade-check found broken references (see output above)")
         case n => sys.error(s"uika upgrade-check failed with exit code $n")
