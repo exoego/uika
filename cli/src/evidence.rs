@@ -432,6 +432,21 @@ fn toml_escape(s: &str) -> String {
 /// create-upfront contract: a run that errors mid-scan leaves this marker, never a stale
 /// draft from an earlier run for a human to review.
 pub fn create_draft_placeholder(path: &Path) -> Result<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "cannot create directory {} for the draft exclude file",
+                parent.display()
+            )
+        })?;
+    }
+    // Parents first: this runs BEFORE the scan, so a path into a directory that does not
+    // exist yet would fail the whole check rather than just the write. Every frontend
+    // makes the dump's parents for the same reason, which makes a matching draft path
+    // like target/uika/draft.toml the natural next thing to write.
     std::fs::write(
         path,
         "# uika --draft-exclude-file: the check did not complete; no rules were drafted.\n",
@@ -941,5 +956,23 @@ mod tests {
                 .is_empty()
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The placeholder runs BEFORE the scan, so a path into a directory that does not
+    /// exist yet used to fail the whole check rather than just the write. Every frontend
+    /// creates the dump's parents, which makes a matching draft path the natural next
+    /// thing to write.
+    #[test]
+    fn the_draft_placeholder_creates_its_parent_directories() {
+        let dir = std::env::temp_dir().join(format!("uika-draftdir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let nested = dir.join("target").join("uika").join("draft.toml");
+
+        super::create_draft_placeholder(&nested).unwrap();
+
+        let content = std::fs::read_to_string(&nested).unwrap();
+        assert!(content.contains("did not complete"), "{content}");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

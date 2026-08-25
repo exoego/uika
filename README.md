@@ -404,7 +404,17 @@ evidence shows (which classes, which logs); a symbol that also breaks a
 reachable or observed class is never drafted, because the rule would waive
 that real break too. The draft is input for a human: review each entry and
 delete what you cannot justify before committing the file. Requires
-`--class-load-log`.
+`--class-load-log`, and refuses to draft when that evidence names no class at
+all: an artifact that never downloaded, a test JVM that never forked, or a
+directory holding only recordings would otherwise draft every unproven
+violation with a reason indistinguishable from a well-evidenced run. Drafting
+into a file that is also an `--exclude-file` is refused for the same reason it
+looks tempting: it would rewrite that file with only the drafted rules.
+
+A `--class-load-log` path that does not exist is an error, not a skip, exactly
+as a missing `--exclude-file` is. Evidence is normally a CI artifact the PR job
+downloads, so configure the knob per run rather than persistently if the same
+build also runs where the artifact is absent.
 
 ## Build-tool plugins
 
