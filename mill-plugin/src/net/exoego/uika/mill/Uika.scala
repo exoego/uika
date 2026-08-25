@@ -55,7 +55,8 @@ object Uika extends ExternalModule {
    * `net.exoego.uika:uika-cli:<version>:<platform>@zip` through Mill's own resolution.
    *
    * @param jdkRelease resolve JDK hierarchy escapes against this API release; 0 disables the
-   *                   layer and a negative value means "the build JVM's own release", clamped by
+   *                   layer and a negative value, the default, derives the lowest release any
+   *                   module compiles for, else the build JVM's, clamped by
    *                   [[UikaCli.effectiveJdkRelease]] to what its ct.sym serves
    * @param jfr        a directory of JFR recordings from a test run of the current, not yet
    *                   upgraded build, or a single `.jfr` recording
@@ -102,17 +103,20 @@ object Uika extends ExternalModule {
       log
     )
     // The LOWEST release any module compiles for, because one flag serves a run that checks
-    // every module: under-claiming only costs Unknowns, while over-claiming makes a member
+    // every module. Under-claiming only costs Unknowns, while over-claiming makes a member
     // the runtime lacks resolve cleanly and loses the finding with nothing to show. A build
     // declaring nothing falls back to the JVM, the only evidence left. Issue #128 tracks
     // carrying a release per module in the dump instead.
+    //
+    // mandatoryJavacOptions as well as javacOptions, since Mill compiles with both and a
+    // trait that pins the release commonly does it there.
     val jdk = UikaCli.JdkSource.current()
     val wantedRelease =
       if (jdkRelease >= 0) jdkRelease
       else {
-        val declared = ev.execute(modules.map(_.javacOptions)).values.get
-          .collect { case options: Seq[?] => options.map(_.toString) }
-          .flatMap(releaseOf)
+        val optionTasks = modules.map(_.javacOptions) ++ modules.map(_.mandatoryJavacOptions)
+        val declared = ev.execute(optionTasks).values.get
+          .flatMap(options => Option(UikaCli.declaredRelease(options.asJava)).map(_.intValue))
         if (declared.isEmpty) Runtime.version().feature() else declared.min
       }
     val exit = UikaCli.runUpgradeCheck(
@@ -236,17 +240,6 @@ object Uika extends ExternalModule {
         artifacts.asJava
       )
     }
-  }
-
-  /** The release a javacOptions list compiles for: `--release N`/`-release N`, else `-target N`. */
-  private def releaseOf(options: Seq[String]): Option[Int] = {
-    def after(flags: Set[String]): Option[String] =
-      options.sliding(2).collectFirst { case Seq(flag, value) if flags(flag) => value }
-    // "1.8" and friends sit below the layer's floor, so they are no evidence of a target.
-    after(Set("--release", "-release"))
-      .orElse(after(Set("-target")))
-      .filterNot(_.startsWith("1."))
-      .flatMap(value => scala.util.Try(value.trim.toInt).toOption)
   }
 
   /** `:foo:bar`, the `:path` shape the dump format uses for Gradle and Maven modules too. */

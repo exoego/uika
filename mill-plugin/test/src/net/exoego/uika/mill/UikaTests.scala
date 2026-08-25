@@ -35,11 +35,14 @@ object UikaTests extends TestSuite {
       // repository list has to be an Input rather than a literal.
       override def repositories = Task.Input { Task.env.get("UIKA_TEST_REPO").toSeq }
     }
-    // Two modules compiling for different releases: with jdkRelease left to derive, the
+    // Two modules compiling for different releases, with jdkRelease left to derive: the
     // LOWEST must reach the CLI. One flag serves a run that checks every module, and
-    // reading only the build JVM reported a release nothing compiles against.
+    // reading only the build JVM reported a release nothing compiles against. `older` states
+    // it through mandatoryJavacOptions, which is half of what Mill actually compiles with and
+    // where a shared trait usually pins it, and in the single-token `--release=N` spelling
+    // javac also accepts.
     object older extends JavaModule {
-      override def javacOptions = Seq("--release", "11")
+      override def mandatoryJavacOptions = Seq("--release=11")
     }
     object newer extends JavaModule {
       override def javacOptions = Seq("--release", "17")

@@ -65,9 +65,10 @@ public abstract class UpgradeCheckTask extends DefaultTask {
 
     /**
      * JDK API release for the CLI's {@code --jdk-release} (resolves JDK hierarchy escapes
-     * instead of counting them unverified). Defaults to the root project's Java toolchain or
-     * target compatibility, else the build JVM; clamped to what the build JVM's ct.sym can
-     * serve. Set 0 to disable the layer.
+     * instead of counting them unverified). Defaults to the lowest release any project in the
+     * build compiles for, from {@code compileJava}'s {@code options.release} else its target
+     * compatibility, and to the build JVM when no project declares one. Clamped to what the
+     * build JVM's ct.sym can serve. Set 0 to disable the layer.
      */
     @Input
     @Optional

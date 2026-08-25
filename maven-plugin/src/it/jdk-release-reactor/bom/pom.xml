@@ -8,17 +8,11 @@
     <artifactId>jdk-release-reactor</artifactId>
     <version>1.0.0</version>
   </parent>
-  <artifactId>newer</artifactId>
-  <!-- The plugin-configuration spelling, which the property scan alone does not see. -->
-  <build>
-    <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-compiler-plugin</artifactId>
-        <configuration>
-          <release>17</release>
-        </configuration>
-      </plugin>
-    </plugins>
-  </build>
+  <artifactId>bom</artifactId>
+  <packaging>pom</packaging>
+  <!-- A pom-packaged module compiles nothing, so this release must NOT reach the minimum.
+       It is lower than both real modules, so counting it would change the asserted value. -->
+  <properties>
+    <maven.compiler.release>8</maven.compiler.release>
+  </properties>
 </project>

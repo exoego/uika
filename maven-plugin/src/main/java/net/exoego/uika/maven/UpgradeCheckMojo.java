@@ -3,6 +3,8 @@ package net.exoego.uika.maven;
 import net.exoego.uika.plugin.core.JfrEvidence;
 import net.exoego.uika.plugin.core.UikaCli;
 import org.apache.maven.execution.MavenSession;
+import org.apache.maven.model.Plugin;
+import org.apache.maven.model.PluginExecution;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -10,6 +12,7 @@ import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
+import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.DefaultArtifact;
@@ -57,9 +60,11 @@ public final class UpgradeCheckMojo extends AbstractMojo {
 
     /**
      * JDK API release for the CLI's {@code --jdk-release} (resolves JDK hierarchy escapes
-     * instead of counting them unverified). Defaults to {@code maven.compiler.release}, then
-     * {@code maven.compiler.target}, then the build JVM; clamped to what the build JVM's
-     * ct.sym can serve. Set 0 to disable the layer.
+     * instead of counting them unverified). Defaults to the lowest release any project in the
+     * reactor compiles for, from maven-compiler-plugin's {@code <release>}/{@code <target>}
+     * else {@code maven.compiler.release}/{@code maven.compiler.target}, and to the build JVM
+     * when no project declares one. Clamped to what the build JVM's ct.sym can serve. Set 0 to
+     * disable the layer.
      */
     @Parameter(property = "uika.jdkRelease")
     private Integer jdkRelease;
@@ -152,12 +157,11 @@ public final class UpgradeCheckMojo extends AbstractMojo {
     }
 
     /**
-     * The JDK API release the checked application runs on: the LOWEST
-     * {@code maven.compiler.release}, else {@code maven.compiler.target} (skipping "1.x"
-     * pre-9 values, which are below the layer's floor anyway), across every project in the
-     * reactor. {@link UikaCli#effectiveJdkRelease} clamps the result at execution time.
+     * The JDK API release the checked application runs on, the LOWEST any project in the
+     * reactor compiles for. {@link UikaCli#effectiveJdkRelease} clamps the result at
+     * execution time.
      *
-     * <p>The whole reactor, not just the top-level project: a module is free to override the
+     * <p>The whole reactor, not just the top-level project. A module is free to override the
      * property, and reading only the aggregator reported a release no module compiles
      * against. The lowest of them, because one flag serves a run that checks every module and
      * under-claiming only costs Unknowns while over-claiming loses findings silently. Issue
@@ -174,19 +178,62 @@ public final class UpgradeCheckMojo extends AbstractMojo {
         return lowest == null ? Runtime.version().feature() : lowest;
     }
 
-    /** {@code maven.compiler.release}, else {@code .target}, of one project; null when unset. */
+    /**
+     * What one project compiles for, or null when it declares nothing servable.
+     *
+     * <p>maven-compiler-plugin's own {@code <release>}/{@code <target>} before the properties,
+     * since a module that configures the plugin directly overrides whatever property it
+     * inherits. A pom-packaged project is skipped outright: it compiles nothing, so the
+     * {@code maven.compiler.release} a BOM or sub-aggregator inherits is not a target anyone
+     * ships, and letting it into the minimum would gut the layer for the modules that do.
+     */
     private static Integer declaredRelease(MavenProject project) {
+        if ("pom".equals(project.getPackaging())) {
+            return null;
+        }
+        Integer configured = compilerPluginRelease(project);
+        if (configured != null) {
+            return configured;
+        }
         var properties = project.getProperties();
         for (String name : List.of("maven.compiler.release", "maven.compiler.target")) {
-            String value = properties.getProperty(name);
-            if (value != null && !value.isBlank() && !value.startsWith("1.")) {
-                try {
-                    return Integer.parseInt(value.trim());
-                } catch (NumberFormatException ignored) {
-                    // Fall through to the next source.
-                }
+            Integer release = UikaCli.parseRelease(properties.getProperty(name));
+            if (release != null) {
+                return release;
             }
         }
         return null;
+    }
+
+    /**
+     * The lowest release maven-compiler-plugin is configured with, across the plugin-level
+     * configuration and every execution, or null when it names none. Executions count because
+     * a module that compiles one source root at 8 and another at 17 runs on 8.
+     */
+    private static Integer compilerPluginRelease(MavenProject project) {
+        Plugin compiler = project.getPlugin("org.apache.maven.plugins:maven-compiler-plugin");
+        if (compiler == null) {
+            return null;
+        }
+        List<Object> configurations = new ArrayList<>();
+        configurations.add(compiler.getConfiguration());
+        for (PluginExecution execution : compiler.getExecutions()) {
+            configurations.add(execution.getConfiguration());
+        }
+        Integer lowest = null;
+        for (Object configuration : configurations) {
+            if (!(configuration instanceof Xpp3Dom dom)) {
+                continue;
+            }
+            for (String name : List.of("release", "target")) {
+                Xpp3Dom child = dom.getChild(name);
+                Integer release = child == null ? null : UikaCli.parseRelease(child.getValue());
+                if (release != null) {
+                    lowest = lowest == null ? release : Math.min(lowest, release);
+                    break;
+                }
+            }
+        }
+        return lowest;
     }
 }

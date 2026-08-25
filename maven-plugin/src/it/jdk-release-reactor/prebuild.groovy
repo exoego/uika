@@ -43,17 +43,5 @@ new ZipOutputStream(zip.newOutputStream()).withCloseable { out ->
 
 new File(basedir, "before.json").text = "{}"
 new File(basedir, "after.json").text = "{}"
-// The evidence directory the goals point at with -Duika.jfr. Before the
-// return: a Groovy script's return ends it, so a statement after one never runs.
-new File(basedir, "load-logs").mkdirs()
-// A REAL recording inside the log directory: the mojo must convert it (JfrEvidence)
-// instead of handing binary JFR to the JVM-free CLI. Whatever classes load during the
-// window (JFR internals at least) give it content; verify.groovy asserts plumbing only.
-def rec = new jdk.jfr.Recording()
-rec.enable("jdk.ClassLoad").withStackTrace().withoutThreshold()
-rec.start()
-Class.forName("java.util.zip.Adler32", false, this.class.classLoader)
-rec.stop()
-rec.dump(new File(basedir, "load-logs/rec.jfr").toPath())
-rec.close()
+
 return true

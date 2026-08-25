@@ -9,8 +9,8 @@
     <version>1.0.0</version>
   </parent>
   <artifactId>older</artifactId>
-  <packaging>pom</packaging>
+  <!-- The property spelling, on a module that actually compiles. -->
   <properties>
-    <maven.compiler.release>11</maven.compiler.release>
+    <maven.compiler.target>11</maven.compiler.target>
   </properties>
 </project>

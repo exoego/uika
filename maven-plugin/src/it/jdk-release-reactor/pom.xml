@@ -12,6 +12,7 @@
   <!-- The aggregator declares NO compiler release on purpose: reading only the top-level
        project is what used to report a release no module compiles against. -->
   <modules>
+    <module>bom</module>
     <module>older</module>
     <module>newer</module>
   </modules>

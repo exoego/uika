@@ -87,22 +87,50 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
 - The upgrade-check tasks pass `--jdk-release` by default (the CLI keeps it
   opt-in; the plugins run on a JVM, which is exactly the environment where a
   default is safe). It is derived from what the MODULES compile for, never the
-  build JVM alone, and from the LOWEST across them: Gradle toolchain else
-  targetCompatibility over `getAllprojects`, Maven
-  `maven.compiler.release`/`.target` (1.x skipped) over `getAllProjects`,
-  `javacOptions` for sbt and Mill. Lowest because `--jdk-release` is ONE
-  process-global flag for a run that checks every module, so a mixed-toolchain
-  build has no single right answer; under-claiming turns a member into NotFound
-  on both sides and it stays unreported as Unknown, while over-claiming makes a
-  member the runtime lacks resolve cleanly and loses the finding with nothing
-  to show. Reading only the root/aggregator was the old bug: a multi-module root
-  usually declares no target at all and fell straight through to the build JVM.
-  Per-module releases need the dump to carry one each -- a format change, issue
-  #128. The result is clamped by `UikaCli.effectiveJdkRelease` to the ct.sym
-  ceiling of the `JdkSource` passed in (feature - 1) and skipped with a log line
-  when that JDK has no ct.sym; that same JdkSource's home is exported as
-  UIKA_JDK, and the two must never be split, or the flag claims a release the
-  CLI's ct.sym cannot serve. Opt out with 0.
+  build JVM alone, and from the LOWEST across them. Lowest because
+  `--jdk-release` is ONE process-global flag for a run that checks every module,
+  so a mixed-toolchain build has no single right answer. Under-claiming turns a
+  member into NotFound on both sides and it stays unreported as Unknown, while
+  over-claiming makes a member the runtime lacks resolve cleanly and loses the
+  finding with nothing to show. Reading only the root/aggregator was the old bug,
+  because a multi-module root usually declares no target at all and fell straight
+  through to the build JVM. Per-module releases need the dump to carry one each,
+  a format change tracked as issue #128.
+- Each plugin reads the spelling that pins the API, never the one that names the
+  COMPILER. Gradle takes `compileJava`'s `options.release` else
+  `targetCompatibility`, over `getAllprojects`, and deliberately NOT the
+  toolchain: Gradle's own recommended shape pairs a 21 toolchain with an 11
+  target, and reading the toolchain claimed 21 for bytecode that runs on 11
+  (`getTargetCompatibility()` already falls back to the toolchain when nothing
+  else is set, so nothing is lost). Maven takes maven-compiler-plugin's
+  `<release>`/`<target>`, including per-execution ones, else
+  `maven.compiler.release`/`.target`, over `getAllProjects`, skipping
+  pom-packaged projects because a BOM compiles nothing and would otherwise drag
+  the whole reactor under. sbt and Mill parse the raw option lists through the
+  one shared `UikaCli.declaredRelease`, which handles the `--release=N` form
+  javac also accepts, scalac's `-release`/`-java-output-version`, and normalizes
+  `1.8`/`jvm-1.8` to 8 rather than dropping it (8 IS servable, and dropping it
+  made an all-Java-8 build fall through to the build JVM). Anything below 8 is
+  reported as no declaration at all, so one legacy module cannot drag the
+  minimum under the floor and switch the layer off for the whole build. sbt must
+  read the Compile configuration axis as well as the project axis, since
+  delegation runs Compile -> Zero and never the reverse; Mill must read
+  `mandatoryJavacOptions` as well as `javacOptions`, since it compiles with both.
+- The result is clamped by `UikaCli.effectiveJdkRelease` to the ct.sym ceiling of
+  the `JdkSource` passed in (feature - 1) and skipped with a log line when that
+  JDK has no ct.sym. That same JdkSource's home is exported as UIKA_JDK, and the
+  two must never be split, or the flag claims a release the CLI's ct.sym cannot
+  serve. `clojure-tool/src-core/exoego/uika/core.clj` carries a hand port of the
+  clamp for the lein plugin and the Clojure tool; its messages name the JDK's
+  home, never "the build JVM", because for lein those two differ by design.
+  Opt out with 0.
+- `uikaUpgradeCheck` is NOT aggregated in sbt (`uikaUpgradeCheck / aggregate :=
+  false`). Every value it reads is ThisBuild- or root-scoped and the dumps
+  already cover the whole build, so aggregating spawned one identical CLI run
+  per project, in parallel, racing on the shared retrieve directory and on the
+  JFR work directory whose stale-conversion sweep deletes a sibling's fresh
+  output. For the same scoping reason the task reads `uikaJdkRelease` through
+  `LocalRootProject /`, as it already did for `uikaJfr`.
 - Runtime load evidence is ONE knob per tool pointed at one directory, serving
   both phases (collect on the base branch's test run, consume on the PR's
   check): Gradle `-PuikaJfr` (bare value defaults to `build/uika/jfr`; the

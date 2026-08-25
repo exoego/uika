@@ -14,18 +14,21 @@ ThisBuild / uikaExcludeFiles := Seq(baseDirectory.value / "uika-exclude.toml")
 // must reach the CLI as --jdk-release.
 ThisBuild / uikaJdkRelease := 11
 
-// Two subprojects compiling for different releases. With uikaJdkRelease at its derive
-// default the LOWEST of them must reach the CLI: one flag serves a run that checks every
-// module, and reading only the build JVM reported a release nothing compiles against.
-lazy val older = project.settings(javacOptions ++= Seq("--release", "11"))
-lazy val newer = project.settings(javacOptions ++= Seq("--release", "17"))
+// Two subprojects compiling for different releases, spelled the two ways that matter. One
+// flag serves a run that checks every module, so the LOWEST must reach the CLI. `older` uses
+// `Compile / javacOptions`, which sbt delegates Compile -> Zero and never the reverse, so a
+// project-scoped read alone cannot see it; `newer` states its target in scalacOptions, which
+// is where a Scala module with no Java sources puts it. 12 rather than 11 so the assertion
+// cannot pass on the value the pinned override above already wrote.
+lazy val older = project.settings(Compile / javacOptions ++= Seq("--release=12"))
+lazy val newer = project.settings(scalacOptions ++= Seq("-release", "17"))
 
 lazy val checkJdkReleaseDerived = taskKey[Unit]("Asserts the lowest subproject release reached the CLI")
 
 checkJdkReleaseDerived := {
   val args = IO.read(baseDirectory.value / "before.json.args")
-  if (!args.contains("--jdk-release 11"))
-    sys.error(s"expected the lowest subproject release (11), not 17 or the build JVM: $args")
+  if (!args.contains("--jdk-release 12"))
+    sys.error(s"expected the lowest subproject release (12), not 17 or the build JVM: $args")
 }
 
 resolvers += "uika-stub" at (baseDirectory.value / "repo").toURI.toString

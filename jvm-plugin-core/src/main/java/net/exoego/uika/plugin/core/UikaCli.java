@@ -120,6 +120,80 @@ public final class UikaCli {
         }
     }
 
+    /** The lowest release the JDK API layer can serve, since ct.sym carries no older stubs. */
+    public static final int MIN_RELEASE = 8;
+
+    /**
+     * The API release a compiler-option list targets, or null when it declares none.
+     *
+     * <p>Shared by every plugin that has only the raw option list to go on, so one parser
+     * covers the spellings javac and scalac actually accept. Both the space-separated and the
+     * {@code --release=17} forms, since javac takes either. {@code -release} alone is scalac's
+     * spelling, and {@code -java-output-version} is its Scala 3 name. Legacy {@code 1.8} and
+     * {@code jvm-1.8} values name release 8, which the layer CAN serve, so they are
+     * normalized rather than dropped.
+     *
+     * <p>Anything below {@link #MIN_RELEASE} is reported as no declaration at all. It cannot
+     * be represented, and treating it as a data point would drag a whole build's minimum
+     * under the floor and switch the layer off for every module.
+     */
+    public static Integer declaredRelease(List<String> options) {
+        Integer target = null;
+        for (int i = 0; i < options.size(); i++) {
+            String option = options.get(i);
+            int separator = firstSeparator(option);
+            String flag = separator < 0 ? option : option.substring(0, separator);
+            String value = separator < 0
+                    ? (i + 1 < options.size() ? options.get(i + 1) : null)
+                    : option.substring(separator + 1);
+            Integer release = parseRelease(value);
+            if (release == null) {
+                continue;
+            }
+            if (flag.equals("--release") || flag.equals("-release")
+                    || flag.equals("--java-output-version") || flag.equals("-java-output-version")) {
+                return release;
+            }
+            if (target == null && (flag.equals("-target") || flag.equals("--target"))) {
+                target = release;
+            }
+        }
+        return target;
+    }
+
+    private static int firstSeparator(String option) {
+        int equals = option.indexOf('=');
+        int colon = option.indexOf(':');
+        if (equals < 0) {
+            return colon;
+        }
+        return colon < 0 ? equals : Math.min(equals, colon);
+    }
+
+    /**
+     * A release number written any of the ways the JVM toolchains spell it ({@code 17},
+     * {@code 1.8}, scalac's {@code jvm-1.8}), or null when it is not one or sits below
+     * {@link #MIN_RELEASE}.
+     */
+    public static Integer parseRelease(String value) {
+        if (value == null) {
+            return null;
+        }
+        String text = value.trim();
+        if (text.startsWith("jvm-")) {
+            text = text.substring("jvm-".length());
+        }
+        if (text.startsWith("1.")) {
+            text = text.substring("1.".length());
+        }
+        try {
+            int release = Integer.parseInt(text);
+            return release < MIN_RELEASE ? null : release;
+        } catch (NumberFormatException notARelease) {
+            return null;
+        }
+    }
+
     /**
      * Clamps a wanted {@code --jdk-release} value to what {@code jdk}'s ct.sym can serve,
      * logging the decision through {@code log}. The plugins run on a JVM by definition, so the
@@ -140,7 +214,14 @@ public final class UikaCli {
         }
         int ctSymMax = jdk.feature() - 1;
         int effective = Math.min(target, ctSymMax);
-        if (effective < 8 || !Files.isRegularFile(jdk.home().resolve("lib").resolve("ct.sym"))) {
+        // Two different reasons, two different messages. Folding them made a below-floor
+        // release report a missing ct.sym, sending the user to inspect a JDK that was fine.
+        if (effective < MIN_RELEASE) {
+            log.accept("uika: skipping the JDK API layer (release " + effective
+                    + " is below the lowest release ct.sym serves, " + MIN_RELEASE + ")");
+            return null;
+        }
+        if (!Files.isRegularFile(jdk.home().resolve("lib").resolve("ct.sym"))) {
             log.accept("uika: skipping the JDK API layer (no usable ct.sym in " + jdk.home() + ")");
             return null;
         }
