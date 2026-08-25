@@ -411,10 +411,12 @@ violation with a reason indistinguishable from a well-evidenced run. Drafting
 into a file that is also an `--exclude-file` is refused for the same reason it
 looks tempting: it would rewrite that file with only the drafted rules.
 
-A `--class-load-log` path that does not exist is an error, not a skip, exactly
-as a missing `--exclude-file` is. Evidence is normally a CI artifact the PR job
-downloads, so configure the knob per run rather than persistently if the same
-build also runs where the artifact is absent.
+A `--class-load-log` path that does not exist is skipped with a warning rather
+than failing the run: evidence is data another job produces, so its absence is
+an operational state, and the knob can stay in a build that also runs on a
+laptop or a fork PR. Nothing is promoted from a path that is not there, which
+is what the warning says. Drafting from evidence that named no class at all is
+still refused.
 
 ## Build-tool plugins
 

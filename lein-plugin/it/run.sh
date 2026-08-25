@@ -16,9 +16,8 @@ unset UIKA_VERSION
 cd "$here/test-project"
 rm -rf target
 : > uika-exclude.toml
-# The evidence file :class-load-logs points at. The real CLI reads it, so it has to
-# exist before the run that is not stubbed, and it has to carry a class load: an
-# evidence set with none of them is a broken pipeline, and drafting from it is refused.
+# :class-load-logs points here. A missing path is only a warning now, but an evidence
+# set naming no class is refused when drafting, so it has to carry a load.
 printf '[class,load] example.Consumer\n[class,load] org.apache.commons.lang3.StringUtils\n' > loads.log
 COMMONS_LANG3_VERSION=3.4 lein uika dump-classpath target/before.json
 lein uika dump-classpath target/after.json

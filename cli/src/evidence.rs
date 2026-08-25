@@ -179,6 +179,19 @@ impl Parser<'_> {
 pub fn load(paths: &[PathBuf]) -> Result<LoadEvidence> {
     let mut loaded = FxHashMap::default();
     for path in paths {
+        // Evidence is data another job produces, not configuration, so a path that is not
+        // there is an expected operational state: the artifact was not downloaded on a
+        // laptop, on a fork PR, or before the base branch ever collected any. An empty
+        // DIRECTORY already degraded to no evidence here, so failing on the absent path
+        // was the same situation answered two different ways. Loud, because promotion is
+        // what silently stops happening, and a typo in the path looks identical.
+        if !path.exists() {
+            eprintln!(
+                "warning: no class-load evidence at {}; nothing will be promoted from it",
+                path.display()
+            );
+            continue;
+        }
         if path.is_dir() {
             for entry in walkdir::WalkDir::new(path)
                 .follow_links(true)
@@ -1006,6 +1019,28 @@ mod tests {
         let empty = dir.join("empty.toml");
         std::fs::write(&empty, "").unwrap();
         super::create_draft_placeholder(&empty).unwrap();
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Evidence is data another job produces, so an absent path is an operational state,
+    /// not a mistake, and an empty directory already degraded this way.
+    #[test]
+    fn a_missing_evidence_path_is_skipped_not_fatal() {
+        let dir = std::env::temp_dir().join(format!("uika-missev-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let present = dir.join("there.log");
+        std::fs::write(&present, "[class,load] com.example.Loaded\n").unwrap();
+
+        let evidence = super::load(&[dir.join("gone.log"), present]).unwrap();
+        // The surviving path still contributes, so one bad entry does not cost the rest.
+        assert_eq!(evidence.distinct_classes(), 1);
+
+        // A permission or read error is still fatal; only absence is tolerated.
+        let unreadable = dir.join("adir");
+        std::fs::create_dir_all(&unreadable).unwrap();
+        assert_eq!(super::load(&[unreadable]).unwrap().distinct_classes(), 0);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
