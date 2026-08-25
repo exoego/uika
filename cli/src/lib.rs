@@ -244,11 +244,8 @@ fn load_evidence(
     exclude_file: &[PathBuf],
 ) -> Result<Option<evidence::LoadEvidence>> {
     if let Some(path) = draft {
-        // Before the placeholder truncates it. --exclude-file is already loaded by both
-        // callers, so an aliased path is a file that WAS read and is about to be
-        // overwritten with only the drafted rules, silently dropping every rule that was
-        // still suppressing something. "Regenerate it in place" is the natural thing to
-        // try, so it has to be refused rather than obeyed.
+        // Before the placeholder truncates it. "Regenerate it in place" is the natural
+        // thing to try, and it drops every rule that was still suppressing something.
         if let Some(clash) = aliases_exclude_file(path, exclude_file) {
             bail!(
                 "--draft-exclude-file {} is also an --exclude-file; drafting would \
@@ -270,9 +267,8 @@ fn load_evidence(
     Ok(Some(ev))
 }
 
-/// The --exclude-file entry the draft path resolves to, if any. Canonicalized because
-/// `./a.toml` and `a.toml` are the same file; the exclude paths have already been read at
-/// every call site, so they exist, and the draft path can only alias one by existing too.
+/// The --exclude-file entry the draft path resolves to, if any. Canonicalized for
+/// spelling and symlinks; hard links are caught by content in create_draft_placeholder.
 fn aliases_exclude_file(draft: &Path, exclude_file: &[PathBuf]) -> Option<PathBuf> {
     let draft = draft.canonicalize().ok()?;
     exclude_file
@@ -300,12 +296,9 @@ fn apply_evidence_and_draft(
     let Some(ev) = evidence else { return Ok(()) };
     evidence::apply(violations, ev);
     if let Some(path) = draft {
-        // Zero observed classes is a broken evidence pipeline, not proof that nothing
-        // loaded: the artifact 404'd, the test JVM never forked, the directory holds only
-        // recordings this JVM-free binary skips. Drafting from it would waive every
-        // unproven violation with a reason that reads exactly like a well-evidenced run,
-        // and a human reviewing the file has nothing to tell them apart. The placeholder
-        // written before the scan stays on disk and says the run did not complete.
+        // Zero observed classes is a broken pipeline (artifact never downloaded, fork
+        // never happened, directory holds only the recordings this binary skips), not
+        // proof that nothing loaded. Drafting from it reads like a well-evidenced run.
         if ev.distinct_classes() == 0 {
             bail!(
                 "refusing to draft from {}: no class loads were observed at all, so every \
@@ -1423,9 +1416,7 @@ mod tests {
         }
     }
 
-    /// Drafting into a file that is also an --exclude-file would rewrite it with only the
-    /// drafted rules, dropping every hand-written rule that was still suppressing
-    /// something. `./x` and `x` are the same file, so the comparison canonicalizes.
+    /// `./x` and `x` are the same file, so the comparison canonicalizes.
     #[test]
     fn draft_path_aliasing_an_exclude_file_is_detected() {
         let dir = std::env::temp_dir().join(format!("uika-alias-{}", std::process::id()));
@@ -1449,9 +1440,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Zero observed classes is a broken evidence pipeline, not proof that nothing loaded.
-    /// Drafting from it would waive every unproven violation with a reason that reads
-    /// exactly like a well-evidenced run.
+    /// The guard is on the evidence, not on the violation slice being empty.
     #[test]
     fn drafting_from_evidence_with_no_classes_is_refused() {
         let dir = std::env::temp_dir().join(format!("uika-noev-{}", std::process::id()));
@@ -1469,8 +1458,6 @@ mod tests {
             "{message}"
         );
 
-        // Non-empty evidence still drafts, so the guard is on the evidence and not on the
-        // empty violation slice.
         std::fs::write(&log, "[class,load] com.example.Loaded\n").unwrap();
         let evidence = crate::evidence::load(std::slice::from_ref(&log)).unwrap();
         assert_eq!(evidence.distinct_classes(), 1);

@@ -428,21 +428,15 @@ fn toml_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// The phrase both files uika writes to a draft path open with. Anything else in a file
-/// about to be truncated was written by someone else, and is not ours to destroy.
+/// The phrase both files uika writes to a draft path open with.
 const DRAFT_MARKER: &str = "uika --draft-exclude-file";
 
 /// Truncate the draft file before the check runs, mirroring `--verdicts-json`'s
 /// create-upfront contract: a run that errors mid-scan leaves this marker, never a stale
 /// draft from an earlier run for a human to review.
 pub fn create_draft_placeholder(path: &Path) -> Result<()> {
-    // Content, not path identity, decides whether this file is ours to truncate. The
-    // caller already refuses a draft path that resolves to an --exclude-file, but
-    // canonicalize sees through spelling and symlinks only, so a HARD LINK to the exclude
-    // file is a different path to the same inode and slips past it. Reading the first
-    // line catches that without a per-platform inode comparison, and also catches the
-    // wider mistake of aiming the draft at hand-written rules never passed as
-    // --exclude-file at all.
+    // Content, not path identity: the caller's canonicalize misses a HARD LINK to the
+    // exclude file, and an inode comparison would need cfg-gated code on both platforms.
     if let Ok(existing) = std::fs::read_to_string(path) {
         let first = existing.lines().next().unwrap_or("");
         if !existing.trim().is_empty() && !first.contains(DRAFT_MARKER) {
@@ -453,10 +447,8 @@ pub fn create_draft_placeholder(path: &Path) -> Result<()> {
             );
         }
     }
-    // Parents before the write: this runs BEFORE the scan, so a path into a directory
-    // that does not exist yet would fail the whole check rather than just the write.
-    // Every frontend makes the dump's parents for the same reason, which makes a matching
-    // draft path like target/uika/draft.toml the natural next thing to write.
+    // This runs BEFORE the scan, so a missing directory would fail the whole check
+    // rather than just the write.
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -962,11 +954,8 @@ mod tests {
 
     /// The placeholder written before the check runs is a valid, empty exclude file, so
     /// an errored run leaves neither a stale draft nor an unparseable one.
-    ///
-    /// The stale draft carries the header, because a real one always does: every draft
-    /// uika writes opens with it, and that is what tells this file apart from rules a
-    /// human wrote. A headerless file is refused instead, which
-    /// `a_file_uika_did_not_write_is_never_truncated` covers.
+    /// The fixture carries the header because a real stale draft always does; the
+    /// headerless case is refused, and covered below.
     #[test]
     fn draft_placeholder_is_a_valid_empty_exclude_file() {
         let dir = std::env::temp_dir().join(format!("uika-draft-holder-{}", std::process::id()));
@@ -989,10 +978,8 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// A hard link to an --exclude-file is a different path to the same inode, so the
-    /// caller's canonicalize-based check cannot see it. Content decides instead, which
-    /// also covers a draft aimed at hand-written rules that were never passed as
-    /// --exclude-file. Overwriting an earlier draft of our own stays allowed.
+    /// Reproduced before the guard existed: the run exited 0 and keep.toml came back
+    /// holding the draft header.
     #[test]
     fn a_file_uika_did_not_write_is_never_truncated() {
         let dir = std::env::temp_dir().join(format!("uika-hardlink-{}", std::process::id()));
@@ -1012,11 +999,10 @@ mod tests {
         );
         assert_eq!(std::fs::read_to_string(&rules).unwrap(), hand_written);
 
-        // Our own placeholder, and a real draft, are both ours to replace.
+        // Ours to replace: an earlier placeholder, and an empty file the user made.
         let ours = dir.join("ours.toml");
         super::create_draft_placeholder(&ours).unwrap();
         super::create_draft_placeholder(&ours).unwrap();
-        // So is an empty file the user created to hold the output.
         let empty = dir.join("empty.toml");
         std::fs::write(&empty, "").unwrap();
         super::create_draft_placeholder(&empty).unwrap();
@@ -1024,10 +1010,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The placeholder runs BEFORE the scan, so a path into a directory that does not
-    /// exist yet used to fail the whole check rather than just the write. Every frontend
-    /// creates the dump's parents, which makes a matching draft path the natural next
-    /// thing to write.
+    /// Every frontend creates the dump's parents, so a matching target/uika/draft.toml
+    /// is the natural next thing to write.
     #[test]
     fn the_draft_placeholder_creates_its_parent_directories() {
         let dir = std::env::temp_dir().join(format!("uika-draftdir-{}", std::process::id()));
