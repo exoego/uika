@@ -19,7 +19,7 @@ pub mod suggest;
 pub mod verdicts;
 pub mod window;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use check::CheckReport;
 use cli::{Cli, Command, FailOn};
 use index::ApiIndex;
@@ -144,7 +144,7 @@ fn cmd_check(
     draft_exclude_file: Option<&Path>,
 ) -> Result<i32> {
     let exclude_rules = exclude::load(exclude_file)?;
-    let load_evidence = load_evidence(class_load_log, draft_exclude_file)?;
+    let load_evidence = load_evidence(class_load_log, draft_exclude_file, exclude_file)?;
     let mut jdk_indexer = jdk::indexer_for(jdk_release)?;
     let mut verdict_writer = verdicts_json
         .map(verdicts::VerdictWriter::create)
@@ -241,8 +241,18 @@ fn finish_verdicts<T>(writer: Option<verdicts::VerdictWriter>, result: Result<T>
 fn load_evidence(
     paths: &[PathBuf],
     draft: Option<&Path>,
+    exclude_file: &[PathBuf],
 ) -> Result<Option<evidence::LoadEvidence>> {
     if let Some(path) = draft {
+        // Before the placeholder truncates it. "Regenerate it in place" is the natural
+        // thing to try, and it drops every rule that was still suppressing something.
+        if let Some(clash) = aliases_exclude_file(path, exclude_file) {
+            bail!(
+                "--draft-exclude-file {} is also an --exclude-file; drafting would \
+                 overwrite it with only the drafted rules. Draft to a new path and merge.",
+                clash.display()
+            );
+        }
         evidence::create_draft_placeholder(path)?;
     }
     if paths.is_empty() {
@@ -255,6 +265,16 @@ fn load_evidence(
         ev.sources()
     );
     Ok(Some(ev))
+}
+
+/// The --exclude-file entry the draft path resolves to, if any. Canonicalized for
+/// spelling and symlinks; hard links are caught by content in create_draft_placeholder.
+fn aliases_exclude_file(draft: &Path, exclude_file: &[PathBuf]) -> Option<PathBuf> {
+    let draft = draft.canonicalize().ok()?;
+    exclude_file
+        .iter()
+        .find(|path| path.canonicalize().is_ok_and(|resolved| resolved == draft))
+        .cloned()
 }
 
 /// The one evidence site per command: promote observed violations on the FINAL set (after
@@ -276,6 +296,17 @@ fn apply_evidence_and_draft(
     let Some(ev) = evidence else { return Ok(()) };
     evidence::apply(violations, ev);
     if let Some(path) = draft {
+        // Zero observed classes is a broken pipeline (artifact never downloaded, fork
+        // never happened, directory holds only the recordings this binary skips), not
+        // proof that nothing loaded. Drafting from it reads like a well-evidenced run.
+        if ev.distinct_classes() == 0 {
+            bail!(
+                "refusing to draft from {}: no class loads were observed at all, so every \
+                 violation would be drafted as never-loaded. Check that the evidence was \
+                 produced and, for the Clojure frontends, that it is text and not JFR.",
+                ev.sources()
+            );
+        }
         let drafted = evidence::draft_excludes(violations, app_roots_matched, ev, path)?;
         eprintln!(
             "note: drafted {drafted} exclude rule(s) to {}",
@@ -513,7 +544,7 @@ fn cmd_upgrade_check(
     let exclude_rules = exclude::load(exclude_file)?;
     // Loaded before the no-changes early return for the same reason as jdk_indexer below:
     // a bad log path must fail on every run, not only when jars changed.
-    let load_evidence = load_evidence(class_load_log, draft_exclude_file)?;
+    let load_evidence = load_evidence(class_load_log, draft_exclude_file, exclude_file)?;
     // Opened before the no-changes early return: a bad --jdk-release value or
     // environment must fail on every run, not only on the first run that has
     // changed jars (a misconfigured PR gate would otherwise pass for weeks).
@@ -1383,5 +1414,55 @@ mod tests {
                 v.reachable, v.invocation_found
             );
         }
+    }
+
+    /// `./x` and `x` are the same file, so the comparison canonicalizes.
+    #[test]
+    fn draft_path_aliasing_an_exclude_file_is_detected() {
+        let dir = std::env::temp_dir().join(format!("uika-alias-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rules = dir.join("keep.toml");
+        std::fs::write(&rules, "").unwrap();
+        let other = dir.join("draft.toml");
+        std::fs::write(&other, "").unwrap();
+
+        let excludes = vec![rules.clone()];
+        assert_eq!(
+            super::aliases_exclude_file(&rules, &excludes).map(|p| p.canonicalize().unwrap()),
+            Some(rules.canonicalize().unwrap())
+        );
+        let spelled_differently = dir.join(".").join("keep.toml");
+        assert!(super::aliases_exclude_file(&spelled_differently, &excludes).is_some());
+        assert!(super::aliases_exclude_file(&other, &excludes).is_none());
+        // A draft path that does not exist yet cannot be a file the loader just read.
+        assert!(super::aliases_exclude_file(&dir.join("new.toml"), &excludes).is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The guard is on the evidence, not on the violation slice being empty.
+    #[test]
+    fn drafting_from_evidence_with_no_classes_is_refused() {
+        let dir = std::env::temp_dir().join(format!("uika-noev-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("empty.log");
+        std::fs::write(&log, "nothing that parses as a class load\n").unwrap();
+        let evidence = crate::evidence::load(std::slice::from_ref(&log)).unwrap();
+        assert_eq!(evidence.distinct_classes(), 0);
+
+        let draft = dir.join("draft.toml");
+        let refused = super::apply_evidence_and_draft(&mut [], None, Some(&evidence), Some(&draft));
+        let message = format!("{:#}", refused.unwrap_err());
+        assert!(
+            message.contains("no class loads were observed"),
+            "{message}"
+        );
+
+        std::fs::write(&log, "[class,load] com.example.Loaded\n").unwrap();
+        let evidence = crate::evidence::load(std::slice::from_ref(&log)).unwrap();
+        assert_eq!(evidence.distinct_classes(), 1);
+        super::apply_evidence_and_draft(&mut [], None, Some(&evidence), Some(&draft)).unwrap();
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

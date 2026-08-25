@@ -404,7 +404,19 @@ evidence shows (which classes, which logs); a symbol that also breaks a
 reachable or observed class is never drafted, because the rule would waive
 that real break too. The draft is input for a human: review each entry and
 delete what you cannot justify before committing the file. Requires
-`--class-load-log`.
+`--class-load-log`, and refuses to draft when that evidence names no class at
+all: an artifact that never downloaded, a test JVM that never forked, or a
+directory holding only recordings would otherwise draft every unproven
+violation with a reason indistinguishable from a well-evidenced run. Drafting
+into a file that is also an `--exclude-file` is refused for the same reason it
+looks tempting: it would rewrite that file with only the drafted rules.
+
+A `--class-load-log` path that does not exist is skipped with a warning rather
+than failing the run: evidence is data another job produces, so its absence is
+an operational state, and the knob can stay in a build that also runs on a
+laptop or a fork PR. Nothing is promoted from a path that is not there, which
+is what the warning says. Drafting from evidence that named no class at all is
+still refused.
 
 ## Build-tool plugins
 
