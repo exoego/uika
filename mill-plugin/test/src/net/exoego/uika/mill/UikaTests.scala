@@ -231,6 +231,42 @@ object UikaTests extends TestSuite {
       }
     }
 
+    test("the dump records the release each module compiles for") {
+      // Same mixed build as the flag test above. The flag can only carry the lowest, but the
+      // dump keeps every module's own, which is what lets upgrade-check scope a JDK move to
+      // the modules that made it.
+      Using.resource(UnitTester(stubCliBuild, null, env = systemEnv)) { tester =>
+        val out = os.Path(value(tester(Uika.dumpClasspath(tester.evaluator))))
+        val json = ujson.read(os.read(out))
+        def release(module: String): Option[Int] =
+          json("modules").arr
+            .find(_("module").str == module)
+            .get
+            .obj
+            .get("jdkRelease")
+            .map(_.num.toInt)
+
+        assert(release(":older").contains(11))
+        assert(release(":newer").contains(17))
+        // Declares no target of its own, so it falls back to the dump-level release, which
+        // is the lowest any module declares.
+        assert(release(":app").isEmpty)
+        assert(json("jdkRelease").num.toInt == 11)
+      }
+    }
+
+    test("--jdkRelease overrides what the modules declare in the dump") {
+      // The derivation only sees what the build declares, so a build compiling for 11 and
+      // shipping on 21 has no other way to say so. The override is a statement about the
+      // whole build, so it replaces every module's own value.
+      Using.resource(UnitTester(stubCliBuild, null, env = systemEnv)) { tester =>
+        val out = os.Path(value(tester(Uika.dumpClasspath(tester.evaluator, jdkRelease = 21))))
+        val json = ujson.read(os.read(out))
+        assert(json("jdkRelease").num.toInt == 21)
+        assert(json("modules").arr.forall(_.obj.get("jdkRelease").map(_.num.toInt).contains(21)))
+      }
+    }
+
     test("UikaTestModule injects the JFR flag into forked test JVMs") {
       // A leaf that does not exist yet, and deleted again between the two evaluations: JFR
       // silently records to a single clobbered FILE when the leaf is missing under an

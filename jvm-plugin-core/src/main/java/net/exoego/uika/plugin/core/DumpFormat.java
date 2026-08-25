@@ -15,13 +15,19 @@ import java.util.Map;
  *
  * <pre>
  * {"version": 2,
+ *  "jdkRelease": 17,
  *  "roots": ["/abs/prefix/", ...],
  *  "artifacts": [{"group":..,"name":..,"version":..,"root":0,"path":"suffix"}, ...],
- *  "modules": [{"module":":path","classesDirs":[{"root":1,"path":"suffix"}],"artifactRefs":[0,...]}, ...]}
+ *  "modules": [{"module":":path","jdkRelease":17,
+ *               "classesDirs":[{"root":1,"path":"suffix"}],"artifactRefs":[0,...]}, ...]}
  * </pre>
  *
  * <p>This collapses duplication that used to scale with module count into one entity table.
  * Entries without coordinates (project/file dependencies) omit group/name/version.
+ *
+ * <p>Both {@code jdkRelease} fields are additive and optional. A module carries one when it
+ * declares an API target; the dump-level one ({@link #dumpRelease}) stands in for the modules
+ * that do not.
  */
 public final class DumpFormat {
     private DumpFormat() {}
@@ -58,7 +64,13 @@ public final class DumpFormat {
                     (String) a.get("file"),
                     (String) a.get("project")));
         }
-        return new Module((String) module.get("module"), classesDirs, artifacts);
+        return new Module((String) module.get("module"), classesDirs, artifacts,
+                releaseOf(module));
+    }
+
+    /** The {@code jdkRelease} of a dump or of one module object, null when it carries none. */
+    private static Integer releaseOf(Map<String, Object> object) {
+        return object.get("jdkRelease") instanceof Number n ? n.intValue() : null;
     }
 
     @SuppressWarnings("unchecked")
@@ -84,12 +96,41 @@ public final class DumpFormat {
             for (Object idx : (List<Object>) m.getOrDefault("artifactRefs", List.of())) {
                 refs.add(artifacts.get(((Number) idx).intValue()));
             }
-            result.add(new Module((String) m.get("module"), classesDirs, refs));
+            result.add(new Module((String) m.get("module"), classesDirs, refs, releaseOf(m)));
         }
         return result;
     }
 
-    /** The feature version of the JVM writing this dump, for a fresh dump. */
+    /**
+     * The dump-level {@code jdkRelease}: the API release the checked application runs on,
+     * the LOWEST any module declares, else {@link #buildJvmRelease()}.
+     *
+     * <p>It is what upgrade-check compares between two dumps for modules that name no
+     * release of their own, and what the merged (non per-module) mode compares outright, so
+     * it has to describe the application rather than whoever wrote the file. The lowest for
+     * the same reason {@code --jdk-release} takes the lowest: one value stands in for every
+     * module that declared nothing, and under-claiming only costs Unknowns while
+     * over-claiming loses findings silently.
+     *
+     * <p>Falling back to the build JVM is not a compromise here. A module that declares no
+     * target compiles against whatever JDK runs the build, so for that module the build JVM
+     * IS the release the application runs on, and a build-image bump genuinely moves it.
+     */
+    public static int dumpRelease(List<Module> modules) {
+        Integer lowest = null;
+        for (Module module : modules) {
+            Integer release = module.jdkRelease();
+            if (release != null) {
+                lowest = lowest == null ? release : Math.min(lowest, release);
+            }
+        }
+        return lowest == null ? buildJvmRelease() : lowest;
+    }
+
+    /**
+     * The feature version of the JVM writing this dump. Only the fallback for a module that
+     * declares no target of its own; see {@link #dumpRelease}.
+     */
     public static int buildJvmRelease() {
         return Runtime.version().feature();
     }
@@ -100,7 +141,7 @@ public final class DumpFormat {
      * or a before dump rehydrated elsewhere would claim the rehydrating JVM's release.
      */
     public static Integer jdkReleaseOf(Map<String, Object> doc) {
-        return doc.get("jdkRelease") instanceof Number n ? n.intValue() : null;
+        return releaseOf(doc);
     }
 
     /** Write as v2. roots are built dynamically from known prefixes plus generic markers. */
@@ -147,6 +188,9 @@ public final class DumpFormat {
             }
             firstModule = false;
             modulesJson.append("{\"module\":").append(quote(module.path()));
+            if (module.jdkRelease() != null) {
+                modulesJson.append(",\"jdkRelease\":").append(module.jdkRelease().intValue());
+            }
             modulesJson.append(",\"classesDirs\":[");
             boolean first = true;
             for (String dir : module.classesDirs()) {

@@ -54,15 +54,32 @@ public final class ClasspathDump {
         private final String path;
         private final List<String> classesDirs;
         private final List<Artifact> artifacts;
+        private final Integer jdkRelease;
 
         public Module(String path, List<String> classesDirs, List<Artifact> artifacts) {
+            this(path, classesDirs, artifacts, null);
+        }
+
+        /**
+         * @param jdkRelease the API release THIS module compiles for, null when it declares
+         *     none. Per module rather than per dump because a build is free to mix them, and
+         *     upgrade-check pairs the releases module by module to decide which modules a JDK
+         *     move has to be checked over.
+         */
+        public Module(String path, List<String> classesDirs, List<Artifact> artifacts,
+                Integer jdkRelease) {
             this.path = path;
             this.classesDirs = classesDirs;
             this.artifacts = artifacts;
+            this.jdkRelease = jdkRelease;
         }
 
         public String path() {
             return path;
+        }
+
+        public Integer jdkRelease() {
+            return jdkRelease;
         }
 
         public List<String> classesDirs() {

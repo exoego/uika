@@ -36,13 +36,23 @@ if ! tr -d '\\' < target/before.json | grep -q '"path":"[^"]*/target/classes"'; 
   echo "FAIL: compiled classes missing from classesDirs" >&2
   cat target/before.json >&2; exit 1
 fi
-# jdkRelease and the derived --jdk-release must describe the JVM the PROJECT runs
-# on, not the one lein runs on: :eval-in-leiningen pins the plugin to lein's. Probe
-# with a second JDK when one is around; UIKA_IT_ALT_JAVA names it.
+# An explicit :jdk-release is the only way to name a runtime the probe cannot see, so
+# it beats the probe in the dump. The fixture sets 11 while lein runs on a much newer
+# JVM, which is exactly the disagreement.
+if ! tr -d ' ' < target/before.json | grep -q '"jdkRelease":11'; then
+  echo "FAIL: :jdk-release 11 did not reach the dump" >&2
+  tr -d ' ' < target/before.json | sed -n 's/.*\("jdkRelease":[0-9]*\).*/\1/p' >&2; exit 1
+fi
+echo ":jdk-release override: dump records 11"
+
+# Without that override, jdkRelease and the derived --jdk-release must describe the JVM
+# the PROJECT runs on, not the one lein runs on: :eval-in-leiningen pins the plugin to
+# lein's. Probe with a second JDK when one is around; UIKA_IT_ALT_JAVA names it.
 if [ -n "${UIKA_IT_ALT_JAVA:-}" ] && [ -x "${UIKA_IT_ALT_JAVA:-}" ]; then
   alt_feature="$("$UIKA_IT_ALT_JAVA" -XshowSettings:properties -version 2>&1 \
     | sed -n 's/.*java\.specification\.version = \([0-9][0-9]*\).*/\1/p')"
-  lein update-in : assoc :java-cmd "\"$UIKA_IT_ALT_JAVA\"" \
+  lein update-in :uika dissoc :jdk-release \
+    -- update-in : assoc :java-cmd "\"$UIKA_IT_ALT_JAVA\"" \
     -- uika dump-classpath target/altjvm.json >/dev/null
   got="$(tr -d ' ' < target/altjvm.json | sed -n 's/.*"jdkRelease":\([0-9]*\).*/\1/p')"
   if [ "$got" != "$alt_feature" ]; then

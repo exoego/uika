@@ -942,10 +942,38 @@ pub struct ModuleOutcome {
     /// dump's modules and must not be counted as a changed one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub jdk: bool,
+    /// For a JDK run, the dump module whose release moved. Empty for a dependency run,
+    /// whose modules are `modules`. A Vec because `modules` is one, and because a future
+    /// grouping of runs would put several here rather than reshape the field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jdk_modules: Vec<String>,
+    /// For a JDK run, the releases compared. The label needs both halves and reading them
+    /// back out of `modules` would be parsing our own formatting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jdk_pair: Option<(u32, u32)>,
     pub scanned_classes: usize,
     /// Post-exclusion violations attributed to any module of this run.
     pub broken: usize,
     pub unknown_refs: usize,
+}
+
+/// The shared tail of a run's summary line, so the per-module rows and the JDK rows
+/// cannot drift into reporting the same three numbers differently.
+fn run_counts(o: &ModuleOutcome) -> String {
+    let broken = if o.broken == 0 {
+        "✅ 0 broken".to_string()
+    } else {
+        format!("❌ {} broken", o.broken)
+    };
+    let unverified = if o.unknown_refs == 0 {
+        "0 unverified".to_string()
+    } else {
+        format!("❓ {} unverified", o.unknown_refs)
+    };
+    format!(
+        "scanned {} classes, {broken}, {unverified}",
+        o.scanned_classes
+    )
 }
 
 /// How the per-module upgrade-check partitioned the dump's modules.
@@ -1022,24 +1050,40 @@ pub fn upgrade_text(
             notes.join(", ")
         )
         .unwrap();
-        for o in &m.outcomes {
-            let broken = if o.broken == 0 {
-                "✅ 0 broken".to_string()
-            } else {
-                format!("❌ {} broken", o.broken)
-            };
-            let unverified = if o.unknown_refs == 0 {
-                "0 unverified".to_string()
-            } else {
-                format!("❓ {} unverified", o.unknown_refs)
-            };
+        for o in m.outcomes.iter().filter(|o| !o.jdk) {
+            writeln!(out, "    {}  {}", o.modules.join(", "), run_counts(o)).unwrap();
+        }
+        // Its own section, not another row above. A JDK run compares two releases of the
+        // JDK while the rows above compare two versions of a jar, so their broken counts
+        // are answers to different questions and side by side they read as one total that
+        // does not add up.
+        let jdk: Vec<&ModuleOutcome> = m.outcomes.iter().filter(|o| o.jdk).collect();
+        if !jdk.is_empty() {
+            let moved: std::collections::BTreeSet<&str> = jdk
+                .iter()
+                .flat_map(|o| o.jdk_modules.iter().map(String::as_str))
+                .collect();
+            writeln!(out).unwrap();
             writeln!(
                 out,
-                "    {}  scanned {} classes, {broken}, {unverified}",
-                o.modules.join(", "),
-                o.scanned_classes,
+                "JDK check: {} of {} modules moved to another release",
+                moved.len(),
+                m.total_modules
             )
             .unwrap();
+            for o in jdk {
+                let pair = match o.jdk_pair {
+                    Some((old, new)) => format!("JDK {old} -> {new}"),
+                    None => String::new(),
+                };
+                writeln!(
+                    out,
+                    "    {}  {pair}  {}",
+                    o.jdk_modules.join(", "),
+                    run_counts(o)
+                )
+                .unwrap();
+            }
         }
     }
     if let Some(result) = result {
@@ -1149,6 +1193,62 @@ mod tests {
             app_roots_matched: Some(true),
             scan_targets: 1,
         }
+    }
+
+    fn outcome(modules: &[&str], jdk_modules: &[&str], broken: usize) -> ModuleOutcome {
+        ModuleOutcome {
+            modules: modules.iter().map(|m| m.to_string()).collect(),
+            jdk: !jdk_modules.is_empty(),
+            jdk_modules: jdk_modules.iter().map(|m| m.to_string()).collect(),
+            jdk_pair: (!jdk_modules.is_empty()).then_some((11, 17)),
+            scanned_classes: 10,
+            broken,
+            unknown_refs: 0,
+        }
+    }
+
+    /// A JDK run compares two releases of the JDK while a module row compares two versions
+    /// of a jar. Listed as one more row, their broken counts read as parts of a total that
+    /// does not add up, so the JDK runs get their own section, one row per module, with the
+    /// same three numbers the rows above carry.
+    #[test]
+    fn jdk_runs_are_reported_apart_from_the_module_rows() {
+        let summary = ModuleRunSummary {
+            outcomes: vec![
+                outcome(&[":app"], &[], 1),
+                outcome(&[":app (JDK 11 -> 17)"], &[":app"], 2),
+                outcome(&[":web (JDK 11 -> 17)"], &[":web"], 0),
+            ],
+            total_modules: 3,
+            unchanged_modules: 1,
+            new_modules: 0,
+            incomplete_modules: 0,
+        };
+        let text = upgrade_text(&[], None, Some(&summary));
+        assert!(
+            text.contains("per-module check: 1 of 3 modules changed their resolved versions"),
+            "{text}"
+        );
+        // The module table holds only the dependency row; the JDK runs are below it, one
+        // per module, so each module's JDK breakage is its own number.
+        let table = text.split("JDK check:").next().unwrap();
+        assert!(
+            table.contains(":app  scanned 10 classes, ❌ 1 broken"),
+            "{text}"
+        );
+        assert!(!table.contains("JDK 11 -> 17"), "{text}");
+        assert!(
+            text.contains("JDK check: 2 of 3 modules moved to another release"),
+            "{text}"
+        );
+        assert!(
+            text.contains(":app  JDK 11 -> 17  scanned 10 classes, ❌ 2 broken"),
+            "{text}"
+        );
+        assert!(
+            text.contains(":web  JDK 11 -> 17  scanned 10 classes, ✅ 0 broken"),
+            "{text}"
+        );
     }
 
     fn member_violation(

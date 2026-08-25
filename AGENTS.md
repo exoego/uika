@@ -28,7 +28,9 @@ not be relearned by experiment.
 - `check --verdicts-json <path>` (also on upgrade-check) streams every
   reference verdict (ok/unknown/broken) as JSON Lines for evaluation. The
   stream carries the raw constant-pool reference (never the collapsed Class
-  ref a "class removed" violation reports), is written before --exclude-file
+  ref a "class removed" violation reports), covers only owners
+  `index::breakable_class_names` accepts (a class the upgrade left untouched is
+  never recorded, so it cannot appear), is written before --exclude-file
   filtering, and does not include graph-walk violations (class/method became
   final, extends final class, class/interface kind flips, class became sealed,
   method became abstract, conflicting default methods) or the META-INF/services
@@ -81,7 +83,10 @@ not be relearned by experiment.
   broken counts unchanged, and the probe links every converted verdict.
   kotlin/* and spring/* escapes correctly stay Unknown. On the stress workload
   unverified went 294→0 and 106 real removals surfaced (owners whose hierarchy
-  escapes into java.util.concurrent).
+  escapes into java.util.concurrent). Those fixture numbers predate
+  `breakable_class_names`, which removed the escapes that were never at risk:
+  guava-selenium now reads 0 unverified with no layer at all, and jetty starts at
+  10 rather than 14.
 - `--jdk-release-old N --jdk-release-new M` (check) makes the JDK upgrade the
   compared pair instead of layering one release under both sides. clap REJECTS
   `--old`/`--new` alongside it rather than accepting and ignoring them: only one
@@ -101,16 +106,50 @@ not be relearned by experiment.
   11 -> 17, while a subclass of java.awt.event.ComponentAdapter reports nothing
   despite the 98 public -> protected constructor narrowings in that pair (the
   subclass-aware access check absorbs them).
-- The dump records the writing JVM's feature version (`jdkRelease`, additive, from
-  `DumpFormat.buildJvmRelease()` in the one shared v2 writer, so all four plugins
-  get it at once). `upgrade-check` turns a before/after disagreement into ONE extra
-  run over the whole after universe — not one per module, since every module runs on
-  the same JVM — appended by `plan_module_runs` with `jdk_pair` set and both jar
-  lists empty. `jdk_change` requires BOTH sides to name a release, so a dump
-  predating the field never manufactures a JDK move. The run is excluded from the
-  "N of M modules changed" count (`ModuleOutcome.jdk`); it is not one of the dump's
-  modules. Gradle rehydration carries the input dump's value forward instead of
-  stamping the rehydrating JVM.
+- The dump records `jdkRelease` (additive) TWICE: once per module, once for the dump.
+  Both name the API release the checked application runs on, never the JVM that wrote
+  the file — that was issue #128, where a build-image JDK bump manufactured a JDK-pair
+  run the application never had while a real application JDK upgrade went unseen. A
+  module's is what it compiles for (the same per-tool derivation `--jdk-release`
+  defaults from, so the two cannot disagree), absent when it declares nothing; the
+  dump's is `DumpFormat.dumpRelease`, the lowest across the modules, else
+  `buildJvmRelease()`. That fallback is not a compromise: a module declaring no target
+  compiles against whatever JDK runs the build, so for it the build JVM IS the
+  application's release. The CLI applies the dump-level value as each module's fallback
+  at load time (`gradle.rs`), so `ModuleUniverse::jdk_release` always has the one
+  answer. The derivation cannot see a runtime that differs from what the build
+  declares, so the plugins' existing release knob doubles as the escape hatch:
+  `UikaCli.overrideRelease` (ported as `core/override-release`) replaces every module's
+  value with an explicit positive one. Zero stays "switch the API layer off" and leaves
+  the recorded release derived, since going silent there would take JDK-move detection
+  down with the layer, and anything below `MIN_RELEASE` is dropped because a dump
+  naming it sends `jdk::release_index` after a release ct.sym never carried.
+- `upgrade-check` turns a before/after disagreement into extra runs appended by
+  `plan_jdk_runs` with `jdk_pair` set and both jar lists empty, ONE PER MODULE whose
+  release moved, over that module's own classpath. Per module for two reasons. A build
+  may mix releases, so a module still on 11 must not be checked against a sibling's
+  17 -> 21 move. And a run is the unit the report counts and the `--fail-on` gate
+  decides on, so only a module-shaped run can give a module its own scanned, broken and
+  unverified numbers. The cost is that a jar on several modules' classpaths is scanned
+  once per module, which an earlier per-pair union avoided. Measured and accepted, with
+  the numbers in the uika-performance skill: the union is flat in module count and per
+  module is linear, so a large monorepo pays minutes. It pays them only on a PR that
+  moves a JDK release, since `release_change` plans nothing otherwise, and
+  `cached_jdk_pair` already keeps the other half of the cost, reading a release out of
+  ct.sym, down to once per distinct pair.
+- A JDK run is named `:app (JDK 11 -> 17)`, module AND pair. That string is the key
+  violations are attributed by, so a bare module name would fold the module's dependency
+  run into the JDK run's broken count, and a bare pair would lose the attribution
+  entirely. `release_change` requires BOTH sides to name a release, so a dump predating
+  the field, or a module the before dump does not have, never manufactures a JDK move.
+  The runs are excluded from the "N of M modules changed" count (`ModuleOutcome.jdk`),
+  since they are not the dump's modules, and they print in their OWN section rather than
+  as more rows of the per-module table (`ModuleOutcome.jdk_modules` and `jdk_pair` carry
+  what that section shows). A JDK run compares two releases of the JDK while a module row
+  compares two versions of a jar, so side by side their broken counts read as parts of
+  one total that does not add up. Merged mode has no per-module data and compares the
+  dump-level values instead. Gradle rehydration carries the input dump's values forward
+  instead of stamping the rehydrating JVM.
 - Tuning knobs: `UIKA_CHUNK` (paths processed concurrently in pass 1; default =
   16x rayon threads, rationale in `check.rs::scan_target_paths`), `UIKA_WINDOW`
   (fallback zip-reader window size; default 1 MiB, two windows).
@@ -118,6 +157,16 @@ not be relearned by experiment.
   their version from the `UIKA_VERSION` env var embedded at compile time
   (`option_env!` in `cli/src/cli.rs`). Never bump the placeholder for a
   release or compare it against tags.
+
+- Pass 1 records a reference only when its owner is in `index::breakable_class_names`,
+  the classes whose entry differs between the compared sides plus every subtype of one
+  (an inherited member can be removed from a supertype while the referenced class itself
+  is untouched). A class identical on both sides resolves identically on both sides, so
+  such references could only ever verdict Ok or Unknown. Dropping them removes unverified
+  noise: guava-selenium went 16 unverified to 0 and jetty 14 to 10, with every violation
+  byte-identical across all ten goldens. The closure runs DOWNWARD over a parent-to-children
+  map rather than as a memoized walk upward, because a memo filled in hash-map iteration
+  order would make the accepted set, and the output, depend on that order.
 
 ## Memory and Speed Rules
 

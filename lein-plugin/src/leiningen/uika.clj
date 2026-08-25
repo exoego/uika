@@ -2,7 +2,9 @@
   "lein uika dump-classpath [output] / lein uika upgrade-check <before> <after>.
 
   Options come from a {:uika {...}} map in project.clj: :fail-on, :exclude-files,
-  :jdk-release (0 disables), :class-load-logs (text format), :draft-exclude-file
+  :jdk-release (0 disables the API layer; a positive value also records the project as
+  running on that release rather than on the probed :java-cmd JVM), :class-load-logs
+  (text format), :draft-exclude-file
   (needs :class-load-logs, and the CLI's own error names the singular CLI flag this
   map rejects), :cli-version, :cli-path. The CLI version defaults to this plugin's
   own, read from the jar's pom.properties, so one version bump updates both."
@@ -71,7 +73,24 @@
   [^File file]
   (boolean (and file (re-find #"\.(jar|zip)$" (.getName file)))))
 
+(def ^:private option-keys
+  "Every key the :uika map accepts. Destructuring drops what it does not name, so
+  without an explicit check a misspelling -- :class-load-log, the Clojure tool's
+  singular spelling, or :exclude-file -- would silently disable the flag instead of
+  failing, and the check would run on CLI defaults with nothing said."
+  #{:fail-on :exclude-files :jdk-release :class-load-logs :draft-exclude-file
+    :cli-version :cli-path})
+
+(defn- check-options
+  "Rejects a misspelled :uika key. Both subtasks run it, since both read the map and a
+  key neither recognises would otherwise silently disable the flag it was meant to set."
+  [opts]
+  (when-let [unknown (seq (sort (remove option-keys (keys opts))))]
+    (main/abort (str "uika: unknown :uika option(s) " (pr-str (vec unknown))
+                     "; known: " (pr-str (vec (sort option-keys)))))))
+
 (defn- dump-classpath [project args]
+  (check-options (:uika project))
   ;; eval/prep, not `lein compile`: compile short-circuits when :aot yields no stale
   ;; namespace, so it never reaches prep -- the only thing that runs :prep-tasks. A
   ;; :java-source-paths project with no :aot would otherwise never run javac and would
@@ -98,8 +117,12 @@
         out (io/file (or (first args)
                          (io/file (:target-path project) "uika" "classpath.json")))]
     (io/make-parents out)
+    ;; :jdk-release wins over the probe. The probe answers "which JVM does lein start for
+    ;; this project", which is the right default and is usually the deployment JVM too, but
+    ;; a project built on one JVM and shipped on another can only say so by hand.
     (spit out (core/dump-json (str ":" (:name project)) artifacts class-dirs
-                              (:feature (project-jvm project))))
+                              (or (core/override-release (:jdk-release (:uika project)))
+                                  (:feature (project-jvm project)))))
     (main/info "uika classpath dump:" (str out))))
 
 (defn- own-version
@@ -110,22 +133,12 @@
       (let [props (doto (Properties.) (.load in))]
         (.getProperty props "version")))))
 
-(def ^:private option-keys
-  "Every key the :uika map accepts. Destructuring drops what it does not name, so
-  without an explicit check a misspelling -- :class-load-log, the Clojure tool's
-  singular spelling, or :exclude-file -- would silently disable the flag instead of
-  failing, and the check would run on CLI defaults with nothing said."
-  #{:fail-on :exclude-files :jdk-release :class-load-logs :draft-exclude-file
-    :cli-version :cli-path})
-
 (defn- upgrade-check [project [before after]]
   (when-not (and before after)
     (main/abort "usage: lein uika upgrade-check <before.json> <after.json>"))
   (let [{:keys [fail-on exclude-files jdk-release class-load-logs draft-exclude-file]
          :as opts} (:uika project)]
-    (when-let [unknown (seq (sort (remove option-keys (keys opts))))]
-      (main/abort (str "uika: unknown :uika option(s) " (pr-str (vec unknown))
-                       "; known: " (pr-str (vec (sort option-keys))))))
+    (check-options opts)
     ;; Binary resolution sits INSIDE the try: an unsupported platform, a zip missing
     ;; the binary and a failed download all throw from here, and lein answers any
     ;; exception without :exit-code with a full cause trace. IOException is caught

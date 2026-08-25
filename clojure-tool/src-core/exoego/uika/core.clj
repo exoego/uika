@@ -30,12 +30,17 @@
   `-T` tool is this one but for the Leiningen plugin is not: :eval-in-leiningen
   pins the plugin to lein's own JVM while project code runs under :java-cmd. The
   field exists so upgrade-check can spot a JDK move between two dumps, so it has
-  to track the runtime, not whoever happened to write the file."
+  to track the runtime, not whoever happened to write the file.
+
+  It is written on the module as well as on the dump, the shape the JVM plugins
+  emit for builds that mix releases across modules. Neither frontend has more than
+  one module, so here the two are always the same number."
   ([module-name artifacts class-dirs]
    (dump-json module-name artifacts class-dirs (.feature (Runtime/version))))
   ([module-name artifacts class-dirs jdk-release]
    (let [artifact-maps (vec artifacts)
          module {"module" module-name
+                 "jdkRelease" jdk-release
                  "classesDirs" (mapv (fn [^String p] {"root" 0 "path" p}) class-dirs)
                  "artifactRefs" (vec (range (count artifact-maps)))}]
      (json/write-str {"version" 2
@@ -181,6 +186,20 @@
       (try
         {:home home :feature (Long/parseLong spec)}
         (catch NumberFormatException _ nil)))))
+
+(defn override-release
+  "Port of UikaCli.overrideRelease; keep the two in sync. The release an explicit
+  :jdk-release names for the DUMP, or nil when it names none.
+
+  The knob answers two questions at once, and this is the second one: which release the
+  application runs on. It is the escape hatch for what the derivation cannot see, a project
+  that ships on a JVM newer than anything it declares. Zero is not that statement, it means
+  \"switch the API layer off\", so the dump keeps its derived value rather than taking JDK
+  move detection down with the layer. Below 8 is dropped for a harder reason: a dump naming
+  it sends upgrade-check to ask ct.sym for a release it has never carried, failing the run."
+  [value]
+  (when-let [release (release-number value)]
+    (when (>= (long release) 8) (long release))))
 
 (defn this-jvm
   "The JVM running this code, in the shape effective-jdk-release and the UIKA_JDK

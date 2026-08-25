@@ -94,8 +94,29 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   over-claiming makes a member the runtime lacks resolve cleanly and loses the
   finding with nothing to show. Reading only the root/aggregator was the old bug,
   because a multi-module root usually declares no target at all and fell straight
-  through to the build JVM. Per-module releases need the dump to carry one each,
-  a format change tracked as issue #128.
+  through to the build JVM.
+- The DUMP carries the release too, and per module (`ClasspathDump.Module`'s fourth
+  argument, written by the same per-project derivation the flag defaults from). The
+  flag stays one value because the layer it switches on is process-wide; the dump can
+  afford one each, and upgrade-check uses them to scope a JDK move to the modules that
+  made it. `DumpFormat.dumpRelease` is the dump-level value, the lowest of them, and
+  the fallback for a module that names none. Do not write `buildJvmRelease()` there
+  again: recording the WRITING JVM was issue #128, where a build-image bump
+  manufactured a JDK-pair run the application never had while a real application JDK
+  upgrade went unseen. It stays the fallback only because a module that declares no
+  target really does compile against the build JVM. Gradle emits the release on every
+  module it dumps (`getTargetCompatibility()` falls back to the toolchain, so a Java
+  project always names one); the Clojure frontends write the same number on their
+  single module and on the dump.
+- Each tool's release knob (`jdkRelease` / `uikaJdkRelease` / `<jdkRelease>` /
+  `:jdk-release`) feeds the DUMP as well as the flag, through
+  `UikaCli.overrideRelease` (`core/override-release` in Clojure). It is the only way a
+  build can state a runtime the derivation cannot see, such as compiling `--release 11`
+  and shipping on 21, and it replaces every module's value rather than sitting beside
+  them because it is a statement about the whole build. Zero keeps its old meaning of
+  switching the API layer off and leaves the dump derived, so do not fold the two
+  meanings together. Mill and the Clojure tool take it on the dump command itself
+  (`--jdkRelease`, `:jdk-release`), since neither has a build-wide setting to read.
 - Each plugin reads the spelling that pins the API, never the one that names the
   COMPILER. Gradle takes `compileJava`'s `options.release` else
   `targetCompatibility`, over `getAllprojects`, and deliberately NOT the

@@ -3,8 +3,6 @@ package net.exoego.uika.maven;
 import net.exoego.uika.plugin.core.JfrEvidence;
 import net.exoego.uika.plugin.core.UikaCli;
 import org.apache.maven.execution.MavenSession;
-import org.apache.maven.model.Plugin;
-import org.apache.maven.model.PluginExecution;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -12,7 +10,6 @@ import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
-import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.DefaultArtifact;
@@ -127,7 +124,8 @@ public final class UpgradeCheckMojo extends AbstractMojo {
             Path binary = UikaCli.extractBinary(zip.toPath(), installDir);
             UikaCli.JdkSource jdk = UikaCli.JdkSource.current();
             Integer effectiveJdkRelease = UikaCli.effectiveJdkRelease(
-                    jdkRelease != null ? jdkRelease : defaultJdkRelease(), jdk,
+                    jdkRelease != null ? jdkRelease : JdkReleases.lowest(session.getAllProjects()),
+                    jdk,
                     line -> getLog().info(line));
             // Recordings (a .jfr value, or recordings inside the directory) are converted
             // to the CLI's text format here: the CLI is JVM-free and never reads binary
@@ -154,104 +152,5 @@ public final class UpgradeCheckMojo extends AbstractMojo {
         if (exit != 0) {
             throw new MojoExecutionException("uika upgrade-check failed with exit code " + exit);
         }
-    }
-
-    /**
-     * The JDK API release the checked application runs on, the LOWEST any project in the
-     * reactor compiles for. {@link UikaCli#effectiveJdkRelease} clamps the result at
-     * execution time.
-     *
-     * <p>The whole reactor, not just the top-level project. A module is free to override the
-     * property, and reading only the aggregator reported a release no module compiles
-     * against. The lowest of them, because one flag serves a run that checks every module and
-     * under-claiming only costs Unknowns while over-claiming loses findings silently. Issue
-     * #128 tracks carrying a release per module in the dump instead.
-     */
-    private int defaultJdkRelease() {
-        Integer lowest = null;
-        for (MavenProject project : session.getAllProjects()) {
-            Integer release = declaredRelease(project);
-            if (release != null) {
-                lowest = lowest == null ? release : Math.min(lowest, release);
-            }
-        }
-        return lowest == null ? Runtime.version().feature() : lowest;
-    }
-
-    /**
-     * What one project compiles for, or null when it declares nothing servable.
-     *
-     * <p>maven-compiler-plugin's own {@code <release>}/{@code <target>} before the properties,
-     * since a module that configures the plugin directly overrides whatever property it
-     * inherits. A pom-packaged project is skipped outright: it compiles nothing, so the
-     * {@code maven.compiler.release} a BOM or sub-aggregator inherits is not a target anyone
-     * ships, and letting it into the minimum would gut the layer for the modules that do.
-     */
-    private static Integer declaredRelease(MavenProject project) {
-        if ("pom".equals(project.getPackaging())) {
-            return null;
-        }
-        Integer configured = compilerPluginRelease(project);
-        if (configured != null) {
-            return configured;
-        }
-        var properties = project.getProperties();
-        for (String name : List.of("maven.compiler.release", "maven.compiler.target")) {
-            Integer release = UikaCli.parseRelease(properties.getProperty(name));
-            if (release != null) {
-                return release;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * The lowest release maven-compiler-plugin actually compiles with, or null when it names
-     * none. Executions count because a module that compiles one source root at 8 and another
-     * at 17 runs on 8.
-     *
-     * <p>The plugin-level configuration is NOT one more candidate to minimize over. Maven
-     * merges it into each execution with the execution winning, so it is a default, and a
-     * value every execution overrides is never compiled with. Treating it as a candidate made
-     * {@code <release>8</release>} at plugin level lose to nothing when both default-compile
-     * and default-testCompile said 17, reporting 8 for a module that only ever compiles at 17.
-     */
-    private static Integer compilerPluginRelease(MavenProject project) {
-        Plugin compiler = project.getPlugin("org.apache.maven.plugins:maven-compiler-plugin");
-        if (compiler == null) {
-            return null;
-        }
-        Integer pluginLevel = configuredRelease(compiler.getConfiguration());
-        Integer lowest = null;
-        boolean anyExecution = false;
-        for (PluginExecution execution : compiler.getExecutions()) {
-            Integer effective = configuredRelease(execution.getConfiguration());
-            if (effective == null) {
-                effective = pluginLevel;
-            }
-            if (effective == null) {
-                continue;
-            }
-            anyExecution = true;
-            lowest = lowest == null ? effective : Math.min(lowest, effective);
-        }
-        // No execution declares one: the plugin-level value is what the default lifecycle
-        // executions would inherit, so it stands on its own.
-        return anyExecution ? lowest : pluginLevel;
-    }
-
-    /** {@code <release>}, else {@code <target>}, of one configuration block. */
-    private static Integer configuredRelease(Object configuration) {
-        if (!(configuration instanceof Xpp3Dom dom)) {
-            return null;
-        }
-        for (String name : List.of("release", "target")) {
-            Xpp3Dom child = dom.getChild(name);
-            Integer release = child == null ? null : UikaCli.parseRelease(child.getValue());
-            if (release != null) {
-                return release;
-            }
-        }
-        return null;
     }
 }

@@ -44,8 +44,10 @@ public class UikaPlugin implements Plugin<Project> {
      * module, and a mixed-toolchain build has no single right answer. Under-claiming turns a
      * member that exists at runtime into NotFound on both sides, which stays unreported as an
      * Unknown. Over-claiming makes a member the runtime does not have resolve cleanly and
-     * loses the finding with nothing to show for it. Per-module releases would need the dump
-     * to carry one each, which is a format change (issue #128).
+     * loses the finding with nothing to show for it. The dump keeps each module's own
+     * release next to it ({@link DumpModuleClasspathTask#getJdkRelease}), which is what lets
+     * upgrade-check scope a JDK move to the modules that made it; the flag stays one value
+     * because the layer it switches on is process-wide.
      *
      * <p>The root project alone is not enough. A multi-module root usually has no java plugin,
      * which used to fall straight through to the JVM running the build.
@@ -62,6 +64,27 @@ public class UikaPlugin implements Plugin<Project> {
         return lowest == null ? Runtime.version().feature() : lowest;
     }
 
+    /** {@code -PuikaJdkRelease} as a number, or null when the property is absent. */
+    static Integer jdkReleaseProperty(Project root) {
+        Object value = root.findProperty("uikaJdkRelease");
+        return value == null ? null : Integer.parseInt(value.toString());
+    }
+
+    /**
+     * The release ONE module records in the dump: {@code -PuikaJdkRelease} when it is set,
+     * else what that project compiles for.
+     *
+     * <p>The override replaces every module's own value rather than sitting beside them,
+     * because it is a statement about the whole build. It exists here for the case the
+     * derivation cannot see: a build compiling {@code --release 11} that ships on a 21
+     * runtime has no other way to say so, and without it upgrade-check would never notice
+     * that runtime moving.
+     */
+    private static Integer dumpJdkRelease(Project root, Project project) {
+        Integer override = UikaCli.overrideRelease(jdkReleaseProperty(root));
+        return override != null ? override : declaredRelease(project);
+    }
+
     /**
      * What one project's bytecode runs on, or null when it declares nothing servable.
      *
@@ -74,7 +97,7 @@ public class UikaPlugin implements Plugin<Project> {
      * it never forces toolchain provisioning the way the compile task's own
      * {@code targetCompatibility} would.
      */
-    private static Integer declaredRelease(Project project) {
+    static Integer declaredRelease(Project project) {
         JavaPluginExtension java =
                 project.getExtensions().findByType(JavaPluginExtension.class);
         if (java == null) {
@@ -213,9 +236,9 @@ public class UikaPlugin implements Plugin<Project> {
                     if (draftExcludeFile != null) {
                         task.getDraftExcludeFile().set(root.file(draftExcludeFile.toString()));
                     }
-                    Object jdkRelease = root.findProperty("uikaJdkRelease");
+                    Integer jdkRelease = jdkReleaseProperty(root);
                     if (jdkRelease != null) {
-                        task.getJdkRelease().set(Integer.parseInt(jdkRelease.toString()));
+                        task.getJdkRelease().set(jdkRelease);
                     } else {
                         // The build knows its JDK, so the JDK API layer defaults ON here (the bare
                         // CLI keeps it opt-in): the lowest release any project targets, else the
@@ -347,6 +370,10 @@ public class UikaPlugin implements Plugin<Project> {
                 JavaPluginExtension javaExt =
                         p.getExtensions().findByType(JavaPluginExtension.class);
                 task.getEmptyDump().set(javaExt == null && conf == null);
+                // Here rather than at registration: compileJava's options.release and the
+                // java extension's targetCompatibility are both build-script settable, so
+                // reading them before the project evaluates would see the plugin defaults.
+                task.getJdkRelease().set(dumpJdkRelease(root, p));
                 SourceSet main = DumpModuleClasspathTask.mainSourceSet(p);
                 if (main != null) {
                     task.getClassesDirs().from(main.getOutput().getClassesDirs());

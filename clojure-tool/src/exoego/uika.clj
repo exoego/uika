@@ -36,8 +36,12 @@
   :aliases  aliases to include in the resolution, e.g. [:prod]
   :class-dir extra classes directory to record (AOT output from tools.build
              compile-clj); the project :paths are always recorded so hinted-interop
-             classes compiled there are scanned too."
-  [{:keys [dir output class-dir] :as args}]
+             classes compiled there are scanned too.
+  :jdk-release the release to record the application as running on, instead of this
+             JVM's. The same knob upgrade-check takes, for a project whose runtime is
+             not the JVM that writes the dump. 0 leaves the recorded release derived,
+             since it only switches the API layer off."
+  [{:keys [dir output class-dir jdk-release] :as args}]
   (let [dir (str (or dir (System/getProperty "user.dir")))
         basis (project-basis dir args)
         ;; Source dirs go in as classesDirs: uika only parses .class files, so pure
@@ -54,7 +58,9 @@
         out (let [f (io/file (or output "target/uika/classpath.json"))]
               (if (.isAbsolute f) f (io/file dir (str f))))]
     (io/make-parents out)
-    (spit out (core/dump-json (str ":" (.getName (io/file dir))) artifacts class-dirs))
+    (spit out (core/dump-json (str ":" (.getName (io/file dir))) artifacts class-dirs
+                              (or (core/override-release jdk-release)
+                                  (.feature (Runtime/version)))))
     (println "uika classpath dump:" (str out))
     (str out)))
 

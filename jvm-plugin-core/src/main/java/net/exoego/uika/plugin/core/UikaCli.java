@@ -195,6 +195,25 @@ public final class UikaCli {
     }
 
     /**
+     * The release an explicit override names for the DUMP, or null when it names none.
+     *
+     * <p>The plugins' {@code jdkRelease} knob answers two questions at once: which release
+     * the API layer resolves escapes against, and — since it is the only place a build can
+     * state it — which release the application runs on. The second is what the dump records,
+     * and it is the escape hatch for the case the derivation cannot see: a build that
+     * compiles {@code --release 11} but ships on a 21 runtime says so here.
+     *
+     * <p>Zero is not that statement. It means "switch the API layer off", so the dump keeps
+     * its derived value rather than going silent and taking JDK-move detection down with the
+     * layer. Anything below {@link #MIN_RELEASE} is dropped for a harder reason: a dump
+     * naming it would send upgrade-check to ask ct.sym for a release it has never carried,
+     * failing the whole run.
+     */
+    public static Integer overrideRelease(Integer override) {
+        return override != null && override >= MIN_RELEASE ? override : null;
+    }
+
+    /**
      * Clamps a wanted {@code --jdk-release} value to what {@code jdk}'s ct.sym can serve,
      * logging the decision through {@code log}. The plugins run on a JVM by definition, so the
      * JDK API layer defaults ON there (unlike the opt-in CLI flag): the build knows its JDK

@@ -257,8 +257,11 @@ pub fn scan_target_paths(
         .and_then(|v| v.parse().ok())
         .unwrap_or_else(|| rayon::current_num_threads().max(1) * 16);
     // Build the owner filter once: extract_refs tests candidate owners against these raw
-    // names instead of interning every constant-pool owner just to reject it.
-    let old_names = old.class_name_set();
+    // names instead of interning every constant-pool owner just to reject it. Only the
+    // classes that could actually break (see breakable_class_names) are in it, which is
+    // what keeps a JDK-pair check from recording a reference record for every mention of
+    // java/lang/String.
+    let old_names = crate::index::breakable_class_names(old, new);
     // Raw name+descriptor pairs of newly-abstract methods. Empty only when the upgrade
     // made nothing abstract, in which case pass 1 skips evidence collection entirely.
     let selection_probe = selection_member_probe(old, new);
@@ -826,7 +829,13 @@ pub fn check(
 ) -> CheckReport {
     let probe = selection_member_probe(old, new);
     let mut scan = ScanResult::new();
-    let parsed = parse_targets(targets, &old.class_name_set(), &scan.graph, false, &probe);
+    let parsed = parse_targets(
+        targets,
+        &crate::index::breakable_class_names(old, new),
+        &scan.graph,
+        false,
+        &probe,
+    );
     scan.merge(parsed);
     if !probe.is_empty() {
         scan.extend_invocations(class_invocation_evidence(library_classes, &probe));

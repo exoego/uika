@@ -26,13 +26,20 @@ object Uika extends ExternalModule {
    * at exist by the time the CLI scans them. That mirrors the sbt plugin; Mill has no
    * resolution-only mode to opt into because a Mill module cannot resolve its own runtime
    * classpath without its upstream modules' compile output existing anyway.
+   *
+   * @param jdkRelease the release to record every module as running on, instead of what each
+   *                   one compiles for. The same knob upgradeCheck takes, for the case the
+   *                   derivation cannot see: a build compiling `--release 11` that ships on a
+   *                   21 runtime has no other way to say so.
    */
-  def dumpClasspath(ev: Evaluator, output: String = "") = Task.Command(exclusive = true) {
+  def dumpClasspath(ev: Evaluator, output: String = "", jdkRelease: Int = -1) =
+    Task.Command(exclusive = true) {
     val modules = javaModules(ev)
     if (modules.isEmpty) {
       Task.fail("uika: no JavaModule found in this build")
     }
-    val dumps = ev.execute(modules.map(moduleDumpTask)).values.get
+    val declaredOverride = UikaCli.overrideRelease(Int.box(jdkRelease))
+    val dumps = ev.execute(modules.map(moduleDumpTask(_, declaredOverride))).values.get
     val workspace = Task.ctx().workspace
     val out =
       if (output.isEmpty) workspace / "out" / "uika" / "classpath.json"
@@ -43,7 +50,7 @@ object Uika extends ExternalModule {
       DumpFormat.writeV2(
         dumps.asJava,
         Seq(workspace.toString).asJava,
-        DumpFormat.buildJvmRelease()
+        DumpFormat.dumpRelease(dumps.asJava)
       )
     )
     Task.log.info(s"uika classpath dump: $out")
@@ -57,7 +64,8 @@ object Uika extends ExternalModule {
    * @param jdkRelease resolve JDK hierarchy escapes against this API release; 0 disables the
    *                   layer and a negative value, the default, derives the lowest release any
    *                   module compiles for, else the build JVM's, clamped by
-   *                   [[UikaCli.effectiveJdkRelease]] to what its ct.sym serves
+   *                   [[UikaCli.effectiveJdkRelease]] to what its ct.sym serves. dumpClasspath
+   *                   takes the same knob for what it records as the application's release
    * @param jfr        a directory of JFR recordings from a test run of the current, not yet
    *                   upgraded build, or a single `.jfr` recording
    */
@@ -105,8 +113,9 @@ object Uika extends ExternalModule {
     // The LOWEST release any module compiles for, because one flag serves a run that checks
     // every module. Under-claiming only costs Unknowns, while over-claiming makes a member
     // the runtime lacks resolve cleanly and loses the finding with nothing to show. A build
-    // declaring nothing falls back to the JVM, the only evidence left. Issue #128 tracks
-    // carrying a release per module in the dump instead.
+    // declaring nothing falls back to the JVM, the only evidence left. The dump keeps each
+    // module's own release next to it (moduleDumpTask); the flag stays one value because the
+    // layer it switches on is process-wide.
     //
     // mandatoryJavacOptions as well as javacOptions, since Mill compiles with both and a
     // trait that pins the release commonly does it there.
@@ -178,7 +187,10 @@ object Uika extends ExternalModule {
    * is only known at runtime, and Mill's task macro can only lift statically known task calls
    * into edges.
    */
-  private def moduleDumpTask(m: JavaModule): Task[ClasspathDump.Module] = {
+  private def moduleDumpTask(
+      m: JavaModule,
+      declaredOverride: Integer
+  ): Task[ClasspathDump.Module] = {
     val depModules = m.recursiveRunModuleDeps
     val depOutputs = Task.traverse(depModules)(_.localRunClasspath)
     Task.Anon {
@@ -234,10 +246,18 @@ object Uika extends ExternalModule {
         new ClasspathDump.Artifact(group, name, version, path.toString, projectOf.get(path).orNull)
       }
 
+      // What THIS module compiles for, in the dump next to it, so upgrade-check can scope a
+      // JDK move to the modules that made it. mandatoryJavacOptions as well as javacOptions,
+      // for the reason upgradeCheck spells out: Mill compiles with both.
+      val declared = Seq(m.javacOptions(), m.mandatoryJavacOptions())
+        .flatMap(options => Option(UikaCli.declaredRelease(options.asJava)))
       new ClasspathDump.Module(
         moduleLabel(m),
         classesDirs.map(_.toString).asJava,
-        artifacts.asJava
+        artifacts.asJava,
+        if (declaredOverride != null) declaredOverride
+        else if (declared.isEmpty) null
+        else declared.minBy(_.intValue)
       )
     }
   }

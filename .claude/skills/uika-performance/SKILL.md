@@ -84,6 +84,8 @@ Traps already hit in this repository:
 | ~60% of scanned classes are byte-identical duplicates bundled across JARs, all inflated and parsed only to lose first-wins | `representative_offsets` picks one entry per (name, CRC) from central directories in path order; the scan inflates only those. |
 | Pass-1 chunking (`UIKA_CHUNK`, one rayon barrier per chunk) defaulted to 1x thread count, parking workers at every boundary where paths finished unevenly | Default raised to 16x thread count (`check.rs::scan_target_paths`): ~8% less wall (sys 2.4s -> 1.6s), ~+12% peak RSS, output byte-identical across chunk sizes. No knee — 8x captures most, 32x still improves. A `sample` profile's parked-thread share suggested ~half the wall was reclaimable; trust the wall-clock diff, not the parking share. Rejected alongside: name-only dedup in `representative_offsets` (vs (name, CRC)) would drop invocation evidence a losing duplicate's distinct bytecode carries — CRC-keyed skipping is safe only because byte-identical copies carry identical evidence. |
 
+| Pass 1's owner filter was every class in `old`, so a JDK-pair check recorded a reference for every mention of `java/lang/String` | `index::breakable_class_names`: the classes whose entry differs between the sides, plus their subtype closure. Measured: stress user 11.13s -> 10.85s (-2.3%), wall and RSS unchanged; a 50-module JDK run 75.2s -> 69.9s user (-7.1%), 13.3s -> 11.5s wall. Kept for detection rather than speed — unverified dropped 269 -> 253 on the stress workload, 16 -> 0 on guava-selenium and 14 -> 10 on jetty, with every violation byte-identical. The hypothesis that reference-record volume dominates pass 1 was WRONG; inflate of the surviving entries still is, as the paragraph above already said. |
+
 Not helpful, measured and rejected: `lto`/`codegen-units=1` (inflate is the wall
 and lives in a self-contained crate, so cross-crate inlining gained nothing while
 tripling release build time).
@@ -105,6 +107,49 @@ A Java port with the same two-pass/int-intern/span-read architecture matched
 Rust on CPU time (the `experiments/` comparison, since removed). Rust's real
 advantages here: memory footprint, startup time for short CLI runs, and static
 binary distribution.
+
+## Deliberate Costs
+
+- Per-module JDK runs (`plan_jdk_runs`) scan each moved module's whole classpath, so a
+  jar shared by N modules is inflated and parsed N times. Measured on a synthetic
+  monorepo worst case, every module carrying the same classpath, 11 -> 17, no dependency
+  changes so the numbers are the JDK runs alone:
+
+  | modules x jars | union, one run per pair | per module |
+  |----------------|------------------------:|-----------:|
+  | 1 x 300        |         0.27s / 149MB   | 0.29s / 151MB |
+  | 10 x 300       |         0.27s / 141MB   |  1.6s / 262MB |
+  | 25 x 300       |         0.29s / 149MB   |  4.7s / 336MB |
+  | 50 x 300       |         0.29s / 170MB   | 7.7-9.8s / 348MB |
+  | 10 x 1000      |         1.15s / 418MB   | 12.0s / 548MB |
+
+  One session, both binaries back to back on the same dumps. Do not compare these
+  absolutes against a later session: a `find | head -300` over the Gradle cache picks a
+  different 300 jars once anything downloads, which moved the same 1 x 300 point from
+  0.29s to 0.61s. The ratios and the shape are what hold.
+
+  The union is flat in module count and per module is linear, so a 50-module build on a
+  2000-jar classpath extrapolates to minutes. User time confirms the work is genuinely
+  redundant rather than an overhead artifact: 3.96s at 1 module and 191s at 50, a factor
+  of 48. Accepted on purpose. A run is the unit the report counts and the `--fail-on`
+  gate decides on, so only a module-shaped run gives a module its own scanned, broken
+  and unverified numbers, and the cost lands only on a PR that moves a JDK release,
+  never on a dependency upgrade. Real builds are cheaper than this table because their
+  module classpaths are not identical.
+
+  Where the remaining headroom is, measured rather than guessed:
+
+  - NOT in cross-run parallelism. One run already reaches user/real 6.5x on 12 cores and
+    50 sequential runs reach 6.8x, so running runs concurrently is worth under 2x wall
+    and multiplies peak RSS by the concurrency.
+  - `cached_jdk_pair` already removes the other half, reading a release out of ct.sym,
+    which would otherwise repeat per module.
+  - Sharing the SCAN across runs would mean composing `ScanResult` arenas per path, and
+    `representative_offsets` plus `parse_targets` both resolve duplicate classes
+    first-wins in path order WITHIN a run, so per-path pieces are not independent.
+  - Narrowing pass 1's owner filter was tried and kept, but it is not the answer here.
+    See the history table below: about 7% of a JDK run's user time, which does not touch
+    the linear scaling.
 
 ## Rejected Approaches
 

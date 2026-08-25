@@ -462,6 +462,21 @@ Override with `jdkRelease` / `uikaJdkRelease` / `<jdkRelease>`
 (`-PuikaJdkRelease=`, `-Duika.jdkRelease=`, `--jdkRelease`), or set 0 to disable
 it.
 
+Each dump also records the release next to every module it lists, read the same
+way. That is what lets `upgrade-check` notice the application's own JDK moved
+between the two dumps and check that move too, scoped to the modules that made
+it. A module left on an older release is never checked against a sibling's
+upgrade, and a module that declares no target is recorded as running on the
+build's own JVM, which is what it compiles against.
+
+The derivation only sees what the build declares, so a project that compiles
+`--release 11` and ships on a 21 runtime looks unchanged when that runtime
+moves. The same override says so by hand. A positive value is recorded as the
+release every module runs on, while `0` still only switches the API layer off
+and leaves the recorded release derived. The dump commands take it as
+`-PuikaJdkRelease=` (Gradle), `-Duika.jdkRelease=` (Maven), `uikaJdkRelease :=`
+(sbt), `--jdkRelease` (Mill), `:jdk-release` (Clojure tool and Leiningen).
+
 [Runtime load evidence](#runtime-load-evidence-jfr---class-load-log) is one
 knob per tool, pointed at one directory for both phases (collect on the base
 branch, consume on the PR):
