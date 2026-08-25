@@ -120,23 +120,28 @@ not be relearned by experiment.
   down with the layer, and anything below `MIN_RELEASE` is dropped because a dump
   naming it sends `jdk::release_index` after a release ct.sym never carried.
 - `upgrade-check` turns a before/after disagreement into extra runs appended by
-  `plan_jdk_runs` with `jdk_pair` set and both jar lists empty: ONE PER DISTINCT MOVE,
-  over the union of the targets of the modules that made it. Per module because a build
-  may mix releases, and a module still on 11 must not be checked against a sibling's
-  17 -> 21 move; a build that moved as a whole still plans exactly one run. The run's
-  name is the pair (`JDK 11 -> 17`), not the module names, because that string is also
-  the key violations are attributed by and the real names would fold a module's
-  dependency run into the JDK run's broken count. `release_change` requires BOTH sides
-  to name a release, so a dump predating the field, or a module the before dump does
-  not have, never manufactures a JDK move. The runs are excluded from the "N of M
-  modules changed" count (`ModuleOutcome.jdk`); they are not the dump's modules. They
-  are also printed in their OWN section rather than as more rows of the per-module
-  table, with `ModuleOutcome.jdk_modules` naming the modules that moved: a JDK run
-  compares two releases of the JDK while a module row compares two versions of a jar, so
-  side by side their broken counts read as parts of one total that does not add up.
-  Merged mode has no per-module data and compares the dump-level values instead. Gradle
-  rehydration carries the input dump's values forward instead of stamping the
-  rehydrating JVM.
+  `plan_jdk_runs` with `jdk_pair` set and both jar lists empty, ONE PER MODULE whose
+  release moved, over that module's own classpath. Per module for two reasons. A build
+  may mix releases, so a module still on 11 must not be checked against a sibling's
+  17 -> 21 move. And a run is the unit the report counts and the `--fail-on` gate
+  decides on, so only a module-shaped run can give a module its own scanned, broken and
+  unverified numbers. The cost is that a jar on several modules' classpaths is scanned
+  once per module, which an earlier per-pair union avoided. That is the cost model the
+  dependency runs already have, and `cached_jdk_pair` keeps the expensive half, reading
+  a release out of ct.sym, down to once per distinct pair.
+- A JDK run is named `:app (JDK 11 -> 17)`, module AND pair. That string is the key
+  violations are attributed by, so a bare module name would fold the module's dependency
+  run into the JDK run's broken count, and a bare pair would lose the attribution
+  entirely. `release_change` requires BOTH sides to name a release, so a dump predating
+  the field, or a module the before dump does not have, never manufactures a JDK move.
+  The runs are excluded from the "N of M modules changed" count (`ModuleOutcome.jdk`),
+  since they are not the dump's modules, and they print in their OWN section rather than
+  as more rows of the per-module table (`ModuleOutcome.jdk_modules` and `jdk_pair` carry
+  what that section shows). A JDK run compares two releases of the JDK while a module row
+  compares two versions of a jar, so side by side their broken counts read as parts of
+  one total that does not add up. Merged mode has no per-module data and compares the
+  dump-level values instead. Gradle rehydration carries the input dump's values forward
+  instead of stamping the rehydrating JVM.
 - Tuning knobs: `UIKA_CHUNK` (paths processed concurrently in pass 1; default =
   16x rayon threads, rationale in `check.rs::scan_target_paths`), `UIKA_WINDOW`
   (fallback zip-reader window size; default 1 MiB, two windows).

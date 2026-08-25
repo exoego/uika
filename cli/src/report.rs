@@ -942,10 +942,15 @@ pub struct ModuleOutcome {
     /// dump's modules and must not be counted as a changed one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub jdk: bool,
-    /// For a JDK run, the dump modules whose release moved and whose classpaths it was
-    /// therefore checked over. Empty for a dependency run, whose modules are `modules`.
+    /// For a JDK run, the dump module whose release moved. Empty for a dependency run,
+    /// whose modules are `modules`. A Vec because `modules` is one, and because a future
+    /// grouping of runs would put several here rather than reshape the field.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub jdk_modules: Vec<String>,
+    /// For a JDK run, the releases compared. The label needs both halves and reading them
+    /// back out of `modules` would be parsing our own formatting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jdk_pair: Option<(u32, u32)>,
     pub scanned_classes: usize,
     /// Post-exclusion violations attributed to any module of this run.
     pub broken: usize,
@@ -1067,10 +1072,13 @@ pub fn upgrade_text(
             )
             .unwrap();
             for o in jdk {
+                let pair = match o.jdk_pair {
+                    Some((old, new)) => format!("JDK {old} -> {new}"),
+                    None => String::new(),
+                };
                 writeln!(
                     out,
-                    "    {} over {}  {}",
-                    o.modules.join(", "),
+                    "    {}  {pair}  {}",
                     o.jdk_modules.join(", "),
                     run_counts(o)
                 )
@@ -1192,6 +1200,7 @@ mod tests {
             modules: modules.iter().map(|m| m.to_string()).collect(),
             jdk: !jdk_modules.is_empty(),
             jdk_modules: jdk_modules.iter().map(|m| m.to_string()).collect(),
+            jdk_pair: (!jdk_modules.is_empty()).then_some((11, 17)),
             scanned_classes: 10,
             broken,
             unknown_refs: 0,
@@ -1200,13 +1209,15 @@ mod tests {
 
     /// A JDK run compares two releases of the JDK while a module row compares two versions
     /// of a jar. Listed as one more row, their broken counts read as parts of a total that
-    /// does not add up, so the JDK runs get their own section naming the modules that moved.
+    /// does not add up, so the JDK runs get their own section, one row per module, with the
+    /// same three numbers the rows above carry.
     #[test]
     fn jdk_runs_are_reported_apart_from_the_module_rows() {
         let summary = ModuleRunSummary {
             outcomes: vec![
                 outcome(&[":app"], &[], 1),
-                outcome(&["JDK 11 -> 17"], &[":app", ":web"], 2),
+                outcome(&[":app (JDK 11 -> 17)"], &[":app"], 2),
+                outcome(&[":web (JDK 11 -> 17)"], &[":web"], 0),
             ],
             total_modules: 3,
             unchanged_modules: 1,
@@ -1218,8 +1229,8 @@ mod tests {
             text.contains("per-module check: 1 of 3 modules changed their resolved versions"),
             "{text}"
         );
-        // The module table holds only the module row, and the JDK run is below it with the
-        // modules it covered spelled out.
+        // The module table holds only the dependency row; the JDK runs are below it, one
+        // per module, so each module's JDK breakage is its own number.
         let table = text.split("JDK check:").next().unwrap();
         assert!(
             table.contains(":app  scanned 10 classes, ❌ 1 broken"),
@@ -1231,7 +1242,11 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("JDK 11 -> 17 over :app, :web  scanned 10 classes, ❌ 2 broken"),
+            text.contains(":app  JDK 11 -> 17  scanned 10 classes, ❌ 2 broken"),
+            "{text}"
+        );
+        assert!(
+            text.contains(":web  JDK 11 -> 17  scanned 10 classes, ✅ 0 broken"),
             "{text}"
         );
     }

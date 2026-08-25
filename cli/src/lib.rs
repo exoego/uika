@@ -696,22 +696,24 @@ fn plan_module_runs(before: &gradle::Universe, after: &gradle::Universe) -> Modu
     plan
 }
 
-/// Add one run per distinct JDK move, over the union of the targets of the modules that made
-/// it. Per module rather than once for the whole universe: the dump records the release each
-/// module compiles for, and a build is free to mix them, so a module still on 11 must not be
-/// checked against the 17 -> 21 move its sibling made. A build where every module moved
-/// together — the common case — still plans exactly one run, just with the same targets the
-/// universe-wide run used.
+/// Add one run per module whose release moved, over that module's own classpath.
+///
+/// Per module for two reasons. A build is free to mix releases, so a module still on 11 must
+/// not be checked against the 17 -> 21 move its sibling made. And a run is the unit the
+/// report counts and the gate decides on, so a module-shaped run is what gives a module's
+/// own scanned, broken and unverified numbers — checking the union once could only report
+/// one lump for every module that moved.
+///
+/// It does mean a jar on several modules' classpaths is scanned once per module, which the
+/// per-pair union avoided. That is the cost model the dependency runs already have, and it
+/// is what buys per-module numbers here too; the compared indexes are still built once per
+/// distinct pair, which is the expensive half.
 fn plan_jdk_runs(
     before: &gradle::Universe,
     after: &gradle::Universe,
     plan: &mut ModulePlan,
     notes: &mut TargetNotes,
 ) {
-    // Grouped before any run is built so each pair's targets are deduplicated across its
-    // modules in one pass; sorted, so the run order does not depend on dump order.
-    let mut moves: std::collections::BTreeMap<(u32, u32), Vec<&gradle::ModuleUniverse>> =
-        std::collections::BTreeMap::new();
     let mut seen_names = std::collections::BTreeSet::new();
     for module in &after.modules {
         // Duplicate names are warned about (and skipped) by the dependency planner already.
@@ -723,43 +725,21 @@ fn plan_jdk_runs(
         let Some(before_module) = before.module(&module.name) else {
             continue;
         };
-        if let Some(pair) = release_change(before_module.jdk_release, module.jdk_release) {
-            moves.entry(pair).or_default().push(module);
-        }
-    }
-
-    for (pair, modules) in moves {
-        let mut seen = std::collections::BTreeSet::new();
-        let mut targets = Vec::new();
-        let mut app_roots = Vec::new();
-        let names: Vec<String> = modules.iter().map(|m| m.name.clone()).collect();
-        for module in modules {
-            // First-seen order, as in a single module's list: the JVM resolves a duplicated
-            // class from the first classpath entry that carries it, and a scan that listed
-            // the same jar twice would also inflate the run's scanned-class count.
-            for target in module_targets(module, after, notes) {
-                if seen.insert(target.clone()) {
-                    targets.push(target);
-                }
-            }
-            for dir in &module.classes_dirs {
-                if !app_roots.contains(dir) {
-                    app_roots.push(dir.clone());
-                }
-            }
-        }
+        let Some((old, new)) = release_change(before_module.jdk_release, module.jdk_release) else {
+            continue;
+        };
         plan.runs.push(ModuleRunPlan {
-            // The pair, not the module names: this pseudo-name is also the key each
-            // violation is attributed by, and reusing the real names would fold the
-            // modules' dependency runs into this run's broken count.
-            names: vec![format!("JDK {} -> {}", pair.0, pair.1)],
+            // The module name AND the pair. This string is the key each violation is
+            // attributed by, and a bare module name would collide with that module's
+            // dependency run, folding its jar breakage into this run's broken count.
+            names: vec![format!("{} (JDK {old} -> {new})", module.name)],
             changes: Vec::new(),
             old_jars: Vec::new(),
             new_jars: Vec::new(),
-            targets,
-            app_roots,
-            jdk_pair: Some(pair),
-            jdk_modules: names,
+            targets: module_targets(module, after, notes),
+            app_roots: module.classes_dirs.clone(),
+            jdk_pair: Some((old, new)),
+            jdk_modules: vec![module.name.clone()],
         });
     }
 }
@@ -957,7 +937,8 @@ fn reachable_rank(reachable: Option<bool>) -> u8 {
 /// Per-run bookkeeping the aggregate report and the exit decision need after merging.
 struct RunOutcome {
     names: Vec<String>,
-    jdk: bool,
+    /// The releases this run compared, when it was a JDK run rather than a jar one.
+    jdk: Option<(u32, u32)>,
     jdk_modules: Vec<String>,
     scanned_classes: usize,
     unknown_refs: usize,
@@ -987,6 +968,24 @@ fn cached_index<'a>(
         None => {
             let index = build_index_multi(jars)?;
             cache.push((jars.to_vec(), index));
+            cache.len() - 1
+        }
+    };
+    Ok(&cache[position].1)
+}
+
+/// Cache of built JDK index pairs, keyed by the releases they compare.
+type JdkPairCache = Vec<((u32, u32), (ApiIndex, ApiIndex))>;
+
+/// One index pair per distinct JDK move, shared by every module that made it. Reading a
+/// release out of ct.sym is the expensive half of a JDK run, and the modules of one build
+/// usually move together.
+fn cached_jdk_pair(cache: &mut JdkPairCache, pair: (u32, u32)) -> Result<&(ApiIndex, ApiIndex)> {
+    let position = match cache.iter().position(|(key, _)| *key == pair) {
+        Some(i) => i,
+        None => {
+            let indexes = jdk_release_pair(pair)?;
+            cache.push((pair, indexes));
             cache.len() - 1
         }
     };
@@ -1037,9 +1036,10 @@ fn upgrade_check_per_module(
             scan_targets: 0,
         };
         let mut run_outcomes: Vec<RunOutcome> = Vec::new();
-        // One library-index cache per side (see cached_index).
+        // One library-index cache per side (see cached_index), plus one for JDK pairs.
         let mut old_indexes: Vec<(Vec<PathBuf>, ApiIndex)> = Vec::new();
         let mut new_indexes: Vec<(Vec<PathBuf>, ApiIndex)> = Vec::new();
+        let mut jdk_indexes: JdkPairCache = Vec::new();
         // Cross-run violation identity: what the report prints, including the advice (per-run
         // suggestions may legitimately differ for one reference when modules moved different
         // versions), but NOT reachable — the same break found by runs that disagree on
@@ -1061,14 +1061,14 @@ fn upgrade_check_per_module(
                 w.set_module(Some(run.names.join(",")));
             }
             // A JDK run's pair comes from ct.sym/jmods, not from jars, so it bypasses the
-            // per-side jar-index caches. One build per run, which is also one per distinct
-            // move: two runs sharing a pair are merged at planning time.
-            let jdk_indexes = match run.jdk_pair {
-                Some(pair) => Some(jdk_release_pair(pair)?),
-                None => None,
-            };
-            let (old_index, new_index) = match &jdk_indexes {
-                Some((o, n)) => (o, n),
+            // per-side jar-index caches and gets its own. Cached because the runs are per
+            // module: every module that made the same move would otherwise reparse ct.sym,
+            // and repeat the jmods-versus-ct.sym warning once per module.
+            let (old_index, new_index) = match run.jdk_pair {
+                Some(pair) => {
+                    let (old, new) = cached_jdk_pair(&mut jdk_indexes, pair)?;
+                    (old, new)
+                }
                 None => (
                     cached_index(&mut old_indexes, &run.old_jars)?,
                     cached_index(&mut new_indexes, &run.new_jars)?,
@@ -1092,7 +1092,7 @@ fn upgrade_check_per_module(
             merged.reachability_computed |= result.reachability_computed;
             run_outcomes.push(RunOutcome {
                 names: run.names.clone(),
-                jdk: run.jdk_pair.is_some(),
+                jdk: run.jdk_pair,
                 jdk_modules: run.jdk_modules.clone(),
                 scanned_classes: result.scanned_classes,
                 unknown_refs: result.unknown_refs,
@@ -1193,8 +1193,9 @@ fn module_outcomes(
         .iter()
         .map(|outcome| report::ModuleOutcome {
             modules: outcome.names.clone(),
-            jdk: outcome.jdk,
+            jdk: outcome.jdk.is_some(),
             jdk_modules: outcome.jdk_modules.clone(),
+            jdk_pair: outcome.jdk,
             scanned_classes: outcome.scanned_classes,
             broken: run_violations(merged, &outcome.names).count(),
             unknown_refs: outcome.unknown_refs,
@@ -1349,17 +1350,18 @@ mod tests {
         }
     }
 
-    /// The pair and the targets of every planned JDK run, which is what decides both what is
-    /// compared and which code it is compared over.
+    /// Every planned JDK run as (label, pair, targets): what is compared, over which code,
+    /// and under which name the report and the gate will find it.
     fn jdk_runs(
         before: &crate::gradle::Universe,
         after: &crate::gradle::Universe,
-    ) -> Vec<((u32, u32), Vec<String>)> {
+    ) -> Vec<(String, (u32, u32), Vec<String>)> {
         plan_module_runs(before, after)
             .runs
             .iter()
             .filter_map(|run| {
                 Some((
+                    run.names.join(", "),
                     run.jdk_pair?,
                     run.targets
                         .iter()
@@ -1379,61 +1381,62 @@ mod tests {
         let after = modular(vec![module(":app", Some(17)), module(":legacy", Some(8))]);
         assert_eq!(
             jdk_runs(&before, &after),
-            vec![((11, 17), vec!["/build:app/classes".to_string()])]
+            vec![(
+                ":app (JDK 11 -> 17)".to_string(),
+                (11, 17),
+                vec!["/build:app/classes".to_string()]
+            )]
         );
     }
 
-    /// Modules moving together share one run over the union of their targets, so the common
-    /// build — every module on one release — still plans exactly one JDK run.
+    /// One run per module, not one per move, so the report and the --fail-on gate get each
+    /// module's own scanned, broken and unverified numbers rather than one lump for every
+    /// module that moved together.
     #[test]
-    fn modules_sharing_a_move_share_one_run() {
+    fn each_moved_module_gets_its_own_run() {
         let before = modular(vec![module(":app", Some(11)), module(":web", Some(11))]);
         let after = modular(vec![module(":app", Some(17)), module(":web", Some(17))]);
         assert_eq!(
             jdk_runs(&before, &after),
-            vec![(
-                (11, 17),
-                vec![
-                    "/build:app/classes".to_string(),
-                    "/build:web/classes".to_string()
-                ]
-            )]
+            vec![
+                (
+                    ":app (JDK 11 -> 17)".to_string(),
+                    (11, 17),
+                    vec!["/build:app/classes".to_string()]
+                ),
+                (
+                    ":web (JDK 11 -> 17)".to_string(),
+                    (11, 17),
+                    vec!["/build:web/classes".to_string()]
+                ),
+            ]
         );
     }
 
-    /// Merging two modules into one run must not list a shared target twice: the JVM
-    /// resolves a duplicated class from the first entry that carries it, and the second copy
-    /// would only inflate the run's scanned-class count.
+    /// The run name carries the pair as well as the module, because a bare module name is
+    /// the key that module's DEPENDENCY run is attributed by. Sharing it would count the
+    /// jar breakage in the JDK run's broken column and again in the module's own.
     #[test]
-    fn a_target_two_modules_share_is_scanned_once() {
-        let dirs = ["/build/shared", "/build/own"];
-        let before = vec![
-            module_with_dirs(":app", Some(11), &dirs),
-            module_with_dirs(":web", Some(11), &dirs),
-        ];
-        let after = vec![
-            module_with_dirs(":app", Some(17), &dirs),
-            module_with_dirs(":web", Some(17), &dirs),
-        ];
-        assert_eq!(
-            jdk_runs(&modular(before), &modular(after)),
-            vec![(
-                (11, 17),
-                vec!["/build/shared".to_string(), "/build/own".to_string()]
-            )]
-        );
+    fn a_jdk_run_never_shares_a_name_with_its_modules_dependency_run() {
+        let before = modular(vec![module(":app", Some(11))]);
+        let after = modular(vec![module(":app", Some(17))]);
+        let names: Vec<String> = plan_module_runs(&before, &after)
+            .runs
+            .iter()
+            .flat_map(|run| run.names.iter().cloned())
+            .collect();
+        assert!(!names.contains(&":app".to_string()), "{names:?}");
     }
 
-    /// Different moves are different comparisons and cannot share an index, so they get a
-    /// run each.
+    /// Different moves are different comparisons and cannot share an index.
     #[test]
-    fn distinct_moves_get_a_run_each() {
+    fn distinct_moves_keep_their_own_pairs() {
         let before = modular(vec![module(":app", Some(11)), module(":web", Some(17))]);
         let after = modular(vec![module(":app", Some(17)), module(":web", Some(21))]);
         assert_eq!(
             jdk_runs(&before, &after)
                 .into_iter()
-                .map(|(pair, _)| pair)
+                .map(|(_, pair, _)| pair)
                 .collect::<Vec<_>>(),
             vec![(11, 17), (17, 21)]
         );
