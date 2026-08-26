@@ -26,11 +26,12 @@ than a warning. uika exits 2 with "cannot open ...", so a missing old-side JAR
 fails the job outright. Only scan targets are skipped with a warning.
 
 Gradle closes it with `uikaResolveClasspath`, which fetches whatever is missing
-through the build's own repositories, mirrors, and credentials. Maven
-and sbt have no equivalent task, so they restore the dependency cache the
-baseline run wrote — it holds the old versions by construction. Bazel closes
-both points at once with `--materialize`, which copies the JARs next to the dump
-and rewrites it to point there.
+through the build's own repositories, mirrors, and credentials. Maven and sbt
+have no equivalent task, so they restore the dependency cache the baseline run
+wrote — it holds the old versions by construction. Bazel closes both points at
+once with `--materialize`, which copies the JARs next to the dump and rewrites it
+to point there. It has no shared dependency cache to restore instead, because its
+JARs live under `bazel-out`.
 
 Every PR workflow below keeps the checkout-based dump as a fallback, since some
 SHAs have no usable baseline: those predating the workflow, expired artifacts,
@@ -359,11 +360,16 @@ jobs:
 
 ## Bazel
 
-Bazel is the one case where restoring a dependency cache does not work. It
-discards an external repository and refetches it whenever the lockfile changes,
-so the baseline's JARs are gone on the PR branch no matter what was cached.
+Bazel is the one case where there is no dependency cache to restore. Its JARs
+live under `bazel-out`, which is build output rather than a shared cache, so a
+baseline produced in another job has nothing on the PR runner to point at.
 `--materialize` sidesteps it: the baseline artifact carries the JARs themselves,
-which also makes it valid on a different runner.
+which is what makes it valid on a different runner.
+
+This one is not a quiet shortfall. The changed pair's old JAR is what the API
+diff is computed against, so when it is missing uika exits 2 with
+`cannot open ...` rather than reporting fewer breaks.
+`bazel-rules/it/run-maven.sh` asserts both halves of that.
 
 ```yaml
 # .github/workflows/uika-baseline.yml

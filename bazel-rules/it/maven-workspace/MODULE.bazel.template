@@ -1,0 +1,31 @@
+module(name = "uika_maven_it", version = "0.0.0")
+
+bazel_dep(name = "rules_java", version = "9.1.0")
+bazel_dep(name = "rules_jvm_external", version = "7.1")
+bazel_dep(name = "uika", version = "0.0.0-dev")
+local_path_override(
+    module_name = "uika",
+    path = "@UIKA_RULES@",
+)
+
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+
+# selenium-remote-driver 3.4.0 asks for guava with an OPEN-ENDED range, so resolution ran
+# past the version declared here and both lock files came out with the same guava, leaving
+# the version diff nothing to see. force_version is what holds it. It also stops a
+# committed lock file from drifting as new guava releases appear.
+maven.artifact(
+    artifact = "guava",
+    force_version = True,
+    group = "com.google.guava",
+    version = "@GUAVA@",
+)
+
+# The version under test. run.sh rewrites the version above to produce the after side,
+# which is what a dependency bump in a real Bazel build looks like.
+maven.install(
+    artifacts = ["org.seleniumhq.selenium:selenium-remote-driver:3.4.0"],
+    lock_file = "//:maven_install.json",
+    repositories = ["https://repo1.maven.org/maven2"],
+)
+use_repo(maven, "maven")

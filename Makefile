@@ -6,7 +6,7 @@
 	mill-compile mill-test mill-clean \
 	clojure-test clojure-clean \
 	lein-test lein-clean lein-stage \
-	bazel-test bazel-clean bazel-stage \
+	bazel-test bazel-maven-test bazel-clean bazel-stage \
 	native-publish-local stage-all
 
 CARGO ?= cargo
@@ -34,6 +34,7 @@ TMPDIR ?= /tmp
 SBT_CACHE_DIR ?= $(TMPDIR)/uika-sbt
 # run.sh copies the test workspace here; the path is stable so Bazel reuses one output base.
 BAZEL_IT_DIR ?= $(TMPDIR)/uika-bazel-it
+BAZEL_MAVEN_IT_DIR ?= $(TMPDIR)/uika-bazel-maven-it
 SBT_FLAGS ?= -Dsbt.supershell=false -batch \
 	-sbt-dir $(SBT_CACHE_DIR)/sbt-dir \
 	-ivy $(SBT_CACHE_DIR)/ivy \
@@ -59,14 +60,15 @@ help:
 		'  make clojure-test' \
 		'  make lein-test' \
 		'  make bazel-test' \
+		'  make bazel-maven-test' \
 		'  make native-publish-local UIKA_VERSION=0.1.0' \
 		'  make stage-all UIKA_VERSION=0.1.0'
 
 build: cargo-build gradle-build sbt-compile maven-verify mill-compile
 
-check: cargo-fmt-check cargo-clippy cargo-test gradle-check sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test
+check: cargo-fmt-check cargo-clippy cargo-test gradle-check sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
-test: cargo-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test
+test: cargo-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
 fmt: cargo-fmt
 
@@ -167,13 +169,22 @@ lein-stage:
 bazel-test: cargo-build
 	UIKA_BIN=$(abspath target/debug/uika) mise exec -- sh $(BAZEL_RULES_DIR)/it/run.sh
 
-# The workspace copy is disposable, but its output base is not: expunge through the copy
-# while it still exists, or Bazel keeps a multi-gigabyte tree for a directory that is gone.
+# The pairing the Bazel issue is named after. Split from bazel-test because this one needs
+# the network: the two lock files are pinned so nothing is resolved, but the artifacts
+# themselves come from Maven Central.
+bazel-maven-test: cargo-build
+	UIKA_BIN=$(abspath target/debug/uika) mise exec -- sh $(BAZEL_RULES_DIR)/it/run-maven.sh
+
+# The workspace copies are disposable, but their output bases are not: expunge through each
+# copy while it still exists, or Bazel keeps a multi-gigabyte tree for a directory that is
+# gone.
 bazel-clean:
-	@if [ -d "$(BAZEL_IT_DIR)/ws" ]; then \
-		cd $(BAZEL_IT_DIR)/ws && $(BAZELISK) clean --expunge >/dev/null 2>&1 || true; \
-	fi
-	rm -rf $(BAZEL_IT_DIR)
+	@for dir in $(BAZEL_IT_DIR) $(BAZEL_MAVEN_IT_DIR); do \
+		if [ -d "$$dir/ws" ]; then \
+			cd $$dir/ws && $(BAZELISK) clean --expunge >/dev/null 2>&1 || true; \
+		fi; \
+	done
+	rm -rf $(BAZEL_IT_DIR) $(BAZEL_MAVEN_IT_DIR)
 
 # The Bazel module is distributed as a release archive rather than through a registry, so
 # staging it is a tarball rather than a deploy. It must run AFTER the native binaries are

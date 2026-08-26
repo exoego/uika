@@ -1,0 +1,15 @@
+load("@rules_java//java:defs.bzl", "java_binary")
+
+# The coordinates uika reports for these come from the maven_coordinates tag that
+# rules_jvm_external puts on the jvm_import targets behind @maven//..., with no tag written
+# by hand anywhere in this workspace.
+java_binary(
+    name = "app",
+    srcs = ["example/Main.java"],
+    main_class = "example.Main",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@maven//:com_google_guava_guava",
+        "@maven//:org_seleniumhq_selenium_selenium_remote_driver",
+    ],
+)

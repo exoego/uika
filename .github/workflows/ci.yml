@@ -91,7 +91,7 @@ jobs:
           path: |
             ~/.cache/bazelisk
             ~/.cache/bazel/_bazel_runner/cache/repos/v1
-          key: bazel-${{ runner.os }}-${{ hashFiles('bazel-rules/MODULE.bazel', 'bazel-rules/it/test-workspace/MODULE.bazel.template', 'bazel-rules/.bazelversion') }}
+          key: bazel-${{ runner.os }}-${{ hashFiles('bazel-rules/MODULE.bazel', 'bazel-rules/it/**/MODULE.bazel.template', 'bazel-rules/it/maven-workspace/maven_install-*.json', 'bazel-rules/.bazelversion') }}
           restore-keys: |
             bazel-${{ runner.os }}-
 

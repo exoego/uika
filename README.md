@@ -839,14 +839,16 @@ absolute. Which paths those are depends on the route. A `bazel run` lays the
 classpath out as runfiles and resolves those symlinks, while the merge resolves
 against the execution root, and both end at the same real file.
 
-And Bazel discards an external repository and refetches it when its lockfile
-changes, so the old JARs a baseline dump points at are gone by the time the PR job
-compares against them. That is a hard failure rather than a quiet one. uika exits
-2 with "cannot open ...", because the compared pair is loaded outright while only
-scan targets are skipped with a warning. `--materialize <dir>` is the answer. It
-hard-links every JAR the dump names into one directory and points the dump there,
-which puts the baseline out of Bazel's reach and makes it portable to another
-machine as a bonus. See [BASELINE-CACHING.md](BASELINE-CACHING.md).
+And a dump names JARs under `bazel-out`, which is build output rather than
+source. They survive a lockfile change in the same tree, so the checkout-based PR
+gate above works unchanged. They do not survive a `bazel clean`, a fresh output
+base, or another machine. That last case is the baseline-as-artifact flow, and
+there the check does not degrade quietly. It fails with `cannot open ...` and
+exit 2, because the changed pair's old JAR is what the API diff is computed
+against, and only a scan target is skipped with a warning. `--materialize <dir>`
+is the answer. It hard-links every JAR the dump names into one directory and
+points the dump there, which takes the baseline out of `bazel-out` and makes it
+portable to another machine. See [BASELINE-CACHING.md](BASELINE-CACHING.md).
 
 
 ## How it works
