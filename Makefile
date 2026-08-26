@@ -6,6 +6,7 @@
 	mill-compile mill-test mill-clean \
 	clojure-test clojure-clean \
 	lein-test lein-clean lein-stage \
+	bazel-test bazel-clean \
 	native-publish-local stage-all
 
 CARGO ?= cargo
@@ -18,15 +19,20 @@ MAVEN ?= mise exec -- mvn
 MILL ?= mise exec -- ./mill
 CLOJURE ?= mise exec -- clojure
 LEIN ?= mise exec -- lein
+# Bazelisk, not bazel: bazel-rules/it/test-workspace/.bazelversion pins the release.
+BAZELISK ?= mise exec -- bazelisk
 GRADLE_PLUGIN_DIR ?= gradle-plugin
 SBT_PLUGIN_DIR ?= sbt-plugin
 MAVEN_PLUGIN_DIR ?= maven-plugin
 MILL_PLUGIN_DIR ?= mill-plugin
 CLOJURE_TOOL_DIR ?= clojure-tool
 LEIN_PLUGIN_DIR ?= lein-plugin
+BAZEL_RULES_DIR ?= bazel-rules
 UIKA_VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' cli/Cargo.toml | head -1)
 TMPDIR ?= /tmp
 SBT_CACHE_DIR ?= $(TMPDIR)/uika-sbt
+# run.sh copies the test workspace here; the path is stable so Bazel reuses one output base.
+BAZEL_IT_DIR ?= $(TMPDIR)/uika-bazel-it
 SBT_FLAGS ?= -Dsbt.supershell=false -batch \
 	-sbt-dir $(SBT_CACHE_DIR)/sbt-dir \
 	-ivy $(SBT_CACHE_DIR)/ivy \
@@ -51,20 +57,21 @@ help:
 		'  make mill-test' \
 		'  make clojure-test' \
 		'  make lein-test' \
+		'  make bazel-test' \
 		'  make native-publish-local UIKA_VERSION=0.1.0' \
 		'  make stage-all UIKA_VERSION=0.1.0'
 
 build: cargo-build gradle-build sbt-compile maven-verify mill-compile
 
-check: cargo-fmt-check cargo-clippy cargo-test gradle-check sbt-scripted maven-verify mill-test clojure-test lein-test
+check: cargo-fmt-check cargo-clippy cargo-test gradle-check sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test
 
-test: cargo-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test
+test: cargo-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test
 
 fmt: cargo-fmt
 
 fmt-check: cargo-fmt-check
 
-clean: gradle-clean sbt-clean maven-clean mill-clean clojure-clean lein-clean
+clean: gradle-clean sbt-clean maven-clean mill-clean clojure-clean lein-clean bazel-clean
 	$(CARGO) clean
 
 cargo-build:
@@ -153,6 +160,19 @@ lein-clean:
 lein-stage:
 	cd $(LEIN_PLUGIN_DIR) && UIKA_VERSION=$(UIKA_VERSION) $(LEIN) \
 		update-in :repositories empty -- deploy staging
+
+# Real-CLI round trip, same reason as clojure-test and lein-test: the dump is written by
+# a tool the Rust side never sees, so only a run against the real binary catches drift.
+bazel-test: cargo-build
+	UIKA_BIN=$(abspath target/debug/uika) mise exec -- sh $(BAZEL_RULES_DIR)/it/run.sh
+
+# The workspace copy is disposable, but its output base is not: expunge through the copy
+# while it still exists, or Bazel keeps a multi-gigabyte tree for a directory that is gone.
+bazel-clean:
+	@if [ -d "$(BAZEL_IT_DIR)/ws" ]; then \
+		cd $(BAZEL_IT_DIR)/ws && $(BAZELISK) clean --expunge >/dev/null 2>&1 || true; \
+	fi
+	rm -rf $(BAZEL_IT_DIR)
 
 native-publish-local:
 	$(GRADLE) -p binary-publishing publishToMavenLocal -PuikaVersion=$(UIKA_VERSION)

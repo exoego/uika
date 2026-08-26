@@ -1,0 +1,28 @@
+load("@rules_java//java:defs.bzl", "java_import")
+
+# maven_coordinates is the tag rules_jvm_external puts on every jvm_import it generates.
+# Writing it by hand here is what keeps this test hermetic: the aspect reads the tag, not
+# a rules_jvm_external API, so no artifact resolution and no network are involved.
+java_import(
+    name = "guava22",
+    jars = ["guava-22.0.jar"],
+    tags = ["maven_coordinates=com.google.guava:guava:22.0"],
+    visibility = ["//visibility:public"],
+)
+
+java_import(
+    name = "guava23",
+    jars = ["guava-23.0-rc1.jar"],
+    tags = ["maven_coordinates=com.google.guava:guava:23.0-rc1"],
+    visibility = ["//visibility:public"],
+)
+
+# The consumer whose references break when guava moves: selenium 3.4.0 calls guava APIs
+# that 23.0-rc1 removed. Same pair as the guava-selenium golden scenario in
+# cli/tests/scenarios.tsv, so the expected finding is already documented there.
+java_import(
+    name = "selenium",
+    jars = ["selenium-remote-driver-3.4.0.jar"],
+    tags = ["maven_coordinates=org.seleniumhq.selenium:selenium-remote-driver:3.4.0"],
+    visibility = ["//visibility:public"],
+)

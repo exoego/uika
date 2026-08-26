@@ -420,7 +420,8 @@ still refused.
 
 ## Build-tool plugins
 
-The Gradle, sbt, Maven, Mill and Leiningen plugins and the Clojure CLI tool write the same dump format: every module's resolved runtime
+The Gradle, sbt, Maven, Mill and Leiningen plugins, the Clojure CLI tool and the
+Bazel rules write the same dump format: every module's resolved runtime
 classpath as coordinate-annotated JSON, kept per module so `upgrade-check` can
 [check each against its own resolution](#per-module-checking-upgrade-check).
 Feed two dumps to `uika upgrade-check`, or one to `uika check
@@ -448,19 +449,20 @@ The settings shown per tool below also have command-line forms:
 (`-PuikaExcludeFile=` for a single file, `--excludeFile` repeated).
 
 [`--jdk-release`](#how-it-works) needs no setting at all. The build runs on a
-JVM, so Gradle, Maven, sbt and Mill derive the release from what the modules
-compile for. Gradle reads `compileJava`'s `options.release` else target
+JVM, so Gradle, Maven, sbt, Mill and Bazel derive the release from what the
+modules compile for. Gradle reads `compileJava`'s `options.release` else target
 compatibility, Maven reads maven-compiler-plugin's `<release>`/`<target>` else
-`maven.compiler.release`/`maven.compiler.target`, and sbt and Mill read `javacOptions` and
-`scalacOptions`. A build with several modules contributes the LOWEST of them,
+`maven.compiler.release`/`maven.compiler.target`, sbt and Mill read `javacOptions` and
+`scalacOptions`, and Bazel reads a target's `javacopts` else the Java toolchain's
+target version. A build with several modules contributes the LOWEST of them,
 because one flag serves a run that checks all of them and under-claiming only
 costs unverified references while over-claiming drops findings. The result is
 clamped to what the selected JDK's `ct.sym` serves, which is the same JDK the
 CLI reads through `UIKA_JDK`. Leiningen and the Clojure tool
 have no module model to read, so they use the project's own JVM release.
-Override with `jdkRelease` / `uikaJdkRelease` / `<jdkRelease>`
-(`-PuikaJdkRelease=`, `-Duika.jdkRelease=`, `--jdkRelease`), or set 0 to disable
-it.
+Override with `jdkRelease` / `uikaJdkRelease` / `<jdkRelease>` /
+`jdk_release` (`-PuikaJdkRelease=`, `-Duika.jdkRelease=`, `--jdkRelease`), or set
+0 to disable it.
 
 Each dump also records the release next to every module it lists, read the same
 way. That is what lets `upgrade-check` notice the application's own JDK moved
@@ -693,6 +695,67 @@ project's `:prep-tasks` first, so both `:aot` classes and `:java-source-paths` o
 are scanned. The reflection caveat above applies here too; `:class-dir` does not,
 because the dump takes its class directories from `:compile-path` and the project's
 own source and resource paths.
+
+### Bazel (`bazel-rules/`)
+
+A Bazel module, taken from the GitHub release rather than a registry for now:
+
+```python
+# MODULE.bazel
+bazel_dep(name = "uika", version = "VERSION_PLACEHOLDER")
+archive_override(
+    module_name = "uika",
+    urls = ["https://github.com/exoego/uika/releases/download/vVERSION_PLACEHOLDER/uika-bazel-VERSION_PLACEHOLDER.tar.gz"],
+    strip_prefix = "bazel-rules",
+)
+```
+
+```python
+# BUILD.bazel
+load("@uika//:defs.bzl", "uika_dump")
+
+uika_dump(
+    name = "uika_dump",
+    targets = ["//app", "//service"],
+)
+
+# The baseline the PR gate compares against: it only feeds the version diff, so it
+# resolves without building anything.
+uika_dump(
+    name = "uika_resolution_dump",
+    build_outputs = False,
+    targets = ["//app", "//service"],
+)
+```
+
+```console
+$ bazel run //:uika_dump -- --output /tmp/after.json
+$ bazel run //:uika_resolution_dump -- --output /tmp/before.json
+```
+
+Each entry in `targets` becomes one module of the dump, named by its label, so
+`upgrade-check` checks each against its own resolution. Unlike the other build
+tools there is no whole-build sweep: a rule cannot expand `//...`, so list the
+deployable targets, or generate the list with
+`bazel query 'kind(java_binary, //...)'`.
+
+Coordinates come from the `maven_coordinates=group:artifact:version` tag that
+rules_jvm_external puts on every `jvm_import` it generates — the same tag its own
+`java_export` and `pom_file` read. Nothing here is specific to rules_jvm_external,
+so a hand-written `java_import` carrying that tag is attributed just as well, and a
+target of your own build is recorded by label the way the other tools record a
+project dependency. `--jdk-release` is derived per target from its `javacopts`,
+falling back to the Java toolchain's target version, and `jdk_release = N` on the
+rule overrides every module.
+
+Two Bazel-specific things to know. The dump is written by `bazel run`, never by a
+build action, because it names absolute paths and an action's output is cacheable —
+`bazel run` lays the classpath out as runfiles, and resolving those symlinks is
+where the real paths come from. And Bazel discards an external repository when its
+lockfile changes, so the old JARs a baseline dump points at can be gone by the time
+the PR job reads them; that costs findings rather than failing, and
+[BASELINE-CACHING.md](BASELINE-CACHING.md) covers it.
+
 
 ## How it works
 

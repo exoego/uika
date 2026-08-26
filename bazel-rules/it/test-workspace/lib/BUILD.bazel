@@ -1,0 +1,14 @@
+load("@rules_java//java:defs.bzl", "java_library")
+
+# A target that pins its own API release has to be recorded with THAT release, not the
+# toolchain's. Reading the toolchain instead was a real bug in the Gradle plugin. The
+# workspace deliberately leaves --java_language_version at Bazel's default of 11, so //app
+# derives 11 from the toolchain while this target derives 17, and the two cannot be
+# confused -- and so the ruleset's own sources keep proving they compile in a workspace
+# that never raised the language version.
+java_library(
+    name = "lib",
+    srcs = ["example/Greeter.java"],
+    javacopts = ["--release=17"],
+    visibility = ["//visibility:public"],
+)

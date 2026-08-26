@@ -1,0 +1,29 @@
+load("@uika//:defs.bzl", "uika_dump")
+
+# The version bump under test. In a real build this is a maven_install.json edit; here it
+# swaps which vendored jar //app depends on, keeping the module LABEL identical across the
+# two dumps -- upgrade-check pairs modules by name, and a renamed module would silently
+# drop it to merged mode.
+config_setting(
+    name = "guava_23",
+    values = {"define": "guava=23"},
+)
+
+uika_dump(
+    name = "dump",
+    targets = [
+        "//app",
+        "//lib",
+    ],
+)
+
+# The baseline shape of the PR gate: no target is built, and only the external jars the
+# version diff needs are recorded.
+uika_dump(
+    name = "resolution_dump",
+    build_outputs = False,
+    targets = [
+        "//app",
+        "//lib",
+    ],
+)

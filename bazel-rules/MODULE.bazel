@@ -1,0 +1,10 @@
+# The version stays at the placeholder in git and is stamped at release, the same rule
+# cli/Cargo.toml follows. private/version.bzl carries the same value and is what the
+# uika-cli download defaults to, so the two are stamped together.
+module(
+    name = "uika",
+    version = "0.0.0-dev",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "rules_java", version = "9.1.0")

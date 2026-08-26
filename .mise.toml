@@ -10,5 +10,8 @@ clojure = "1.12.5.1664"
 # standalone jar that no GitHub release serves (404 on every install).
 leiningen = "2.12.0"
 java = "temurin-21"
+# Bazelisk, not bazel: it reads bazel-rules/.bazelversion, so the ruleset pins the
+# Bazel release its integration test runs on independently of this file.
+bazelisk = "1.29.0"
 # aqua backend mislabels the native binary; the asdf plugin installs a working shim.
 "asdf:joschi/asdf-jreleaser" = "1.25.0"
