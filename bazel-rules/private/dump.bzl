@@ -12,8 +12,17 @@ def _line(*fields):
     tool's. Fields are tab-separated and belong to the most recent "module" line. Paths are
     runfiles paths, which the binary resolves to real absolute paths at run time, so
     nothing that is cached ever carries an absolute path.
+
+    A field carrying a delimiter fails the build rather than being escaped. A tab or a
+    newline cannot occur in a Bazel label, and a javacopt or a path holding one is
+    pathological, so a codec to maintain on both sides of the wire would exist only to hide
+    a corrupt manifest that the Java side would then mis-parse into the wrong module.
     """
-    return "\t".join([f if f else "" for f in fields])
+    values = [f if f else "" for f in fields]
+    for value in values:
+        if "\t" in value or "\n" in value:
+            fail("a uika manifest field cannot contain a tab or a newline: {}".format(value))
+    return "\t".join(values)
 
 def _runtime_jars(target):
     """Everything on the target's runtime classpath.

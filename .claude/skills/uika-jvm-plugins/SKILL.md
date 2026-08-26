@@ -363,6 +363,13 @@ hold lives here.
   default, so that decision lives in the one place that knows both the version and the
   map. No test reaches this: the integration test consumes the rules at a git revision,
   where the map is empty by construction, so the trap only exists in a released archive.
+- No duplicate-target guard is needed on `uika_dump`. Bazel rejects a repeated label in a
+  `label_list` itself ("Label '//app:app' is duplicated in the 'targets' attribute"), before
+  the rule implementation runs, and two distinct labels cannot produce one module name. A
+  guard was written and then removed once that was checked.
+- The manifest fails the build on a field carrying a tab or a newline instead of escaping
+  it. A codec on both sides of the wire would exist only to hide a corrupt manifest that
+  the Java side would mis-parse into the wrong module.
 - The integration test never downloads the CLI (`UIKA_CLI_PATH` short-circuits both the
   repository rule and the run), which keeps it hermetic and off Maven Central, so the
   download path is covered by hand instead. Last checked against the published 0.8.0:
