@@ -3,8 +3,8 @@
 ## Build and test
 
 ```console
-$ make check   # cargo fmt --check + cargo clippy + cargo test + Gradle/sbt/Maven/Mill plugin checks
-$ make test    # cargo test + Gradle/sbt/Maven/Mill plugin tests
+$ make check   # cargo fmt --check + cargo clippy + cargo test + build-tool plugin checks
+$ make test    # cargo test + build-tool plugin tests
 $ make build   # cargo build + Gradle/sbt/Maven/Mill plugin builds
 
 $ cargo build --release                       # for benchmarks

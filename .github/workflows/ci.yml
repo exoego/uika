@@ -80,6 +80,21 @@ jobs:
           restore-keys: |
             maven-${{ runner.os }}-
 
+      - name: Cache Bazel
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          # The bazelisk entry is the Bazel distribution itself; repos/v1 is the
+          # repository cache, which is what saves refetching rules_java and a remote
+          # JDK on every run. The OUTPUT base is deliberately not cached: the bazel
+          # integration test cleans it on purpose (bazel-rules/it/run.sh explains why),
+          # so storing it would cost gigabytes to restore something the run discards.
+          path: |
+            ~/.cache/bazelisk
+            ~/.cache/bazel/_bazel_runner/cache/repos/v1
+          key: bazel-${{ runner.os }}-${{ hashFiles('bazel-rules/MODULE.bazel', 'bazel-rules/it/test-workspace/MODULE.bazel.template', 'bazel-rules/.bazelversion') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-
+
       - name: Check
         # UIKA_IT_ALT_JAVA gives the lein integration test a second JDK, so it can
         # prove jdkRelease follows the project's :java-cmd and not lein's own JVM.

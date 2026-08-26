@@ -53,8 +53,8 @@ tools on the same inputs (wall time, peak memory, and what each one reports).
 
 ## Usage
 
-Every recipe below drives the Gradle, sbt, Maven, Mill or Leiningen plugin,
-or the Clojure CLI tool, so declare it in your build first: see
+Every recipe below drives the Gradle, sbt, Maven, Mill or Leiningen plugin, the
+Clojure CLI tool or the Bazel rules, so declare it in your build first: see
 [Build-tool plugins](#build-tool-plugins).
 
 ### PR gate on GitHub Actions (the main use case)
@@ -94,13 +94,13 @@ jobs:
         run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
 ```
 
-sbt, Maven and Mill use the same three steps with different commands.
+sbt, Maven, Mill and Bazel use the same three steps with different commands.
 
-| Step | sbt | Maven | Mill |
-| --- | --- | --- | --- |
-| Baseline dump | `sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/before.json` | `mvn -q uika:dump-classpath -Duika.output=/tmp/before.json` | `./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/before.json` |
-| PR dump | `sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json` | `mvn -q compile uika:dump-classpath -Duika.output=/tmp/after.json` | `./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/after.json` |
-| Check | `sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"` | `mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json` | `./mill net.exoego.uika.mill.Uika/upgradeCheck --before /tmp/before.json --after /tmp/after.json` |
+| Step | sbt | Maven | Mill | Bazel |
+| --- | --- | --- | --- | --- |
+| Baseline dump | `sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/before.json` | `mvn -q uika:dump-classpath -Duika.output=/tmp/before.json` | `./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/before.json` | `bazel run //:uika_resolution_dump -- --output /tmp/before.json --materialize /tmp/uika-baseline` |
+| PR dump | `sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json` | `mvn -q compile uika:dump-classpath -Duika.output=/tmp/after.json` | `./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/after.json` | `bazel run //:uika_dump -- --output /tmp/after.json` |
+| Check | `sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"` | `mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json` | `./mill net.exoego.uika.mill.Uika/upgradeCheck --before /tmp/before.json --after /tmp/after.json` | `bazel run //:uika_upgrade_check -- --before /tmp/before.json --after /tmp/after.json` |
 
 To keep the base-branch resolution off the PR's critical path, dump the
 baseline once per push instead and cache it as an artifact keyed by SHA:
@@ -130,7 +130,7 @@ and in the PR job, after downloading the artifact into `/tmp/uika-jfr`:
       - run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json -PuikaJfr=/tmp/uika-jfr
 ```
 
-The [per-tool knobs](#build-tool-plugins) cover sbt, Maven and Mill.
+The [per-tool knobs](#build-tool-plugins) cover sbt, Maven, Mill and Bazel.
 
 ## Command reference
 
@@ -420,7 +420,8 @@ still refused.
 
 ## Build-tool plugins
 
-The Gradle, sbt, Maven, Mill and Leiningen plugins and the Clojure CLI tool write the same dump format: every module's resolved runtime
+The Gradle, sbt, Maven, Mill and Leiningen plugins, the Clojure CLI tool and the
+Bazel rules write the same dump format: every module's resolved runtime
 classpath as coordinate-annotated JSON, kept per module so `upgrade-check` can
 [check each against its own resolution](#per-module-checking-upgrade-check).
 Feed two dumps to `uika upgrade-check`, or one to `uika check
@@ -440,6 +441,8 @@ one coordinate bump updates both. The Leiningen plugin and the Clojure CLI tool
 are the exception: neither resolver handles a zip-packaged artifact, so they
 download it straight from Maven Central (`UIKA_CLI_URL` to override the URL,
 `UIKA_CLI_PATH` to point at a binary you already have and skip the download).
+Bazel downloads it in a repository rule, so its repository cache holds it and a
+second run needs no network; `UIKA_CLI_PATH` works there too.
 
 The settings shown per tool below also have command-line forms:
 [`failOn`](#violation-tiers-and---fail-on) (`-PuikaFailOn=`, `set uikaFailOn
@@ -448,19 +451,20 @@ The settings shown per tool below also have command-line forms:
 (`-PuikaExcludeFile=` for a single file, `--excludeFile` repeated).
 
 [`--jdk-release`](#how-it-works) needs no setting at all. The build runs on a
-JVM, so Gradle, Maven, sbt and Mill derive the release from what the modules
-compile for. Gradle reads `compileJava`'s `options.release` else target
+JVM, so Gradle, Maven, sbt, Mill and Bazel derive the release from what the
+modules compile for. Gradle reads `compileJava`'s `options.release` else target
 compatibility, Maven reads maven-compiler-plugin's `<release>`/`<target>` else
-`maven.compiler.release`/`maven.compiler.target`, and sbt and Mill read `javacOptions` and
-`scalacOptions`. A build with several modules contributes the LOWEST of them,
+`maven.compiler.release`/`maven.compiler.target`, sbt and Mill read `javacOptions` and
+`scalacOptions`, and Bazel reads a target's `javacopts` else the Java toolchain's
+target version. A build with several modules contributes the LOWEST of them,
 because one flag serves a run that checks all of them and under-claiming only
 costs unverified references while over-claiming drops findings. The result is
 clamped to what the selected JDK's `ct.sym` serves, which is the same JDK the
 CLI reads through `UIKA_JDK`. Leiningen and the Clojure tool
 have no module model to read, so they use the project's own JVM release.
-Override with `jdkRelease` / `uikaJdkRelease` / `<jdkRelease>`
-(`-PuikaJdkRelease=`, `-Duika.jdkRelease=`, `--jdkRelease`), or set 0 to disable
-it.
+Override with `jdkRelease` / `uikaJdkRelease` / `<jdkRelease>` /
+`jdk_release` (`-PuikaJdkRelease=`, `-Duika.jdkRelease=`, `--jdkRelease`), or set
+0 to disable it.
 
 Each dump also records the release next to every module it lists, read the same
 way. That is what lets `upgrade-check` notice the application's own JDK moved
@@ -505,6 +509,21 @@ branch, consume on the PR):
   flag, not the variable). The mixin is needed because `forkArgs` is a task on the
   test module itself, out of reach of a command that finds the modules through the
   evaluator.
+- Bazel: collect with `bazel test`, check with `--jfr <dir>`. `--jvmopt` already
+  reaches every test JVM, so nothing has to be injected, and the check target
+  prints the flag (and creates the directory) so the recipe cannot drift:
+
+  ```console
+  $ jvmopt=$(bazel run //:uika_upgrade_check -- jfr-jvmopt /tmp/uika-jfr)
+  $ bazel test //... --nocache_test_results \
+        --sandbox_writable_path=/tmp/uika-jfr "$jvmopt"
+  $ bazel run //:uika_upgrade_check -- --before /tmp/before.json \
+        --after /tmp/after.json --jfr /tmp/uika-jfr
+  ```
+
+  `--nocache_test_results` is not optional: a cached test forks no JVM and would
+  record nothing, with no symptom. `--sandbox_writable_path` is what lets the
+  recording land outside the sandbox, where the check can read it afterwards.
 
 JFR generates pid-unique recording names for a directory value, so parallel
 test JVMs never collide, and the injected flag needs JDK 17+ test JVMs (the
@@ -513,8 +532,9 @@ value instead of a directory — a production recording, say — is
 consumption-only: the check converts it, test JVMs are left untouched.
 [`--draft-exclude-file`](#runtime-load-evidence-jfr---class-load-log)
 maps to `-PuikaDraftExcludeFile=` / `uikaDraftExcludeFile :=` /
-`-Duika.draftExcludeFile=` / `--draftExcludeFile` / `:draft-exclude-file` (both
-Clojure frontends, which take text logs rather than JFR).
+`-Duika.draftExcludeFile=` / `--draftExcludeFile` (Mill and Bazel) /
+`:draft-exclude-file` (both Clojure frontends, which take text logs rather than
+JFR).
 
 ### Gradle (`gradle-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-gradle-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-gradle-plugin)
 
@@ -693,6 +713,91 @@ project's `:prep-tasks` first, so both `:aot` classes and `:java-source-paths` o
 are scanned. The reflection caveat above applies here too; `:class-dir` does not,
 because the dump takes its class directories from `:compile-path` and the project's
 own source and resource paths.
+
+### Bazel (`bazel-rules/`)
+
+Bazel 7 or newer, with bzlmod. The module comes from the GitHub release rather
+than from a registry for now:
+
+```python
+# MODULE.bazel
+bazel_dep(name = "uika", version = "VERSION_PLACEHOLDER")
+archive_override(
+    module_name = "uika",
+    urls = ["https://github.com/exoego/uika/releases/download/vVERSION_PLACEHOLDER/uika-bazel-VERSION_PLACEHOLDER.tar.gz"],
+    strip_prefix = "bazel-rules",
+)
+```
+
+```python
+# BUILD.bazel
+load("@uika//:defs.bzl", "uika_dump", "uika_upgrade_check")
+
+UIKA_TARGETS = ["//app", "//service"]
+
+uika_dump(
+    name = "uika_dump",
+    targets = UIKA_TARGETS,
+)
+
+# The baseline the PR gate compares against: it only feeds the version diff, so it
+# resolves without building anything.
+uika_dump(
+    name = "uika_resolution_dump",
+    build_outputs = False,
+    targets = UIKA_TARGETS,
+)
+
+uika_upgrade_check(
+    name = "uika_upgrade_check",
+    exclude_files = ["uika-exclude.toml"],
+    fail_on = "reachable",
+    targets = UIKA_TARGETS,
+)
+```
+
+```console
+$ bazel run //:uika_dump -- --output /tmp/after.json
+$ bazel run //:uika_resolution_dump -- --output /tmp/before.json
+$ bazel run //:uika_upgrade_check -- --before /tmp/before.json --after /tmp/after.json
+```
+
+The CLI binary comes from a repository rule, so Bazel's repository cache holds it
+and the release archive pins its checksum for every platform. `--failOn`,
+`--excludeFile`, `--jdkRelease`, `--classLoadLog` and
+`--draftExcludeFile` override the rule's settings on the command line, and a
+relative path in any of them resolves against the directory you ran `bazel` from,
+not the runfiles tree. The check target repeats `targets` only to read the API
+release they compile for, so it builds nothing.
+
+Each entry in `targets` becomes one module of the dump, named by its label, so
+`upgrade-check` checks each against its own resolution. Unlike the other build
+tools there is no whole-build sweep: a rule cannot expand `//...`, so list the
+deployable targets, or generate the list with
+`bazel query 'kind(java_binary, //...)'`.
+
+Coordinates come from the `maven_coordinates=group:artifact:version` tag that
+rules_jvm_external puts on every `jvm_import` it generates — the same tag its own
+`java_export` and `pom_file` read. Nothing here is specific to rules_jvm_external,
+so a hand-written `java_import` carrying that tag is attributed just as well, and a
+target of your own build is recorded by label the way the other tools record a
+project dependency. `--jdk-release` is derived per target from its `javacopts`,
+falling back to the Java toolchain's target version, and `jdk_release = N` on the
+rule overrides every module.
+
+Two Bazel-specific things to know. The dump is written by `bazel run`, never by a
+build action, because it names absolute paths and an action's output is cacheable.
+`bazel run` lays the classpath out as runfiles, and resolving those symlinks is
+where the real paths come from.
+
+And Bazel discards an external repository and refetches it when its lockfile
+changes, so the old JARs a baseline dump points at are gone by the time the PR job
+compares against them. uika treats a JAR it cannot open as a warning, so the
+symptom is *fewer* findings rather than a failure. `--materialize <dir>` is the
+answer: it hard-links every JAR the dump names into one directory and points the
+dump there, which puts the baseline out of Bazel's reach and makes it portable to
+another machine as a bonus. See [BASELINE-CACHING.md](BASELINE-CACHING.md).
+
 
 ## How it works
 

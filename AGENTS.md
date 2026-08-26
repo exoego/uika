@@ -184,9 +184,10 @@ an agent whose harness does not auto-load it can just read the path.
   numbers, optimization history, rejected approaches; before profiling or
   touching the hot path.
 - `.claude/skills/uika-jvm-plugins/SKILL.md` — Gradle/sbt/Maven/Mill/Leiningen
-  plugin, Clojure CLI tool and `jvm-plugin-core` invariants; before changing
-  anything under `gradle-plugin/`, `sbt-plugin/`, `maven-plugin/`,
-  `mill-plugin/`, `clojure-tool/`, `lein-plugin/`, or `jvm-plugin-core/`.
+  plugin, Clojure CLI tool, Bazel rules and `jvm-plugin-core` invariants; before
+  changing anything under `gradle-plugin/`, `sbt-plugin/`, `maven-plugin/`,
+  `mill-plugin/`, `clojure-tool/`, `lein-plugin/`, `bazel-rules/`, or
+  `jvm-plugin-core/`.
 
 Module layout is not documented here on purpose: `ls cli/src/` plus the
 "How it works" section of README.md is the current answer, and a hand-kept

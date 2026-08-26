@@ -1,0 +1,25 @@
+load("@rules_java//java:defs.bzl", "java_binary", "java_test")
+
+java_binary(
+    name = "app",
+    srcs = ["example/Main.java"],
+    main_class = "example.Main",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//lib",
+        "//vendor:selenium",
+    ] + select({
+        "//:guava_23": ["//vendor:guava23"],
+        "//conditions:default": ["//vendor:guava22"],
+    }),
+)
+
+# use_testrunner = False keeps the workspace free of a test framework: a plain main that
+# returns 0 is a passing test, and all this one has to do is load a class.
+java_test(
+    name = "load_test",
+    srcs = ["example/LoadTest.java"],
+    main_class = "example.LoadTest",
+    use_testrunner = False,
+    deps = ["//vendor:selenium"],
+)

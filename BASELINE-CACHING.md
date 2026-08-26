@@ -26,7 +26,9 @@ run continues against an incomplete old-side index and reports *fewer* breaks
 than exist. Gradle closes it with `uikaResolveClasspath`, which fetches whatever
 is missing through the build's own repositories, mirrors, and credentials. Maven
 and sbt have no equivalent task, so they restore the dependency cache the
-baseline run wrote — it holds the old versions by construction.
+baseline run wrote — it holds the old versions by construction. Bazel closes
+both points at once with `--materialize`, which copies the JARs next to the dump
+and rewrites it to point there.
 
 Every PR workflow below keeps the checkout-based dump as a fallback, since some
 SHAs have no usable baseline: those predating the workflow, expired artifacts,
@@ -352,3 +354,99 @@ jobs:
         if: steps.baseline-artifact.outcome == 'success' || steps.baseline-fallback.outcome == 'success'
         run: sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"
 ```
+
+## Bazel
+
+Bazel is the one case where restoring a dependency cache does not work. It
+discards an external repository and refetches it whenever the lockfile changes,
+so the baseline's JARs are gone on the PR branch no matter what was cached.
+`--materialize` sidesteps it: the baseline artifact carries the JARs themselves,
+which also makes it valid on a different runner.
+
+```yaml
+# .github/workflows/uika-baseline.yml
+name: uika-baseline
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:   # backfill the current tip
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # build_outputs = False on this target, so it resolves without building anything
+      - run: |
+          bazel run //:uika_resolution_dump -- \
+            --output /tmp/uika-baseline/classpath.json \
+            --materialize /tmp/uika-baseline/jars
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: uika-baseline-${{ github.sha }}
+          path: /tmp/uika-baseline
+          retention-days: 30   # a PR's base.sha is always a recent tip
+```
+
+```yaml
+# .github/workflows/linkage-check.yml
+name: linkage-check
+on:
+  pull_request:
+    paths:
+      - 'MODULE.bazel'
+      - 'maven_install.json'
+
+jobs:
+  linkage-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read   # to read the baseline artifact
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch baseline artifact
+        id: baseline
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh api \
+            "repos/${{ github.repository }}/actions/artifacts?name=uika-baseline-${{ github.event.pull_request.base.sha }}&per_page=5" \
+            --jq '[.artifacts[] | select(.expired == false)][0].id // empty')
+          test -n "$id"
+          gh api "repos/${{ github.repository }}/actions/artifacts/$id/zip" > /tmp/baseline.zip
+          unzip -o /tmp/baseline.zip -d /tmp/uika-baseline
+
+      - name: Dump the baseline the slow way
+        id: baseline-fallback
+        if: steps.baseline.outcome != 'success'
+        continue-on-error: true
+        run: |
+          git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
+          git checkout ${{ github.event.pull_request.base.sha }}
+          if bazel run //:uika_resolution_dump -- \
+               --output /tmp/uika-baseline/classpath.json \
+               --materialize /tmp/uika-baseline/jars; then
+            status=0
+          else
+            status=1
+          fi
+          git checkout -
+          exit $status
+
+      - run: bazel run //:uika_dump -- --output /tmp/after.json
+
+      - name: Check broken references
+        if: steps.baseline.outcome == 'success' || steps.baseline-fallback.outcome == 'success'
+        run: >
+          bazel run //:uika_upgrade_check --
+          --before /tmp/uika-baseline/classpath.json --after /tmp/after.json
+```
+
+The materialized directory has to be restored at the same absolute path the
+baseline run wrote it to, because the dump names its JARs absolutely. Both
+workflows above use `/tmp/uika-baseline` for exactly that reason.

@@ -1,0 +1,52 @@
+load("@rules_java//java:defs.bzl", "java_library")
+
+_RELEASE_17 = ["--release", "17"]
+
+# The sources under net/exoego/uika/plugin/core are committed SYMLINKS into
+# jvm-plugin-core/. Every uika build-tool front end source-includes that directory rather
+# than depending on a published artifact, so a DumpFormat change reaches all of them at
+# once. Listed one by one instead of globbed: there are four, and a glob over a symlink
+# into another tree is not something to rely on.
+# --release 17 is the floor every uika front end sets, and here it is load-bearing in a
+# second way: Bazel's default --java_language_version is 11, so without it the core's arrow
+# switches and pattern instanceof do not compile in a user's workspace at all.
+java_library(
+    name = "core",
+    javacopts = _RELEASE_17,
+    srcs = [
+        "net/exoego/uika/plugin/core/ClasspathDump.java",
+        "net/exoego/uika/plugin/core/DumpFormat.java",
+        "net/exoego/uika/plugin/core/JfrEvidence.java",
+        "net/exoego/uika/plugin/core/UikaCli.java",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+java_library(
+    name = "manifest",
+    javacopts = _RELEASE_17,
+    srcs = ["net/exoego/uika/bazel/Manifest.java"],
+    deps = [":core"],
+)
+
+java_library(
+    name = "dump",
+    javacopts = _RELEASE_17,
+    srcs = ["net/exoego/uika/bazel/DumpMain.java"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":core",
+        ":manifest",
+    ],
+)
+
+java_library(
+    name = "check",
+    javacopts = _RELEASE_17,
+    srcs = ["net/exoego/uika/bazel/UpgradeCheckMain.java"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":core",
+        ":manifest",
+    ],
+)
