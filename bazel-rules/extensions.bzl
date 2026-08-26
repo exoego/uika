@@ -27,7 +27,7 @@ _cli = tag_class(
 
 def _uika_impl(module_ctx):
     version = UIKA_VERSION
-    sha256 = UIKA_CLI_SHA256
+    sha256 = None
     repository = None
     for module in module_ctx.modules:
         for tag in module.tags.cli:
@@ -41,6 +41,13 @@ def _uika_impl(module_ctx):
                 repository = tag.repository
         if module.tags.cli:
             break
+
+    if sha256 == None:
+        # The stamped checksums describe UIKA_VERSION's archives and nothing else, so a
+        # version override has to drop them. Carrying them over verified the requested
+        # version against another version's hash and failed the fetch outright, which made
+        # a released archive plus any version override unusable.
+        sha256 = UIKA_CLI_SHA256 if version == UIKA_VERSION else {}
 
     uika_cli_repository(
         name = "uika_cli",

@@ -5,7 +5,6 @@ Clojure tool: Bazel's repository cache is exactly the right place for a pinned b
 second run needs no network and an air-gapped build can prime it.
 """
 
-load(":checksums.bzl", "UIKA_CLI_SHA256")
 load(":version.bzl", "UIKA_VERSION")
 
 _CENTRAL = "https://repo1.maven.org/maven2"
@@ -98,8 +97,10 @@ uika_cli_repository = repository_rule(
     doc = "The uika CLI binary for the host platform.",
     attrs = {
         "version": attr.string(default = UIKA_VERSION),
+        # No default: the stamped checksums only describe UIKA_VERSION, so whether they
+        # apply depends on the version being requested. That decision belongs in the module
+        # extension, which is the one place that knows both.
         "sha256": attr.string_dict(
-            default = UIKA_CLI_SHA256,
             doc = "Maven classifier to sha256 of its distribution zip.",
         ),
         "repository": attr.string(default = _CENTRAL),

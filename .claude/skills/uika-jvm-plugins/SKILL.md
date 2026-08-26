@@ -355,6 +355,14 @@ hold lives here.
   `cli_repository.bzl` prints its own message, carrying the hash it just downloaded so the
   pin is paste-ready. Verified on a cold fetch with an empty `--repository_cache`; do not
   assume Bazel covers this.
+- `private/checksums.bzl` describes UIKA_VERSION's archives and NOTHING else, so
+  `extensions.bzl` drops the map whenever a `uika.cli(version = ...)` tag names a
+  different one. Carrying it over verified the requested version against another
+  version's hash and failed the fetch outright, which made a released archive plus any
+  version override unusable. The repository rule's `sha256` attr deliberately has no
+  default, so that decision lives in the one place that knows both the version and the
+  map. No test reaches this: the integration test consumes the rules at a git revision,
+  where the map is empty by construction, so the trap only exists in a released archive.
 - The integration test never downloads the CLI (`UIKA_CLI_PATH` short-circuits both the
   repository rule and the run), which keeps it hermetic and off Maven Central, so the
   download path is covered by hand instead. Last checked against the published 0.8.0:
