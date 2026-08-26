@@ -21,10 +21,12 @@ runner:
    new, but the PR job resolves the *new* versions, so nothing pulls the old
    ones in on its own.
 
-Point 2 matters because a JAR uika cannot open is a warning, not an error: the
-run continues against an incomplete old-side index and reports *fewer* breaks
-than exist. Gradle closes it with `uikaResolveClasspath`, which fetches whatever
-is missing through the build's own repositories, mirrors, and credentials. Maven
+Point 2 matters because a compared-pair JAR uika cannot open is an error rather
+than a warning. uika exits 2 with "cannot open ...", so a missing old-side JAR
+fails the job outright. Only scan targets are skipped with a warning.
+
+Gradle closes it with `uikaResolveClasspath`, which fetches whatever is missing
+through the build's own repositories, mirrors, and credentials. Maven
 and sbt have no equivalent task, so they restore the dependency cache the
 baseline run wrote — it holds the old versions by construction. Bazel closes
 both points at once with `--materialize`, which copies the JARs next to the dump

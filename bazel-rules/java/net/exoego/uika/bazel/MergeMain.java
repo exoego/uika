@@ -1,6 +1,5 @@
 package net.exoego.uika.bazel;
 
-import net.exoego.uika.plugin.core.ClasspathDump.Artifact;
 import net.exoego.uika.plugin.core.ClasspathDump.Module;
 import net.exoego.uika.plugin.core.DumpFormat;
 import net.exoego.uika.plugin.core.UikaCli;
@@ -10,9 +9,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -25,9 +24,9 @@ import java.util.stream.Stream;
  *
  * <p>Unlike {@link DumpMain} there is no runfiles tree here, so the fragments name paths
  * relative to the execution root and this merges them against the {@code --execroot} the
- * caller read out of {@code bazel info}. That is also why the sweep cannot be a
- * {@code bazel run} target itself, since a nested {@code bazel info} would block on the
- * server lock.
+ * caller read out of {@code bazel info}. The execution root is passed in rather than looked
+ * up here so this stays a plain JVM tool with no {@code bazel} binary on its path, and so the
+ * caller can pass the configuration flags its sweep build used.
  */
 public final class MergeMain {
     private MergeMain() {}
@@ -43,11 +42,12 @@ public final class MergeMain {
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
-                case "--execroot" -> execroot = Path.of(args[++i]);
-                case "--fragments" -> fragmentDirs.add(Path.of(args[++i]));
-                case "--output", "-o" -> output = args[++i];
-                case "--materialize" -> materialize = args[++i];
-                case "--jdkRelease" -> override = UikaCli.overrideRelease(Integer.valueOf(args[++i]));
+                case "--execroot" -> execroot = Path.of(Manifest.flagValue(args, ++i));
+                case "--fragments" -> fragmentDirs.add(Path.of(Manifest.flagValue(args, ++i)));
+                case "--output", "-o" -> output = Manifest.flagValue(args, ++i);
+                case "--materialize" -> materialize = Manifest.flagValue(args, ++i);
+                case "--jdkRelease" ->
+                        override = UikaCli.overrideRelease(Manifest.flagRelease(args, ++i));
                 default -> throw new IllegalArgumentException("unknown argument: " + args[i]);
             }
         }
@@ -58,12 +58,13 @@ public final class MergeMain {
 
         Path root = execroot;
         List<Module> modules = new ArrayList<>();
-        Map<String, Boolean> seen = new LinkedHashMap<>();
+        Set<String> seen = new LinkedHashSet<>();
         for (Path fragment : fragments(fragmentDirs)) {
-            for (Module module : Manifest.parse(fragment, override, raw -> root.resolve(raw))) {
-                // A target matched by two patterns produces the same fragment twice. Taking
-                // the first keeps one module per name, which is what upgrade-check pairs on.
-                if (seen.putIfAbsent(module.path(), Boolean.TRUE) == null) {
+            for (Module module : Manifest.parse(
+                    fragment, override, raw -> Manifest.resolveExecroot(root, raw))) {
+                // Overlapping --fragments roots can yield the same module twice. Taking the
+                // first keeps one module per name, which is what upgrade-check pairs on.
+                if (seen.add(module.path())) {
                     modules.add(module);
                 }
             }
@@ -79,7 +80,7 @@ public final class MergeMain {
             modules = Materialize.into(modules, directory);
             roots.add(directory.toString());
         }
-        roots.addAll(externalRoots(modules));
+        roots.addAll(Manifest.externalRoots(modules));
 
         Path target = Manifest.workspacePath(output);
         Files.createDirectories(target.getParent());
@@ -90,35 +91,27 @@ public final class MergeMain {
         System.out.println("uika classpath dump: " + target + " (" + modules.size() + " modules)");
     }
 
+    /**
+     * Every fragment under the given directories, sorted across ALL of them rather than within
+     * each, so the first-wins dedupe above does not depend on the order the flags were passed.
+     *
+     * <p>The start directory is resolved first because {@code Files.walk} does not descend a
+     * symlinked start, while {@code Files.isDirectory} follows one. Without that,
+     * {@code --fragments bazel-bin} (the workspace convenience symlink, and the spelling the
+     * flag is named after) finds nothing and reports it as a sweep that was never run.
+     */
     private static List<Path> fragments(List<Path> directories) throws IOException {
         List<Path> found = new ArrayList<>();
         for (Path directory : directories) {
             if (!Files.isDirectory(directory)) {
                 continue;
             }
-            try (Stream<Path> walk = Files.walk(directory)) {
+            try (Stream<Path> walk = Files.walk(directory.toRealPath())) {
                 walk.filter(p -> p.getFileName().toString().endsWith(FRAGMENT_SUFFIX))
-                        .sorted()
                         .forEach(found::add);
             }
         }
+        found.sort(null);
         return found;
-    }
-
-    /** Same root-table seeding as the rule-based dump; see DumpMain. */
-    private static List<String> externalRoots(List<Module> modules) {
-        List<String> roots = new ArrayList<>();
-        for (Module module : modules) {
-            for (Artifact artifact : module.artifacts()) {
-                int external = artifact.file().indexOf("/external/");
-                if (external >= 0) {
-                    String root = artifact.file().substring(0, external + "/external/".length());
-                    if (!roots.contains(root)) {
-                        roots.add(root);
-                    }
-                }
-            }
-        }
-        return roots;
     }
 }

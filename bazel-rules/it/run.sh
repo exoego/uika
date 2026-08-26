@@ -138,8 +138,12 @@ python3 "$RULES/it/assert_jfr.py" "$OUT/jfr-report.txt"
 echo "--- sweep over //... with the aspect"
 BIN=$("$BAZEL" info bazel-bin)
 # Fragments live in bazel-out and nothing prunes them, so a target deleted since the last
-# sweep would still contribute its module. Clearing first is part of the recipe.
-find "$BIN" -name "*.uika-manifest.tsv" -delete
+# sweep would still contribute its module. Clearing first is part of the recipe. The guard is
+# the recipe's too, because bazel info PRINTS bazel-bin without creating it, so find exits 1
+# on a fresh output base and kills a set -e job on the recipe's first line.
+if [ -d "$BIN" ]; then
+  find "$BIN" -name "*.uika-manifest.tsv" -delete
+fi
 "$BAZEL" build //... --aspects=@uika//:defs.bzl%uika_classpath_aspect \
   --output_groups=uika_dump
 "$BAZEL" run @uika//:merge -- --output "$OUT/sweep.json" \

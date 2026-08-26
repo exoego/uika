@@ -1,6 +1,5 @@
 package net.exoego.uika.bazel;
 
-import net.exoego.uika.plugin.core.ClasspathDump.Artifact;
 import net.exoego.uika.plugin.core.ClasspathDump.Module;
 import net.exoego.uika.plugin.core.DumpFormat;
 import net.exoego.uika.plugin.core.UikaCli;
@@ -10,9 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 
 /**
  * Turns the classpath manifest a {@code uika_dump} target builds into a uika v2 dump.
@@ -34,9 +31,10 @@ public final class DumpMain {
         String materialize = null;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
-                case "--output", "-o" -> output = args[++i];
-                case "--materialize" -> materialize = args[++i];
-                case "--jdkRelease" -> override = UikaCli.overrideRelease(Integer.valueOf(args[++i]));
+                case "--output", "-o" -> output = Manifest.flagValue(args, ++i);
+                case "--materialize" -> materialize = Manifest.flagValue(args, ++i);
+                case "--jdkRelease" ->
+                        override = UikaCli.overrideRelease(Manifest.flagRelease(args, ++i));
                 default -> throw new IllegalArgumentException("unknown argument: " + args[i]);
             }
         }
@@ -48,7 +46,7 @@ public final class DumpMain {
             modules = Materialize.into(modules, directory);
             roots.add(directory.toString());
         }
-        roots.addAll(externalRoots(modules));
+        roots.addAll(Manifest.externalRoots(modules));
 
         Path target = Manifest.workspacePath(output);
         Files.createDirectories(target.getParent());
@@ -57,24 +55,6 @@ public final class DumpMain {
                 DumpFormat.writeV2(modules, roots, DumpFormat.dumpRelease(modules)),
                 StandardCharsets.UTF_8);
         System.out.println("uika classpath dump: " + target);
-    }
-
-    /**
-     * Root prefixes worth collapsing in the dump: the directory each external repository's
-     * jars sit under. The v2 root table shortens every path under them, and an external repo
-     * path is long because it carries the whole download URL.
-     */
-    private static List<String> externalRoots(List<Module> modules) {
-        Set<String> roots = new LinkedHashSet<>();
-        for (Module module : modules) {
-            for (Artifact artifact : module.artifacts()) {
-                int external = artifact.file().indexOf("/external/");
-                if (external >= 0) {
-                    roots.add(artifact.file().substring(0, external + "/external/".length()));
-                }
-            }
-        }
-        return new ArrayList<>(roots);
     }
 
     private static String required(String property) {

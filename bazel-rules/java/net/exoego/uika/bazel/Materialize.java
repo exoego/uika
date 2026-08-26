@@ -25,23 +25,26 @@ final class Materialize {
      * <p>A dump names jars under {@code bazel-out}, which is build output rather than source.
      * They survive a lock file change in the same tree, but not a {@code bazel clean}, a fresh
      * output base, or another machine, which is exactly the baseline-as-CI-artifact flow. When
-     * the changed pair's OLD jar is missing the check does not degrade, it fails: uika exits 2
-     * with "cannot open ...". Measured in bazel-rules/it/run-maven.sh, which asserts both
-     * halves. Copying the classpath out of bazel-out is the fix, and it makes the dump
-     * portable to another machine as a bonus.
+     * the changed pair's OLD jar is missing the check does not degrade. It fails, and uika
+     * exits 2 with "cannot open ...", because a compared-pair jar goes through {@code load}
+     * rather than the scan-target path that warns and skips. Asserted in
+     * bazel-rules/it/run.sh, which requires the materialized baseline to still exit 1 with
+     * the same findings. Copying the classpath out of bazel-out is the fix, and it makes
+     * the dump portable to another machine as a bonus.
      *
      * <p>Hard links where the filesystem allows it, so the common case costs no space at all.
      */
     static List<Module> into(List<Module> modules, Path directory)
             throws IOException {
         Files.createDirectories(directory);
+        Set<Path> sources = realSources(modules);
         Map<String, String> moved = new LinkedHashMap<>();
         Set<String> taken = new LinkedHashSet<>();
         List<Module> result = new ArrayList<>(modules.size());
         for (Module module : modules) {
             List<String> classes = new ArrayList<>(module.classesDirs().size());
             for (String source : module.classesDirs()) {
-                classes.add(one(source, directory, moved, taken));
+                classes.add(one(source, directory, sources, moved, taken));
             }
             List<Artifact> artifacts = new ArrayList<>(module.artifacts().size());
             for (Artifact artifact : module.artifacts()) {
@@ -49,7 +52,7 @@ final class Materialize {
                         artifact.group(),
                         artifact.name(),
                         artifact.version(),
-                        one(artifact.file(), directory, moved, taken),
+                        one(artifact.file(), directory, sources, moved, taken),
                         artifact.project()));
             }
             result.add(new Module(module.path(), classes, artifacts, module.jdkRelease()));
@@ -57,7 +60,21 @@ final class Materialize {
         return result;
     }
 
-    private static String one(String source, Path directory,
+    /** Every file the dump names, so a destination that is one of them can be refused. */
+    private static Set<Path> realSources(List<Module> modules) throws IOException {
+        Set<Path> sources = new LinkedHashSet<>();
+        for (Module module : modules) {
+            for (String source : module.classesDirs()) {
+                sources.add(Path.of(source).toRealPath());
+            }
+            for (Artifact artifact : module.artifacts()) {
+                sources.add(Path.of(artifact.file()).toRealPath());
+            }
+        }
+        return sources;
+    }
+
+    private static String one(String source, Path directory, Set<Path> sources,
             Map<String, String> moved, Set<String> taken) throws IOException {
         String already = moved.get(source);
         if (already != null) {
@@ -80,7 +97,19 @@ final class Materialize {
                     + " Bazel classpath entry is always a jar");
         }
         Path to = directory.resolve(candidate);
-        Files.deleteIfExists(to);
+        if (Files.exists(to)) {
+            // Deleting a file the dump itself names destroys the bytes about to be copied.
+            // A workspace that vendors its jars reaches this with --materialize vendor, and
+            // comparing `to` against THIS `from` is not enough. A same-named jar from
+            // elsewhere in the classpath claims the name first, so the vendored source is
+            // deleted while `from` and `to` are genuinely different files.
+            if (sources.contains(to.toRealPath())) {
+                throw new IOException("cannot materialize into " + directory + ": " + to
+                        + " is itself on the classpath, so copying over it would destroy the"
+                        + " jar being copied; choose a directory the dump does not name");
+            }
+            Files.delete(to);
+        }
         try {
             Files.createLink(to, from);
         } catch (IOException | UnsupportedOperationException crossDeviceOrUnsupported) {

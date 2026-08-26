@@ -310,15 +310,16 @@ hold lives here.
   served from a remote cache, so an action that wrote one would hand a second machine
   another machine's paths. `bazel run` lays the classpath out as runfiles, and
   `toRealPath` on those symlinks is where the absolute paths come from, with no
-  `bazel info execution_root` to guess at (a nested `bazel info` inside a `bazel run`
-  would block on the server lock anyway).
+  `bazel info execution_root` to guess at. The sweep is the one exception, and it stays
+  within the rule. Its fragments ARE written by an action, but they name execution-root
+  relative paths and only the merge turns them absolute.
 - Coordinates come from the `maven_coordinates=` TAG, not from a provider, because
   rules_jvm_external exposes none. That is deliberate rather than a workaround: the same
   tag is what its own `java_export` and `pom_file` read, so anything carrying it is
   attributed and the integration test needs no resolver and no network.
 - A `java_binary`'s `JavaInfo.transitive_runtime_jars` is EMPTY. Its classpath is in
   `JavaRuntimeClasspathInfo` instead. The symptom is a dump with no artifacts at all and
-  no error, so `_runtime_jars` in `private/dump.bzl` checks that provider first.
+  no error, so `_runtime_jars` in `private/manifest.bzl` checks that provider first.
 - `build_outputs = False` skips GENERATED jars, never main-repository ones. A vendored
   jar in the main repository needs no build and carries the coordinates the version diff
   runs on, so a main-repository test would empty a baseline dump of the artifacts it
@@ -372,10 +373,18 @@ hold lives here.
   the Java side would mis-parse into the wrong module.
 - The `//...` sweep and the `uika_dump` rule share `private/manifest.bzl` so one code path
   decides what a module is. They differ only in which path names each jar, which `path_of`
-  selects: the rule resolves runfiles (`short_path`), the sweep has no runfiles tree and its
-  merge step prefixes `bazel info execution_root` (`path`). That is also why the merge is
-  its own command rather than a `bazel run` target, since a nested `bazel info` would block
-  on the server lock.
+  selects. The rule resolves runfiles (`short_path`), while the sweep has no runfiles tree
+  and its merge step prefixes `bazel info execution_root` (`path`). `@uika//:merge` IS an
+  ordinary `bazel run` target. What stays outside it is the `bazel info`, whose value the
+  recipe passes in, so the tool needs no `bazel` on its path and the caller can carry the
+  configuration flags its sweep build used.
+- Bazel REPLANTS the execution root's `external/` symlink forest on every invocation,
+  keeping the repositories that invocation needs and pruning the rest, so the merge prunes
+  the rules_jvm_external repository holding the third-party jars before it resolves a
+  single path. The output base holds those repositories itself and is never replanted,
+  which is why `Manifest.resolveExecroot` falls back to it. Measured on 9.2.0. The
+  integration test cannot reach this, because every third-party jar in its workspace is a
+  main-repository source file and main-repository symlinks do survive.
 - The aspect must NOT declare `provides = [UikaClasspathInfo]`. It returns nothing for a
   target without JavaInfo, Bazel enforces an advertisement, and a sweep over `//...` aborts
   at the first non-Java target. Nothing depended on it, because the rule attribute filters
