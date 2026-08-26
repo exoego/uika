@@ -113,33 +113,23 @@ public final class DumpMain {
         for (int n = 2; !taken.add(candidate); n++) {
             candidate = n + "-" + name;
         }
+        // Every Bazel classpath entry is a jar: JavaInfo and JavaRuntimeClasspathInfo both
+        // model the classpath as jars, and a directory can only reach a target through
+        // runfiles. Refusing one loudly beats the two silent alternatives, since
+        // Files.copy on a directory would produce an EMPTY one and report success.
+        if (Files.isDirectory(from)) {
+            throw new IOException("cannot materialize " + from + ": it is a directory, and a"
+                    + " Bazel classpath entry is always a jar");
+        }
         Path to = directory.resolve(candidate);
         Files.deleteIfExists(to);
-        if (Files.isDirectory(from)) {
-            copyTree(from, to);
-        } else {
-            try {
-                Files.createLink(to, from);
-            } catch (IOException | UnsupportedOperationException crossDeviceOrUnsupported) {
-                Files.copy(from, to, StandardCopyOption.REPLACE_EXISTING);
-            }
+        try {
+            Files.createLink(to, from);
+        } catch (IOException | UnsupportedOperationException crossDeviceOrUnsupported) {
+            Files.copy(from, to, StandardCopyOption.REPLACE_EXISTING);
         }
         moved.put(source, to.toString());
         return to.toString();
-    }
-
-    private static void copyTree(Path from, Path to) throws IOException {
-        try (var paths = Files.walk(from)) {
-            for (Path path : paths.toList()) {
-                Path destination = to.resolve(from.relativize(path).toString());
-                if (Files.isDirectory(path)) {
-                    Files.createDirectories(destination);
-                } else {
-                    Files.createDirectories(destination.getParent());
-                    Files.copy(path, destination, StandardCopyOption.REPLACE_EXISTING);
-                }
-            }
-        }
     }
 
     /**

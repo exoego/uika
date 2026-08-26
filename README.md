@@ -762,7 +762,9 @@ $ bazel run //:uika_resolution_dump -- --output /tmp/before.json
 $ bazel run //:uika_upgrade_check -- --before /tmp/before.json --after /tmp/after.json
 ```
 
-`--failOn`, `--excludeFile`, `--jdkRelease`, `--classLoadLog` and
+The CLI binary comes from a repository rule, so Bazel's repository cache holds it
+and the release archive pins its checksum for every platform. `--failOn`,
+`--excludeFile`, `--jdkRelease`, `--classLoadLog` and
 `--draftExcludeFile` override the rule's settings on the command line, and a
 relative path in any of them resolves against the directory you ran `bazel` from,
 not the runfiles tree. The check target repeats `targets` only to read the API

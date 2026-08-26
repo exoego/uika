@@ -5,6 +5,7 @@ Clojure tool: Bazel's repository cache is exactly the right place for a pinned b
 second run needs no network and an air-gapped build can prime it.
 """
 
+load(":checksums.bzl", "UIKA_CLI_SHA256")
 load(":version.bzl", "UIKA_VERSION")
 
 _CENTRAL = "https://repo1.maven.org/maven2"
@@ -63,9 +64,10 @@ def _uika_cli_impl(repository_ctx):
             version,
             classifier,
         ),
-        # Empty means unpinned, which Bazel warns about and still caches. The release
-        # archive of this ruleset is cut from the tag BEFORE the binaries are built, so it
-        # cannot carry their checksums; a build that wants them pins them itself.
+        # A released archive carries every platform's checksum (private/checksums.bzl,
+        # stamped by stage.sh once the binaries exist). Consuming the rules at a git
+        # revision leaves the map empty, and Bazel warns about the unpinned download; pin
+        # it with the uika.cli tag's sha256 when that matters.
         sha256 = repository_ctx.attr.sha256.get(classifier, ""),
         stripPrefix = "uika-{}-{}".format(version, classifier),
     )
@@ -81,7 +83,10 @@ uika_cli_repository = repository_rule(
     doc = "The uika CLI binary for the host platform.",
     attrs = {
         "version": attr.string(default = UIKA_VERSION),
-        "sha256": attr.string_dict(doc = "Maven classifier to sha256 of its distribution zip."),
+        "sha256": attr.string_dict(
+            default = UIKA_CLI_SHA256,
+            doc = "Maven classifier to sha256 of its distribution zip.",
+        ),
         "repository": attr.string(default = _CENTRAL),
     },
     environ = ["UIKA_CLI_PATH"],

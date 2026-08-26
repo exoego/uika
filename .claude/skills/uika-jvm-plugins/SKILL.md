@@ -340,12 +340,15 @@ hold lives here.
   lands outside the sandbox on purpose. The `jfr-jvmopt` subcommand prints the flag AND
   creates the directory, so the README recipe cannot drift from
   `UikaCli.jfrClassLoadJvmArg` the way Maven's hand-written argLine can.
-- The release archive is cut with `cp -RL` (`make bazel-stage`). The four jvm-plugin-core
-  sources under `bazel-rules/java` are committed symlinks pointing OUT of the module root,
-  which is fine in this repository and useless to a consumer.
-- The archive is built from the tag before the CLI binaries exist, so `@uika_cli` cannot
-  carry their checksums and downloads unpinned by default. A build that wants them states
-  them itself through the `uika.cli` tag.
+- The release archive is cut with `cp -RL` (`bazel-rules/stage.sh`, via `make
+  bazel-stage`). The four jvm-plugin-core sources under `bazel-rules/java` are committed
+  symlinks pointing OUT of the module root, which is fine in this repository and useless
+  to a consumer. `it/` is dropped from the archive because its `local_path_override`
+  points back here.
+- `bazel-stage` must run AFTER the native binaries are in `dist/native`. That is where the
+  checksums it stamps into `private/checksums.bzl` come from, so a released archive pins
+  every platform's uika-cli download. Consuming the rules at a git revision leaves the map
+  empty and the download unpinned, which the `uika.cli` tag's `sha256` closes.
 
 ## Leiningen Plugin Notes
 

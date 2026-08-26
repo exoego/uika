@@ -176,22 +176,11 @@ bazel-clean:
 	rm -rf $(BAZEL_IT_DIR)
 
 # The Bazel module is distributed as a release archive rather than through a registry, so
-# staging it is a tarball rather than a deploy. Copied with -L first, because the four
-# jvm-plugin-core sources under bazel-rules/java are symlinks and an archive of symlinks
-# pointing out of the module root is useless to a consumer. The version is stamped into the
-# copy, the same way UIKA_VERSION is stamped into the CLI, so git keeps the placeholder.
+# staging it is a tarball rather than a deploy. It must run AFTER the native binaries are
+# in dist/native, because that is where the CLI checksums the archive pins come from.
 bazel-stage:
-	rm -rf $(BAZEL_STAGE_DIR)
-	mkdir -p $(BAZEL_STAGE_DIR)
-	cp -RL $(BAZEL_RULES_DIR) $(BAZEL_STAGE_DIR)/bazel-rules
-	rm -rf $(BAZEL_STAGE_DIR)/bazel-rules/it
-	sed -i.bak 's/0\.0\.0-dev/$(UIKA_VERSION)/' \
-		$(BAZEL_STAGE_DIR)/bazel-rules/MODULE.bazel \
-		$(BAZEL_STAGE_DIR)/bazel-rules/private/version.bzl
-	rm -f $(BAZEL_STAGE_DIR)/bazel-rules/MODULE.bazel.bak \
-		$(BAZEL_STAGE_DIR)/bazel-rules/private/version.bzl.bak
-	tar -czf $(BAZEL_STAGE_DIR)/uika-bazel-$(UIKA_VERSION).tar.gz \
-		-C $(BAZEL_STAGE_DIR) bazel-rules
+	sh $(BAZEL_RULES_DIR)/stage.sh $(UIKA_VERSION) $(BAZEL_RULES_DIR) \
+		$(BAZEL_STAGE_DIR) dist/native
 
 native-publish-local:
 	$(GRADLE) -p binary-publishing publishToMavenLocal -PuikaVersion=$(UIKA_VERSION)
