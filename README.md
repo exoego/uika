@@ -94,13 +94,20 @@ jobs:
         run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
 ```
 
-sbt, Maven, Mill and Bazel use the same three steps with different commands.
+The other tools use the same three steps with different commands.
 
-| Step | sbt | Maven | Mill | Bazel |
-| --- | --- | --- | --- | --- |
-| Baseline dump | `sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/before.json` | `mvn -q uika:dump-classpath -Duika.output=/tmp/before.json` | `./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/before.json` | `bazel run //:uika_resolution_dump -- --output /tmp/before.json --materialize /tmp/uika-baseline` |
-| PR dump | `sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json` | `mvn -q compile uika:dump-classpath -Duika.output=/tmp/after.json` | `./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/after.json` | `bazel run //:uika_dump -- --output /tmp/after.json` |
-| Check | `sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"` | `mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json` | `./mill net.exoego.uika.mill.Uika/upgradeCheck --before /tmp/before.json --after /tmp/after.json` | `bazel run //:uika_upgrade_check -- --before /tmp/before.json --after /tmp/after.json` |
+| Tool | Baseline dump | PR dump | Check |
+| --- | --- | --- | --- |
+| sbt | `sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/before.json` | `sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json` | `sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"` |
+| Maven | `mvn -q uika:dump-classpath -Duika.output=/tmp/before.json` | `mvn -q compile uika:dump-classpath -Duika.output=/tmp/after.json` | `mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json` |
+| Mill | `./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/before.json` | `./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/after.json` | `./mill net.exoego.uika.mill.Uika/upgradeCheck --before /tmp/before.json --after /tmp/after.json` |
+| Clojure CLI | `clojure -Tuika dump-classpath :output '"/tmp/before.json"'` | `clojure -Tuika dump-classpath :output '"/tmp/after.json"'` | `clojure -Tuika upgrade-check :before '"/tmp/before.json"' :after '"/tmp/after.json"'` |
+| Leiningen | `lein uika dump-classpath /tmp/before.json` | `lein uika dump-classpath /tmp/after.json` | `lein uika upgrade-check /tmp/before.json /tmp/after.json` |
+| Bazel | `bazel run //:uika_resolution_dump -- --output /tmp/before.json --materialize /tmp/uika-baseline` | `bazel run //:uika_dump -- --output /tmp/after.json` | `bazel run //:uika_upgrade_check -- --before /tmp/before.json --after /tmp/after.json` |
+
+The baseline dump skips the build outputs where the tool can (the base branch is
+only there for its resolved versions). Mill, the Clojure tool and Leiningen have
+no such switch, so their two dump rows differ only in the output path.
 
 To keep the base-branch resolution off the PR's critical path, dump the
 baseline once per push instead and cache it as an artifact keyed by SHA:
@@ -131,6 +138,9 @@ and in the PR job, after downloading the artifact into `/tmp/uika-jfr`:
 ```
 
 The [per-tool knobs](#build-tool-plugins) cover sbt, Maven, Mill and Bazel.
+The Clojure CLI tool and the Leiningen plugin read text class-load logs
+(`:class-load-log` and `:class-load-logs`) but do not convert JFR recordings
+yet, so record with `-Xlog:class+load` there.
 
 ## Command reference
 
