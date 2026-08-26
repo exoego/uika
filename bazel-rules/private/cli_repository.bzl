@@ -57,25 +57,35 @@ def _uika_cli_impl(repository_ctx):
     classifier = _classifier(repository_ctx)
     version = repository_ctx.attr.version
     binary = "uika.exe" if classifier.startswith("windows") else "uika"
-    repository_ctx.download_and_extract(
-        url = "{}/net/exoego/uika/uika-cli/{}/uika-cli-{}-{}.zip".format(
-            repository_ctx.attr.repository,
-            version,
-            version,
-            classifier,
-        ),
-        # A released archive carries every platform's checksum (private/checksums.bzl,
-        # stamped by stage.sh once the binaries exist). Consuming the rules at a git
-        # revision leaves the map empty, and Bazel warns about the unpinned download; pin
-        # it with the uika.cli tag's sha256 when that matters.
-        sha256 = repository_ctx.attr.sha256.get(classifier, ""),
+    url = "{}/net/exoego/uika/uika-cli/{}/uika-cli-{}-{}.zip".format(
+        repository_ctx.attr.repository,
+        version,
+        version,
+        classifier,
+    )
+    # A released archive carries every platform's checksum (private/checksums.bzl, stamped
+    # by stage.sh once the binaries exist), so the release path is verified with nothing to
+    # wire up. Consuming the rules at a git revision leaves the map empty by construction.
+    expected = repository_ctx.attr.sha256.get(classifier, "")
+    result = repository_ctx.download_and_extract(
+        url = url,
+        sha256 = expected,
         stripPrefix = "uika-{}-{}".format(version, classifier),
     )
+    if not expected:
+        # Bazel itself says NOTHING about an unpinned download_and_extract. The familiar
+        # "canonical reproducible form" note comes from http_archive, which reports it by
+        # hand, so a bare repository rule that stays quiet leaves the download silently
+        # unverified. Verified against a cold fetch with an empty --repository_cache.
+        # The hash is the one just downloaded, so it is paste-ready but proves only that
+        # this fetch and a later one agree.
+        print("uika: {} was downloaded without a checksum. Pin it with".format(url) +
+              " uika.cli(sha256 = {{\"{}\": \"{}\"}})".format(classifier, result.sha256))
     if binary != "uika.exe":
         # Bazel's zip extractor drops the executable bit that the release archive carries.
-        result = repository_ctx.execute(["chmod", "+x", binary])
-        if result.return_code != 0:
-            fail("could not make {} executable: {}".format(binary, result.stderr))
+        chmod = repository_ctx.execute(["chmod", "+x", binary])
+        if chmod.return_code != 0:
+            fail("could not make {} executable: {}".format(binary, chmod.stderr))
     repository_ctx.file("BUILD.bazel", _BUILD.format(binary = binary))
 
 uika_cli_repository = repository_rule(

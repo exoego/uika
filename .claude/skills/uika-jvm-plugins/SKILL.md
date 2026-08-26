@@ -349,6 +349,16 @@ hold lives here.
   checksums it stamps into `private/checksums.bzl` come from, so a released archive pins
   every platform's uika-cli download. Consuming the rules at a git revision leaves the map
   empty and the download unpinned, which the `uika.cli` tag's `sha256` closes.
+- Bazel says NOTHING about an unpinned `download_and_extract`. The familiar "canonical
+  reproducible form" note comes from `http_archive`, which reports it by hand, so a bare
+  repository rule that stays quiet leaves the download silently unverified. That is why
+  `cli_repository.bzl` prints its own message, carrying the hash it just downloaded so the
+  pin is paste-ready. Verified on a cold fetch with an empty `--repository_cache`; do not
+  assume Bazel covers this.
+- The integration test never downloads the CLI (`UIKA_CLI_PATH` short-circuits both the
+  repository rule and the run), which keeps it hermetic and off Maven Central, so the
+  download path is covered by hand instead. Last checked against the published 0.8.0:
+  unpinned prints the pin, a correct pin is silent, a wrong one fails the fetch.
 
 ## Leiningen Plugin Notes
 
