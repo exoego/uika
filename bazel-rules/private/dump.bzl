@@ -4,12 +4,15 @@ load("@rules_java//java/common:java_common.bzl", "java_common")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
 load(":aspect.bzl", "UikaClasspathInfo", "module_name", "uika_classpath_aspect")
 
-# A line-oriented wire format, not JSON, purely so the Java side needs no JSON parser --
-# jvm-plugin-core deliberately has none (every other front end borrows its build tool's).
-# Fields are tab-separated and belong to the most recent "module" line. Paths are runfiles
-# paths; the binary resolves them to real absolute paths at run time, so nothing that is
-# cached ever carries an absolute path.
 def _line(*fields):
+    """One manifest record.
+
+    A line-oriented wire format, not JSON, purely so the Java side needs no JSON parser --
+    jvm-plugin-core deliberately has none, because every other front end borrows its build
+    tool's. Fields are tab-separated and belong to the most recent "module" line. Paths are
+    runfiles paths, which the binary resolves to real absolute paths at run time, so
+    nothing that is cached ever carries an absolute path.
+    """
     return "\t".join([f if f else "" for f in fields])
 
 def _runtime_jars(target):

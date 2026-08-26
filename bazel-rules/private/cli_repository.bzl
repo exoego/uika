@@ -21,6 +21,11 @@ _CLASSIFIERS = {
 }
 
 def _classifier(repository_ctx):
+    """The published classifier for the host platform.
+
+    Windows short-circuits ahead of the table because only one Windows binary is published,
+    so there is no architecture to consult and no second row that could ever match.
+    """
     name = repository_ctx.os.name.lower()
     arch = repository_ctx.os.arch.lower()
     if name.startswith("windows"):
