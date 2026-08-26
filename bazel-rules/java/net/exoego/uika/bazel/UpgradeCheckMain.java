@@ -110,7 +110,8 @@ public final class UpgradeCheckMain {
         if (releases == null || releases.isEmpty()) {
             return override != null ? override : DumpFormat.buildJvmRelease();
         }
-        List<Module> modules = Manifest.parse(Manifest.resolveRunfile(releases), override);
+        List<Module> modules = Manifest.parse(
+                Manifest.resolveRunfile(releases), override, Manifest::resolveRunfile);
         return DumpFormat.dumpRelease(modules);
     }
 

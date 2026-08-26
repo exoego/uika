@@ -135,6 +135,18 @@ fi
 
 python3 "$RULES/it/assert_jfr.py" "$OUT/jfr-report.txt"
 
+echo "--- sweep over //... with the aspect"
+BIN=$("$BAZEL" info bazel-bin)
+# Fragments live in bazel-out and nothing prunes them, so a target deleted since the last
+# sweep would still contribute its module. Clearing first is part of the recipe.
+find "$BIN" -name "*.uika-manifest.tsv" -delete
+"$BAZEL" build //... --aspects=@uika//:defs.bzl%uika_classpath_aspect \
+  --output_groups=uika_dump
+"$BAZEL" run @uika//:merge -- --output "$OUT/sweep.json" \
+  --execroot "$("$BAZEL" info execution_root)" --fragments "$BIN"
+
+python3 "$RULES/it/assert_sweep.py" "$OUT/sweep.json" "$OUT/before.json"
+
 python3 "$RULES/it/assert_dump.py" "$OUT/before.json" "$OUT/after.json" \
   "$OUT/resolution.json" "$OUT/report.txt" \
   "$OUT/before-materialized.json" "$OUT/baseline-jars" "$OUT/materialized-report.txt"

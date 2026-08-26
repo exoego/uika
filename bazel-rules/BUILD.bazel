@@ -1,1 +1,12 @@
+load("@rules_java//java:defs.bzl", "java_binary")
+
 exports_files(["MODULE.bazel"])
+
+# The sweep's merge step. Not a uika_dump target, because a sweep over //... cannot be
+# expressed as a rule attribute at all. See MergeMain for why it takes --execroot.
+java_binary(
+    name = "merge",
+    main_class = "net.exoego.uika.bazel.MergeMain",
+    visibility = ["//visibility:public"],
+    runtime_deps = ["//java:merge"],
+)
