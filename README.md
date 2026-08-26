@@ -777,22 +777,50 @@ A rule cannot expand a target pattern, so for a whole-build dump apply the aspec
 from the command line instead of listing anything:
 
 ```console
-$ find "$(bazel info bazel-bin)" -name '*.uika-manifest.tsv' -delete
-$ bazel build //... --aspects=@uika//:defs.bzl%uika_classpath_aspect       --output_groups=uika_dump
-$ bazel run @uika//:merge -- --output /tmp/after.json       --execroot "$(bazel info execution_root)"       --fragments "$(bazel info bazel-bin)"
+$ BIN=$(bazel info bazel-bin)
+$ if [ -d "$BIN" ]; then find "$BIN" -name '*.uika-manifest.tsv' -delete; fi
+$ bazel build //... --aspects=@uika//:defs.bzl%uika_classpath_aspect \
+    --output_groups=uika_dump
+$ bazel run @uika//:merge -- --output /tmp/after.json \
+    --execroot "$(bazel info execution_root)" --fragments "$BIN"
 ```
 
-Narrow the pattern to keep the module count sane, `kind(java_binary, //...)` for
-instance, since `upgrade-check` runs once per module. A target carrying a
-`maven_coordinates` tag is skipped, because it is a dependency rather than a
-module of the build under check and it already appears in the artifact list of
-everything that uses it. The `find -delete` is part of the recipe rather than
-tidiness: fragments live in `bazel-out` and nothing prunes them, so a target
-deleted since the last sweep would otherwise still contribute its module.
+Every Java target the pattern matches becomes a module, so narrow the pattern to
+keep the count sane. `upgrade-check` runs once per module, and a bare `//...`
+sweeps your test targets and the `uika_dump` targets themselves along with the
+code you ship. `kind()` is a query function rather than a target pattern, so
+narrowing by rule kind needs a round trip through `bazel query`:
 
-`--materialize` works the same way here. The merge step is a separate command
-because it needs `bazel info`, which cannot run inside a `bazel run` without
-blocking on the server lock.
+```console
+$ bazel build $(bazel query 'kind(java_binary, //...)') \
+    --aspects=@uika//:defs.bzl%uika_classpath_aspect --output_groups=uika_dump
+```
+
+The two forms do not match the same targets. `bazel build //...` skips anything
+tagged `manual` while `bazel query` does not, so a workspace that keeps its
+deployables out of CI with that tag sweeps none of them through the first form.
+
+A target carrying a `maven_coordinates` tag is skipped, because it is a
+dependency rather than a module of the build under check and it already appears
+in the artifact list of everything that uses it. Note that rules_jvm_external
+puts that tag on the first-party library `java_export` generates, so a target you
+publish yourself is skipped too.
+
+The `find -delete` is part of the recipe rather than tidiness. Fragments live in
+`bazel-out` and nothing prunes them, so a target deleted since the last sweep
+would otherwise still contribute its module. Guard it on the directory existing,
+since `bazel info` prints `bazel-bin` without creating it and `find` fails on a
+fresh output base.
+
+Pass the same configuration flags to `bazel info` that the sweep build used.
+Fragments land in the configuration's own `bazel-out/<config>/bin`, so a `-c opt`
+sweep read back through a bare `bazel info bazel-bin` either finds nothing or
+merges an older configuration's fragments.
+
+`--materialize` works the same way here. The merge is a separate command from the
+sweep build because it needs the execution root, which the recipe reads with
+`bazel info` and passes in. `@uika//:merge` is itself an ordinary `bazel run`
+target.
 
 Coordinates come from the `maven_coordinates=group:artifact:version` tag that
 rules_jvm_external puts on every `jvm_import` it generates — the same tag its own
@@ -803,18 +831,22 @@ project dependency. `--jdk-release` is derived per target from its `javacopts`,
 falling back to the Java toolchain's target version, and `jdk_release = N` on the
 rule overrides every module.
 
-Two Bazel-specific things to know. The dump is written by `bazel run`, never by a
-build action, because it names absolute paths and an action's output is cacheable.
-`bazel run` lays the classpath out as runfiles, and resolving those symlinks is
-where the real paths come from.
+Two Bazel-specific things to know. The dump is written by a `bazel run`, never by
+a build action, because it names absolute paths and an action's output is
+cacheable. The sweep does write its per-target fragments from an action, but a
+fragment names paths relative to the execution root and only the merge turns them
+absolute. Which paths those are depends on the route. A `bazel run` lays the
+classpath out as runfiles and resolves those symlinks, while the merge resolves
+against the execution root, and both end at the same real file.
 
 And Bazel discards an external repository and refetches it when its lockfile
 changes, so the old JARs a baseline dump points at are gone by the time the PR job
-compares against them. uika treats a JAR it cannot open as a warning, so the
-symptom is *fewer* findings rather than a failure. `--materialize <dir>` is the
-answer: it hard-links every JAR the dump names into one directory and points the
-dump there, which puts the baseline out of Bazel's reach and makes it portable to
-another machine as a bonus. See [BASELINE-CACHING.md](BASELINE-CACHING.md).
+compares against them. That is a hard failure rather than a quiet one. uika exits
+2 with "cannot open ...", because the compared pair is loaded outright while only
+scan targets are skipped with a warning. `--materialize <dir>` is the answer. It
+hard-links every JAR the dump names into one directory and points the dump there,
+which puts the baseline out of Bazel's reach and makes it portable to another
+machine as a bonus. See [BASELINE-CACHING.md](BASELINE-CACHING.md).
 
 
 ## How it works

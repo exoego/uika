@@ -11,7 +11,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -164,6 +166,100 @@ final class Manifest {
             return resolved.toAbsolutePath();
         }
         return Paths.get(workspace).resolve(resolved);
+    }
+
+    /**
+     * The real absolute path of an execution-root-relative entry, which is what a sweep
+     * fragment names.
+     *
+     * <p>Two bases, tried in order, for the same reason {@link #resolveRunfile} tries several.
+     * Most entries sit under the execution root, but an external repository reaches it only
+     * through a symlink Bazel replants on every invocation, keeping the repositories that
+     * invocation needs and pruning the rest. The merge is itself an invocation, so a
+     * rules_jvm_external repository holding the third-party jars is pruned before this runs.
+     * Measured on 9.2.0, where an external entry present after the sweep build is gone
+     * after the next build of anything else. The output base holds those repositories
+     * itself and is never replanted, so it serves as the second base.
+     *
+     * <p>{@code toRealPath} for the reason {@link #resolveRunfile} gives. The integration
+     * test cannot reach the external case, because every third-party jar in its workspace is
+     * a main-repository source file, and main-repository symlinks do survive.
+     */
+    static Path resolveExecroot(Path execroot, String path) {
+        for (Path base : executionBases(execroot)) {
+            Path candidate = base.resolve(path).normalize();
+            if (Files.exists(candidate)) {
+                try {
+                    return candidate.toRealPath();
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
+        }
+        throw new IllegalStateException("cannot find " + path + " under " + execroot
+                + "; build the sweep and run the merge against the same output base, and"
+                + " pass every configuration flag the sweep build used to `bazel info`");
+    }
+
+    private static List<Path> executionBases(Path execroot) {
+        List<Path> bases = new ArrayList<>();
+        bases.add(execroot);
+        // <output base>/execroot/<workspace name>, so the output base is two levels up.
+        Path workspaceDir = execroot.getParent();
+        if (workspaceDir != null && workspaceDir.getParent() != null) {
+            bases.add(workspaceDir.getParent());
+        }
+        return bases;
+    }
+
+    /**
+     * Root prefixes worth collapsing in the dump: the directory each external repository's
+     * jars sit under. The v2 root table shortens every path under them, and an external repo
+     * path is long because it carries the whole download URL.
+     */
+    static List<String> externalRoots(List<Module> modules) {
+        Set<String> roots = new LinkedHashSet<>();
+        for (Module module : modules) {
+            for (Artifact artifact : module.artifacts()) {
+                int external = artifact.file().indexOf("/external/");
+                if (external >= 0) {
+                    roots.add(artifact.file().substring(0, external + "/external/".length()));
+                }
+            }
+        }
+        return new ArrayList<>(roots);
+    }
+
+    /**
+     * The value of the flag at {@code index}, rejecting both a trailing flag and an empty one.
+     * The documented recipe substitutes {@code $(bazel info ...)} into these, so a failed
+     * {@code bazel info} arrives here as an empty string, and {@code Path.of("")} is a
+     * perfectly good relative path that would silently resolve every entry against the
+     * working directory.
+     */
+    static String flagValue(String[] args, int index) {
+        if (index >= args.length || args[index].isEmpty()) {
+            throw new IllegalArgumentException("missing value for " + args[index - 1]);
+        }
+        return args[index];
+    }
+
+    private static Integer release(String value) {
+        try {
+            return Integer.valueOf(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("--jdkRelease wants a whole number, got " + value);
+        }
+    }
+
+    /** The {@code --jdkRelease} value, named in the error rather than left to {@code valueOf}. */
+    static Integer flagRelease(String[] args, int index) {
+        String raw = flagValue(args, index);
+        try {
+            return Integer.valueOf(raw);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("--jdkRelease wants a whole number, got " + raw);
+        }
     }
 
     private static String emptyToNull(String value) {

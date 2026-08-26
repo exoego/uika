@@ -55,7 +55,7 @@ def line(*fields):
             fail("a uika manifest field cannot contain a tab or a newline: {}".format(value))
     return "\t".join(values)
 
-def runtime_jars(target):
+def _runtime_jars(target):
     """Everything on the target's runtime classpath.
 
     java_library and java_import answer with JavaInfo, but a java_binary's
@@ -104,7 +104,7 @@ def module_records(
     # compile-only deps, which the attribute walk alone would not); the aspect only decides
     # WHO produced each jar. A jar with no owner entry still goes in uncoordinated, which is
     # strictly better than dropping it from the scan.
-    for jar in runtime_jars(target):
+    for jar in _runtime_jars(target):
         if jar.path in own:
             continue
         entry = owners.get(jar.path)
