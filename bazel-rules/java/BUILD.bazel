@@ -23,9 +23,30 @@ java_library(
 )
 
 java_library(
+    name = "manifest",
+    javacopts = _RELEASE_17,
+    srcs = ["net/exoego/uika/bazel/Manifest.java"],
+    deps = [":core"],
+)
+
+java_library(
     name = "dump",
     javacopts = _RELEASE_17,
     srcs = ["net/exoego/uika/bazel/DumpMain.java"],
     visibility = ["//visibility:public"],
-    deps = [":core"],
+    deps = [
+        ":core",
+        ":manifest",
+    ],
+)
+
+java_library(
+    name = "check",
+    javacopts = _RELEASE_17,
+    srcs = ["net/exoego/uika/bazel/UpgradeCheckMain.java"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":core",
+        ":manifest",
+    ],
 )

@@ -28,16 +28,26 @@ def _manifest_impl(ctx):
 
     lines = []
     runfiles = []
+    if ctx.attr.releases_only and not ctx.attr.targets:
+        # Nothing to read a release from, so the toolchain's is the whole answer. Written as
+        # a module of its own because that is all the parser on the other side understands.
+        lines.append(_line("module", "@java_toolchain"))
+        lines.append(_line("toolchain", toolchain_release))
     for target in ctx.attr.targets:
         info = target[UikaClasspathInfo]
-        own = {jar.path: None for jar in info.own_jars}
-        owners = {entry.path: entry for entry in info.owners.to_list()}
-
         lines.append(_line("module", module_name(target.label)))
         lines.append(_line("toolchain", toolchain_release))
         for opt in info.javacopts:
             lines.append(_line("javacopt", opt))
 
+        if ctx.attr.releases_only:
+            # The check target needs the release derivation and nothing else, so it skips
+            # the classpath entirely. Sharing the rule keeps ONE derivation, which is what
+            # stops the flag and the recorded release from disagreeing.
+            continue
+
+        own = {jar.path: None for jar in info.own_jars}
+        owners = {entry.path: entry for entry in info.owners.to_list()}
         if ctx.attr.build_outputs:
             for jar in info.own_jars:
                 lines.append(_line("classes", jar.short_path))
@@ -86,6 +96,7 @@ uika_classpath_manifest = rule(
             doc = "The targets to dump, one module each.",
         ),
         "build_outputs": attr.bool(default = True),
+        "releases_only": attr.bool(default = False),
         "_java_toolchain": attr.label(
             default = Label("@rules_java//toolchains:current_java_toolchain"),
         ),

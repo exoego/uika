@@ -53,8 +53,8 @@ tools on the same inputs (wall time, peak memory, and what each one reports).
 
 ## Usage
 
-Every recipe below drives the Gradle, sbt, Maven, Mill or Leiningen plugin,
-or the Clojure CLI tool, so declare it in your build first: see
+Every recipe below drives the Gradle, sbt, Maven, Mill or Leiningen plugin, the
+Clojure CLI tool or the Bazel rules, so declare it in your build first: see
 [Build-tool plugins](#build-tool-plugins).
 
 ### PR gate on GitHub Actions (the main use case)
@@ -94,13 +94,13 @@ jobs:
         run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
 ```
 
-sbt, Maven and Mill use the same three steps with different commands.
+sbt, Maven, Mill and Bazel use the same three steps with different commands.
 
-| Step | sbt | Maven | Mill |
-| --- | --- | --- | --- |
-| Baseline dump | `sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/before.json` | `mvn -q uika:dump-classpath -Duika.output=/tmp/before.json` | `./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/before.json` |
-| PR dump | `sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json` | `mvn -q compile uika:dump-classpath -Duika.output=/tmp/after.json` | `./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/after.json` |
-| Check | `sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"` | `mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json` | `./mill net.exoego.uika.mill.Uika/upgradeCheck --before /tmp/before.json --after /tmp/after.json` |
+| Step | sbt | Maven | Mill | Bazel |
+| --- | --- | --- | --- | --- |
+| Baseline dump | `sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/before.json` | `mvn -q uika:dump-classpath -Duika.output=/tmp/before.json` | `./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/before.json` | `bazel run //:uika_resolution_dump -- --output /tmp/before.json --materialize /tmp/uika-baseline` |
+| PR dump | `sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json` | `mvn -q compile uika:dump-classpath -Duika.output=/tmp/after.json` | `./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/after.json` | `bazel run //:uika_dump -- --output /tmp/after.json` |
+| Check | `sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"` | `mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json` | `./mill net.exoego.uika.mill.Uika/upgradeCheck --before /tmp/before.json --after /tmp/after.json` | `bazel run //:uika_upgrade_check -- --before /tmp/before.json --after /tmp/after.json` |
 
 To keep the base-branch resolution off the PR's critical path, dump the
 baseline once per push instead and cache it as an artifact keyed by SHA:
@@ -441,6 +441,8 @@ one coordinate bump updates both. The Leiningen plugin and the Clojure CLI tool
 are the exception: neither resolver handles a zip-packaged artifact, so they
 download it straight from Maven Central (`UIKA_CLI_URL` to override the URL,
 `UIKA_CLI_PATH` to point at a binary you already have and skip the download).
+Bazel downloads it in a repository rule, so its repository cache holds it and a
+second run needs no network; `UIKA_CLI_PATH` works there too.
 
 The settings shown per tool below also have command-line forms:
 [`failOn`](#violation-tiers-and---fail-on) (`-PuikaFailOn=`, `set uikaFailOn
@@ -712,11 +714,13 @@ archive_override(
 
 ```python
 # BUILD.bazel
-load("@uika//:defs.bzl", "uika_dump")
+load("@uika//:defs.bzl", "uika_dump", "uika_upgrade_check")
+
+UIKA_TARGETS = ["//app", "//service"]
 
 uika_dump(
     name = "uika_dump",
-    targets = ["//app", "//service"],
+    targets = UIKA_TARGETS,
 )
 
 # The baseline the PR gate compares against: it only feeds the version diff, so it
@@ -724,14 +728,28 @@ uika_dump(
 uika_dump(
     name = "uika_resolution_dump",
     build_outputs = False,
-    targets = ["//app", "//service"],
+    targets = UIKA_TARGETS,
+)
+
+uika_upgrade_check(
+    name = "uika_upgrade_check",
+    exclude_files = ["uika-exclude.toml"],
+    fail_on = "reachable",
+    targets = UIKA_TARGETS,
 )
 ```
 
 ```console
 $ bazel run //:uika_dump -- --output /tmp/after.json
 $ bazel run //:uika_resolution_dump -- --output /tmp/before.json
+$ bazel run //:uika_upgrade_check -- --before /tmp/before.json --after /tmp/after.json
 ```
+
+`--failOn`, `--excludeFile`, `--jdkRelease`, `--classLoadLog` and
+`--draftExcludeFile` override the rule's settings on the command line, and a
+relative path in any of them resolves against the directory you ran `bazel` from,
+not the runfiles tree. The check target repeats `targets` only to read the API
+release they compile for, so it builds nothing.
 
 Each entry in `targets` becomes one module of the dump, named by its label, so
 `upgrade-check` checks each against its own resolution. Unlike the other build
@@ -749,12 +767,17 @@ falling back to the Java toolchain's target version, and `jdk_release = N` on th
 rule overrides every module.
 
 Two Bazel-specific things to know. The dump is written by `bazel run`, never by a
-build action, because it names absolute paths and an action's output is cacheable —
+build action, because it names absolute paths and an action's output is cacheable.
 `bazel run` lays the classpath out as runfiles, and resolving those symlinks is
-where the real paths come from. And Bazel discards an external repository when its
-lockfile changes, so the old JARs a baseline dump points at can be gone by the time
-the PR job reads them; that costs findings rather than failing, and
-[BASELINE-CACHING.md](BASELINE-CACHING.md) covers it.
+where the real paths come from.
+
+And Bazel discards an external repository and refetches it when its lockfile
+changes, so the old JARs a baseline dump points at are gone by the time the PR job
+compares against them. uika treats a JAR it cannot open as a warning, so the
+symptom is *fewer* findings rather than a failure. `--materialize <dir>` is the
+answer: it hard-links every JAR the dump names into one directory and points the
+dump there, which puts the baseline out of Bazel's reach and makes it portable to
+another machine as a bonus. See [BASELINE-CACHING.md](BASELINE-CACHING.md).
 
 
 ## How it works

@@ -44,7 +44,15 @@ def coordinate(artifact):
 
 
 def main():
-    before_path, after_path, resolution_path, report_path = sys.argv[1:5]
+    (
+        before_path,
+        after_path,
+        resolution_path,
+        report_path,
+        materialized_path,
+        materialized_dir,
+        materialized_report_path,
+    ) = sys.argv[1:8]
     before, after, resolution = (
         load(before_path),
         load(after_path),
@@ -110,15 +118,32 @@ def main():
     if resolution_coordinates != expected["before"]:
         fail("resolution dump coordinates are {}".format(resolution_coordinates))
 
-    with open(report_path, encoding="utf-8") as handle:
-        report = handle.read()
-    for expected_line in (
-        "CHANGED com.google.guava:guava 22.0 -> 23.0-rc1",
-        "1 of 2 modules changed their resolved versions",
-        "TimeLimiter.callWithTimeout",
-    ):
-        if expected_line not in report:
-            fail("the report does not mention {!r}".format(expected_line))
+    # A materialized dump must name only files under its own directory, or it has not
+    # escaped Bazel's reach and the baseline it feeds is still perishable.
+    materialized = load(materialized_path)
+    materialized_artifacts, materialized_modules = resolved(materialized)
+    files = [a["file"] for a in materialized_artifacts]
+    for module in materialized_modules.values():
+        files.extend(module["classes"])
+    if not files:
+        fail("the materialized dump names no files")
+    expected_dir = os.path.normpath(materialized_dir)
+    for path in files:
+        if os.path.dirname(os.path.normpath(path)) != expected_dir:
+            fail("{} is not under {}".format(path, expected_dir))
+        if not os.path.exists(path):
+            fail("{} does not exist".format(path))
+
+    for name, path in (("report", report_path), ("materialized report", materialized_report_path)):
+        with open(path, encoding="utf-8") as handle:
+            report = handle.read()
+        for expected_line in (
+            "CHANGED com.google.guava:guava 22.0 -> 23.0-rc1",
+            "1 of 2 modules changed their resolved versions",
+            "TimeLimiter.callWithTimeout",
+        ):
+            if expected_line not in report:
+                fail("the {} does not mention {!r}".format(name, expected_line))
 
 
 main()

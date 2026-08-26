@@ -36,6 +36,11 @@ done
 
 cd "$WS"
 
+# Both the @uika_cli repository rule and UpgradeCheckMain read this, so the check runs
+# against the freshly built debug binary instead of downloading a release.
+UIKA_CLI_PATH=$UIKA_BIN
+export UIKA_CLI_PATH
+
 echo "--- baseline dump (resolution only)"
 # The workspace directory is recreated per run but its output base is not, so bazel-out
 # still holds the jars the LAST run built. Without this clean the assertion below reads
@@ -54,12 +59,17 @@ done
 echo "--- before dump"
 "$BAZEL" run //:dump -- --output "$OUT/before.json"
 
+echo "--- before dump, materialized"
+"$BAZEL" run //:dump -- --output "$OUT/before-materialized.json" \
+  --materialize "$OUT/baseline-jars"
+
 echo "--- after dump (guava 22.0 -> 23.0-rc1)"
 "$BAZEL" run --define guava=23 //:dump -- --output "$OUT/after.json"
 
 echo "--- upgrade-check"
 set +e
-"$UIKA_BIN" upgrade-check --before "$OUT/before.json" --after "$OUT/after.json" > "$OUT/report.txt" 2>&1
+"$BAZEL" run //:check -- --before "$OUT/before.json" --after "$OUT/after.json" \
+  > "$OUT/report.txt" 2>&1
 status=$?
 set -e
 cat "$OUT/report.txt"
@@ -69,16 +79,40 @@ if [ "$status" -ne 1 ]; then
 fi
 
 set +e
-"$UIKA_BIN" upgrade-check --before "$OUT/before.json" --after "$OUT/after.json" \
-  --fail-on never > /dev/null 2>&1
+"$BAZEL" run //:check -- --before "$OUT/before.json" --after "$OUT/after.json" \
+  --failOn never > /dev/null 2>&1
 clean_status=$?
 set -e
 if [ "$clean_status" -ne 0 ]; then
-  echo "--fail-on never should exit 0, got $clean_status" >&2
+  echo "--failOn never should exit 0, got $clean_status" >&2
+  exit 1
+fi
+
+set +e
+"$BAZEL" run //:check_without_targets -- --before "$OUT/before.json" --after "$OUT/after.json" \
+  > /dev/null 2>&1
+no_targets_status=$?
+set -e
+if [ "$no_targets_status" -ne 1 ]; then
+  echo "the no-targets check should exit 1, got $no_targets_status" >&2
+  exit 1
+fi
+
+# The same finding out of the materialized baseline. Its jars live outside Bazel's reach,
+# which is what a PR job needs once the lockfile change has taken the originals away.
+set +e
+"$BAZEL" run //:check -- --before "$OUT/before-materialized.json" --after "$OUT/after.json" \
+  > "$OUT/materialized-report.txt" 2>&1
+materialized_status=$?
+set -e
+if [ "$materialized_status" -ne 1 ]; then
+  echo "expected exit 1 from the materialized baseline, got $materialized_status" >&2
+  cat "$OUT/materialized-report.txt" >&2
   exit 1
 fi
 
 python3 "$RULES/it/assert_dump.py" "$OUT/before.json" "$OUT/after.json" \
-  "$OUT/resolution.json" "$OUT/report.txt"
+  "$OUT/resolution.json" "$OUT/report.txt" \
+  "$OUT/before-materialized.json" "$OUT/baseline-jars" "$OUT/materialized-report.txt"
 
 echo "bazel integration test passed"

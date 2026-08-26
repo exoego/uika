@@ -8,3 +8,8 @@ module(
 )
 
 bazel_dep(name = "rules_java", version = "9.1.0")
+
+# Declared here so a build that only loads the rules gets a working uika_upgrade_check.
+# The repository is lazy, so a build that never runs one downloads nothing.
+uika = use_extension("//:extensions.bzl", "uika")
+use_repo(uika, "uika_cli")

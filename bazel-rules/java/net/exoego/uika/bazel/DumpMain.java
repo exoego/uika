@@ -6,14 +6,15 @@ import net.exoego.uika.plugin.core.DumpFormat;
 import net.exoego.uika.plugin.core.UikaCli;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -29,115 +30,124 @@ public final class DumpMain {
     private DumpMain() {}
 
     public static void main(String[] args) throws IOException {
-        Path manifest = resolveRunfile(required("uika.manifest"));
+        Path manifest = Manifest.resolveRunfile(required("uika.manifest"));
         Integer override = UikaCli.overrideRelease(Integer.getInteger("uika.jdkRelease", 0));
 
-        String output = null;
+        String output = "uika/classpath.json";
+        String materialize = null;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--output", "-o" -> output = args[++i];
+                case "--materialize" -> materialize = args[++i];
                 case "--jdkRelease" -> override = UikaCli.overrideRelease(Integer.valueOf(args[++i]));
                 default -> throw new IllegalArgumentException("unknown argument: " + args[i]);
             }
         }
 
-        List<Module> modules = parse(manifest, override);
-        Path target = outputPath(output);
-        Files.createDirectories(target.toAbsolutePath().getParent());
+        List<Module> modules = Manifest.parse(manifest, override);
+        List<String> roots = new ArrayList<>();
+        if (materialize != null) {
+            Path directory = Manifest.workspacePath(materialize);
+            modules = materialize(modules, directory);
+            roots.add(directory.toString());
+        }
+        roots.addAll(externalRoots(modules));
+
+        Path target = Manifest.workspacePath(output);
+        Files.createDirectories(target.getParent());
         Files.writeString(
                 target,
-                DumpFormat.writeV2(modules, preferredRoots(modules), DumpFormat.dumpRelease(modules)),
+                DumpFormat.writeV2(modules, roots, DumpFormat.dumpRelease(modules)),
                 StandardCharsets.UTF_8);
         System.out.println("uika classpath dump: " + target);
     }
 
     /**
-     * Where a {@code --output} lands. A relative path resolves against the workspace the user
-     * ran from, never the runfiles directory that happens to be the working directory of a
-     * {@code bazel run}. Writing into the runfiles tree would put the dump somewhere the next
-     * build is free to delete.
+     * Copies every jar the dump names into one directory and rewrites the dump to point
+     * there.
+     *
+     * <p>Bazel discards an external repository and refetches it when its lockfile changes, so
+     * the jars a baseline dump names are gone by the time the PR job compares against it. uika
+     * treats a jar it cannot open as a warning, which means the failure shows up as FEWER
+     * findings rather than as an error. Copying the baseline's classpath out of Bazel's reach
+     * is the fix, and it makes the dump portable to another machine as a bonus.
+     *
+     * <p>Hard links where the filesystem allows it, so the common case costs no space at all.
      */
-    private static Path outputPath(String output) {
-        String workspace = System.getenv("BUILD_WORKSPACE_DIRECTORY");
-        Path path = Paths.get(output == null ? "uika/classpath.json" : output);
-        if (path.isAbsolute() || workspace == null) {
-            return path.toAbsolutePath();
+    private static List<Module> materialize(List<Module> modules, Path directory)
+            throws IOException {
+        Files.createDirectories(directory);
+        Map<String, String> moved = new LinkedHashMap<>();
+        Set<String> taken = new LinkedHashSet<>();
+        List<Module> result = new ArrayList<>(modules.size());
+        for (Module module : modules) {
+            List<String> classes = new ArrayList<>(module.classesDirs().size());
+            for (String source : module.classesDirs()) {
+                classes.add(materializeOne(source, directory, moved, taken));
+            }
+            List<Artifact> artifacts = new ArrayList<>(module.artifacts().size());
+            for (Artifact artifact : module.artifacts()) {
+                artifacts.add(new Artifact(
+                        artifact.group(),
+                        artifact.name(),
+                        artifact.version(),
+                        materializeOne(artifact.file(), directory, moved, taken),
+                        artifact.project()));
+            }
+            result.add(new Module(module.path(), classes, artifacts, module.jdkRelease()));
         }
-        return Paths.get(workspace).resolve(path);
+        return result;
     }
 
-    private static List<Module> parse(Path manifest, Integer override) throws IOException {
-        List<Module> modules = new ArrayList<>();
-        String label = null;
-        List<String> javacopts = new ArrayList<>();
-        String toolchainRelease = null;
-        List<String> classes = new ArrayList<>();
-        List<Artifact> artifacts = new ArrayList<>();
-
-        List<String> lines = Files.readAllLines(manifest, StandardCharsets.UTF_8);
-        for (String line : lines) {
-            if (line.isEmpty()) {
-                continue;
+    private static String materializeOne(String source, Path directory,
+            Map<String, String> moved, Set<String> taken) throws IOException {
+        String already = moved.get(source);
+        if (already != null) {
+            return already;
+        }
+        Path from = Path.of(source);
+        // Two artifacts can share a file name (the same jar at two versions, or a
+        // build output named like a dependency), and the second must not overwrite the first.
+        String name = from.getFileName().toString();
+        String candidate = name;
+        for (int n = 2; !taken.add(candidate); n++) {
+            candidate = n + "-" + name;
+        }
+        Path to = directory.resolve(candidate);
+        Files.deleteIfExists(to);
+        if (Files.isDirectory(from)) {
+            copyTree(from, to);
+        } else {
+            try {
+                Files.createLink(to, from);
+            } catch (IOException | UnsupportedOperationException crossDeviceOrUnsupported) {
+                Files.copy(from, to, StandardCopyOption.REPLACE_EXISTING);
             }
-            String[] f = line.split("\t", -1);
-            switch (f[0]) {
-                case "module" -> {
-                    if (label != null) {
-                        modules.add(module(label, classes, artifacts,
-                                release(javacopts, toolchainRelease, override)));
-                    }
-                    label = f[1];
-                    javacopts = new ArrayList<>();
-                    toolchainRelease = null;
-                    classes = new ArrayList<>();
-                    artifacts = new ArrayList<>();
+        }
+        moved.put(source, to.toString());
+        return to.toString();
+    }
+
+    private static void copyTree(Path from, Path to) throws IOException {
+        try (var paths = Files.walk(from)) {
+            for (Path path : paths.toList()) {
+                Path destination = to.resolve(from.relativize(path).toString());
+                if (Files.isDirectory(path)) {
+                    Files.createDirectories(destination);
+                } else {
+                    Files.createDirectories(destination.getParent());
+                    Files.copy(path, destination, StandardCopyOption.REPLACE_EXISTING);
                 }
-                case "toolchain" -> toolchainRelease = f[1];
-                case "javacopt" -> javacopts.add(f[1]);
-                case "classes" -> classes.add(resolveRunfile(f[1]).toString());
-                case "dep" -> artifacts.add(new Artifact(
-                        emptyToNull(f[1]),
-                        emptyToNull(f[2]),
-                        emptyToNull(f[3]),
-                        resolveRunfile(f[5]).toString(),
-                        emptyToNull(f[4])));
-                default -> throw new IllegalArgumentException("unknown manifest line: " + line);
             }
         }
-        if (label != null) {
-            modules.add(module(label, classes, artifacts,
-                    release(javacopts, toolchainRelease, override)));
-        }
-        return modules;
-    }
-
-    private static Module module(String label, List<String> classes, List<Artifact> artifacts,
-            Integer release) {
-        return new Module(label, classes, artifacts, release);
-    }
-
-    /**
-     * The API release a target compiles for: its own {@code javacopts} if they pin one, else
-     * the java toolchain's target version. Read the spelling that pins the API, never the one
-     * that names the compiler -- Bazel's recommended shape runs a recent toolchain against an
-     * older target just as Gradle's does. An explicit override replaces both, because it is a
-     * statement about the whole build.
-     */
-    private static Integer release(List<String> javacopts, String toolchainRelease,
-            Integer override) {
-        if (override != null) {
-            return override;
-        }
-        Integer declared = UikaCli.declaredRelease(javacopts);
-        return declared != null ? declared : UikaCli.parseRelease(toolchainRelease);
     }
 
     /**
      * Root prefixes worth collapsing in the dump: the directory each external repository's
      * jars sit under. The v2 root table shortens every path under them, and an external repo
-     * path is long (it carries the whole download URL).
+     * path is long because it carries the whole download URL.
      */
-    private static List<String> preferredRoots(List<Module> modules) {
+    private static List<String> externalRoots(List<Module> modules) {
         Set<String> roots = new LinkedHashSet<>();
         for (Module module : modules) {
             for (Artifact artifact : module.artifacts()) {
@@ -150,61 +160,11 @@ public final class DumpMain {
         return new ArrayList<>(roots);
     }
 
-    /**
-     * The real absolute path of a runfiles entry.
-     *
-     * <p>Two path conventions reach this method. A jar arrives as a Starlark {@code
-     * short_path}, which is {@code pkg/file} in the main repository and {@code ../repo/file}
-     * elsewhere, so it resolves against the working directory of a {@code bazel run} (the main
-     * repository's runfiles directory). The manifest arrives as an {@code rlocationpath},
-     * which always carries the repository prefix and so resolves one level up. Rather than
-     * track which is which, try the bases in order and take the one that exists: the two
-     * conventions cannot both resolve to a file for the same input.
-     *
-     * <p>{@code toRealPath} is what makes the dump usable at all -- the runfiles entry is a
-     * symlink into the output base or an external repository, and only its target survives
-     * the next build.
-     */
-    private static Path resolveRunfile(String path) {
-        for (Path base : runfilesBases()) {
-            Path candidate = base.resolve(path).normalize();
-            if (Files.exists(candidate)) {
-                try {
-                    return candidate.toRealPath();
-                } catch (IOException e) {
-                    throw new UncheckedIOException(e);
-                }
-            }
-        }
-        throw new IllegalStateException("cannot find " + path + " in the runfiles of this target;"
-                + " run it with `bazel run`, not by executing the launcher directly");
-    }
-
-    private static List<Path> runfilesBases() {
-        List<Path> bases = new ArrayList<>();
-        Path cwd = Paths.get("").toAbsolutePath();
-        bases.add(cwd);
-        if (cwd.getParent() != null) {
-            bases.add(cwd.getParent());
-        }
-        for (String variable : new String[] {"RUNFILES_DIR", "JAVA_RUNFILES"}) {
-            String value = System.getenv(variable);
-            if (value != null && !value.isEmpty()) {
-                bases.add(Paths.get(value));
-            }
-        }
-        return bases;
-    }
-
     private static String required(String property) {
         String value = System.getProperty(property);
         if (value == null || value.isEmpty()) {
             throw new IllegalStateException("missing -D" + property + "; use the uika_dump rule");
         }
         return value;
-    }
-
-    private static String emptyToNull(String value) {
-        return value.isEmpty() ? null : value;
     }
 }

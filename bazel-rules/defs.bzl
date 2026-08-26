@@ -1,4 +1,4 @@
-"""Public API: `uika_dump` writes a uika classpath dump for a set of Java targets."""
+"""Public API: `uika_dump` writes a classpath dump, `uika_upgrade_check` compares two."""
 
 load("@rules_java//java:defs.bzl", "java_binary")
 load("//private:aspect.bzl", _uika_classpath_aspect = "uika_classpath_aspect")
@@ -38,5 +38,54 @@ def uika_dump(name, targets, build_outputs = True, jdk_release = 0, **kwargs):
         ],
         main_class = "net.exoego.uika.bazel.DumpMain",
         runtime_deps = [Label("//java:dump")],
+        **kwargs
+    )
+
+def uika_upgrade_check(
+        name,
+        targets = [],
+        fail_on = None,
+        exclude_files = [],
+        jdk_release = 0,
+        **kwargs):
+    """Declares a `bazel run`-able target that checks a before/after pair of dumps.
+
+    ```console
+    $ bazel run //:uika_upgrade_check -- --before /tmp/before.json --after /tmp/after.json
+    ```
+
+    Args:
+      name: target name.
+      targets: the same targets the dump lists. Only their declared API release is read,
+        so nothing is built. Leave empty to fall back to the Java toolchain's target
+        version, which over-claims for a target that pins a lower release.
+      fail_on: never, reachable or any. Omitted leaves the CLI default.
+      exclude_files: TOML files of known false positives, as workspace-relative paths.
+      jdk_release: the API release to resolve JDK escapes against. 0 switches the layer off.
+      **kwargs: passed through to the generated java_binary (visibility, tags, ...).
+    """
+    releases = name + ".releases"
+    uika_classpath_manifest(
+        name = releases,
+        targets = targets,
+        build_outputs = False,
+        releases_only = True,
+        visibility = ["//visibility:private"],
+    )
+    java_binary(
+        name = name,
+        data = [
+            ":" + releases,
+            Label("@uika_cli//:binary"),
+        ],
+        jvm_flags = [
+            "-Duika.cli=$(rlocationpath {})".format(Label("@uika_cli//:binary")),
+            "-Duika.releases=$(rlocationpath :{})".format(releases),
+            "-Duika.failOn={}".format(fail_on or ""),
+            "-Duika.excludeFiles={}".format(",".join(exclude_files)),
+            "-Duika.jdkRelease={}".format(jdk_release),
+        ],
+        main_class = "net.exoego.uika.bazel.UpgradeCheckMain",
+        runtime_deps = [Label("//java:check")],
         **kwargs
     )
