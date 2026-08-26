@@ -90,6 +90,7 @@ def _aspect_impl(target, ctx):
     if group == None and target.label.workspace_name == "":
         project = module_name(target.label)
 
+    own_jars = _own_jars(target)
     direct = [
         struct(
             path = jar.path,
@@ -99,12 +100,12 @@ def _aspect_impl(target, ctx):
             version = version,
             project = project,
         )
-        for jar in _own_jars(target)
+        for jar in own_jars
     ]
 
     return [UikaClasspathInfo(
         owners = depset(direct = direct, transitive = transitive),
-        own_jars = _own_jars(target),
+        own_jars = own_jars,
         javacopts = list(getattr(ctx.rule.attr, "javacopts", [])),
     )]
 

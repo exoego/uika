@@ -716,7 +716,8 @@ own source and resource paths.
 
 ### Bazel (`bazel-rules/`)
 
-A Bazel module, taken from the GitHub release rather than a registry for now:
+Bazel 7 or newer, with bzlmod. The module comes from the GitHub release rather
+than from a registry for now:
 
 ```python
 # MODULE.bazel

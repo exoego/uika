@@ -5,6 +5,9 @@ module(
     name = "uika",
     version = "0.0.0-dev",
     compatibility_level = 1,
+    # Verified on 7.6, 8.4 and 9.2. The floor is bzlmod being the default, which is what
+    # makes bazel_dep the whole installation story.
+    bazel_compatibility = [">=7.0.0"],
 )
 
 bazel_dep(name = "rules_java", version = "9.1.0")

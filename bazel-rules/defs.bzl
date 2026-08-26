@@ -14,6 +14,9 @@ def uika_dump(name, targets, build_outputs = True, jdk_release = 0, **kwargs):
 
     Args:
       name: target name. `bazel run //:<name> -- --output <path>` writes the dump.
+        `--materialize <dir>` copies every jar the dump names into `<dir>` and points the
+        dump there, which is what keeps a baseline usable after a lockfile change has taken
+        the originals away.
       targets: the Java targets to dump, one module each.
       build_outputs: build and record the targets' own jars. Set False for the baseline
         dump of a PR gate: it only feeds the version diff, so the sibling targets need not

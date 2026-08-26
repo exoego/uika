@@ -29,7 +29,7 @@ def _classifier(repository_ctx):
         fail("no uika-cli binary is published for {}/{} (available: {})".format(
             name,
             arch,
-            ", ".join(sorted({v: None for v in _CLASSIFIERS.values()}.keys()) + ["windows-x86_64"]),
+            "linux-x86_64, macos-aarch64, macos-x86_64, windows-x86_64",
         ))
     return classifier
 
