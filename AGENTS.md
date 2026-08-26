@@ -28,7 +28,7 @@ not be relearned by experiment.
 - `check --verdicts-json <path>` (also on upgrade-check) streams every
   reference verdict (ok/unknown/broken) as JSON Lines for evaluation. The
   stream carries the raw constant-pool reference (never the collapsed Class
-  ref a "class removed" violation reports), is written before --exclude-file
+  ref that a "class removed" violation reports), is written before --exclude-file
   filtering, and does not include graph-walk violations (class/method became
   final, extends final class, class/interface kind flips, class became sealed,
   method became abstract, conflicting default methods) or the META-INF/services
