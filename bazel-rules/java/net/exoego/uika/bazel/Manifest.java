@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 
 /**
  * Reads the tab-separated manifest that a {@code uika_dump} or {@code uika_upgrade_check}
@@ -27,11 +28,16 @@ final class Manifest {
     /**
      * The modules a manifest describes.
      *
+     * <p>{@code resolve} turns a path field into the file it names. A manifest built for a
+     * {@code bazel run} target names runfiles, and one built by the sweep aspect names
+     * execution-root-relative paths, which is the only difference between the two.
+     *
      * <p>A release-only manifest (the one {@code uika_upgrade_check} builds) carries no
      * {@code classes} or {@code dep} lines, so the modules come back with empty lists and
      * only their release filled in. That is the whole point of reusing this parser for it.
      */
-    static List<Module> parse(Path manifest, Integer override) throws IOException {
+    static List<Module> parse(Path manifest, Integer override, Function<String, Path> resolve)
+            throws IOException {
         List<Module> modules = new ArrayList<>();
         Builder current = null;
         for (String line : Files.readAllLines(manifest, StandardCharsets.UTF_8)) {
@@ -52,12 +58,12 @@ final class Manifest {
             switch (fields[0]) {
                 case "toolchain" -> current.toolchainRelease = fields[1];
                 case "javacopt" -> current.javacopts.add(fields[1]);
-                case "classes" -> current.classes.add(resolveRunfile(fields[1]).toString());
+                case "classes" -> current.classes.add(resolve.apply(fields[1]).toString());
                 case "dep" -> current.artifacts.add(new Artifact(
                         emptyToNull(fields[1]),
                         emptyToNull(fields[2]),
                         emptyToNull(fields[3]),
-                        resolveRunfile(fields[5]).toString(),
+                        resolve.apply(fields[5]).toString(),
                         emptyToNull(fields[4])));
                 default -> throw new IllegalArgumentException("unknown manifest line: " + line);
             }

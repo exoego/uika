@@ -25,7 +25,10 @@ java_library(
 java_library(
     name = "manifest",
     javacopts = _RELEASE_17,
-    srcs = ["net/exoego/uika/bazel/Manifest.java"],
+    srcs = [
+        "net/exoego/uika/bazel/Manifest.java",
+        "net/exoego/uika/bazel/Materialize.java",
+    ],
     deps = [":core"],
 )
 
@@ -44,6 +47,17 @@ java_library(
     name = "check",
     javacopts = _RELEASE_17,
     srcs = ["net/exoego/uika/bazel/UpgradeCheckMain.java"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":core",
+        ":manifest",
+    ],
+)
+
+java_library(
+    name = "merge",
+    javacopts = _RELEASE_17,
+    srcs = ["net/exoego/uika/bazel/MergeMain.java"],
     visibility = ["//visibility:public"],
     deps = [
         ":core",
