@@ -130,6 +130,7 @@ jobs:
             -DskipTests -Dinvoker.skip=true deploy
           (cd mill-plugin && UIKA_VERSION="$UIKA_VERSION" mise exec -- ./mill publishM2Local + stageChecksums)
           make lein-stage UIKA_VERSION="$UIKA_VERSION"
+          make bazel-stage UIKA_VERSION="$UIKA_VERSION"
 
       - name: Deploy to Maven Central and update the GitHub release
         run: mise exec -- jreleaser release

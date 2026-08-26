@@ -43,6 +43,9 @@ release:
 files:
   globs:
     - pattern: dist/native/*/uika-*.zip
+    # The Bazel module ships as a release archive rather than through a registry, so the
+    # release page is where a bazel_dep archive_override points.
+    - pattern: dist/bazel/uika-bazel-*.tar.gz
 
 deploy:
   maven:

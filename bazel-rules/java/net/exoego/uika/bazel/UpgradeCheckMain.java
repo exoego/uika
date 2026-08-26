@@ -2,10 +2,12 @@ package net.exoego.uika.bazel;
 
 import net.exoego.uika.plugin.core.ClasspathDump.Module;
 import net.exoego.uika.plugin.core.DumpFormat;
+import net.exoego.uika.plugin.core.JfrEvidence;
 import net.exoego.uika.plugin.core.UikaCli;
 import net.exoego.uika.plugin.core.UikaCli.JdkSource;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -21,12 +23,18 @@ public final class UpgradeCheckMain {
     private UpgradeCheckMain() {}
 
     public static void main(String[] args) throws IOException, InterruptedException {
+        if (args.length > 0 && args[0].equals("jfr-jvmopt")) {
+            printJfrJvmOpt(args.length > 1 ? args[1] : "uika/jfr");
+            return;
+        }
+
         Path before = null;
         Path after = null;
         String failOn = property("uika.failOn");
         List<Path> excludeFiles = paths(property("uika.excludeFiles"));
         List<Path> classLoadLogs = new ArrayList<>();
         Path draftExcludeFile = null;
+        Path jfr = null;
         Integer override = UikaCli.overrideRelease(Integer.getInteger("uika.jdkRelease", 0));
 
         for (int i = 0; i < args.length; i++) {
@@ -36,6 +44,7 @@ public final class UpgradeCheckMain {
                 case "--failOn" -> failOn = args[++i];
                 case "--excludeFile" -> excludeFiles.add(Manifest.workspacePath(args[++i]));
                 case "--classLoadLog" -> classLoadLogs.add(Manifest.workspacePath(args[++i]));
+                case "--jfr" -> jfr = Manifest.workspacePath(args[++i]);
                 case "--draftExcludeFile" -> draftExcludeFile = Manifest.workspacePath(args[++i]);
                 case "--jdkRelease" -> override = UikaCli.overrideRelease(Integer.valueOf(args[++i]));
                 default -> throw new IllegalArgumentException("unknown argument: " + args[i]);
@@ -46,12 +55,44 @@ public final class UpgradeCheckMain {
                     "usage: bazel run //:your_check -- --before <a.json> --after <b.json>");
         }
 
+        if (jfr != null) {
+            // Recordings are converted HERE, never by the CLI: the CLI is JVM-free and must
+            // not read binary JFR. The conversions land under the knob directory itself,
+            // which rewrite() handles by design (it deletes its own stale output first).
+            classLoadLogs.addAll(JfrEvidence.rewrite(
+                    List.of(jfr), workDirFor(jfr), System.out::println));
+        }
+
         JdkSource jdk = JdkSource.current();
         Integer release = UikaCli.effectiveJdkRelease(
                 wantedRelease(override), jdk, System.out::println);
         int status = UikaCli.runUpgradeCheck(cliBinary(), before, after, failOn, excludeFiles,
                 release, jdk, classLoadLogs, draftExcludeFile, System.out::println);
         System.exit(status);
+    }
+
+    /**
+     * Prints the Bazel flag that makes every test JVM record its class loads.
+     *
+     * <p>Printed rather than documented, so the README recipe cannot drift from the format
+     * the converter expects. The Maven plugin has the opposite arrangement, a hand-written
+     * argLine that has to be kept in step by hand, because no mojo can inject into surefire.
+     * Bazel needs no injection at all, since --jvmopt already reaches every test JVM.
+     *
+     * <p>Creating the directory is part of the job. Given a MISSING PARENT, JFR aborts JVM
+     * startup and the mistake is loud; given an existing parent and a missing leaf it
+     * silently records to a single file at that path instead, every fork clobbering the last.
+     */
+    private static void printJfrJvmOpt(String directory) throws IOException {
+        Path dir = Manifest.workspacePath(directory);
+        Files.createDirectories(dir);
+        System.out.println("--jvmopt=" + UikaCli.jfrClassLoadJvmArg(dir));
+    }
+
+    /** Where converted recordings land. Inside the knob directory, so one path is enough. */
+    private static Path workDirFor(Path jfr) {
+        Path base = JfrEvidence.isRecording(jfr) ? jfr.getParent() : jfr;
+        return base.resolve(JfrEvidence.WORK_DIR_NAME);
     }
 
     /**

@@ -1,6 +1,6 @@
 ---
 name: uika-jvm-plugins
-description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen build-tool plugins, the Clojure CLI tool, and the shared jvm-plugin-core - task shape, coordinate handling, CLI fetch and version defaulting, logger wiring, --jdk-release derivation, and how the tests stub the CLI. Load before changing anything under gradle-plugin/, sbt-plugin/, maven-plugin/, mill-plugin/, clojure-tool/, lein-plugin/, or jvm-plugin-core/.
+description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen build-tool plugins, the Clojure CLI tool, the Bazel rules, and the shared jvm-plugin-core - task shape, coordinate handling, CLI fetch and version defaulting, logger wiring, --jdk-release derivation, and how the tests stub the CLI. Load before changing anything under gradle-plugin/, sbt-plugin/, maven-plugin/, mill-plugin/, clojure-tool/, lein-plugin/, bazel-rules/, or jvm-plugin-core/.
 ---
 
 # uika JVM Build-Tool Plugin Notes
@@ -299,6 +299,53 @@ Same rule as the Mill section: point-of-use comments and the tests in
   prep step would burden every consumer, so the small ports (classifier, ct.sym clamp,
   extract) live in the ns with "keep in sync" markers. JFR conversion is deliberately
   absent until that changes.
+
+## Bazel Rules Notes
+
+Point-of-use comments and `bazel-rules/it/` hold the invariants. Only what neither can
+hold lives here.
+
+- The dump is written by `bazel run`, NEVER by a build action. It names absolute paths,
+  and an action's output is cacheable and may be replayed into another output base or
+  served from a remote cache, so an action that wrote one would hand a second machine
+  another machine's paths. `bazel run` lays the classpath out as runfiles, and
+  `toRealPath` on those symlinks is where the absolute paths come from, with no
+  `bazel info execution_root` to guess at (a nested `bazel info` inside a `bazel run`
+  would block on the server lock anyway).
+- Coordinates come from the `maven_coordinates=` TAG, not from a provider, because
+  rules_jvm_external exposes none. That is deliberate rather than a workaround: the same
+  tag is what its own `java_export` and `pom_file` read, so anything carrying it is
+  attributed and the integration test needs no resolver and no network.
+- A `java_binary`'s `JavaInfo.transitive_runtime_jars` is EMPTY. Its classpath is in
+  `JavaRuntimeClasspathInfo` instead. The symptom is a dump with no artifacts at all and
+  no error, so `_runtime_jars` in `private/dump.bzl` checks that provider first.
+- `build_outputs = False` skips GENERATED jars, never main-repository ones. A vendored
+  jar in the main repository needs no build and carries the coordinates the version diff
+  runs on, so a main-repository test would empty a baseline dump of the artifacts it
+  exists for.
+- The release derivation is single-sourced through the SAME manifest rule the dump uses,
+  in a `releases_only` mode. Reading only the Java toolchain would be shorter and wrong,
+  because a target that pins a lower release than the toolchain would then be
+  over-claimed, and over-claiming drops findings silently.
+- `javacopts = ["--release", "17"]` on the ruleset's own java_library targets is not
+  decoration. Bazel's default `--java_language_version` is 11, so without it the core's
+  arrow switches do not compile in a user's workspace. Bazel strips the toolchain's
+  `-source`/`-target` when javacopts name `--release`, so the two do not conflict.
+- The integration test cleans the output base before asserting that
+  `build_outputs = False` built nothing. The workspace copy is recreated per run but its
+  output base is keyed by that stable path and is not, so the assertion would otherwise
+  read the jars the previous run left behind and pass unconditionally.
+- JFR collection needs `--nocache_test_results`: a cached test forks no JVM and records
+  nothing, with no symptom. It also needs `--sandbox_writable_path`, since the recording
+  lands outside the sandbox on purpose. The `jfr-jvmopt` subcommand prints the flag AND
+  creates the directory, so the README recipe cannot drift from
+  `UikaCli.jfrClassLoadJvmArg` the way Maven's hand-written argLine can.
+- The release archive is cut with `cp -RL` (`make bazel-stage`). The four jvm-plugin-core
+  sources under `bazel-rules/java` are committed symlinks pointing OUT of the module root,
+  which is fine in this repository and useless to a consumer.
+- The archive is built from the tag before the CLI binaries exist, so `@uika_cli` cannot
+  carry their checksums and downloads unpinned by default. A build that wants them states
+  them itself through the `uika.cli` tag.
 
 ## Leiningen Plugin Notes
 

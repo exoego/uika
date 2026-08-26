@@ -130,7 +130,7 @@ and in the PR job, after downloading the artifact into `/tmp/uika-jfr`:
       - run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json -PuikaJfr=/tmp/uika-jfr
 ```
 
-The [per-tool knobs](#build-tool-plugins) cover sbt, Maven and Mill.
+The [per-tool knobs](#build-tool-plugins) cover sbt, Maven, Mill and Bazel.
 
 ## Command reference
 
@@ -509,6 +509,21 @@ branch, consume on the PR):
   flag, not the variable). The mixin is needed because `forkArgs` is a task on the
   test module itself, out of reach of a command that finds the modules through the
   evaluator.
+- Bazel: collect with `bazel test`, check with `--jfr <dir>`. `--jvmopt` already
+  reaches every test JVM, so nothing has to be injected, and the check target
+  prints the flag (and creates the directory) so the recipe cannot drift:
+
+  ```console
+  $ jvmopt=$(bazel run //:uika_upgrade_check -- jfr-jvmopt /tmp/uika-jfr)
+  $ bazel test //... --nocache_test_results \
+        --sandbox_writable_path=/tmp/uika-jfr "$jvmopt"
+  $ bazel run //:uika_upgrade_check -- --before /tmp/before.json \
+        --after /tmp/after.json --jfr /tmp/uika-jfr
+  ```
+
+  `--nocache_test_results` is not optional: a cached test forks no JVM and would
+  record nothing, with no symptom. `--sandbox_writable_path` is what lets the
+  recording land outside the sandbox, where the check can read it afterwards.
 
 JFR generates pid-unique recording names for a directory value, so parallel
 test JVMs never collide, and the injected flag needs JDK 17+ test JVMs (the
@@ -517,8 +532,9 @@ value instead of a directory — a production recording, say — is
 consumption-only: the check converts it, test JVMs are left untouched.
 [`--draft-exclude-file`](#runtime-load-evidence-jfr---class-load-log)
 maps to `-PuikaDraftExcludeFile=` / `uikaDraftExcludeFile :=` /
-`-Duika.draftExcludeFile=` / `--draftExcludeFile` / `:draft-exclude-file` (both
-Clojure frontends, which take text logs rather than JFR).
+`-Duika.draftExcludeFile=` / `--draftExcludeFile` (Mill and Bazel) /
+`:draft-exclude-file` (both Clojure frontends, which take text logs rather than
+JFR).
 
 ### Gradle (`gradle-plugin/`) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-gradle-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-gradle-plugin)
 

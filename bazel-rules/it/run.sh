@@ -111,6 +111,30 @@ if [ "$materialized_status" -ne 1 ]; then
   exit 1
 fi
 
+echo "--- runtime load evidence"
+JFR=$OUT/jfr
+# The flag is printed by the check target rather than written out here, so this recipe
+# cannot drift from the format the converter expects. Printing it also creates the
+# directory, which JFR needs in place before any test JVM starts.
+jvmopt=$("$BAZEL" run //:check -- jfr-jvmopt "$JFR")
+# --nocache_test_results because a cached test forks no JVM and would record nothing,
+# with no symptom at all. --sandbox_writable_path because the recording lands outside the
+# sandbox on purpose, so the check can read it afterwards.
+"$BAZEL" test //app:load_test --nocache_test_results --sandbox_writable_path="$JFR" "$jvmopt"
+
+set +e
+"$BAZEL" run //:check -- --before "$OUT/before.json" --after "$OUT/after.json" \
+  --jfr "$JFR" --failOn reachable > "$OUT/jfr-report.txt" 2>&1
+jfr_status=$?
+set -e
+cat "$OUT/jfr-report.txt"
+if [ "$jfr_status" -ne 1 ]; then
+  echo "expected exit 1 from --failOn reachable with load evidence, got $jfr_status" >&2
+  exit 1
+fi
+
+python3 "$RULES/it/assert_jfr.py" "$OUT/jfr-report.txt"
+
 python3 "$RULES/it/assert_dump.py" "$OUT/before.json" "$OUT/after.json" \
   "$OUT/resolution.json" "$OUT/report.txt" \
   "$OUT/before-materialized.json" "$OUT/baseline-jars" "$OUT/materialized-report.txt"

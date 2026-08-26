@@ -6,7 +6,7 @@
 	mill-compile mill-test mill-clean \
 	clojure-test clojure-clean \
 	lein-test lein-clean lein-stage \
-	bazel-test bazel-clean \
+	bazel-test bazel-clean bazel-stage \
 	native-publish-local stage-all
 
 CARGO ?= cargo
@@ -28,6 +28,7 @@ MILL_PLUGIN_DIR ?= mill-plugin
 CLOJURE_TOOL_DIR ?= clojure-tool
 LEIN_PLUGIN_DIR ?= lein-plugin
 BAZEL_RULES_DIR ?= bazel-rules
+BAZEL_STAGE_DIR ?= dist/bazel
 UIKA_VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' cli/Cargo.toml | head -1)
 TMPDIR ?= /tmp
 SBT_CACHE_DIR ?= $(TMPDIR)/uika-sbt
@@ -174,6 +175,24 @@ bazel-clean:
 	fi
 	rm -rf $(BAZEL_IT_DIR)
 
+# The Bazel module is distributed as a release archive rather than through a registry, so
+# staging it is a tarball rather than a deploy. Copied with -L first, because the four
+# jvm-plugin-core sources under bazel-rules/java are symlinks and an archive of symlinks
+# pointing out of the module root is useless to a consumer. The version is stamped into the
+# copy, the same way UIKA_VERSION is stamped into the CLI, so git keeps the placeholder.
+bazel-stage:
+	rm -rf $(BAZEL_STAGE_DIR)
+	mkdir -p $(BAZEL_STAGE_DIR)
+	cp -RL $(BAZEL_RULES_DIR) $(BAZEL_STAGE_DIR)/bazel-rules
+	rm -rf $(BAZEL_STAGE_DIR)/bazel-rules/it
+	sed -i.bak 's/0\.0\.0-dev/$(UIKA_VERSION)/' \
+		$(BAZEL_STAGE_DIR)/bazel-rules/MODULE.bazel \
+		$(BAZEL_STAGE_DIR)/bazel-rules/private/version.bzl
+	rm -f $(BAZEL_STAGE_DIR)/bazel-rules/MODULE.bazel.bak \
+		$(BAZEL_STAGE_DIR)/bazel-rules/private/version.bzl.bak
+	tar -czf $(BAZEL_STAGE_DIR)/uika-bazel-$(UIKA_VERSION).tar.gz \
+		-C $(BAZEL_STAGE_DIR) bazel-rules
+
 native-publish-local:
 	$(GRADLE) -p binary-publishing publishToMavenLocal -PuikaVersion=$(UIKA_VERSION)
 
@@ -186,3 +205,4 @@ stage-all:
 	$(MAVEN) -f $(MAVEN_PLUGIN_DIR)/pom.xml -B -Prelease -Drevision=$(UIKA_VERSION) -DskipTests -Dinvoker.skip=true deploy
 	cd $(MILL_PLUGIN_DIR) && UIKA_VERSION=$(UIKA_VERSION) $(MILL) publishM2Local + stageChecksums
 	$(MAKE) lein-stage UIKA_VERSION=$(UIKA_VERSION)
+	$(MAKE) bazel-stage UIKA_VERSION=$(UIKA_VERSION)
