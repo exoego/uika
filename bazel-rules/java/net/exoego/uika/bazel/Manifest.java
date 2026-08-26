@@ -172,18 +172,21 @@ final class Manifest {
      * The real absolute path of an execution-root-relative entry, which is what a sweep
      * fragment names.
      *
-     * <p>Two bases, tried in order, for the same reason {@link #resolveRunfile} tries several.
-     * Most entries sit under the execution root, but an external repository reaches it only
-     * through a symlink Bazel replants on every invocation, keeping the repositories that
-     * invocation needs and pruning the rest. The merge is itself an invocation, so a
-     * rules_jvm_external repository holding the third-party jars is pruned before this runs.
-     * Measured on 9.2.0, where an external entry present after the sweep build is gone
-     * after the next build of anything else. The output base holds those repositories
-     * itself and is never replanted, so it serves as the second base.
+     * <p>Two bases, tried in order, for the same reason {@link #resolveRunfile} tries
+     * several. Most entries sit under the execution root, but an external repository reaches
+     * it only through a symlink Bazel replants on every invocation, keeping the repositories
+     * that invocation needs and pruning the rest. The merge is itself an invocation, so it
+     * prunes repositories the sweep build had. The output base holds those repositories and
+     * is never replanted, so it serves as the second base.
      *
-     * <p>{@code toRealPath} for the reason {@link #resolveRunfile} gives. The integration
-     * test cannot reach the external case, because every third-party jar in its workspace is
-     * a main-repository source file, and main-repository symlinks do survive.
+     * <p>What this reaches is a jar that is a SOURCE file in an external module, such as a
+     * {@code java_import} of a checked-in jar in a module you depend on, whose fragment path
+     * is a bare {@code external/<repo>/...}. rules_jvm_external is not affected, because its
+     * processed jars sit under {@code bazel-out} and the execution root's {@code bazel-out}
+     * is a real directory rather than part of the forest. Measured end to end on 9.2.0.
+     *
+     * <p>{@code toRealPath} for the reason {@link #resolveRunfile} gives. Neither integration
+     * workspace produces a bare {@code external/} path, so neither can reach this.
      */
     static Path resolveExecroot(Path execroot, String path) {
         for (Path base : executionBases(execroot)) {

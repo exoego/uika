@@ -379,12 +379,16 @@ hold lives here.
   recipe passes in, so the tool needs no `bazel` on its path and the caller can carry the
   configuration flags its sweep build used.
 - Bazel REPLANTS the execution root's `external/` symlink forest on every invocation,
-  keeping the repositories that invocation needs and pruning the rest, so the merge prunes
-  the rules_jvm_external repository holding the third-party jars before it resolves a
-  single path. The output base holds those repositories itself and is never replanted,
-  which is why `Manifest.resolveExecroot` falls back to it. Measured on 9.2.0. The
-  integration test cannot reach this, because every third-party jar in its workspace is a
-  main-repository source file and main-repository symlinks do survive.
+  keeping the repositories that invocation needs and pruning the rest, so `bazel run
+  @uika//:merge` prunes repositories the sweep build had. The output base holds those
+  repositories itself and is never replanted, which is why `Manifest.resolveExecroot` falls
+  back to it. What this reaches is a jar that is a SOURCE file in an external module, such
+  as a `java_import` of a checked-in jar in a module you depend on, whose fragment path is a
+  bare `external/<repo>/...`. rules_jvm_external is NOT affected, because its processed jars
+  sit at `bazel-out/<cfg>/bin/external/<repo>/...` and the execroot's `bazel-out` is a real
+  directory rather than part of the forest. Measured end to end on 9.2.0 with a
+  `local_path_override` module exporting a checked-in jar. Neither `it/test-workspace` nor
+  `it/maven-workspace` produces a bare `external/` path, so neither can reach it.
 - The aspect must NOT declare `provides = [UikaClasspathInfo]`. It returns nothing for a
   target without JavaInfo, Bazel enforces an advertisement, and a sweep over `//...` aborts
   at the first non-Java target. Nothing depended on it, because the rule attribute filters
@@ -411,7 +415,6 @@ hold lives here.
   committed and pinned, and guava needs `force_version` because selenium-remote-driver
   3.4.0 asks for it with an OPEN-ENDED range that otherwise resolves past both versions
   under test and leaves the version diff nothing to see.
-
 - The integration test never downloads the CLI (`UIKA_CLI_PATH` short-circuits both the
   repository rule and the run), which keeps it hermetic and off Maven Central, so the
   download path is covered by hand instead. Last checked against the published 0.8.0:
