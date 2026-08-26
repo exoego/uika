@@ -1,0 +1,11 @@
+load("@uika//:defs.bzl", "uika_dump", "uika_upgrade_check")
+
+uika_dump(
+    name = "dump",
+    targets = ["//app"],
+)
+
+uika_upgrade_check(
+    name = "check",
+    targets = ["//app"],
+)

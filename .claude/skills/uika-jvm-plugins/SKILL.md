@@ -395,6 +395,23 @@ hold lives here.
 - Sweep fragments live in bazel-out and nothing prunes them, so the documented recipe
   deletes `*.uika-manifest.tsv` first. A target deleted since the last sweep would otherwise
   still contribute its module, which is a wrong dump rather than a stale one.
+- A dump names jars under `bazel-out`, which is BUILD OUTPUT rather than source. They
+  survive a lock file change in the same tree, so the checkout-based PR gate needs no
+  `--materialize`, but they do not survive `bazel clean`, a fresh output base or another
+  machine, which is the baseline-as-artifact flow. There the check FAILS, exit 2 with
+  "cannot open ...", because the changed pair's old jar is what the API diff is computed
+  against and there is no partial answer to fall back to. Measured in `it/run-maven.sh`,
+  which asserts both halves. An earlier claim here said Bazel discards the external
+  repository on a lock file change and that the symptom is quieter findings. Both were
+  wrong, and rules_jvm_external 7.x stores version-addressed processed jars under
+  bazel-out, so nothing is overwritten.
+- `it/maven-workspace/` is the only place a real `maven.install` runs, so it is what proves
+  the aspect reads what rules_jvm_external actually emits rather than a tag shape written
+  by hand. It needs the network, hence its own `make bazel-maven-test`. The lock files are
+  committed and pinned, and guava needs `force_version` because selenium-remote-driver
+  3.4.0 asks for it with an OPEN-ENDED range that otherwise resolves past both versions
+  under test and leaves the version diff nothing to see.
+
 - The integration test never downloads the CLI (`UIKA_CLI_PATH` short-circuits both the
   repository rule and the run), which keeps it hermetic and off Maven Central, so the
   download path is covered by hand instead. Last checked against the published 0.8.0:

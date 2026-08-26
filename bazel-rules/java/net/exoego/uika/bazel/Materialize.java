@@ -27,10 +27,11 @@ final class Materialize {
      * output base, or another machine, which is exactly the baseline-as-CI-artifact flow. When
      * the changed pair's OLD jar is missing the check does not degrade. It fails, and uika
      * exits 2 with "cannot open ...", because a compared-pair jar goes through {@code load}
-     * rather than the scan-target path that warns and skips. Asserted in
-     * bazel-rules/it/run.sh, which requires the materialized baseline to still exit 1 with
-     * the same findings. Copying the classpath out of bazel-out is the fix, and it makes
-     * the dump portable to another machine as a bonus.
+     * rather than the scan-target path that warns and skips. Measured in
+     * bazel-rules/it/run-maven.sh, which asserts both halves across a {@code bazel clean},
+     * and asserted again in bazel-rules/it/run.sh, which requires the materialized baseline
+     * to still exit 1 with the same findings. Copying the classpath out of bazel-out is
+     * the fix, and it makes the dump portable to another machine as a bonus.
      *
      * <p>Hard links where the filesystem allows it, so the common case costs no space at all.
      */
