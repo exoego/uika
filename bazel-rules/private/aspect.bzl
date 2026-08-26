@@ -7,29 +7,17 @@ CONVENTION rather than a rules_jvm_external API: any target carrying the tag is 
 whoever declared it, and the integration test needs no artifact resolution at all.
 """
 
+load("@rules_java//java/common:java_common.bzl", "java_common")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
-
-UikaClasspathInfo = provider(
-    doc = "Per-jar coordinate attribution over a target's transitive closure.",
-    fields = {
-        "owners": "depset of struct(path, short_path, group, name, version, project), one " +
-                  "entry per jar, naming the target that produced it",
-        "own_jars": "list of File: the visited target's own runtime output jars",
-        "javacopts": "list of str: the visited target's javacopts, for the release derivation",
-    },
+load(
+    ":manifest.bzl",
+    "UikaClasspathInfo",
+    "exec_path",
+    "module_name",
+    "module_records",
 )
 
 _TAG_PREFIX = "maven_coordinates="
-
-def module_name(label):
-    """`//app:app`, not the `@@//app:app` that str() gives since Bazel 7.
-
-    upgrade-check pairs modules between two dumps by this string, and matches an artifact's
-    `project` attribution against it, so both have to be the stable spelling a user types.
-    """
-    if label.workspace_name:
-        return str(label)
-    return "//{}:{}".format(label.package, label.name)
 
 # Attributes a runtime classpath can flow along. `exports` matters because a java_library
 # that only re-exports puts nothing of its own on the classpath.
@@ -103,15 +91,49 @@ def _aspect_impl(target, ctx):
         for jar in own_jars
     ]
 
-    return [UikaClasspathInfo(
+    info = UikaClasspathInfo(
         owners = depset(direct = direct, transitive = transitive),
         own_jars = own_jars,
         javacopts = list(getattr(ctx.rule.attr, "javacopts", [])),
-    )]
+    )
+
+    # A target carrying coordinates is a DEPENDENCY, not a module of the build under check,
+    # and it already appears in the artifact list of every module that uses it. Emitting a
+    # fragment for it too would make `//...` produce a module per third-party jar.
+    if group != None:
+        return [info]
+
+    # One fragment per remaining visited target, in the `uika_dump` output group. Only the
+    # targets named on the command line contribute their output groups, so a sweep over
+    # //... gets one fragment per pattern match and not one per jar in the closure.
+    records = module_records(
+        target = target,
+        info = info,
+        toolchain_release = ctx.attr._java_toolchain[java_common.JavaToolchainInfo].target_version,
+        path_of = exec_path,
+    )
+    fragment = ctx.actions.declare_file(target.label.name + ".uika-manifest.tsv")
+    ctx.actions.write(fragment, "\n".join(records.lines) + "\n")
+
+    # The jars ride in the same output group on purpose. --output_groups REPLACES the
+    # default outputs, so without them a sweep would write a manifest naming jars that the
+    # build was never asked to produce.
+    return [
+        info,
+        OutputGroupInfo(uika_dump = depset([fragment] + records.jars)),
+    ]
 
 uika_classpath_aspect = aspect(
     implementation = _aspect_impl,
     attr_aspects = _ASPECT_ATTRS,
-    provides = [UikaClasspathInfo],
+    attrs = {
+        "_java_toolchain": attr.label(
+            default = Label("@rules_java//toolchains:current_java_toolchain"),
+        ),
+    },
+    # Deliberately NOT `provides = [UikaClasspathInfo]`. The aspect returns nothing for a
+    # target without JavaInfo, and Bazel enforces an advertisement, so a sweep over //...
+    # aborted the moment it reached a non-Java target. The rule attribute filters on JavaInfo
+    # itself, so nothing depended on the advertisement.
     doc = "Attributes every jar on a Java target's classpath to the target that produced it.",
 )

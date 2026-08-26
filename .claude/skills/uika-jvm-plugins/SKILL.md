@@ -363,6 +363,29 @@ hold lives here.
   default, so that decision lives in the one place that knows both the version and the
   map. No test reaches this: the integration test consumes the rules at a git revision,
   where the map is empty by construction, so the trap only exists in a released archive.
+- No duplicate-target guard is needed on `uika_dump`. Bazel rejects a repeated label in a
+  `label_list` itself ("Label '//app:app' is duplicated in the 'targets' attribute"), before
+  the rule implementation runs, and two distinct labels cannot produce one module name. A
+  guard was written and then removed once that was checked.
+- The manifest fails the build on a field carrying a tab or a newline instead of escaping
+  it. A codec on both sides of the wire would exist only to hide a corrupt manifest that
+  the Java side would mis-parse into the wrong module.
+- The `//...` sweep and the `uika_dump` rule share `private/manifest.bzl` so one code path
+  decides what a module is. They differ only in which path names each jar, which `path_of`
+  selects: the rule resolves runfiles (`short_path`), the sweep has no runfiles tree and its
+  merge step prefixes `bazel info execution_root` (`path`). That is also why the merge is
+  its own command rather than a `bazel run` target, since a nested `bazel info` would block
+  on the server lock.
+- The aspect must NOT declare `provides = [UikaClasspathInfo]`. It returns nothing for a
+  target without JavaInfo, Bazel enforces an advertisement, and a sweep over `//...` aborts
+  at the first non-Java target. Nothing depended on it, because the rule attribute filters
+  on JavaInfo itself.
+- The sweep's jars ride in the `uika_dump` output group alongside the fragment.
+  `--output_groups` REPLACES the default outputs, so without them the sweep writes a
+  manifest naming jars the build was never asked to produce.
+- Sweep fragments live in bazel-out and nothing prunes them, so the documented recipe
+  deletes `*.uika-manifest.tsv` first. A target deleted since the last sweep would otherwise
+  still contribute its module, which is a wrong dump rather than a stale one.
 - The integration test never downloads the CLI (`UIKA_CLI_PATH` short-circuits both the
   repository rule and the run), which keeps it hermetic and off Maven Central, so the
   download path is covered by hand instead. Last checked against the published 0.8.0:

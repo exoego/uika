@@ -9,12 +9,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /**
@@ -44,11 +41,11 @@ public final class DumpMain {
             }
         }
 
-        List<Module> modules = Manifest.parse(manifest, override);
+        List<Module> modules = Manifest.parse(manifest, override, Manifest::resolveRunfile);
         List<String> roots = new ArrayList<>();
         if (materialize != null) {
             Path directory = Manifest.workspacePath(materialize);
-            modules = materialize(modules, directory);
+            modules = Materialize.into(modules, directory);
             roots.add(directory.toString());
         }
         roots.addAll(externalRoots(modules));
@@ -60,76 +57,6 @@ public final class DumpMain {
                 DumpFormat.writeV2(modules, roots, DumpFormat.dumpRelease(modules)),
                 StandardCharsets.UTF_8);
         System.out.println("uika classpath dump: " + target);
-    }
-
-    /**
-     * Copies every jar the dump names into one directory and rewrites the dump to point
-     * there.
-     *
-     * <p>Bazel discards an external repository and refetches it when its lockfile changes, so
-     * the jars a baseline dump names are gone by the time the PR job compares against it. uika
-     * treats a jar it cannot open as a warning, which means the failure shows up as FEWER
-     * findings rather than as an error. Copying the baseline's classpath out of Bazel's reach
-     * is the fix, and it makes the dump portable to another machine as a bonus.
-     *
-     * <p>Hard links where the filesystem allows it, so the common case costs no space at all.
-     */
-    private static List<Module> materialize(List<Module> modules, Path directory)
-            throws IOException {
-        Files.createDirectories(directory);
-        Map<String, String> moved = new LinkedHashMap<>();
-        Set<String> taken = new LinkedHashSet<>();
-        List<Module> result = new ArrayList<>(modules.size());
-        for (Module module : modules) {
-            List<String> classes = new ArrayList<>(module.classesDirs().size());
-            for (String source : module.classesDirs()) {
-                classes.add(materializeOne(source, directory, moved, taken));
-            }
-            List<Artifact> artifacts = new ArrayList<>(module.artifacts().size());
-            for (Artifact artifact : module.artifacts()) {
-                artifacts.add(new Artifact(
-                        artifact.group(),
-                        artifact.name(),
-                        artifact.version(),
-                        materializeOne(artifact.file(), directory, moved, taken),
-                        artifact.project()));
-            }
-            result.add(new Module(module.path(), classes, artifacts, module.jdkRelease()));
-        }
-        return result;
-    }
-
-    private static String materializeOne(String source, Path directory,
-            Map<String, String> moved, Set<String> taken) throws IOException {
-        String already = moved.get(source);
-        if (already != null) {
-            return already;
-        }
-        Path from = Path.of(source);
-        // Two artifacts can share a file name (the same jar at two versions, or a
-        // build output named like a dependency), and the second must not overwrite the first.
-        String name = from.getFileName().toString();
-        String candidate = name;
-        for (int n = 2; !taken.add(candidate); n++) {
-            candidate = n + "-" + name;
-        }
-        // Every Bazel classpath entry is a jar: JavaInfo and JavaRuntimeClasspathInfo both
-        // model the classpath as jars, and a directory can only reach a target through
-        // runfiles. Refusing one loudly beats the two silent alternatives, since
-        // Files.copy on a directory would produce an EMPTY one and report success.
-        if (Files.isDirectory(from)) {
-            throw new IOException("cannot materialize " + from + ": it is a directory, and a"
-                    + " Bazel classpath entry is always a jar");
-        }
-        Path to = directory.resolve(candidate);
-        Files.deleteIfExists(to);
-        try {
-            Files.createLink(to, from);
-        } catch (IOException | UnsupportedOperationException crossDeviceOrUnsupported) {
-            Files.copy(from, to, StandardCopyOption.REPLACE_EXISTING);
-        }
-        moved.put(source, to.toString());
-        return to.toString();
     }
 
     /**

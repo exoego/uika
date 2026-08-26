@@ -771,10 +771,28 @@ not the runfiles tree. The check target repeats `targets` only to read the API
 release they compile for, so it builds nothing.
 
 Each entry in `targets` becomes one module of the dump, named by its label, so
-`upgrade-check` checks each against its own resolution. Unlike the other build
-tools there is no whole-build sweep: a rule cannot expand `//...`, so list the
-deployable targets, or generate the list with
-`bazel query 'kind(java_binary, //...)'`.
+`upgrade-check` checks each against its own resolution.
+
+A rule cannot expand a target pattern, so for a whole-build dump apply the aspect
+from the command line instead of listing anything:
+
+```console
+$ find "$(bazel info bazel-bin)" -name '*.uika-manifest.tsv' -delete
+$ bazel build //... --aspects=@uika//:defs.bzl%uika_classpath_aspect       --output_groups=uika_dump
+$ bazel run @uika//:merge -- --output /tmp/after.json       --execroot "$(bazel info execution_root)"       --fragments "$(bazel info bazel-bin)"
+```
+
+Narrow the pattern to keep the module count sane, `kind(java_binary, //...)` for
+instance, since `upgrade-check` runs once per module. A target carrying a
+`maven_coordinates` tag is skipped, because it is a dependency rather than a
+module of the build under check and it already appears in the artifact list of
+everything that uses it. The `find -delete` is part of the recipe rather than
+tidiness: fragments live in `bazel-out` and nothing prunes them, so a target
+deleted since the last sweep would otherwise still contribute its module.
+
+`--materialize` works the same way here. The merge step is a separate command
+because it needs `bazel info`, which cannot run inside a `bazel run` without
+blocking on the server lock.
 
 Coordinates come from the `maven_coordinates=group:artifact:version` tag that
 rules_jvm_external puts on every `jvm_import` it generates — the same tag its own
