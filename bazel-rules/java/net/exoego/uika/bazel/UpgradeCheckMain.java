@@ -55,19 +55,28 @@ public final class UpgradeCheckMain {
                     "usage: bazel run //:your_check -- --before <a.json> --after <b.json>");
         }
 
+        List<Path> evidence = new ArrayList<>(classLoadLogs);
         if (jfr != null) {
+            evidence.add(jfr);
+        }
+        if (!evidence.isEmpty()) {
             // Recordings are converted HERE, never by the CLI: the CLI is JVM-free and must
-            // not read binary JFR. The conversions land under the knob directory itself,
-            // which rewrite() handles by design (it deletes its own stale output first).
-            classLoadLogs.addAll(JfrEvidence.rewrite(
-                    List.of(jfr), workDirFor(jfr), System.out::println));
+            // not read binary JFR. The WHOLE list goes through the converter, the shape
+            // every sibling integration uses: a recording handed to --classLoadLog converts
+            // too (the CLI skips .jfr names silently, so forwarding it raw loses the
+            // evidence with no symptom), while a text log or a directory entry passes
+            // through with any recordings found under it appended. The conversions land
+            // under the knob directory itself, which rewrite() handles by design (it
+            // deletes its own stale output first).
+            Path workBase = jfr != null ? jfr : evidence.get(0);
+            evidence = JfrEvidence.rewrite(evidence, workDirFor(workBase), System.out::println);
         }
 
         JdkSource jdk = JdkSource.current();
         Integer release = UikaCli.effectiveJdkRelease(
                 wantedRelease(override), jdk, System.out::println);
         int status = UikaCli.runUpgradeCheck(cliBinary(), before, after, failOn, excludeFiles,
-                release, jdk, classLoadLogs, draftExcludeFile, System.out::println);
+                release, jdk, evidence, draftExcludeFile, System.out::println);
         System.exit(status);
     }
 
@@ -89,9 +98,13 @@ public final class UpgradeCheckMain {
         System.out.println("--jvmopt=" + UikaCli.jfrClassLoadJvmArg(dir));
     }
 
-    /** Where converted recordings land. Inside the knob directory, so one path is enough. */
-    private static Path workDirFor(Path jfr) {
-        Path base = JfrEvidence.isRecording(jfr) ? jfr.getParent() : jfr;
+    /**
+     * Where converted recordings land. Inside the knob directory (or beside a file-valued
+     * entry), so one path is enough. Preferring --jfr keeps the pre-existing location when
+     * both knobs are given.
+     */
+    private static Path workDirFor(Path entry) {
+        Path base = Files.isDirectory(entry) ? entry : entry.getParent();
         return base.resolve(JfrEvidence.WORK_DIR_NAME);
     }
 
