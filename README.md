@@ -308,8 +308,13 @@ suite, or a staging/production soak — with JFR recording every class load:
 -XX:StartFlightRecording:jdk.ClassLoad#enabled=true,jdk.ClassLoad#stackTrace=true,filename=<dir>
 ```
 
-(JDK 17+ syntax; the [build-tool plugins](#build-tool-plugins) inject exactly
-this into test JVMs from one option). JFR generates pid-unique file names for a
+(JDK 17+ syntax; Gradle and sbt inject exactly this into test JVMs from one
+option, Mill through its test-module mixin, Bazel prints it ready to paste, and
+Maven, Leiningen and the Clojure CLI take it by hand — each page carries the
+recipe). Quote the `filename` value when the directory path contains a comma:
+the comma is the option delimiter, and an unquoted one silently truncates
+`filename=` with exit 0, leaving the directory empty. The injecting tools quote
+it for you. JFR generates pid-unique file names for a
 directory-valued `filename`, so parallel test JVMs never collide, and the
 recorded stacks are what uika turns into the `via ...` trigger on every
 promoted violation. Teams already running continuous production JFR only need
@@ -425,9 +430,9 @@ resolve the binary differently, and their pages say how.
 Every tool spells the same options its own way, listed per page:
 [`failOn`](#violation-tiers-and---fail-on),
 [`excludeFiles`](#excluding-known-false-positives---exclude-file),
-[runtime load evidence](#runtime-load-evidence-jfr---class-load-log) (one option
-pointed at one directory for both phases, collect on the base branch and
-consume on the PR), and `jdkRelease`.
+[runtime load evidence](#runtime-load-evidence-jfr---class-load-log) (one
+directory serving both phases, collect on the base branch and consume on the
+PR), and `jdkRelease`.
 
 [`--jdk-release`](#how-it-works) needs no setting at all. The build runs on a
 JVM, so each tool derives the release from what the modules compile for. A

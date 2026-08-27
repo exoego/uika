@@ -75,4 +75,27 @@ final class UikaCliJfrArgTest {
                     () -> "no recording landed in " + commaDir + ":\n" + output);
         }
     }
+
+    /// The hand-written copies of the flag (Maven cannot inject into surefire, the two
+    /// Clojure frontends have nothing to inject into, and the README shows the canonical
+    /// form) are kept in sync with the composer by hand. This pins them: each file must
+    /// carry the composed flag verbatim up to the filename value, so a change to the
+    /// event settings or their order fails here instead of drifting silently.
+    @Test
+    void handWrittenRecipesCarryTheComposedFlag() throws Exception {
+        var composed = UikaCli.jfrClassLoadJvmArg(Path.of("VALUE"));
+        var prefix = composed.substring(0, composed.indexOf("VALUE"));
+        for (var relative : java.util.List.of(
+                "../README.md",
+                "../docs/maven.md",
+                "../docs/clojure.md",
+                "../docs/leiningen.md",
+                "../maven-plugin/src/main/java/net/exoego/uika/maven/UpgradeCheckMojo.java")) {
+            var file = Path.of(relative);
+            var text = Files.readString(file);
+            assertTrue(text.contains(prefix),
+                    () -> file + " does not carry the composed StartFlightRecording flag: "
+                            + prefix);
+        }
+    }
 }

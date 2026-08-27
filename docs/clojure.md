@@ -52,6 +52,12 @@ invocation, the way the Maven recipe does:
 -XX:StartFlightRecording:jdk.ClassLoad#enabled=true,jdk.ClassLoad#stackTrace=true,filename=<dir>
 ```
 
+Create `<dir>` first: given a missing parent JFR aborts JVM startup, but given
+an existing parent it silently records to a single clobbered file at that
+path. Quote the `filename` value when the path carries a comma — the comma is
+the option delimiter, and an unquoted one silently truncates `filename=` with
+exit 0, leaving the directory empty.
+
 Consume with `:jfr`, pointed at that directory or at a single recording:
 
 ```console

@@ -36,9 +36,24 @@ already have and skip the download). `:jdk-release` defaults to the release
 falls back to the JVM the project's own code runs on (`:java-cmd`, probed).
 
 For [runtime load evidence](../README.md#runtime-load-evidence-jfr---class-load-log),
-collect by running the current build's tests with the JFR flag on the test JVM
-(there is no test task to inject it into, so add it by hand, the way the Maven
-recipe does), then point `:jfr` at the recording directory. Recordings are
+collect by running the current build's tests with the JFR flag on the test
+JVM. The plugin injects nothing, so add it yourself; a profile keeps it out of
+everyday runs:
+
+```clojure
+:profiles {:uika-jfr {:jvm-opts ["-XX:StartFlightRecording:jdk.ClassLoad#enabled=true,jdk.ClassLoad#stackTrace=true,filename=target/uika-jfr"]}}
+```
+
+```console
+$ mkdir -p target/uika-jfr
+$ lein with-profile +uika-jfr test
+```
+
+Create the directory first (given a missing parent JFR aborts JVM startup, but
+given an existing parent it silently records to a single clobbered file), quote
+the `filename` value if the path carries a comma (the option delimiter;
+unquoted it silently truncates with exit 0), and the test JVM needs JDK 17+ for
+the event-settings syntax. Then point `:jfr` at the directory. Recordings are
 converted with the JDK's own JFR reader before the CLI runs, which needs lein
 itself on Java 17+; `:class-load-logs` still takes text logs alongside.
 
