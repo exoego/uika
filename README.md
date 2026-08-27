@@ -96,14 +96,16 @@ jobs:
 
 The other tools use the same three steps with different commands, and each
 tool's page carries this workflow adapted to it:
-[sbt](docs/sbt.md#pr-gate-on-github-actions),
-[Maven](docs/maven.md#pr-gate-on-github-actions),
-[Mill](docs/mill.md#pr-gate-on-github-actions),
-[Clojure CLI](docs/clojure.md#pr-gate-on-github-actions),
-[Leiningen](docs/leiningen.md#pr-gate-on-github-actions) and
-[Bazel](docs/bazel.md#pr-gate-on-github-actions). The baseline dump skips the
-build outputs where the tool can, because the base branch is only there for
-its resolved versions.
+
+- [sbt](docs/sbt.md#pr-gate-on-github-actions)
+- [Maven](docs/maven.md#pr-gate-on-github-actions)
+- [Mill](docs/mill.md#pr-gate-on-github-actions)
+- [Clojure CLI](docs/clojure.md#pr-gate-on-github-actions)
+- [Leiningen](docs/leiningen.md#pr-gate-on-github-actions)
+- [Bazel](docs/bazel.md#pr-gate-on-github-actions)
+
+The baseline dump skips the build outputs where the tool can, because the
+base branch is only there for its resolved versions.
 
 To keep the base-branch resolution off the PR's critical path, dump the
 baseline once per push instead and cache it as an artifact keyed by SHA:
