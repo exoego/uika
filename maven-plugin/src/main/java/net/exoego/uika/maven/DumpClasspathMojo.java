@@ -47,13 +47,19 @@ public final class DumpClasspathMojo extends AbstractMojo {
 
     @Override
     public void execute() throws MojoExecutionException {
+        // Attribution maps over the WHOLE reactor: a selected module may depend on an
+        // unselected sibling, and that edge keeps its "project" key either way.
         Map<String, MavenProject> reactorByGav = new HashMap<>();
         for (MavenProject reactorProject : session.getAllProjects()) {
             reactorByGav.put(gav(reactorProject), reactorProject);
         }
         Map<MavenProject, String> moduleNames = moduleNames(session.getAllProjects());
+        // Modules over the SELECTED set only. Maven resolves dependencies for
+        // session.getProjects(), so a -pl-excluded project has an empty getArtifacts()
+        // and would land in the dump as a module with zero artifacts, silently
+        // under-reporting. Without -pl the two sets are the same reactor.
         List<ClasspathDump.Module> modules = new ArrayList<>();
-        for (MavenProject reactorProject : session.getAllProjects()) {
+        for (MavenProject reactorProject : session.getProjects()) {
             modules.add(moduleOf(reactorProject, reactorByGav, moduleNames));
         }
 
