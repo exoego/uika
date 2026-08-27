@@ -135,7 +135,7 @@ and in the PR job, after downloading the artifact into `/tmp/uika-jfr`:
       - run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json -PuikaJfr=/tmp/uika-jfr
 ```
 
-The [per-tool knobs](#build-tool-plugins) cover sbt, Maven, Mill and Bazel.
+The [per-tool options](#build-tool-plugins) cover sbt, Maven, Mill and Bazel.
 The Clojure CLI tool and the Leiningen plugin read text class-load logs
 (`:class-load-log` and `:class-load-logs`) but do not convert JFR recordings
 yet, so record with `-Xlog:class+load` there.
@@ -348,22 +348,22 @@ suite, or a staging/production soak — with JFR recording every class load:
 ```
 
 (JDK 17+ syntax; the [build-tool plugins](#build-tool-plugins) inject exactly
-this into test JVMs from one knob). JFR generates pid-unique file names for a
+this into test JVMs from one option). JFR generates pid-unique file names for a
 directory-valued `filename`, so parallel test JVMs never collide, and the
 recorded stacks are what uika turns into the `via ...` trigger on every
 promoted violation. Teams already running continuous production JFR only need
 the `jdk.ClassLoad` event enabled — the recording they already collect then IS
 the evidence, no extra flags.
 
-The plugins take the knob as a directory or a single `.jfr` file. A file — a
+The plugins take the option as a directory or a single `.jfr` file. A file — a
 production recording, say — is consumption-only: the check converts it, test
 JVMs are left untouched. The injected flag needs JDK 17+ test JVMs (the
-event-settings syntax), so leave the knob off for an older test leg.
+event-settings syntax), so leave the option off for an older test leg.
 
 The intended CI shape mirrors [baseline caching](BASELINE-CACHING.md): the
 base branch's test run records once per push and stores the directory as an
 artifact, and the dependency PR's `upgrade-check` downloads it and points the
-same knob at it. The plugins convert recordings with the JDK's own JFR reader
+same option at it. The plugins convert recordings with the JDK's own JFR reader
 before invoking the CLI, which stays JVM-free and never reads binary
 recordings. A ⚠️ violation whose referencing class appears in the evidence is
 promoted out of the tier and marked, trigger included:
@@ -426,14 +426,14 @@ looks tempting: it would rewrite that file with only the drafted rules.
 
 A `--class-load-log` path that does not exist is skipped with a warning rather
 than failing the run: evidence is data another job produces, so its absence is
-an operational state, and the knob can stay in a build that also runs on a
+an operational state, and the option can stay in a build that also runs on a
 laptop or a fork PR. Nothing is promoted from a path that is not there, which
 is what the warning says. Drafting from evidence that named no class at all is
 still refused.
 
 ## Build-tool plugins
 
-Setup, per-tool knob spellings and tool-specific caveats live on one page per
+Setup, per-tool option spellings and tool-specific caveats live on one page per
 tool:
 
 - [Gradle](docs/gradle.md)
@@ -460,10 +460,10 @@ there is no separate install step. The version defaults to the plugin's own, so
 one coordinate bump updates both. The Clojure CLI tool, Leiningen and Bazel
 resolve the binary differently, and their pages say how.
 
-Every tool spells the same knobs its own way, listed per page:
+Every tool spells the same options its own way, listed per page:
 [`failOn`](#violation-tiers-and---fail-on),
 [`excludeFiles`](#excluding-known-false-positives---exclude-file),
-[runtime load evidence](#runtime-load-evidence-jfr---class-load-log) (one knob
+[runtime load evidence](#runtime-load-evidence-jfr---class-load-log) (one option
 pointed at one directory for both phases, collect on the base branch and
 consume on the PR), and `jdkRelease`.
 
