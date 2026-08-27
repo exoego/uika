@@ -68,4 +68,5 @@ deploy:
           - sbt-plugin/target/staging-deploy
           - maven-plugin/target/staging-deploy
           - mill-plugin/out/staging-deploy
+          - clojure-tool/target/staging-deploy
           - lein-plugin/target/staging-deploy

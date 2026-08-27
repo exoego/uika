@@ -290,11 +290,25 @@ Same rule as the Mill section: point-of-use comments and the tests in
   uika-cli distribution cannot go through it. The tool downloads from Maven Central
   directly (`UIKA_CLI_URL` overrides), unlike the JVM plugins which reuse the build's
   resolver.
-- The tool is distributed as a git dep (`:deps/root "clojure-tool"`), costing nothing
-  against the Central release quota. The CLI version default comes from the tool's own
-  `:git/tag` in `clojure.java.basis/current-basis` -- a tool installed from a tag knows
-  the matching CLI release with no stamping step. A `:local/root` install has no tag,
-  hence `:cli-version` / `UIKA_CLI_VERSION`.
+- The tool is published to Central as `net.exoego.uika/clojure-uika` (build.clj's
+  `stage`, wired into stage-all and jreleaser.yml like the other plugins; it rides the
+  shared deployment, so it costs files but no extra release against the Central
+  quota). The documented consumption is a deps.edn ALIAS carrying `:ns-default
+  exoego.uika`, never `-Ttools install` from Maven: tools.deps has no usage lookup for
+  :mvn coordinates (`ext/coord-usage :mvn` is TBD upstream, checked through 0.31.1642
+  and the CLI-bundled copy), so a Maven-installed tool needs every call
+  ns-qualified. `:tools/usage` in deps.edn covers git/:local-root `-Ttools` installs;
+  it was missing before the Maven switch, so the unqualified call the docs showed had
+  never actually worked. The CLI version default comes from the tool's own coordinate
+  in `clojure.java.basis/current-basis` (`version-from-libs`): :mvn/version in the
+  alias flow, else the repo `:git/tag`. A `:local/root` install has neither, hence
+  `:cli-version` / `UIKA_CLI_VERSION`.
+- build.clj strips the empty `<repositories/>` element write-pom leaves behind even
+  with :mvn/repos dissoc'd from the basis (PomChecker rejects the element's presence,
+  the same rule lein-stage works around), and throws on a POPULATED block so a
+  regression dies in `make clojure-stage` instead of in the all-or-nothing Central
+  validation. The strip runs before b/jar so the jar-embedded pom matches the staged
+  .pom byte for byte.
 - jvm-plugin-core is NOT shared here: tools.deps does not compile Java sources and a
   prep step would burden every consumer, so the small ports (classifier, ct.sym clamp,
   extract) live in the ns with "keep in sync" markers. JFR conversion is deliberately

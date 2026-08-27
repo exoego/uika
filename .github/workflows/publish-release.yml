@@ -129,6 +129,7 @@ jobs:
           mise exec -- mvn -f maven-plugin/pom.xml -B -Prelease -Drevision="$UIKA_VERSION" \
             -DskipTests -Dinvoker.skip=true deploy
           (cd mill-plugin && UIKA_VERSION="$UIKA_VERSION" mise exec -- ./mill publishM2Local + stageChecksums)
+          make clojure-stage UIKA_VERSION="$UIKA_VERSION"
           make lein-stage UIKA_VERSION="$UIKA_VERSION"
           make bazel-stage UIKA_VERSION="$UIKA_VERSION"
 

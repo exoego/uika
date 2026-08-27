@@ -112,3 +112,14 @@
         (is (thrown-with-msg? Exception #"broken references"
               (uika/upgrade-check {:before (str before) :after (str after)
                                    :cli-path (str failing-stub)})))))))
+
+(deftest version-from-libs-reads-maven-then-git-coordinates
+  ;; The Maven coordinate is the deps.edn alias flow; the git tag is a -Ttools
+  ;; install from the repo. Both name the matching uika-cli release.
+  (is (= "1.2.3" (uika/version-from-libs
+                  {'net.exoego.uika/clojure-uika {:mvn/version "1.2.3"}})))
+  (is (= "1.2.3" (uika/version-from-libs
+                  {'io.github.exoego/uika {:git/tag "v1.2.3" :git/sha "abcdef"}})))
+  ;; Another lib's coordinate never masquerades as the tool's own version.
+  (is (nil? (uika/version-from-libs
+             {'org.clojure/clojure {:mvn/version "1.12.5"}}))))

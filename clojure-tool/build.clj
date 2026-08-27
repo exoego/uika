@@ -1,0 +1,99 @@
+(ns build
+  "Stages the clojure-uika artifacts for the Maven Central deployment:
+  `clojure -T:build stage` writes the jar, a sources jar, an empty javadoc jar
+  (Central requires the jar to exist, not to have content; readers have the
+  sources jar, like every other uika plugin) and the pom, each with the md5/sha1
+  pair jreleaser.yml expects staged (its deployer has checksums: false), into
+  target/staging-deploy in Maven repository layout.
+
+  UIKA_VERSION names the release, injected by the release workflow exactly as it
+  is for the other plugins; the in-tree default matches their placeholder."
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [clojure.tools.build.api :as b])
+  (:import (java.security MessageDigest)))
+
+(def ^:private lib 'net.exoego.uika/clojure-uika)
+(def ^:private version
+  (or (not-empty (System/getenv "UIKA_VERSION")) "0.0.0-dev"))
+(def ^:private class-dir "target/classes")
+
+(defn- hex-digest [algorithm ^java.io.File file]
+  (let [digest (.digest (MessageDigest/getInstance algorithm)
+                        (java.nio.file.Files/readAllBytes (.toPath file)))]
+    (str/join (map #(format "%02x" %) digest))))
+
+(defn- stage-file
+  "Copies `src` into the staging repo under `file-name` and writes the md5/sha1
+  pair next to it."
+  [staging-dir ^java.io.File src file-name]
+  (let [dest (io/file staging-dir file-name)]
+    (io/make-parents dest)
+    (io/copy src dest)
+    (doseq [[algorithm ext] [["MD5" ".md5"] ["SHA-1" ".sha1"]]]
+      (spit (io/file staging-dir (str file-name ext)) (hex-digest algorithm dest)))))
+
+(defn- strip-repositories
+  "write-pom emits an empty <repositories/> element even with :mvn/repos gone,
+  and PomChecker rejects the element's presence. A POPULATED block instead means
+  the :mvn/repos dissoc regressed, which must fail here rather than in the
+  Central deployment's all-or-nothing validation."
+  [^java.io.File pom]
+  (let [text (slurp pom)]
+    (when (str/includes? text "<repositories>")
+      (throw (ex-info "pom carries a populated <repositories> block; the :mvn/repos dissoc regressed" {})))
+    (spit pom (str/replace text #"(?m)^\s*<repositories/>\r?\n" ""))))
+
+(defn stage [_]
+  (b/delete {:path "target/classes"})
+  (b/delete {:path "target/staging-deploy"})
+  (b/delete {:path "target/javadoc-empty"})
+  (let [basis (-> (b/create-basis {:project "deps.edn"})
+                  ;; write-pom copies non-central entries from :mvn/repos into a
+                  ;; <repositories> block, and the user/root deps.edn contributes
+                  ;; clojars. PomChecker rejects any <repositories> block outright
+                  ;; (the same rule lein-stage works around), failing the whole
+                  ;; all-or-nothing deployment. Dropping the key still leaves an
+                  ;; empty <repositories/> element behind, which strip-repositories
+                  ;; removes below.
+                  (dissoc :mvn/repos))
+        artifact (name lib)
+        staging-dir (str "target/staging-deploy/net/exoego/uika/" artifact "/" version)
+        jar-file (str "target/" artifact "-" version ".jar")
+        sources-file (str "target/" artifact "-" version "-sources.jar")
+        javadoc-file (str "target/" artifact "-" version "-javadoc.jar")]
+    (b/copy-dir {:src-dirs ["src" "src-core"] :target-dir class-dir})
+    (b/write-pom {:class-dir class-dir
+                  :lib lib
+                  :version version
+                  :basis basis
+                  :scm {:url "https://github.com/exoego/uika"
+                        :connection "scm:git:https://github.com/exoego/uika.git"
+                        :developerConnection "scm:git:git@github.com:exoego/uika.git"
+                        :tag (str "v" version)}
+                  :pom-data [[:description "Clojure CLI tool for writing uika resolved classpath dumps and running upgrade checks"]
+                             [:url "https://github.com/exoego/uika"]
+                             [:licenses
+                              [:license
+                               [:name "Apache License 2.0"]
+                               [:url "https://www.apache.org/licenses/LICENSE-2.0"]]]
+                             [:developers
+                              [:developer
+                               [:id "exoego"]
+                               [:name "TATSUNO Yasuhiro"]
+                               [:url "https://github.com/exoego"]]]]})
+    ;; Strip before b/jar so the copy embedded under META-INF/maven matches the
+    ;; staged .pom byte for byte.
+    (strip-repositories (io/file class-dir "META-INF" "maven" (namespace lib) artifact "pom.xml"))
+    ;; The jar already holds the sources (nothing is AOT-compiled), so the
+    ;; Central-required sources jar carries the same trees.
+    (b/jar {:class-dir class-dir :jar-file jar-file})
+    (b/jar {:class-dir class-dir :jar-file sources-file})
+    (.mkdirs (io/file "target/javadoc-empty"))
+    (b/jar {:class-dir "target/javadoc-empty" :jar-file javadoc-file})
+    (stage-file staging-dir
+                (io/file class-dir "META-INF" "maven" (namespace lib) artifact "pom.xml")
+                (str artifact "-" version ".pom"))
+    (doseq [f [jar-file sources-file javadoc-file]]
+      (stage-file staging-dir (io/file f) (.getName (io/file f))))
+    (println "staged" artifact version "into" staging-dir)))

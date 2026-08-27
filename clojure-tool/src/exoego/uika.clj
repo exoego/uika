@@ -1,11 +1,14 @@
 (ns exoego.uika
-  "uika as a Clojure CLI tool: `clojure -Tuika dump-classpath` / `clojure -Tuika upgrade-check`.
+  "uika as a Clojure CLI tool: `clojure -T:uika dump-classpath` / `clojure -T:uika upgrade-check`.
 
-  Installed as a git dependency (`:deps/root \"clojure-tool\"`), so releasing it costs
-  nothing against the Maven Central quota. The repo tag doubles as the CLI version:
-  when the tool itself is resolved as a git dep, its own `:git/tag` in the runtime
-  basis names the matching uika-cli release. Everything not specific to tools.deps
-  lives in exoego.uika.core, shared with the Leiningen plugin."
+  Published to Maven Central as net.exoego.uika/clojure-uika and consumed through a
+  deps.edn alias that carries :ns-default itself, because tools.deps resolves no
+  usage data for :mvn coordinates (coord-usage :mvn is TBD upstream), so a
+  `-Ttools`-installed Maven tool would need every function call qualified. The
+  tool's own coordinate in the runtime basis names the matching uika-cli release:
+  :mvn/version from the alias flow, or the repo :git/tag when installed with
+  `-Ttools` from git. Everything not specific to tools.deps lives in
+  exoego.uika.core, shared with the Leiningen plugin."
   (:require [clojure.java.basis :as basis]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -64,14 +67,22 @@
     (println "uika classpath dump:" (str out))
     (str out)))
 
-(defn- own-git-tag
-  "The :git/tag this tool was resolved with, when it came in as a git dep. That tag
-  is the repo release tag, so stripping the v prefix yields the uika-cli version."
+(defn version-from-libs
+  "The version this tool was resolved with, out of a basis :libs map. The Maven
+  coordinate is authoritative (the deps.edn alias flow); a git install instead
+  carries the repo release tag, whose v prefix strips to the uika-cli version."
+  [libs]
+  (some (fn [[lib {:git/keys [tag] :mvn/keys [version]}]]
+          (cond
+            (and version (= lib 'net.exoego.uika/clojure-uika)) version
+            (and tag (str/starts-with? (str lib) "io.github.exoego/uika"))
+            (cond-> tag (str/starts-with? tag "v") (subs 1))
+            :else nil))
+        libs))
+
+(defn- own-version
   []
-  (some (fn [[lib {:git/keys [tag]}]]
-          (when (and tag (str/starts-with? (str lib) "io.github.exoego/uika"))
-            (cond-> tag (str/starts-with? tag "v") (subs 1))))
-        (:libs (basis/current-basis))))
+  (version-from-libs (:libs (basis/current-basis))))
 
 (defn upgrade-check
   "Runs uika upgrade-check over a before/after pair of dumps.
@@ -85,13 +96,14 @@
   :draft-exclude-file
                      where the CLI writes draft exclude rules for symbols never
                      observed loading, which needs :class-load-log too
-  :cli-version       uika-cli version; defaults to this tool's own git tag
-                     (UIKA_CLI_VERSION is consulted in between)
+  :cli-version       uika-cli version; defaults to this tool's own version, read
+                     from its coordinate in the runtime basis (UIKA_CLI_VERSION is
+                     consulted in between)
   :cli-path          existing uika binary, skipping the download entirely
                      (UIKA_CLI_PATH does the same from the environment)"
   [{:keys [before after] :as args}]
   (when-not (and before after)
     (throw (ex-info "usage: clojure -Tuika upgrade-check :before <a.json> :after <b.json>" {})))
   (core/run-upgrade-check
-   (core/resolve-binary args own-git-tag "uika-cli version is unknown; pass :cli-version")
+   (core/resolve-binary args own-version "uika-cli version is unknown; pass :cli-version")
    args))
