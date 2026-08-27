@@ -50,7 +50,12 @@ object UikaPlugin extends AutoPlugin {
     uikaUpgradeCheck := {
       val args = Def.spaceDelimited("<before.json> <after.json>").parsed
       if (args.length != 2) sys.error("usage: uikaUpgradeCheck <before.json> <after.json>")
-      val version = uikaCliVersion.value match {
+      // LocalRootProject scope on every user knob this task reads, for the reason the
+      // uikaJdkRelease read below spells out: read bare, a buildSettings task resolves
+      // ThisBuild only, and the documented `set uikaFailOn := ...` shell form scopes to the
+      // root project, which was silently ignored. Root-project scope still delegates to
+      // ThisBuild, so both spellings work.
+      val version = (LocalRootProject / uikaCliVersion).value match {
         case "" => sys.error("""uika-cli version is unknown; set uikaCliVersion := "<version>"""")
         case v  => v
       }
@@ -68,7 +73,7 @@ object UikaPlugin extends AutoPlugin {
         .find(_.getName.endsWith(".zip"))
         .getOrElse(sys.error(s"uika-cli zip not found among ${files.mkString(", ")}"))
       val binary = UikaCli.extractBinary(zip.toPath, (uikaDir / s"cli-$version-$classifier").toPath)
-      val excludeFiles = uikaExcludeFiles.value.map(_.toPath).asJava
+      val excludeFiles = (LocalRootProject / uikaExcludeFiles).value.map(_.toPath).asJava
       val jdk = UikaCli.JdkSource.current()
       // The LOWEST release any subproject compiles for, because one flag serves a run that
       // checks every module. Under-claiming only costs Unknowns, while over-claiming makes a
@@ -116,7 +121,7 @@ object UikaPlugin extends AutoPlugin {
       )
       val draftExcludeFile =
         (LocalRootProject / uikaDraftExcludeFile).value.map(_.getAbsoluteFile.toPath).orNull
-      UikaCli.runUpgradeCheck(binary, file(args.head).toPath, file(args(1)).toPath, uikaFailOn.value, excludeFiles, jdkRelease, jdk, classLoadLogs, draftExcludeFile, (line: String) => log.info(line)) match {
+      UikaCli.runUpgradeCheck(binary, file(args.head).toPath, file(args(1)).toPath, (LocalRootProject / uikaFailOn).value, excludeFiles, jdkRelease, jdk, classLoadLogs, draftExcludeFile, (line: String) => log.info(line)) match {
         case 0 => ()
         case 1 => sys.error("uika upgrade-check found broken references (see output above)")
         case n => sys.error(s"uika upgrade-check failed with exit code $n")

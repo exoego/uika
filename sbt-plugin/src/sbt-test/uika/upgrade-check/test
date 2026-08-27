@@ -20,6 +20,15 @@ $ exists before.json.marker
 > checkJdkReleaseDerived
 > set ThisBuild / uikaJdkRelease := 11
 
-# Stub CLI exits 1 (violations found): the task must fail.
-> set ThisBuild / uikaCliVersion := "9.9.8"
+# Root-project scope, the documented `set uikaFailOn := ...` shell form. The ThisBuild
+# values stay set underneath, so these only reach the CLI if the check reads the keys
+# through LocalRootProject.
+> set uikaFailOn := "never"
+> set uikaExcludeFiles := Seq(baseDirectory.value / "uika-exclude2.toml")
+> uikaUpgradeCheck before.json after.json
+> checkRootScopedSettingsPassed
+
+# Stub CLI exits 1 (violations found): the task must fail. Root-project scope again, so
+# the version read is pinned to LocalRootProject too (ThisBuild still says 9.9.9).
+> set uikaCliVersion := "9.9.8"
 -> uikaUpgradeCheck before.json after.json
