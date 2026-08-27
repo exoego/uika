@@ -28,6 +28,14 @@ uika_upgrade_check(
 # code path, since there is no module to read a javacopt from.
 uika_upgrade_check(name = "check_without_targets")
 
+# The off switch. 0 must reach the CLI as no --jdk-release at all, which only works while
+# the attr default stays distinguishable from an explicit 0.
+uika_upgrade_check(
+    name = "check_layer_off",
+    jdk_release = 0,
+    targets = UIKA_TARGETS,
+)
+
 # The baseline shape of the PR gate: no target is built, and only the external jars the
 # version diff needs are recorded.
 uika_dump(
