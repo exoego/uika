@@ -185,7 +185,7 @@ rules_jvm_external puts on every `jvm_import` it generates — the same tag its 
 `java_export` and `pom_file` read. Nothing here is specific to rules_jvm_external,
 so a hand-written `java_import` carrying that tag is attributed just as well, and a
 target of your own build is recorded by label the way the other tools record a
-project dependency. [`--jdk-release`](../README.md#build-tool-plugins) is
+project dependency. [`jdkRelease`](../README.md#build-tool-plugins) is
 derived per target from its `javacopts`, falling back to the Java toolchain's
 target version, and `jdk_release = N` on the rule overrides every module.
 
