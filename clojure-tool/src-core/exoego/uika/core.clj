@@ -183,9 +183,14 @@
         home (value "java\\.home")
         spec (value "java\\.specification\\.version")]
     (when (and home spec)
-      (try
-        {:home home :feature (Long/parseLong spec)}
-        (catch NumberFormatException _ nil)))))
+      ;; JDK 8 spells the release 1.8; UikaCli.parseRelease strips the same prefix on
+      ;; the Java side. Without it the probe answers nil, lein falls back to its OWN
+      ;; JVM, and the dump records the writing JVM's release -- the issue #128
+      ;; mis-attribution -- for a release that is inside the supported range.
+      (let [spec (if (str/starts-with? spec "1.") (subs spec 2) spec)]
+        (try
+          {:home home :feature (Long/parseLong spec)}
+          (catch NumberFormatException _ nil))))))
 
 (defn override-release
   "Port of UikaCli.overrideRelease; keep the two in sync. The release an explicit
