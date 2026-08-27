@@ -192,6 +192,41 @@
           {:home home :feature (Long/parseLong spec)}
           (catch NumberFormatException _ nil))))))
 
+(defn declared-release
+  "Port of UikaCli.declaredRelease and parseRelease; keep them in sync. The API release
+  a compiler-option list targets, or nil when it declares none. Both the space-separated
+  and the --release=17 forms, -target as the weaker fallback, and the legacy 1.8 /
+  jvm-1.8 spellings normalized to 8. Anything below 8 is no declaration at all, so one
+  legacy module cannot drag a build's minimum under the floor and switch the layer off."
+  [options]
+  (let [parse (fn [value]
+                (when value
+                  (let [text (str/trim (str value))
+                        text (if (str/starts-with? text "jvm-") (subs text 4) text)
+                        text (if (str/starts-with? text "1.") (subs text 2) text)
+                        release (try (Long/parseLong text)
+                                     (catch NumberFormatException _ nil))]
+                    (when (and release (>= release 8)) release))))
+        options (mapv str (or options []))
+        release-flags #{"--release" "-release" "--java-output-version" "-java-output-version"}
+        target-flags #{"-target" "--target"}]
+    (loop [i 0 target nil]
+      (if (>= i (count options))
+        target
+        (let [option (nth options i)
+              sep (let [e (str/index-of option "=") c (str/index-of option ":")]
+                    (cond (and e c) (min e c) e e :else c))
+              flag (if sep (subs option 0 sep) option)
+              value (if sep
+                      (subs option (inc sep))
+                      (when (< (inc i) (count options)) (nth options (inc i))))
+              release (parse value)]
+          (cond
+            (nil? release) (recur (inc i) target)
+            (contains? release-flags flag) release
+            (and (nil? target) (contains? target-flags flag)) (recur (inc i) release)
+            :else (recur (inc i) target)))))))
+
 (defn override-release
   "Port of UikaCli.overrideRelease; keep the two in sync. The release an explicit
   :jdk-release names for the DUMP, or nil when it names none.

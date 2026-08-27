@@ -74,6 +74,22 @@
          (uika.core/parse-jvm-properties
           "java.home = /opt/jdk8\njava.specification.version = 1.8\n"))))
 
+(deftest declared-release-reads-the-javac-spellings
+  ;; Port of UikaCli.declaredRelease, for lein's :javac-options: the spelling that pins
+  ;; the API must win over the probed runtime JVM, or a project compiling --release 8 on
+  ;; a 21 JVM is over-claimed and findings are lost with nothing to show.
+  (is (= 11 (uika.core/declared-release ["--release" "11"])))
+  (is (= 11 (uika.core/declared-release ["--release=11"])))
+  (is (= 8 (uika.core/declared-release ["-target" "1.8" "-source" "1.8"])))
+  ;; --release wins over -target, position notwithstanding, like the Java side.
+  (is (= 17 (uika.core/declared-release ["-target" "11" "--release" "17"])))
+  (is (nil? (uika.core/declared-release [])))
+  (is (nil? (uika.core/declared-release nil)))
+  ;; Below 8 is no declaration at all, so one legacy module cannot drag the minimum
+  ;; under the floor and switch the layer off.
+  (is (nil? (uika.core/declared-release ["--release" "7"])))
+  (is (nil? (uika.core/declared-release ["-Xlint:all"]))))
+
 (deftest upgrade-check-forwards-flags-and-fails-on-violations
   (let [dir (temp-dir)
         stub (io/file dir "uika")

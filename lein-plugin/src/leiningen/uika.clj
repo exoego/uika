@@ -119,11 +119,14 @@
         out (io/file (or (first args)
                          (io/file (:target-path project) "uika" "classpath.json")))]
     (io/make-parents out)
-    ;; :jdk-release wins over the probe. The probe answers "which JVM does lein start for
-    ;; this project", which is the right default and is usually the deployment JVM too, but
-    ;; a project built on one JVM and shipped on another can only say so by hand.
+    ;; :jdk-release first, then :javac-options, then the probe. :javac-options is the
+    ;; spelling that pins the API, which every other tool reads before any JVM evidence:
+    ;; a project compiling --release 8 on a 21 JVM would otherwise be over-claimed, the
+    ;; direction that loses findings with nothing to show. The probe answers "which JVM
+    ;; does lein start for this project", the only evidence left when nothing declares.
     (spit out (core/dump-json (str ":" (:name project)) artifacts class-dirs
                               (or (core/override-release (:jdk-release (:uika project)))
+                                  (core/declared-release (:javac-options project))
                                   (:feature (project-jvm project)))))
     (main/info "uika classpath dump:" (str out))))
 
@@ -153,7 +156,9 @@
        {:before before :after after
         :fail-on fail-on
         :exclude-file exclude-files
-        :jdk-release jdk-release
+        ;; The declared :javac-options release backs the flag too, like the dump above.
+        ;; `or`, so an explicit 0 keeps its off-switch meaning (0 is truthy in Clojure).
+        :jdk-release (or jdk-release (core/declared-release (:javac-options project)))
         :class-load-log class-load-logs
         :jfr jfr
         ;; Conversions land under the project's own target space, like the JVM

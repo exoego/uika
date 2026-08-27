@@ -92,6 +92,19 @@ if [ "$got" != "8" ]; then
 fi
 echo "JDK 8 probe: jdkRelease 8"
 
+# :javac-options is the spelling that pins the API, so it must beat the probed JVM in
+# the dump, the way every other tool's declared release does. Passed on the fly so the
+# fixture keeps probing by default; 17 matches neither the fixture's :jdk-release 11
+# nor the mise-pinned lein JVM's feature.
+lein update-in :uika dissoc :jdk-release \
+  -- update-in : assoc :javac-options '["--release" "17"]' \
+  -- uika dump-classpath target/declared.json >/dev/null
+got="$(tr -d ' ' < target/declared.json | sed -n 's/.*"jdkRelease":\([0-9]*\).*/\1/p')"
+if [ "$got" != "17" ]; then
+  echo "FAIL: :javac-options --release 17 recorded jdkRelease $got, not 17" >&2; exit 1
+fi
+echo ":javac-options derivation: jdkRelease 17"
+
 # :provided is compile-scope: the fixture's Java source imports javax.servlet, so
 # javac only succeeds because prep runs on the FULL project. Prepping the unmerged
 # one (which drops :provided) fails with "package javax.servlet does not exist".
