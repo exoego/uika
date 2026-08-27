@@ -309,10 +309,26 @@ Same rule as the Mill section: point-of-use comments and the tests in
   regression dies in `make clojure-stage` instead of in the all-or-nothing Central
   validation. The strip runs before b/jar so the jar-embedded pom matches the staged
   .pom byte for byte.
-- jvm-plugin-core is NOT shared here: tools.deps does not compile Java sources and a
-  prep step would burden every consumer, so the small ports (classifier, ct.sym clamp,
-  extract) live in the ns with "keep in sync" markers. JFR conversion is deliberately
-  absent until that changes.
+- jvm-plugin-core is mostly NOT shared here: tools.deps does not compile Java sources
+  in a git or :local/root install, so the small ports (classifier, ct.sym clamp,
+  extract) live in the ns with "keep in sync" markers. The ONE compiled exception is
+  JfrEvidence, because binary JFR parsing is the JDK reader's job and not
+  hand-portable: build.clj copies the single source out of jvm-plugin-core and javacs
+  it (--release 17) into the published jar, and lein-plugin compiles the same file
+  from a committed symlink under `java-src/`. core.clj calls it REFLECTIVELY
+  (`jfr-evidence` / `rewrite-evidence`): an (:import ...) would fail the whole ns
+  load on a source install without the class, taking the text-log flow down with it.
+  Class absent or JVM below 17 (which throws UnsupportedClassVersionError, not
+  ClassNotFoundException) degrades to text-only, and an explicit :jfr then fails
+  with the specific reason instead of forwarding a binary the CLI silently skips.
+  The whole class-load list goes through JfrEvidence.rewrite when the class is
+  present — the JVM plugins' shape — so a recording handed to :class-load-log
+  converts too, and the workdir leaf comes from the class's own WORK_DIR_NAME.
+  Tests need `clojure -T:build javac` first (the Makefile's clojure-test runs it;
+  the :test alias adds target/core-classes), and both frontends' JFR tests record
+  REAL recordings by running `java -XX:StartFlightRecording:... -version` — on some
+  JDKs every startup event carries a stack, so assertions must accept framed blocks
+  as well as bare `[class,load]` lines.
 
 ## Bazel Rules Notes
 

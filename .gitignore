@@ -13,6 +13,7 @@ lein-plugin/pom.xml
 lein-plugin/it/test-project/uika-exclude.toml
 lein-plugin/it/test-project/loads.log
 lein-plugin/it/test-project/uika-draft.toml
+lein-plugin/it/test-project/jfr-evidence/
 # Bazel convenience symlinks, if anyone runs bazel inside the ruleset itself. The
 # integration test runs in a temp copy and never creates them here.
 bazel-rules/bazel-*

@@ -18,6 +18,28 @@
   (or (not-empty (System/getenv "UIKA_VERSION")) "0.0.0-dev"))
 (def ^:private class-dir "target/classes")
 
+;; JfrEvidence only, not all of jvm-plugin-core: it is the one class core.clj cannot
+;; hand-port (binary JFR parsing belongs to the JDK's own reader), while the small
+;; UikaCli ports stay in src-core with their keep-in-sync markers.
+(def ^:private core-java-src
+  "../jvm-plugin-core/src/main/java/net/exoego/uika/plugin/core/JfrEvidence.java")
+(def ^:private core-java-dir "target/core-java")
+(def ^:private core-classes-dir "target/core-classes")
+
+(defn javac
+  "Compiles the vendored jvm-plugin-core source (JfrEvidence) into
+  target/core-classes, which the :test alias puts on the classpath and `stage`
+  copies into the jar. --release 17 is the same floor every build compiling
+  jvm-plugin-core sets, and it is the tool's floor only for JFR conversion: the
+  class loads lazily, so everything else still runs on older JVMs."
+  [_]
+  (b/copy-file {:src core-java-src
+                :target (str core-java-dir
+                             "/net/exoego/uika/plugin/core/JfrEvidence.java")})
+  (b/javac {:src-dirs [core-java-dir]
+            :class-dir core-classes-dir
+            :javac-opts ["--release" "17"]}))
+
 (defn- hex-digest [algorithm ^java.io.File file]
   (let [digest (.digest (MessageDigest/getInstance algorithm)
                         (java.nio.file.Files/readAllBytes (.toPath file)))]
@@ -45,9 +67,9 @@
     (spit pom (str/replace text #"(?m)^\s*<repositories/>\r?\n" ""))))
 
 (defn stage [_]
-  (b/delete {:path "target/classes"})
-  (b/delete {:path "target/staging-deploy"})
-  (b/delete {:path "target/javadoc-empty"})
+  (doseq [path ["target/classes" "target/staging-deploy" "target/javadoc-empty"
+                "target/sources" core-java-dir core-classes-dir]]
+    (b/delete {:path path}))
   (let [basis (-> (b/create-basis {:project "deps.edn"})
                   ;; write-pom copies non-central entries from :mvn/repos into a
                   ;; <repositories> block, and the user/root deps.edn contributes
@@ -62,7 +84,8 @@
         jar-file (str "target/" artifact "-" version ".jar")
         sources-file (str "target/" artifact "-" version "-sources.jar")
         javadoc-file (str "target/" artifact "-" version "-javadoc.jar")]
-    (b/copy-dir {:src-dirs ["src" "src-core"] :target-dir class-dir})
+    (javac nil)
+    (b/copy-dir {:src-dirs ["src" "src-core" core-classes-dir] :target-dir class-dir})
     (b/write-pom {:class-dir class-dir
                   :lib lib
                   :version version
@@ -85,10 +108,12 @@
     ;; Strip before b/jar so the copy embedded under META-INF/maven matches the
     ;; staged .pom byte for byte.
     (strip-repositories (io/file class-dir "META-INF" "maven" (namespace lib) artifact "pom.xml"))
-    ;; The jar already holds the sources (nothing is AOT-compiled), so the
-    ;; Central-required sources jar carries the same trees.
+    ;; The jar already holds the Clojure sources (nothing is AOT-compiled); the
+    ;; Central-required sources jar carries the same trees plus the vendored
+    ;; JfrEvidence.java in place of its compiled class.
     (b/jar {:class-dir class-dir :jar-file jar-file})
-    (b/jar {:class-dir class-dir :jar-file sources-file})
+    (b/copy-dir {:src-dirs ["src" "src-core" core-java-dir] :target-dir "target/sources"})
+    (b/jar {:class-dir "target/sources" :jar-file sources-file})
     (.mkdirs (io/file "target/javadoc-empty"))
     (b/jar {:class-dir "target/javadoc-empty" :jar-file javadoc-file})
     (stage-file staging-dir

@@ -4,9 +4,11 @@
   Options come from a {:uika {...}} map in project.clj: :fail-on, :exclude-files,
   :jdk-release (0 disables the API layer; a positive value also records the project as
   running on that release rather than on the probed :java-cmd JVM), :class-load-logs
-  (text format), :draft-exclude-file
-  (needs :class-load-logs, and the CLI's own error names the singular CLI flag this
-  map rejects), :cli-version, :cli-path. The CLI version defaults to this plugin's
+  (text format), :jfr (a recording or a directory of recordings mixed with text logs,
+  converted with the JDK's own JFR reader, which needs lein itself on Java 17+),
+  :draft-exclude-file
+  (needs :class-load-logs or :jfr, and the CLI's own error names the singular CLI flag
+  this map rejects), :cli-version, :cli-path. The CLI version defaults to this plugin's
   own, read from the jar's pom.properties, so one version bump updates both."
   (:require [clojure.java.io :as io]
             [exoego.uika.core :as core]
@@ -78,7 +80,7 @@
   without an explicit check a misspelling -- :class-load-log, the Clojure tool's
   singular spelling, or :exclude-file -- would silently disable the flag instead of
   failing, and the check would run on CLI defaults with nothing said."
-  #{:fail-on :exclude-files :jdk-release :class-load-logs :draft-exclude-file
+  #{:fail-on :exclude-files :jdk-release :class-load-logs :jfr :draft-exclude-file
     :cli-version :cli-path})
 
 (defn- check-options
@@ -136,7 +138,8 @@
 (defn- upgrade-check [project [before after]]
   (when-not (and before after)
     (main/abort "usage: lein uika upgrade-check <before.json> <after.json>"))
-  (let [{:keys [fail-on exclude-files jdk-release class-load-logs draft-exclude-file]
+  (let [{:keys [fail-on exclude-files jdk-release class-load-logs jfr
+                draft-exclude-file]
          :as opts} (:uika project)]
     (check-options opts)
     ;; Binary resolution sits INSIDE the try: an unsupported platform, a zip missing
@@ -152,6 +155,10 @@
         :exclude-file exclude-files
         :jdk-release jdk-release
         :class-load-log class-load-logs
+        :jfr jfr
+        ;; Conversions land under the project's own target space, like the JVM
+        ;; plugins' build/target workdirs.
+        :evidence-work-dir (io/file (:target-path project) "uika")
         :draft-exclude-file draft-exclude-file
         :jvm (project-jvm project)})
       (catch clojure.lang.ExceptionInfo e

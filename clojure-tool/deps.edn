@@ -12,7 +12,10 @@
  :aliases
  {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}}
           :ns-default build}
-  :test {:extra-paths ["test"]
+  ;; target/core-classes holds the vendored JfrEvidence compiled by
+  ;; `clojure -T:build javac` (the Makefile's clojure-test runs it first); the
+  ;; published jar carries the same class at its root.
+  :test {:extra-paths ["test" "target/core-classes"]
          :extra-deps {io.github.cognitect-labs/test-runner
                       {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
          :main-opts ["-m" "cognitect.test-runner"]}}}

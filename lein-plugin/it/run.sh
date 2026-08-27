@@ -19,6 +19,11 @@ rm -rf target
 # :class-load-logs points here. A missing path is only a warning now, but an evidence
 # set naming no class is refused when drafting, so it has to carry a load.
 printf '[class,load] example.Consumer\n[class,load] org.apache.commons.lang3.StringUtils\n' > loads.log
+# :jfr points here. A REAL recording, because only the JDK's own writer produces the
+# chunk format the converter reads; `java -version` records enough jdk.ClassLoad
+# events to convert.
+rm -rf jfr-evidence && mkdir jfr-evidence
+java "-XX:StartFlightRecording:jdk.ClassLoad#enabled=true,jdk.ClassLoad#stackTrace=true,filename=jfr-evidence/probe.jfr" -version 2>/dev/null
 COMMONS_LANG3_VERSION=3.4 lein uika dump-classpath target/before.json
 lein uika dump-classpath target/after.json
 
@@ -85,6 +90,9 @@ out="$(UIKA_CLI_PATH="$UIKA_BIN" lein uika upgrade-check target/before.json targ
 echo "$out"
 echo "$out" | grep -q "CHANGED org.apache.commons:commons-lang3 3.4 -> 3.20.0"
 echo "$out" | grep -q "scanned"
+# :jfr conversion runs plugin-side before the CLI. The event-count line proves the
+# compiled JfrEvidence loaded under lein's own JVM and read the recording.
+echo "$out" | grep -q "uika: converted jfr-evidence/probe.jfr"
 # The application class must be a reachability root, or `:fail-on "reachable"` gates
 # on nothing and every assertion above it passes with an empty classesDirs.
 if echo "$out" | grep -q "no application root matched"; then
@@ -101,6 +109,8 @@ args="$(cat target/before.json.args)"
 case "$args" in *"--fail-on reachable"*) ;; *) echo "FAIL: fail-on not forwarded: $args" >&2; exit 1;; esac
 case "$args" in *"--exclude-file uika-exclude.toml"*) ;; *) echo "FAIL: exclude-files not forwarded: $args" >&2; exit 1;; esac
 case "$args" in *"--class-load-log loads.log"*) ;; *) echo "FAIL: class-load-logs not forwarded: $args" >&2; exit 1;; esac
+case "$args" in *"--class-load-log jfr-evidence"*) ;; *) echo "FAIL: the :jfr directory was not forwarded: $args" >&2; exit 1;; esac
+case "$args" in *"jfr-class-load/jfr-1-probe.log"*) ;; *) echo "FAIL: the jfr conversion is missing from argv: $args" >&2; exit 1;; esac
 case "$args" in *"--draft-exclude-file uika-draft.toml"*) ;; *) echo "FAIL: draft-exclude-file not forwarded: $args" >&2; exit 1;; esac
 # Presence, not the exact 11: effective-jdk-release clamps to the JVM's ct.sym
 # ceiling, so a pre-12 lein JVM would legitimately send a lower number and a JRE

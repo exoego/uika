@@ -1,6 +1,7 @@
 (ns exoego.uika-test
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
+            [clojure.java.shell :as shell]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [exoego.uika :as uika]
@@ -123,3 +124,42 @@
   ;; Another lib's coordinate never masquerades as the tool's own version.
   (is (nil? (uika/version-from-libs
              {'org.clojure/clojure {:mvn/version "1.12.5"}}))))
+
+(deftest jfr-recordings-are-converted-for-the-cli
+  ;; A REAL recording, not a synthetic file: only the JDK's own writer produces the
+  ;; chunk format the converter reads. `java -version` under StartFlightRecording
+  ;; loads hundreds of JDK classes, which is plenty of jdk.ClassLoad events.
+  (let [dir (temp-dir)
+        stub (io/file dir "uika")
+        before (io/file dir "before.json")
+        after (io/file dir "after.json")
+        evidence-dir (io/file dir "evidence")
+        recording (io/file evidence-dir "probe.jfr")
+        java-bin (str (io/file (System/getProperty "java.home") "bin" "java"))]
+    (.mkdirs evidence-dir)
+    (spit stub "#!/bin/sh\necho \"$@\" > \"$3.args\"\nexit 0\n")
+    (.setExecutable stub true false)
+    (spit before "{}")
+    (spit after "{}")
+    (spit (io/file evidence-dir "loads.log") "[class,load] com.example.FromText\n")
+    (let [{:keys [exit]} (shell/sh java-bin
+                                   (str "-XX:StartFlightRecording:jdk.ClassLoad#enabled=true,"
+                                        "jdk.ClassLoad#stackTrace=true,filename=" recording)
+                                   "-version")]
+      (is (zero? (long exit))))
+    (uika/upgrade-check {:before (str before) :after (str after)
+                         :jfr (str evidence-dir)
+                         :evidence-work-dir (str (io/file dir "work"))
+                         :cli-path (str stub)})
+    (let [args (slurp (str before ".args"))
+          converted (re-find #"\S*jfr-1-probe\.log" args)]
+      ;; The directory entry stays on the command (its text log still matters) and
+      ;; the conversion is appended next to it.
+      (is (str/includes? args (str "--class-load-log " evidence-dir)))
+      (is converted)
+      ;; Which shape depends on the JDK: an event whose stack survived becomes a
+      ;; framed block, a stackless one a bare tagged line. Either proves the
+      ;; converter wrote the CLI's text format.
+      (let [text (slurp converted)]
+        (is (or (str/includes? text "Java stack when loading ")
+                (str/includes? text "[class,load] ")))))))

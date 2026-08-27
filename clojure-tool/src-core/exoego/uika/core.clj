@@ -240,6 +240,43 @@
                               " (the ct.sym in " home " has no release " target ")")))
               effective))))))
 
+(defn- jfr-evidence
+  "The compiled net.exoego.uika.plugin.core.JfrEvidence out of jvm-plugin-core, as
+  {:class c}, or {:missing why} when this frontend cannot convert recordings. Looked
+  up reflectively rather than imported: an import would fail the whole namespace
+  load on a source install that never ran javac, taking the text-log flow down with
+  it. Java 17 is the class-file floor every build compiling jvm-plugin-core guards,
+  and an older JVM answers the load with UnsupportedClassVersionError, not
+  ClassNotFoundException, so the two absences get their own messages."
+  []
+  (try {:class (Class/forName "net.exoego.uika.plugin.core.JfrEvidence")}
+       (catch ClassNotFoundException _
+         {:missing (str "the compiled JfrEvidence class is not on the classpath"
+                        " (the Maven-distributed artifact carries it; a source"
+                        " install does not)")})
+       (catch UnsupportedClassVersionError _
+         {:missing (str "JFR conversion needs a Java 17+ runtime, and this JVM is "
+                        (.feature (Runtime/version)))})))
+
+(defn- rewrite-evidence
+  "JfrEvidence.rewrite: recordings among `entries` (files, or found under directory
+  entries) are converted into `work-dir`'s workdir subdirectory and replaced by the
+  converted text paths; text entries pass through unchanged. Reflection throughout,
+  for the reason jfr-evidence gives; the workdir leaf name comes from the class's
+  own WORK_DIR_NAME so the frontends cannot drift from the JVM plugins."
+  [^Class cls entries work-dir]
+  (let [method (.getMethod cls "rewrite"
+                           (into-array Class [java.util.List java.nio.file.Path
+                                              java.util.function.Consumer]))
+        work-dir-name (str (-> cls (.getField "WORK_DIR_NAME") (.get nil)))
+        result (.invoke method nil
+                        (object-array
+                         [(mapv (fn [entry] (.toPath (io/file (str entry)))) entries)
+                          (.toPath (io/file (str work-dir) work-dir-name))
+                          (reify java.util.function.Consumer
+                            (accept [_ line] (println line)))]))]
+    (mapv str result)))
+
 (defn run-upgrade-check
   "Runs the binary and throws on a non-zero exit. Output is streamed line by line,
   not inherited: the caller may sit under a wrapper that captures stdout, the same
@@ -248,18 +285,37 @@
   Port of UikaCli.runUpgradeCheck's command building. Keep the two in sync. A flag
   added there also needs the key here and, for Leiningen, in `option-keys`."
   [binary {:keys [before after fail-on exclude-file jdk-release class-load-log
-                  draft-exclude-file jvm]}]
+                  draft-exclude-file jvm jfr evidence-work-dir]}]
   (let [jvm (or jvm (this-jvm))
         release (effective-jdk-release (or jdk-release (:feature jvm)) jvm)
         ;; Blank drops out for the reason `env` gives above, since a CI-templated
         ;; project.clj interpolating an unset input yields "" rather than nil.
         ->vec #(into [] (comp (map str) (remove str/blank?))
                      (cond (nil? %) [] (sequential? %) % :else [%]))
+        ;; :jfr values join the class-load list and the WHOLE list goes through
+        ;; JfrEvidence.rewrite, the JVM plugins' shape: a recording handed to
+        ;; :class-load-log is converted too, and a directory entry keeps its text
+        ;; logs while contributing any recordings found under it. Without the
+        ;; compiled class, text-only entries keep the old pass-through (a source
+        ;; install loses only conversion), while an explicit :jfr fails with the
+        ;; reason instead of forwarding a binary the CLI would silently skip.
+        evidence (let [entries (into (->vec class-load-log) (->vec jfr))]
+                   (if (empty? entries)
+                     entries
+                     (let [{:keys [class missing]} (jfr-evidence)]
+                       (cond
+                         class (rewrite-evidence class entries
+                                                 (or evidence-work-dir "target/uika"))
+                         (seq (->vec jfr))
+                         (throw (ex-info (str "uika: cannot convert JFR evidence: "
+                                              missing)
+                                         {:jfr jfr}))
+                         :else entries))))
         command (-> [(str binary) "upgrade-check" "--before" (str before) "--after" (str after)]
                     (into (when fail-on ["--fail-on" (name fail-on)]))
                     (into (mapcat #(vector "--exclude-file" %) (->vec exclude-file)))
                     (into (when release ["--jdk-release" (str release)]))
-                    (into (mapcat #(vector "--class-load-log" %) (->vec class-load-log)))
+                    (into (mapcat #(vector "--class-load-log" %) evidence))
                     ;; ->vec even for this single-valued flag. Its lein neighbours are
                     ;; vectors, and a bare (str ["x.toml"]) is a legal filename, so the
                     ;; draft would land in `["x.toml"]` with the run still exiting 0.

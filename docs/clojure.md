@@ -34,15 +34,38 @@ There is no module model to read a compile target from, so
 [`:jdk-release`](../README.md#build-tool-plugins) defaults to the project's
 own JVM release. Set it to override that, or to 0 to disable the API layer.
 
-Two Clojure-specific caveats. Interop calls without type hints go through
+One Clojure-specific caveat. Interop calls without type hints go through
 runtime reflection and leave no reference in the constant pool, so uika sees
 the Java dependencies on the classpath at full strength but only the
 type-hinted, AOT-compiled part of the Clojure code itself; point `:class-dir`
-at the tools.build `compile-clj` output to include it. JFR recordings are not
-converted by this tool yet; record
-[text class-load logs](../README.md#runtime-load-evidence-jfr---class-load-log)
-with `-Xlog:class+load` and pass them to `:class-load-log`, with
-`:draft-exclude-file` alongside to draft an exclude file.
+at the tools.build `compile-clj` output to include it.
+
+## Runtime load evidence (JFR)
+
+Collect by running the current, not yet upgraded build's test suite (or a
+staging soak) with
+[JFR recording class loads](../README.md#runtime-load-evidence-jfr---class-load-log).
+There is no test task to inject the flag into, so add it to your own test JVM
+invocation, the way the Maven recipe does:
+
+```console
+-XX:StartFlightRecording:jdk.ClassLoad#enabled=true,jdk.ClassLoad#stackTrace=true,filename=<dir>
+```
+
+Consume with `:jfr`, pointed at that directory or at a single recording:
+
+```console
+$ clojure -T:uika upgrade-check :before '"/tmp/before.json"' :after '"/tmp/after.json"' \
+      :jfr '"/tmp/uika-jfr"'
+```
+
+Recordings are converted with the JDK's own JFR reader before the CLI runs,
+text logs in the same directory ride along unchanged, and a recording handed
+to `:class-load-log` is converted too. Conversion needs the tool itself on
+Java 17+, the same floor the recording test JVMs already have for the flag
+syntax.
+[`:draft-exclude-file`](../README.md#runtime-load-evidence-jfr---class-load-log)
+drafts exclude rules from the same evidence.
 
 ## PR gate on GitHub Actions
 

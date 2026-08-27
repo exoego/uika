@@ -91,8 +91,12 @@
   :fail-on           never | reachable | any (CLI default when omitted)
   :exclude-file      one path or a vector of paths
   :jdk-release       JDK API release; 0 disables, default is the running JVM's
+  :jfr               runtime class-load evidence as JFR: a recording, or a directory
+                     holding recordings and text logs mixed. Recordings are converted
+                     with the JDK's own JFR reader before the CLI runs, which needs
+                     this tool on Java 17+
   :class-load-log    one path or a vector: runtime class-load evidence in the CLI's
-                     text format (JFR conversion is not implemented in this tool yet)
+                     text format (a recording given here is converted too)
   :draft-exclude-file
                      where the CLI writes draft exclude rules for symbols never
                      observed loading, which needs :class-load-log too

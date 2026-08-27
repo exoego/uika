@@ -18,5 +18,7 @@
          :exclude-files ["uika-exclude.toml"]
          ;; Paired because the CLI rejects --draft-exclude-file on its own.
          :class-load-logs ["loads.log"]
+         ;; run.sh records a real JFR recording here before the check runs.
+         :jfr "jfr-evidence"
          :draft-exclude-file "uika-draft.toml"
          :jdk-release 11})

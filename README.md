@@ -135,10 +135,7 @@ and in the PR job, after downloading the artifact into `/tmp/uika-jfr`:
       - run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json -PuikaJfr=/tmp/uika-jfr
 ```
 
-The [per-tool options](#build-tool-plugins) cover sbt, Maven, Mill and Bazel.
-The Clojure CLI tool and the Leiningen plugin read text class-load logs
-(`:class-load-log` and `:class-load-logs`) but do not convert JFR recordings
-yet, so record with `-Xlog:class+load` there.
+The [per-tool options](#build-tool-plugins) cover the other tools.
 
 ## Command reference
 

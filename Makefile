@@ -140,6 +140,7 @@ mill-clean:
 # the tool writes v2 JSON by hand instead of sharing DumpFormat, so only a run
 # against the real CLI can catch the two drifting apart.
 clojure-test: cargo-build
+	cd $(CLOJURE_TOOL_DIR) && $(CLOJURE) -T:build javac
 	cd $(CLOJURE_TOOL_DIR) && UIKA_BIN=$(abspath target/debug/uika) $(CLOJURE) -M:test
 
 clojure-clean:

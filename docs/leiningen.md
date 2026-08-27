@@ -21,8 +21,8 @@ $ lein uika upgrade-check /tmp/before.json /tmp/after.json
 The whole `:uika` map is
 [`:fail-on`](../README.md#violation-tiers-and---fail-on),
 [`:exclude-files`](../README.md#excluding-known-false-positives---exclude-file),
-`:jdk-release` (0 disables), `:class-load-logs` (text format),
-`:draft-exclude-file` (needs `:class-load-logs`), `:cli-version` and
+`:jdk-release` (0 disables), `:class-load-logs` (text format), `:jfr`,
+`:draft-exclude-file` (needs `:class-load-logs` or `:jfr`), `:cli-version` and
 `:cli-path`. Any other key is an error rather than a silent no-op, so a
 misspelling cannot quietly disable a flag. The CLI answers a lone
 `:draft-exclude-file` by naming `--class-load-log`, whose keyword form this map
@@ -33,9 +33,14 @@ downloads the CLI binary straight from Maven Central (`UIKA_CLI_URL` to
 override the URL, `:cli-path` or `UIKA_CLI_PATH` to point at a binary you
 already have and skip the download). There is no module model to read a
 compile target from, so `:jdk-release` defaults to the project's own JVM
-release. JFR recordings are not converted by this plugin yet; record
-[text class-load logs](../README.md#runtime-load-evidence-jfr---class-load-log)
-with `-Xlog:class+load` and point `:class-load-logs` at them.
+release.
+
+For [runtime load evidence](../README.md#runtime-load-evidence-jfr---class-load-log),
+collect by running the current build's tests with the JFR flag on the test JVM
+(there is no test task to inject it into, so add it by hand, the way the Maven
+recipe does), then point `:jfr` at the recording directory. Recordings are
+converted with the JDK's own JFR reader before the CLI runs, which needs lein
+itself on Java 17+; `:class-load-logs` still takes text logs alongside.
 
 The dump excludes what only development pulls in (the `:base`/`:system`/`:user`/`:dev`
 profiles, so no nREPL, and `:provided`, which an uberjar leaves out) and runs the
