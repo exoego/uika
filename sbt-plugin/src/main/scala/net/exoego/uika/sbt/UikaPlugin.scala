@@ -182,9 +182,10 @@ object UikaPlugin extends AutoPlugin {
         .distinct
         .filterNot(ownProductSet)
         .map(file => new ClasspathDump.Artifact(null, null, null, file.getAbsolutePath))
-      val runtimeFiles = (Runtime / dependencyClasspath).value
+      val runtimeEntries = (Runtime / dependencyClasspath).value
         .map(_.data.getAbsoluteFile)
-        .toSet
+        .distinct
+      val runtimeFiles = runtimeEntries.toSet
       val artifacts = update.value.configurations
         .flatMap(_.modules)
         .flatMap { module =>
@@ -198,6 +199,16 @@ object UikaPlugin extends AutoPlugin {
               )
           }
         }
+      // Unmanaged jars (lib/*.jar, unmanagedClasspath additions) have no update.value
+      // entry, so without a fallback they vanish from the dump although they are on the
+      // classpath the module runs on. Coordinate-less like the internal entries: nothing
+      // the version diff compares, but a scan target all the same. Mill guards against
+      // the same drop by subtracting only what the module itself produces.
+      val attributed = ownProductSet ++
+        (internalArtifacts ++ artifacts).map(a => file(a.file()).getAbsoluteFile)
+      val unmanagedArtifacts = runtimeEntries
+        .filterNot(attributed)
+        .map(f => new ClasspathDump.Artifact(null, null, null, f.getAbsolutePath))
       // What THIS module compiles for, in the dump next to it, so upgrade-check can scope a
       // JDK move to the modules that made it. Both axes and both compilers, for the reason
       // uikaUpgradeCheck spells out above: sbt delegates Compile to Zero and never the
@@ -216,7 +227,7 @@ object UikaPlugin extends AutoPlugin {
       new ClasspathDump.Module(
         ":" + modulePath,
         classDirs.asJava,
-        (internalArtifacts ++ artifacts).asJava,
+        (internalArtifacts ++ artifacts ++ unmanagedArtifacts).asJava,
         if (declaredOverride != null) declaredOverride
         else if (declared.isEmpty) null
         else declared.minBy(_.intValue)

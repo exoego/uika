@@ -40,6 +40,23 @@ lazy val app = (project in file("app"))
     }.taskValue
   )
 
+lazy val prepareVendoredJar = taskKey[Unit]("Writes an unmanaged jar into app/lib")
+
+// lib/ is sbt's default unmanagedBase, the everyday spelling of a vendored jar. It is on
+// the runtime classpath but has no update.value entry, which is exactly the shape that
+// used to vanish from the dump.
+prepareVendoredJar := {
+  import java.util.zip.{ZipEntry, ZipOutputStream}
+  val dir = (app / baseDirectory).value / "lib"
+  IO.createDirectory(dir)
+  val out = new ZipOutputStream(new java.io.FileOutputStream(dir / "vendored.jar"))
+  try {
+    out.putNextEntry(new ZipEntry("marker.txt"))
+    out.write("vendored".getBytes("UTF-8"))
+    out.closeEntry()
+  } finally out.close()
+}
+
 lazy val checkDump = taskKey[Unit]("Checks the generated uika dump")
 
 checkDump := {
@@ -76,6 +93,15 @@ checkDump := {
     !artifact.contains("group") &&
       roots(artifact("root").asInstanceOf[Double].toInt) + artifact("path") == coreClassesDir
   }, s"no internal-dependency entry for $coreClassesDir in $module")
+
+  // The vendored jar is not in update.value, so it can only appear through the
+  // coordinate-less fallback: nothing the version diff compares, but a scan target all
+  // the same. Without it the jar is on the classpath :app runs on and absent from the dump.
+  val vendored = ((app / baseDirectory).value / "lib" / "vendored.jar").getAbsolutePath
+  assert(artifactRefs.map(artifacts).exists { artifact =>
+    !artifact.contains("group") &&
+      roots(artifact("root").asInstanceOf[Double].toInt) + artifact("path") == vendored
+  }, s"no unmanaged-jar entry for $vendored in $module")
 
   // Each module records the release IT compiles for, so upgrade-check can scope a JDK
   // move to the modules that made it; the dump-level value is the lowest of them.
