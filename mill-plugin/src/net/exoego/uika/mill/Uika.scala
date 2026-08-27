@@ -4,6 +4,7 @@ import coursier.core as cs
 import mill.*
 import mill.api.{Discover, Evaluator, ExternalModule, SelectMode}
 import mill.javalib.{BoundDep, CoursierModule, Dep, JavaModule, TestModule}
+import mill.scalalib.ScalaModule
 import net.exoego.uika.plugin.core.{ClasspathDump, DumpFormat, JfrEvidence, UikaCli}
 
 import scala.annotation.nowarn
@@ -118,12 +119,17 @@ object Uika extends ExternalModule {
     // layer it switches on is process-wide.
     //
     // mandatoryJavacOptions as well as javacOptions, since Mill compiles with both and a
-    // trait that pins the release commonly does it there.
+    // trait that pins the release commonly does it there. The scalac list too, because a
+    // pure-Scala module has no javacOptions at all and states its target in scalacOptions
+    // (`-release` / `-java-output-version`), which declaredRelease parses. allScalacOptions
+    // rather than the two halves: mandatoryScalacOptions is protected, and the combined
+    // list is what Mill actually hands scalac.
     val jdk = UikaCli.JdkSource.current()
     val wantedRelease =
       if (jdkRelease >= 0) jdkRelease
       else {
-        val optionTasks = modules.map(_.javacOptions) ++ modules.map(_.mandatoryJavacOptions)
+        val optionTasks = modules.map(_.javacOptions) ++ modules.map(_.mandatoryJavacOptions) ++
+          modules.collect { case s: ScalaModule => s.allScalacOptions }
         val declared = ev.execute(optionTasks).values.get
           .flatMap(options => Option(UikaCli.declaredRelease(options.asJava)).map(_.intValue))
         if (declared.isEmpty) Runtime.version().feature() else declared.min
@@ -193,6 +199,13 @@ object Uika extends ExternalModule {
   ): Task[ClasspathDump.Module] = {
     val depModules = m.recursiveRunModuleDeps
     val depOutputs = Task.traverse(depModules)(_.localRunClasspath)
+    // Collected outside the body: the task macro can only lift statically known task calls,
+    // and a call scoped inside a pattern-match branch is not one.
+    val scalacOptionTasks: Seq[Task[Seq[String]]] = m match {
+      case s: ScalaModule => Seq(s.allScalacOptions)
+      case _ => Nil
+    }
+    val scalacDeclared = Task.traverse(scalacOptionTasks)(identity)
     Task.Anon {
       val ownOutput = m.localRunClasspath().map(_.path)
       val classesDirs = ownOutput.filter(os.exists)
@@ -248,8 +261,9 @@ object Uika extends ExternalModule {
 
       // What THIS module compiles for, in the dump next to it, so upgrade-check can scope a
       // JDK move to the modules that made it. mandatoryJavacOptions as well as javacOptions,
-      // for the reason upgradeCheck spells out: Mill compiles with both.
-      val declared = Seq(m.javacOptions(), m.mandatoryJavacOptions())
+      // for the reason upgradeCheck spells out: Mill compiles with both. The scalac lists
+      // too, since a pure-Scala module states its target there alone.
+      val declared = (Seq(m.javacOptions(), m.mandatoryJavacOptions()) ++ scalacDeclared())
         .flatMap(options => Option(UikaCli.declaredRelease(options.asJava)))
       new ClasspathDump.Module(
         moduleLabel(m),

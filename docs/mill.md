@@ -75,8 +75,8 @@ baseline as an artifact instead:
   [`--excludeFile`](../README.md#excluding-known-false-positives---exclude-file)
   (repeatable) are plain command-line flags, shown above.
 - [`--jdkRelease`](../README.md#build-tool-plugins) overrides the release
-  derived from `javacOptions` and `scalacOptions`. Set 0 to disable the API
-  layer.
+  derived from `javacOptions` and `scalacOptions` (their mandatory halves
+  included, since Mill compiles with both). Set 0 to disable the API layer.
 
 ## Runtime load evidence (JFR)
 
