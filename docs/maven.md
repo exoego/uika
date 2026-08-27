@@ -32,6 +32,49 @@ $ mvn uika:upgrade-check \
 A dump also refers to build outputs, and this plugin cannot build them itself.
 Run a `compile` phase in the same invocation when they should be scanned.
 
+## PR gate on GitHub Actions
+
+The three steps of the [PR gate](../README.md#pr-gate-on-github-actions-the-main-use-case)
+look like this for Maven. The baseline dump omits the `compile` phase, because
+the base branch is only there for its resolved versions:
+
+```yaml
+name: dependency binary incompatibility check
+on: pull_request
+
+jobs:
+  upgrade-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # ... You may need to setup Java/Maven here ....
+
+      - name: Dump baseline classpath (base branch)
+        id: baseline
+        continue-on-error: true
+        run: |
+          git checkout ${{ github.event.pull_request.base.sha }}
+          if mvn -q uika:dump-classpath -Duika.output=/tmp/before.json; then
+            status=0
+          else
+            status=1
+          fi
+          git checkout -
+          exit $status
+
+      - name: Dump PR classpath
+        run: mvn -q compile uika:dump-classpath -Duika.output=/tmp/after.json
+
+      - name: Check broken references
+        if: steps.baseline.outcome == 'success'
+        run: mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json
+```
+
+To keep the base-branch resolution off the PR's critical path, cache the
+baseline as an artifact instead:
+[BASELINE-CACHING.md](../BASELINE-CACHING.md).
+
 ## Knobs
 
 - [`failOn`](../README.md#violation-tiers-and---fail-on) and

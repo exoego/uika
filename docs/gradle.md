@@ -41,6 +41,45 @@ The dump task builds the module outputs by default. Pass
 [PR gate](../README.md#pr-gate-on-github-actions-the-main-use-case) uses on
 the base branch.
 
+## PR gate on GitHub Actions
+
+```yaml
+name: dependency binary incompatibility check
+on: pull_request
+
+jobs:
+  upgrade-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # ... You may need to setup Java/Gradle here ....
+
+      - name: Dump baseline classpath (base branch)
+        id: baseline
+        continue-on-error: true
+        run: |
+          git checkout ${{ github.event.pull_request.base.sha }}
+          if ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json -PuikaBuildOutputs=false; then
+            status=0
+          else
+            status=1
+          fi
+          git checkout -
+          exit $status
+
+      - name: Dump PR classpath
+        run: ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
+
+      - name: Check broken references
+        if: steps.baseline.outcome == 'success'
+        run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
+```
+
+To keep the base-branch resolution off the PR's critical path, cache the
+baseline as an artifact instead:
+[BASELINE-CACHING.md](../BASELINE-CACHING.md).
+
 ## Knobs
 
 - [`failOn`](../README.md#violation-tiers-and---fail-on) and

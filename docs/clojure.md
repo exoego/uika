@@ -37,3 +37,52 @@ converted by this tool yet; record
 [text class-load logs](../README.md#runtime-load-evidence-jfr---class-load-log)
 with `-Xlog:class+load` and pass them to `:class-load-log`, with
 `:draft-exclude-file` alongside to draft an exclude file.
+
+## PR gate on GitHub Actions
+
+The three steps of the [PR gate](../README.md#pr-gate-on-github-actions-the-main-use-case)
+look like this for the Clojure CLI. The job installs the tool first, and there
+is no switch to skip build outputs, so the two dumps differ only in the output
+path:
+
+```yaml
+name: dependency binary incompatibility check
+on: pull_request
+
+jobs:
+  upgrade-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # ... You may need to setup Java and the Clojure CLI here ....
+
+      - name: Install uika tool
+        run: |
+          clojure -Ttools install io.github.exoego/uika \
+              '{:git/tag "vVERSION_PLACEHOLDER" :deps/root "clojure-tool"}' :as uika
+
+      - name: Dump baseline classpath (base branch)
+        id: baseline
+        continue-on-error: true
+        run: |
+          git checkout ${{ github.event.pull_request.base.sha }}
+          if clojure -Tuika dump-classpath :output '"/tmp/before.json"'; then
+            status=0
+          else
+            status=1
+          fi
+          git checkout -
+          exit $status
+
+      - name: Dump PR classpath
+        run: clojure -Tuika dump-classpath :output '"/tmp/after.json"'
+
+      - name: Check broken references
+        if: steps.baseline.outcome == 'success'
+        run: clojure -Tuika upgrade-check :before '"/tmp/before.json"' :after '"/tmp/after.json"'
+```
+
+To keep the base-branch resolution off the PR's critical path, cache the
+baseline as an artifact instead:
+[BASELINE-CACHING.md](../BASELINE-CACHING.md).

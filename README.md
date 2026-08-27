@@ -71,7 +71,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # ... You may need to setup Java/Gradle/Maven/Sbt here ....
+      # ... You may need to setup Java/Gradle here ....
 
       - name: Dump baseline classpath (base branch)
         id: baseline
@@ -94,20 +94,16 @@ jobs:
         run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
 ```
 
-The other tools use the same three steps with different commands.
-
-| Tool | Baseline dump | PR dump | Check |
-| --- | --- | --- | --- |
-| sbt | `sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/before.json` | `sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json` | `sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"` |
-| Maven | `mvn -q uika:dump-classpath -Duika.output=/tmp/before.json` | `mvn -q compile uika:dump-classpath -Duika.output=/tmp/after.json` | `mvn uika:upgrade-check -Duika.before=/tmp/before.json -Duika.after=/tmp/after.json` |
-| Mill | `./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/before.json` | `./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/after.json` | `./mill net.exoego.uika.mill.Uika/upgradeCheck --before /tmp/before.json --after /tmp/after.json` |
-| Clojure CLI | `clojure -Tuika dump-classpath :output '"/tmp/before.json"'` | `clojure -Tuika dump-classpath :output '"/tmp/after.json"'` | `clojure -Tuika upgrade-check :before '"/tmp/before.json"' :after '"/tmp/after.json"'` |
-| Leiningen | `lein uika dump-classpath /tmp/before.json` | `lein uika dump-classpath /tmp/after.json` | `lein uika upgrade-check /tmp/before.json /tmp/after.json` |
-| Bazel | `bazel run //:uika_resolution_dump -- --output /tmp/before.json --materialize /tmp/uika-baseline` | `bazel run //:uika_dump -- --output /tmp/after.json` | `bazel run //:uika_upgrade_check -- --before /tmp/before.json --after /tmp/after.json` |
-
-The baseline dump skips the build outputs where the tool can (the base branch is
-only there for its resolved versions). Mill, the Clojure tool and Leiningen have
-no such switch, so their two dump rows differ only in the output path.
+The other tools use the same three steps with different commands, and each
+tool's page carries this workflow adapted to it:
+[sbt](docs/sbt.md#pr-gate-on-github-actions),
+[Maven](docs/maven.md#pr-gate-on-github-actions),
+[Mill](docs/mill.md#pr-gate-on-github-actions),
+[Clojure CLI](docs/clojure.md#pr-gate-on-github-actions),
+[Leiningen](docs/leiningen.md#pr-gate-on-github-actions) and
+[Bazel](docs/bazel.md#pr-gate-on-github-actions). The baseline dump skips the
+build outputs where the tool can, because the base branch is only there for
+its resolved versions.
 
 To keep the base-branch resolution off the PR's critical path, dump the
 baseline once per push instead and cache it as an artifact keyed by SHA:

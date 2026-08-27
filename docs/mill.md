@@ -26,6 +26,51 @@ $ ./mill net.exoego.uika.mill.Uika/upgradeCheck \
 The dump command compiles as a side effect, so the PR-side dump needs no extra
 step.
 
+## PR gate on GitHub Actions
+
+The three steps of the [PR gate](../README.md#pr-gate-on-github-actions-the-main-use-case)
+look like this for Mill. There is no switch to skip build outputs, so the two
+dumps differ only in the output path:
+
+```yaml
+name: dependency binary incompatibility check
+on: pull_request
+
+jobs:
+  upgrade-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # ... You may need to setup Java/Mill here ....
+
+      - name: Dump baseline classpath (base branch)
+        id: baseline
+        continue-on-error: true
+        run: |
+          git checkout ${{ github.event.pull_request.base.sha }}
+          if ./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/before.json; then
+            status=0
+          else
+            status=1
+          fi
+          git checkout -
+          exit $status
+
+      - name: Dump PR classpath
+        run: ./mill net.exoego.uika.mill.Uika/dumpClasspath --output /tmp/after.json
+
+      - name: Check broken references
+        if: steps.baseline.outcome == 'success'
+        run: >
+          ./mill net.exoego.uika.mill.Uika/upgradeCheck
+          --before /tmp/before.json --after /tmp/after.json
+```
+
+To keep the base-branch resolution off the PR's critical path, cache the
+baseline as an artifact instead:
+[BASELINE-CACHING.md](../BASELINE-CACHING.md).
+
 ## Knobs
 
 - [`--failOn`](../README.md#violation-tiers-and---fail-on) and

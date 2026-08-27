@@ -61,6 +61,54 @@ release they compile for, so it builds nothing.
 Each entry in `targets` becomes one module of the dump, named by its label, so
 `upgrade-check` checks each against its own resolution.
 
+## PR gate on GitHub Actions
+
+The three steps of the [PR gate](../README.md#pr-gate-on-github-actions-the-main-use-case)
+look like this for Bazel. The baseline uses `uika_resolution_dump`, which only
+feeds the version diff and so resolves without building anything, and
+`--materialize` hard-links the baseline JARs out of `bazel-out`, which keeps
+them readable however the tree moves on (see
+[What a dump names](#what-a-dump-names)):
+
+```yaml
+name: dependency binary incompatibility check
+on: pull_request
+
+jobs:
+  upgrade-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # ... You may need to setup Bazel here ....
+
+      - name: Dump baseline classpath (base branch)
+        id: baseline
+        continue-on-error: true
+        run: |
+          git checkout ${{ github.event.pull_request.base.sha }}
+          if bazel run //:uika_resolution_dump -- --output /tmp/before.json --materialize /tmp/uika-baseline; then
+            status=0
+          else
+            status=1
+          fi
+          git checkout -
+          exit $status
+
+      - name: Dump PR classpath
+        run: bazel run //:uika_dump -- --output /tmp/after.json
+
+      - name: Check broken references
+        if: steps.baseline.outcome == 'success'
+        run: >
+          bazel run //:uika_upgrade_check --
+          --before /tmp/before.json --after /tmp/after.json
+```
+
+To keep the base-branch resolution off the PR's critical path, cache the
+baseline as an artifact instead:
+[BASELINE-CACHING.md](../BASELINE-CACHING.md).
+
 ## Runtime load evidence (JFR)
 
 Collect with `bazel test`, check with `--jfr <dir>`. `--jvmopt` already

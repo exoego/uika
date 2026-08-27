@@ -45,3 +45,46 @@ project's `:prep-tasks` first, so both `:aot` classes and `:java-source-paths` o
 are scanned. The [reflection caveat](clojure.md) of the Clojure code itself applies
 here too; `:class-dir` does not, because the dump takes its class directories
 from `:compile-path` and the project's own source and resource paths.
+
+## PR gate on GitHub Actions
+
+The three steps of the [PR gate](../README.md#pr-gate-on-github-actions-the-main-use-case)
+look like this for Leiningen. There is no switch to skip build outputs, so the
+two dumps differ only in the output path:
+
+```yaml
+name: dependency binary incompatibility check
+on: pull_request
+
+jobs:
+  upgrade-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # ... You may need to setup Java/Leiningen here ....
+
+      - name: Dump baseline classpath (base branch)
+        id: baseline
+        continue-on-error: true
+        run: |
+          git checkout ${{ github.event.pull_request.base.sha }}
+          if lein uika dump-classpath /tmp/before.json; then
+            status=0
+          else
+            status=1
+          fi
+          git checkout -
+          exit $status
+
+      - name: Dump PR classpath
+        run: lein uika dump-classpath /tmp/after.json
+
+      - name: Check broken references
+        if: steps.baseline.outcome == 'success'
+        run: lein uika upgrade-check /tmp/before.json /tmp/after.json
+```
+
+To keep the base-branch resolution off the PR's critical path, cache the
+baseline as an artifact instead:
+[BASELINE-CACHING.md](../BASELINE-CACHING.md).
