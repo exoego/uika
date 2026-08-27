@@ -109,12 +109,17 @@
       (is (str/includes? (slurp (str before ".args"))
                          (str "--draft-exclude-file " dir "/draft.toml")))
       (uika/upgrade-check {:before (str before) :after (str after)
+                           :fail-on ""
                            :class-load-log ""
                            :draft-exclude-file ""
                            :cli-path (str stub)})
       (let [args (slurp (str before ".args"))]
         (is (not (str/includes? args "--draft-exclude-file")))
-        (is (not (str/includes? args "--class-load-log")))))
+        (is (not (str/includes? args "--class-load-log")))
+        ;; The Java side has guarded --fail-on with isBlank since it was written. A
+        ;; CI-templated "" must run on the CLI default here too, not reach clap as
+        ;; --fail-on "" and die with a usage error at exit 2.
+        (is (not (str/includes? args "--fail-on")))))
     (testing "a CLI that found violations fails the command"
       (let [failing-stub (io/file dir "uika-fail")]
         (spit failing-stub "#!/bin/sh\nexit 1\n")
