@@ -312,7 +312,11 @@
                                          {:jfr jfr}))
                          :else entries))))
         command (-> [(str binary) "upgrade-check" "--before" (str before) "--after" (str after)]
-                    (into (when fail-on ["--fail-on" (name fail-on)]))
+                    ;; Blank drops out like the Java side's isBlank guard: a CI-templated
+                    ;; :fail-on "" must run on the CLI default, not hand clap --fail-on ""
+                    ;; and die with a usage error at exit 2.
+                    (into (let [value (some-> fail-on name)]
+                            (when-not (str/blank? value) ["--fail-on" value])))
                     (into (mapcat #(vector "--exclude-file" %) (->vec exclude-file)))
                     (into (when release ["--jdk-release" (str release)]))
                     (into (mapcat #(vector "--class-load-log" %) evidence))
