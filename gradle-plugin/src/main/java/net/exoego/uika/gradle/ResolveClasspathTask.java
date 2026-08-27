@@ -157,8 +157,11 @@ public abstract class ResolveClasspathTask extends DefaultTask {
                 if (!new File(artifact.file()).exists() && artifact.group() != null) {
                     File local = resolvedByKey.get(keyOf(artifact));
                     if (local != null) {
+                        // The 5-arg ctor: a Maven-produced dump writes coordinates AND the
+                        // project key on reactor dependencies, and dropping it here would
+                        // put those coordinates back into the version diff as Removed.
                         artifact = new Artifact(artifact.group(), artifact.name(),
-                                artifact.version(), local.getAbsolutePath());
+                                artifact.version(), local.getAbsolutePath(), artifact.project());
                         rewritten++;
                     } else {
                         unresolved++;

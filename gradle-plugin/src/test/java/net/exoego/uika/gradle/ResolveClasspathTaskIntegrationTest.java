@@ -66,6 +66,35 @@ final class ResolveClasspathTaskIntegrationTest {
         assertRewrittenToLocalJars(output, "stub-lib-1.0.0.jar", "stub-lib2-1.0.0.jar");
     }
 
+    /// A Maven-produced dump writes coordinates AND the project key on reactor
+    /// dependencies, and the CLI excludes project-attributed coordinates from the version
+    /// diff. Rehydration must carry the key through a rewrite, or a rehydrated reactor
+    /// dependency diffs as Removed and floods the report.
+    @Test
+    void keepsProjectAttributionOnRewrittenArtifacts() throws Exception {
+        publishStubJar("stub-lib");
+        writeProject();
+        Path input = write(projectDir.resolve("before.json"), """
+                {"modules":[{"module":":","classesDirs":[],"artifacts":[
+                  {"group":"example","name":"stub-lib","version":"1.0.0",
+                   "file":"/nonexistent/stub-lib-1.0.0.jar","project":":lib"}]}]}
+                """);
+        Path output = projectDir.resolve("before-local.json");
+
+        assertTaskSuccess(run(input, output).build());
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> artifacts = (List<Map<String, Object>>) doc.get("artifacts");
+        Map<String, Object> rewritten = artifacts.stream()
+                .filter(artifact -> "stub-lib".equals(artifact.get("name")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("stub-lib missing from " + artifacts));
+        assertEquals(":lib", rewritten.get("project"),
+                "the project attribution was dropped by the rewrite");
+    }
+
     /// The input dump must exist before the build starts. When a task produces it
     /// mid-build, the plugin saw nothing at configuration time, so the action must fail
     /// with the explicit message instead of silently skipping the fetch.
