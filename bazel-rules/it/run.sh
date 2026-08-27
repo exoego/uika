@@ -183,6 +183,27 @@ fi
 
 python3 "$RULES/it/assert_jfr.py" "$OUT/jfr-report.txt"
 
+# A recording handed to --classLoadLog must be converted exactly like a --jfr value:
+# the CLI is JVM-free and skips .jfr names silently, so forwarding it raw loses the
+# evidence with no symptom at all.
+rec="$(find "$JFR" -name '*.jfr' | head -1)"
+set +e
+"$BAZEL" run //:check -- --before "$OUT/before.json" --after "$OUT/after.json" \
+  --classLoadLog "$rec" --failOn reachable > "$OUT/cll-jfr-report.txt" 2>&1
+cll_status=$?
+set -e
+if ! grep -q "uika: converted" "$OUT/cll-jfr-report.txt"; then
+  echo "a recording passed via --classLoadLog was not converted:" >&2
+  cat "$OUT/cll-jfr-report.txt" >&2
+  exit 1
+fi
+if [ "$cll_status" -ne 1 ]; then
+  echo "expected exit 1 from --failOn reachable with --classLoadLog evidence, got $cll_status" >&2
+  cat "$OUT/cll-jfr-report.txt" >&2
+  exit 1
+fi
+python3 "$RULES/it/assert_jfr.py" "$OUT/cll-jfr-report.txt"
+
 echo "--- sweep over //... with the aspect"
 BIN=$("$BAZEL" info bazel-bin)
 # Fragments live in bazel-out and nothing prunes them, so a target deleted since the last
