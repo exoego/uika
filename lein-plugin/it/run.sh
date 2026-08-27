@@ -66,6 +66,32 @@ if [ -n "${UIKA_IT_ALT_JAVA:-}" ] && [ -x "${UIKA_IT_ALT_JAVA:-}" ]; then
   echo "project-JVM probe: jdkRelease $got matches :java-cmd"
 fi
 
+# A JDK 8 :java-cmd says java.specification.version = 1.8, the one spelling a bare
+# Long/parseLong cannot read. The shim fakes only the probe output and hands anything
+# else to the real java, so the dump must record 8. A nil probe would fall back to
+# lein's own JVM and record the WRITING JVM's release, the issue #128 shape.
+shim="$here/test-project/target/fake-jdk8-java"
+real_java="$(command -v java)"
+cat > "$shim" <<SHIM
+#!/bin/sh
+case "\$*" in
+  *"-XshowSettings:properties"*)
+    echo "    java.home = /opt/fake-jdk8" >&2
+    echo "    java.specification.version = 1.8" >&2
+    exit 0 ;;
+esac
+exec "$real_java" "\$@"
+SHIM
+chmod +x "$shim"
+lein update-in :uika dissoc :jdk-release \
+  -- update-in : assoc :java-cmd "\"$shim\"" \
+  -- uika dump-classpath target/jdk8.json >/dev/null
+got="$(tr -d ' ' < target/jdk8.json | sed -n 's/.*"jdkRelease":\([0-9]*\).*/\1/p')"
+if [ "$got" != "8" ]; then
+  echo "FAIL: a JDK 8 :java-cmd recorded jdkRelease $got, not 8" >&2; exit 1
+fi
+echo "JDK 8 probe: jdkRelease 8"
+
 # :provided is compile-scope: the fixture's Java source imports javax.servlet, so
 # javac only succeeds because prep runs on the FULL project. Prepping the unmerged
 # one (which drops :provided) fails with "package javax.servlet does not exist".

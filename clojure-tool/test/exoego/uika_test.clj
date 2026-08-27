@@ -65,6 +65,15 @@
     (is (nil? (uika.core/parse-jvm-properties
                "java.home = /x\njava.specification.version = twenty\n")))))
 
+(deftest jvm-properties-parse-the-jdk8-spelling
+  ;; JDK 8 says java.specification.version = 1.8, which a bare Long/parseLong cannot
+  ;; read. A nil probe makes lein fall back to its OWN JVM and the dump then records the
+  ;; writing JVM's release -- the issue #128 mis-attribution the probe exists to prevent.
+  ;; 8 is inside the supported range (MIN_RELEASE is 8), so the spelling must parse.
+  (is (= {:home "/opt/jdk8" :feature 8}
+         (uika.core/parse-jvm-properties
+          "java.home = /opt/jdk8\njava.specification.version = 1.8\n"))))
+
 (deftest upgrade-check-forwards-flags-and-fails-on-violations
   (let [dir (temp-dir)
         stub (io/file dir "uika")
