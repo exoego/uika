@@ -87,6 +87,21 @@ checkJdkReleasePassed := {
     sys.error(s"uikaJdkRelease setting was not forwarded to the CLI: $args")
 }
 
+lazy val checkRootScopedSettingsPassed = taskKey[Unit]("Asserts root-project-scoped uikaFailOn and uikaExcludeFiles reached the CLI")
+
+// The documented shell form `set uikaFailOn := ...` scopes to the root project, not
+// ThisBuild, and the ThisBuild values above stay set underneath. So these assertions can
+// only pass if the check reads the keys through LocalRootProject, where root-project scope
+// wins over the ThisBuild defaults by delegation.
+checkRootScopedSettingsPassed := {
+  val args = IO.read(baseDirectory.value / "before.json.args")
+  if (!args.contains("--fail-on never"))
+    sys.error(s"a root-project-scoped uikaFailOn was not forwarded to the CLI: $args")
+  val expected = (baseDirectory.value / "uika-exclude2.toml").getAbsolutePath
+  if (!args.contains(s"--exclude-file $expected"))
+    sys.error(s"a root-project-scoped uikaExcludeFiles was not forwarded to the CLI: $args")
+}
+
 lazy val checkCliOutputLogged = taskKey[Unit]("Asserts the stub CLI's output went through the task logger")
 
 // log.info from uikaUpgradeCheck is persisted to the task's streams file. Inherited stdio
