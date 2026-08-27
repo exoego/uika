@@ -297,12 +297,15 @@ Same rule as the Mill section: point-of-use comments and the tests in
   exoego.uika`, never `-Ttools install` from Maven: tools.deps has no usage lookup for
   :mvn coordinates (`ext/coord-usage :mvn` is TBD upstream, checked through 0.31.1642
   and the CLI-bundled copy), so a Maven-installed tool needs every call
-  ns-qualified. `:tools/usage` in deps.edn covers git/:local-root `-Ttools` installs;
-  it was missing before the Maven switch, so the unqualified call the docs showed had
-  never actually worked. The CLI version default comes from the tool's own coordinate
-  in `clojure.java.basis/current-basis` (`version-from-libs`): :mvn/version in the
-  alias flow, else the repo `:git/tag`. A `:local/root` install has neither, hence
-  `:cli-version` / `UIKA_CLI_VERSION`.
+  ns-qualified. `:tools/usage` in deps.edn is for DEVELOPMENT `:local/root` (or git)
+  `-Ttools` installs, so manual testing matches the documented UX; it was missing
+  before the Maven switch, so the unqualified call the docs showed had never actually
+  worked. The CLI version default comes from the tool's own :mvn/version in
+  `clojure.java.basis/current-basis` (`version-from-libs`), so the alias's one
+  coordinate pins tool and CLI together. Git and :local/root installs are deliberately
+  UNSUPPORTED for version derivation (the tag branch was removed with zero released
+  users); they fall back to `:cli-version` / `UIKA_CLI_VERSION` with the usage hint
+  naming the former.
 - build.clj strips the empty `<repositories/>` element write-pom leaves behind even
   with :mvn/repos dissoc'd from the basis (PomChecker rejects the element's presence,
   the same rule lein-stage works around), and throws on a POPULATED block so a

@@ -4,9 +4,10 @@
         ;; with what `clojure -M`/`-X` actually puts on the classpath.
         org.clojure/tools.deps {:mvn/version "0.31.1642"}
         org.clojure/data.json {:mvn/version "2.5.2"}}
- ;; For a `-Ttools` install from git or :local/root. The Maven flow does not read
- ;; this: tools.deps has no usage lookup for :mvn coordinates (coord-usage :mvn is
- ;; TBD upstream), which is why docs/clojure.md documents a deps.edn alias carrying
+ ;; For a development `-Ttools install` from :local/root (or git), so unqualified
+ ;; calls behave like the documented alias flow. The Maven flow does not read this:
+ ;; tools.deps has no usage lookup for :mvn coordinates (coord-usage :mvn is TBD
+ ;; upstream), which is why docs/clojure.md documents a deps.edn alias carrying
  ;; :ns-default itself instead.
  :tools/usage {:ns-default exoego.uika}
  :aliases

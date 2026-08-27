@@ -5,13 +5,11 @@
   deps.edn alias that carries :ns-default itself, because tools.deps resolves no
   usage data for :mvn coordinates (coord-usage :mvn is TBD upstream), so a
   `-Ttools`-installed Maven tool would need every function call qualified. The
-  tool's own coordinate in the runtime basis names the matching uika-cli release:
-  :mvn/version from the alias flow, or the repo :git/tag when installed with
-  `-Ttools` from git. Everything not specific to tools.deps lives in
-  exoego.uika.core, shared with the Leiningen plugin."
+  tool's own :mvn/version in the runtime basis names the matching uika-cli
+  release, so the alias pins both. Everything not specific to tools.deps lives
+  in exoego.uika.core, shared with the Leiningen plugin."
   (:require [clojure.java.basis :as basis]
             [clojure.java.io :as io]
-            [clojure.string :as str]
             [clojure.tools.deps :as deps]
             [clojure.tools.deps.util.dir :as deps-dir]
             [exoego.uika.core :as core]))
@@ -68,16 +66,14 @@
     (str out)))
 
 (defn version-from-libs
-  "The version this tool was resolved with, out of a basis :libs map. The Maven
-  coordinate is authoritative (the deps.edn alias flow); a git install instead
-  carries the repo release tag, whose v prefix strips to the uika-cli version."
+  "The version this tool was resolved with, out of a basis :libs map: its own
+  Maven coordinate, the deps.edn alias flow the docs describe. A git or
+  :local/root install carries no such coordinate and falls back to
+  :cli-version / UIKA_CLI_VERSION, with the resolve-binary usage hint naming
+  the former."
   [libs]
-  (some (fn [[lib {:git/keys [tag] :mvn/keys [version]}]]
-          (cond
-            (and version (= lib 'net.exoego.uika/clojure-uika)) version
-            (and tag (str/starts-with? (str lib) "io.github.exoego/uika"))
-            (cond-> tag (str/starts-with? tag "v") (subs 1))
-            :else nil))
+  (some (fn [[lib {:mvn/keys [version]}]]
+          (when (= lib 'net.exoego.uika/clojure-uika) version))
         libs))
 
 (defn- own-version
@@ -101,8 +97,9 @@
                      where the CLI writes draft exclude rules for symbols never
                      observed loading, which needs :class-load-log too
   :cli-version       uika-cli version; defaults to this tool's own version, read
-                     from its coordinate in the runtime basis (UIKA_CLI_VERSION is
-                     consulted in between)
+                     from its Maven coordinate in the runtime basis
+                     (UIKA_CLI_VERSION is consulted in between, and a source
+                     install has no coordinate, so it needs one of the two)
   :cli-path          existing uika binary, skipping the download entirely
                      (UIKA_CLI_PATH does the same from the environment)"
   [{:keys [before after] :as args}]
