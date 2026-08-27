@@ -3,6 +3,7 @@ package net.exoego.uika.mill
 import mill.*
 import mill.api.{Discover, Evaluator, ExecResult}
 import mill.javalib.*
+import mill.scalalib.ScalaModule
 import mill.testkit.{TestRootModule, UnitTester}
 import net.exoego.uika.plugin.core.UikaCli
 import utest.*
@@ -50,6 +51,27 @@ object UikaTests extends TestSuite {
     object testJvm extends JavaModule {
       object test extends JavaTests, UikaTestModule {
         override def testFramework = "com.novocode.junit.JUnitFramework"
+      }
+    }
+    lazy val millDiscover: Discover = Discover[this.type]
+  }
+
+  object mixedLangBuild extends TestRootModule {
+    // A pure-Scala module has no javacOptions to read: its release pin lives in
+    // scalacOptions alone, and it declares the LOWER one here so the derived flag can only
+    // come out 11 if that spelling is actually read. The plugin's own Scala version, so the
+    // compiler is already in the cache mill-test warmed by building the plugin itself.
+    object scalamod extends ScalaModule {
+      override def scalaVersion = "3.8.2"
+      override def scalacOptions = Seq("-release", "11")
+      override def repositories = Task {
+        super.repositories() ++ Task.env.get("UIKA_TEST_REPO").toSeq
+      }
+    }
+    object javamod extends JavaModule {
+      override def javacOptions = Seq("--release", "17")
+      override def repositories = Task {
+        super.repositories() ++ Task.env.get("UIKA_TEST_REPO").toSeq
       }
     }
     lazy val millDiscover: Discover = Discover[this.type]
@@ -264,6 +286,48 @@ object UikaTests extends TestSuite {
         val json = ujson.read(os.read(out))
         assert(json("jdkRelease").num.toInt == 21)
         assert(json("modules").arr.forall(_.obj.get("jdkRelease").map(_.num.toInt).contains(21)))
+      }
+    }
+
+    test("jdk-release derivation reads a Scala module's scalacOptions") {
+      // sbt reads the scalac option lists and docs/mill.md promises the same, so a pure-Scala
+      // module pinning `-release` must reach the flag. Over-claiming is the silent direction:
+      // without this the minimum came from the Java siblings or the build JVM.
+      val repo = os.temp.dir(prefix = "uika-stub-repo")
+      publishStubCli(repo, "9.9.9", "#!/bin/sh\necho \"$@\" > \"$3.args\"\nexit 0\n")
+      Using.resource(UnitTester(
+        mixedLangBuild,
+        null,
+        env = systemEnv + ("UIKA_TEST_REPO" -> repo.toNIO.toUri.toASCIIString)
+      )) { tester =>
+        val before = mixedLangBuild.moduleDir / "before.json"
+        val after = mixedLangBuild.moduleDir / "after.json"
+        os.write.over(before, "{}", createFolders = true)
+        os.write.over(after, "{}")
+
+        value(tester(Uika.upgradeCheck(
+          tester.evaluator, before.toString, after.toString, cliVersion = "9.9.9")))
+
+        val args = os.read(os.Path(s"$before.args"))
+        assert(args.contains("--jdk-release 11"))
+      }
+    }
+
+    test("the dump records a Scala module's scalacOptions release") {
+      Using.resource(UnitTester(mixedLangBuild, null, env = systemEnv)) { tester =>
+        val out = os.Path(value(tester(Uika.dumpClasspath(tester.evaluator))))
+        val json = ujson.read(os.read(out))
+        def release(module: String): Option[Int] =
+          json("modules").arr
+            .find(_("module").str == module)
+            .get
+            .obj
+            .get("jdkRelease")
+            .map(_.num.toInt)
+
+        assert(release(":scalamod").contains(11))
+        assert(release(":javamod").contains(17))
+        assert(json("jdkRelease").num.toInt == 11)
       }
     }
 
