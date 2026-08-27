@@ -1,4 +1,4 @@
-# Bazel rules (`bazel-rules/`)
+# [Bazel rules](../bazel-rules/)
 
 One of uika's [build-tool integrations](../README.md#build-tool-plugins).
 Bazel 7 or newer, with bzlmod. The module comes from the GitHub release rather

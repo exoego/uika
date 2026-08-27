@@ -1,4 +1,4 @@
-# Clojure CLI tool (`clojure-tool/`)
+# [Clojure CLI tool](../clojure-tool/)
 
 One of uika's [build-tool integrations](../README.md#build-tool-plugins).
 The tool itself is distributed as a git dependency, so it adds nothing to
