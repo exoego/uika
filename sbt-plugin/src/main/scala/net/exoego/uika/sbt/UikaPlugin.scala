@@ -20,7 +20,7 @@ object UikaPlugin extends AutoPlugin {
     val uikaFailOn = settingKey[String]("When uikaUpgradeCheck fails the build: never, reachable, or any (default)")
     val uikaExcludeFiles = settingKey[Seq[File]]("TOML files of known false positives to suppress, passed as repeated --exclude-file")
     val uikaJdkRelease = settingKey[Int]("JDK API release for --jdk-release, and the release the dump records the application as running on (0 disables the layer but leaves the dump derived; a negative value, the default, derives the lowest release any subproject compiles for from its javacOptions and scalacOptions, else the build JVM's, clamped to what its ct.sym serves)")
-    val uikaJfr = settingKey[Option[File]]("JFR class-load evidence location: a directory makes forked Test JVMs record jdk.ClassLoad there (pid-unique file names; needs Test/fork := true and a JDK 17+ test JVM) and uikaUpgradeCheck converts and reads it back; a .jfr file is consumed only. Set it bare in build.sbt or at ThisBuild; a per-subproject value reaches only that project's tests, not the check")
+    val uikaJfr = settingKey[Option[File]]("JFR class-load evidence location: a directory makes forked Test JVMs record jdk.ClassLoad there (pid-unique file names; needs Test/fork := true and a JDK 17+ test JVM) and uikaUpgradeCheck converts and reads it back; a .jfr file is consumed only. Set it bare in build.sbt or at ThisBuild; either reaches every project's forked tests and the check. A per-subproject value overrides where that project's tests record, and never reaches the check")
     val uikaDraftExcludeFile = settingKey[Option[File]]("File for uikaUpgradeCheck to write draft exclude rules to (--draft-exclude-file); only meaningful with uikaJfr. Set it bare in build.sbt or at ThisBuild")
     val uikaUpgradeCheck = inputKey[Unit]("Runs uika upgrade-check: uikaUpgradeCheck <before.json> <after.json>")
   }
@@ -141,7 +141,13 @@ object UikaPlugin extends AutoPlugin {
     // aborting forks whose per-subproject directory does not exist.
     Test / javaOptions ++= {
       val log = sLog.value
-      uikaJfr.value match {
+      // The bare read resolves this subproject and ThisBuild only, while a bare
+      // `uikaJfr := Some(...)` in build.sbt is root-project-scoped -- exactly the value the
+      // check side reads through LocalRootProject. Without the fallback that spelling
+      // recorded only the root project's tests while the check still passed
+      // --class-load-log, quietly feeding it near-empty evidence. The per-subproject read
+      // stays first so a subproject can still override where its own tests record.
+      uikaJfr.value.orElse((LocalRootProject / uikaJfr).value) match {
         // A .jfr value is consumption-only: test JVMs cannot record into an existing
         // recording, so injection is skipped for it. The truth table (a directory named
         // logs.jfr is still a directory and keeps injection) is shared with the Gradle
