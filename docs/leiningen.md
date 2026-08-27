@@ -31,9 +31,9 @@ rejects as unknown.
 Leiningen's resolver does not handle a zip-packaged artifact, so the plugin
 downloads the CLI binary straight from Maven Central (`UIKA_CLI_URL` to
 override the URL, `:cli-path` or `UIKA_CLI_PATH` to point at a binary you
-already have and skip the download). There is no module model to read a
-compile target from, so `:jdk-release` defaults to the project's own JVM
-release.
+already have and skip the download). `:jdk-release` defaults to the release
+`:javac-options` pins (`--release`, or `-target`); a project declaring neither
+falls back to the JVM the project's own code runs on (`:java-cmd`, probed).
 
 For [runtime load evidence](../README.md#runtime-load-evidence-jfr---class-load-log),
 collect by running the current build's tests with the JFR flag on the test JVM
