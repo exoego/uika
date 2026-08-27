@@ -1,7 +1,8 @@
 # Notes for Agents
 
 README.md is the source of truth for purpose, workflows, command reference,
-build-tool integrations, publishing, and the high-level design. This file holds
+publishing, and the high-level design. Per-tool build integration pages live
+under `docs/`, one per tool, linked from the README. This file holds
 what only agents need: invariants, internal semantics, and lessons that must
 not be relearned by experiment.
 
