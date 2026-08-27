@@ -90,6 +90,19 @@
   (is (nil? (uika.core/declared-release ["--release" "7"])))
   (is (nil? (uika.core/declared-release ["-Xlint:all"]))))
 
+(deftest jfr-evidence-is-compiled-to-the-jdk17-floor
+  ;; Guards build.clj's ["--release" "17"]: without it javac targets whatever JDK runs
+  ;; the build and the published class dies with UnsupportedClassVersionError on a 17
+  ;; runtime — which jfr-evidence would then MIS-report as "needs a Java 17+ runtime"
+  ;; on a JVM that already is one. Mill and sbt carry the same guard.
+  (let [resource (io/resource "net/exoego/uika/plugin/core/JfrEvidence.class")]
+    (is (some? resource) "run clojure -T:build javac first (make clojure-test does)")
+    (with-open [in (io/input-stream resource)]
+      (let [header (.readNBytes in 8)
+            major (+ (* 256 (bit-and (aget header 6) 0xff))
+                     (bit-and (aget header 7) 0xff))]
+        (is (<= major 61) (str "class-file major " major " (61 = JDK 17)"))))))
+
 (deftest upgrade-check-forwards-flags-and-fails-on-violations
   (let [dir (temp-dir)
         stub (io/file dir "uika")

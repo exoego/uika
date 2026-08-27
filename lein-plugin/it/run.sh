@@ -13,6 +13,17 @@ unset UIKA_VERSION
 
 (cd "$here/.." && lein install </dev/null)
 
+# The 17 floor must hold on the compiled JfrEvidence (project.clj's --release 17), or a
+# 17 runtime dies with UnsupportedClassVersionError, which the reflective loader then
+# mis-reports as "needs a Java 17+ runtime". Mill and sbt carry the same guard.
+jar="$HOME/.m2/repository/net/exoego/uika/lein-uika/0.0.0-dev/lein-uika-0.0.0-dev.jar"
+major="$(unzip -p "$jar" net/exoego/uika/plugin/core/JfrEvidence.class \
+  | od -An -j6 -N2 -tu1 | awk '{print $1 * 256 + $2}')"
+if [ "$major" -gt 61 ]; then
+  echo "FAIL: JfrEvidence.class has class-file major $major (61 = JDK 17)" >&2; exit 1
+fi
+echo "class-file floor: major $major"
+
 cd "$here/test-project"
 rm -rf target
 : > uika-exclude.toml
