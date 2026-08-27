@@ -33,3 +33,15 @@ assert libModule != null
 assert libModule.classesDirs.any { dir ->
     json.roots[dir.root] + dir.path == new File(basedir, "lib/target/classes").absolutePath
 }
+
+// The -pl invocation: Maven resolved dependencies for the selected project only, so an
+// unselected module in the dump could only carry zero artifacts. The dump must therefore
+// hold the selected module alone, not the whole reactor.
+def selectedFile = [new File(basedir, "target/uika/selected.json"),
+                    new File(basedir, "lib/target/uika/selected.json")].find { it.isFile() }
+assert selectedFile != null
+def selected = new JsonSlurper().parse(selectedFile)
+assert selected.modules.collect { it.module } == [":dummy-maven-lib"]
+assert selected.modules[0].classesDirs.any { dir ->
+    selected.roots[dir.root] + dir.path == new File(basedir, "lib/target/classes").absolutePath
+}
