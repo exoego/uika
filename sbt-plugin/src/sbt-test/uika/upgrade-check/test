@@ -14,6 +14,15 @@ $ exists before.json.marker
 > checkJfrConverted
 > checkTestJavaOptionsInjected
 
+# Root-project scope, where a bare uikaJfr := Some(...) in build.sbt lands. With the
+# ThisBuild value cleared, the subproject's injection can only see it through
+# LocalRootProject. Restored afterwards so the later phases keep their evidence flags.
+> set ThisBuild / uikaJfr := None
+> set uikaJfr := Some(baseDirectory.value / "load-logs-root")
+> checkSubprojectTestJavaOptionsInjected
+> set uikaJfr := None
+> set ThisBuild / uikaJfr := Some(baseDirectory.value / "load-logs")
+
 # With the override removed, the release is derived from what the subprojects compile for.
 > set ThisBuild / uikaJdkRelease := -1
 > uikaUpgradeCheck before.json after.json

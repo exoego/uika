@@ -130,6 +130,19 @@ checkTestJavaOptionsInjected := {
     sys.error(s"uikaJfr did not inject Test/javaOptions: $opts")
 }
 
+lazy val checkSubprojectTestJavaOptionsInjected = taskKey[Unit]("Asserts a root-project-scoped uikaJfr reaches subproject test JVMs")
+
+// A bare `uikaJfr := Some(...)` in build.sbt is root-project-scoped, and its directory has
+// to reach EVERY project's forked tests, not only the root's. The test script clears the
+// ThisBuild value and sets a root-scoped one first, so this can only pass when the
+// injection falls back to LocalRootProject.
+checkSubprojectTestJavaOptionsInjected := {
+  val opts = (older / Test / javaOptions).value
+  val dir = (baseDirectory.value / "load-logs-root").getAbsolutePath
+  if (!opts.exists(o => o.startsWith("-XX:StartFlightRecording:jdk.ClassLoad#enabled=true") && o.contains(dir)))
+    sys.error(s"a root-project-scoped uikaJfr did not reach the subproject's Test/javaOptions: $opts")
+}
+
 lazy val prepareJfr = taskKey[Unit]("Records a real JFR recording with jdk.ClassLoad into load-logs/rec.jfr")
 
 // A REAL recording inside the log directory: the task must convert it (JfrEvidence)
