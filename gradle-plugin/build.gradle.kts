@@ -19,7 +19,7 @@ repositories {
 group = "net.exoego.uika"
 version = providers.gradleProperty("uikaVersion")
     .orElse(providers.environmentVariable("UIKA_VERSION"))
-    .getOrElse("0.1.0")
+    .getOrElse("0.0.0-dev")
 
 sourceSets {
     main {
