@@ -105,7 +105,10 @@ tool's page carries this workflow adapted to it:
 - [Bazel](docs/bazel.md#pr-gate-on-github-actions)
 
 The baseline dump skips the build outputs where the tool can, because the
-base branch is only there for its resolved versions.
+base branch is only there for its resolved versions. The baseline step is
+`continue-on-error` and the check is gated on its outcome, so a PR whose base
+cannot produce a baseline (the PR that introduces this setup itself, say)
+skips the check instead of failing it. The gate arms from the next PR on.
 
 To keep the base-branch resolution off the PR's critical path, dump the
 baseline once per push instead and cache it as an artifact keyed by SHA:
