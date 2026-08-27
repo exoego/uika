@@ -68,7 +68,9 @@ object Uika extends ExternalModule {
    *                   [[UikaCli.effectiveJdkRelease]] to what its ct.sym serves. dumpClasspath
    *                   takes the same knob for what it records as the application's release
    * @param jfr        a directory of JFR recordings from a test run of the current, not yet
-   *                   upgraded build, or a single `.jfr` recording
+   *                   upgraded build, or a single `.jfr` recording; defaults to `UIKA_JFR`,
+   *                   the variable that made the tests record, so one knob serves both
+   *                   phases
    */
   def upgradeCheck(
       ev: Evaluator,
@@ -105,9 +107,13 @@ object Uika extends ExternalModule {
     }
     val binary = extractCli(resolver, version, Task.dest)
     // Recordings are converted here, never handed to the CLI: the CLI is JVM-free and must
-    // not read binary JFR.
+    // not read binary JFR. --jfr falls back to UIKA_JFR, the variable that made the tests
+    // record (UikaTestModule), so ONE knob serves both phases the way the sibling tools'
+    // single option does; the flag stays the explicit override.
+    val jfrValue = Option(jfr).filter(_.nonEmpty)
+      .orElse(Task.env.get("UIKA_JFR").filter(_.nonEmpty))
     val classLoadLogs = JfrEvidence.rewrite(
-      Option(jfr).filter(_.nonEmpty).map(os.Path(_, workspace).toNIO).toSeq.asJava,
+      jfrValue.map(os.Path(_, workspace).toNIO).toSeq.asJava,
       (Task.dest / JfrEvidence.WORK_DIR_NAME).toNIO,
       log
     )

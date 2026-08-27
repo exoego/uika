@@ -87,10 +87,12 @@ mix `UikaTestModule` into the test modules, last so its `forkArgs` wins:
 object test extends JavaTests, TestModule.Junit5, net.exoego.uika.mill.UikaTestModule
 ```
 
-Export `UIKA_JFR=<dir>` for the test run, then pass `--jfr <dir>` to
-`upgradeCheck` (the check reads the flag, not the variable). The mixin is
-needed because `forkArgs` is a task on the test module itself, out of reach of
-a command that finds the modules through the evaluator.
+Export `UIKA_JFR=<dir>` for the test run; `upgradeCheck` reads the same
+variable back, so one knob serves both phases (`--jfr` is the explicit
+override). The mixin is needed because `forkArgs` is a task on the test module
+itself, out of reach of a command that finds the modules through the evaluator.
+While `UIKA_JFR` is set, tests re-run rather than replay from cache — a cached
+test forks no JVM and would record nothing.
 
 Your own `override def forkArgs = Seq(...)` replaces the list and drops the injected
 flag. Append to `super.forkArgs()` instead. `./mill testLocal` does not fork, so it

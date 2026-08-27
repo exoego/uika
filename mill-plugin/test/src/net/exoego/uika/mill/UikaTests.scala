@@ -331,6 +331,56 @@ object UikaTests extends TestSuite {
       }
     }
 
+    test("collection defeats testCached replay while UIKA_JFR is set") {
+      // A replayed testCached forks no JVM and records nothing, with no symptom: Gradle
+      // closes this with upToDateWhen(false), Bazel with --nocache_test_results. Mill's
+      // spelling is a per-evaluation nonce among the fork args, so a cached test's
+      // inputs never match while collection is on.
+      val jfrDir = os.temp.dir(prefix = "uika-jfr") / "recordings"
+      Using.resource(UnitTester(
+        stubCliBuild,
+        null,
+        env = systemEnv + ("UIKA_JFR" -> jfrDir.toString)
+      )) { tester =>
+        def evaluate(): Seq[String] = value(tester(stubCliBuild.testJvm.test.forkArgs))
+        assert(evaluate() != evaluate())
+      }
+      // Without the variable the args must stay stable, or every ordinary test run
+      // would lose caching for nothing.
+      Using.resource(UnitTester(stubCliBuild, null, env = systemEnv - "UIKA_JFR")) { tester =>
+        def evaluate(): Seq[String] = value(tester(stubCliBuild.testJvm.test.forkArgs))
+        assert(evaluate() == evaluate())
+      }
+    }
+
+    test("upgradeCheck --jfr falls back to UIKA_JFR") {
+      // One knob serving both phases, like the sibling tools' single option: the same
+      // variable that made the tests record is read back by the check, so a CI recipe
+      // sets UIKA_JFR once. --jfr stays the explicit override.
+      val repo = os.temp.dir(prefix = "uika-stub-repo")
+      publishStubCli(repo, "9.9.9", "#!/bin/sh\necho \"$@\" > \"$3.args\"\nexit 0\n")
+      val jfrDir = os.temp.dir(prefix = "uika-jfr-consume")
+      Using.resource(UnitTester(
+        stubCliBuild,
+        null,
+        env = systemEnv ++ Map(
+          "UIKA_TEST_REPO" -> repo.toNIO.toUri.toASCIIString,
+          "UIKA_JFR" -> jfrDir.toString
+        )
+      )) { tester =>
+        val before = stubCliBuild.moduleDir / "before.json"
+        val after = stubCliBuild.moduleDir / "after.json"
+        os.write.over(before, "{}", createFolders = true)
+        os.write.over(after, "{}")
+
+        value(tester(Uika.upgradeCheck(
+          tester.evaluator, before.toString, after.toString, cliVersion = "9.9.9")))
+
+        val args = os.read(os.Path(s"$before.args"))
+        assert(args.contains(s"--class-load-log $jfrDir"))
+      }
+    }
+
     test("UikaTestModule injects the JFR flag into forked test JVMs") {
       // A leaf that does not exist yet, and deleted again between the two evaluations: JFR
       // silently records to a single clobbered FILE when the leaf is missing under an

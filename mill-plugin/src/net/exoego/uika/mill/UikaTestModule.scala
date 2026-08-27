@@ -13,7 +13,8 @@ import net.exoego.uika.plugin.core.{JfrEvidence, UikaCli}
  * The one part of the plugin that needs a mixin: `forkArgs` is a task on the test module
  * itself, out of reach of an [[ExternalModule]] command. Collection is keyed by the
  * `UIKA_JFR` environment variable because an ordinary test run has no task argument to
- * carry it; consumption stays explicit (`upgradeCheck --jfr`).
+ * carry it, and `upgradeCheck` reads the same variable back when `--jfr` is not given, so
+ * one knob serves both phases.
  *
  * Mix this in LAST, and append to `super.forkArgs()` in any override of your own: `forkArgs`
  * is a plain list, so a `def forkArgs = Seq(...)` later in the linearization silently drops
@@ -48,7 +49,15 @@ trait UikaTestModule extends TestModule {
           // Load-bearing: a missing PARENT aborts JVM startup, but a missing leaf directory
           // under an existing parent makes JFR silently record to a single clobbered FILE.
           BuildCtx.withFilesystemCheckerDisabled(os.makeDir.all(dir))
-          Seq(UikaCli.jfrClassLoadJvmArg(dir.toNIO))
+          // The nonce defeats testCached replay: a cached test forks no JVM and records
+          // nothing, with no symptom (Gradle closes this with upToDateWhen(false), Bazel
+          // with --nocache_test_results). A fresh value per evaluation keeps a cached
+          // test's inputs from ever matching while collection is on; without UIKA_JFR
+          // the args stay stable and ordinary caching is untouched.
+          Seq(
+            UikaCli.jfrClassLoadJvmArg(dir.toNIO),
+            s"-Duika.jfr.collect=${System.nanoTime()}"
+          )
         }
     }
   }
