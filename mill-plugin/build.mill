@@ -49,7 +49,7 @@ object `package` extends ScalaModule, PublishModule {
   // The released version is stamped in by the release workflow, exactly as -PuikaVersion and
   // -Drevision do for the other plugins. cli/Cargo.toml keeps its 0.0.0-dev placeholder, so
   // there is no in-tree version to read.
-  def publishVersion = Task.Input { Task.env.getOrElse("UIKA_VERSION", "0.1.0") }
+  def publishVersion = Task.Input { Task.env.getOrElse("UIKA_VERSION", "0.0.0-dev") }
 
   // Central requires the doc jar to exist, not to have content. See PUBLISHING.md for why the
   // other plugins publish it empty; the same namespace quota applies here.

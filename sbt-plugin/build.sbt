@@ -1,5 +1,5 @@
 ThisBuild / organization := "net.exoego.uika"
-ThisBuild / version := "0.1.0"
+ThisBuild / version := "0.0.0-dev"
 ThisBuild / scalaVersion := "2.12.21"
 ThisBuild / versionScheme := Some("early-semver")
 // Maven Central rejects the legacy sbt-uika-<version>.jar file name; publish

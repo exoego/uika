@@ -1,4 +1,4 @@
-.PHONY: help build check test fmt fmt-check clean probe \
+.PHONY: help build check test fmt fmt-check clean probe placeholder-check \
 	cargo-build cargo-release cargo-test cargo-clippy cargo-fmt cargo-fmt-check \
 	gradle-build gradle-check gradle-test gradle-clean \
 	sbt-compile sbt-scripted sbt-clean \
@@ -66,7 +66,19 @@ help:
 
 build: cargo-build gradle-build sbt-compile maven-verify mill-compile
 
-check: cargo-fmt-check cargo-clippy cargo-test gradle-check sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
+# Every in-tree version placeholder must be 0.0.0-dev, which is structurally
+# unpublishable. A plausible placeholder (0.1.0 was the old one in the JVM plugins) makes
+# an UNSTAMPED local build embed it as the CLI default, silently fetching that uika-cli
+# release from Central instead of failing the resolution loudly.
+placeholder-check:
+	@for f in gradle-plugin/build.gradle.kts sbt-plugin/build.sbt maven-plugin/pom.xml \
+	  mill-plugin/build.mill lein-plugin/project.clj clojure-tool/build.clj \
+	  cli/Cargo.toml bazel-rules/private/version.bzl; do \
+	  grep -q '0\.0\.0-dev' $$f || { echo "$$f lost its 0.0.0-dev version placeholder" >&2; exit 1; }; \
+	done
+	@echo "version placeholders: all 0.0.0-dev"
+
+check: placeholder-check cargo-fmt-check cargo-clippy cargo-test gradle-check sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
 test: cargo-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
