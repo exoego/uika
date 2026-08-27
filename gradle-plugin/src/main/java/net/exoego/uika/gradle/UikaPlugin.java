@@ -1,6 +1,7 @@
 package net.exoego.uika.gradle;
 
 import net.exoego.uika.plugin.core.UikaCli;
+import org.gradle.api.GradleException;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.Task;
@@ -64,10 +65,26 @@ public class UikaPlugin implements Plugin<Project> {
         return lowest == null ? Runtime.version().feature() : lowest;
     }
 
-    /** {@code -PuikaJdkRelease} as a number, or null when the property is absent. */
+    /**
+     * {@code -PuikaJdkRelease} as a number, or null when the property is absent.
+     *
+     * <p>Parse failures become a uika-named error on purpose: this runs during
+     * {@code apply()}, so a typo or the bare spelling (Gradle sets a bare {@code -P} to the
+     * empty string) would otherwise kill every invocation, {@code gradle tasks} included,
+     * with a raw NumberFormatException naming no uika anything.
+     */
     static Integer jdkReleaseProperty(Project root) {
         Object value = root.findProperty("uikaJdkRelease");
-        return value == null ? null : Integer.parseInt(value.toString());
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(value.toString().trim());
+        } catch (NumberFormatException e) {
+            throw new GradleException(
+                    "-PuikaJdkRelease wants a whole number (0 disables the JDK API layer), got \""
+                            + value + "\"");
+        }
     }
 
     /**

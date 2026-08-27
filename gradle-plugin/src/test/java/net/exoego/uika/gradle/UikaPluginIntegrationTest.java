@@ -154,6 +154,25 @@ final class UikaPluginIntegrationTest {
         assertEquals(Map.of(":older", 11, ":newer", 17), moduleReleases(derived));
     }
 
+    @Test
+    void malformedJdkReleasePropertyFailsWithAUikaMessage() throws Exception {
+        writeMixedReleaseProject();
+
+        // A typo, and the bare spelling (Gradle sets a bare -P to the empty string). The
+        // property is parsed during apply(), so an unguarded parse killed EVERY invocation,
+        // `gradle tasks` included, with a raw NumberFormatException naming no uika anything.
+        for (String property : List.of("-PuikaJdkRelease=eleven", "-PuikaJdkRelease")) {
+            BuildResult result = GradleRunner.create()
+                    .withProjectDir(projectDir.toFile())
+                    .withArguments("tasks", property)
+                    .withPluginClasspath()
+                    .buildAndFail();
+            assertTrue(result.getOutput().contains("-PuikaJdkRelease wants a whole number"),
+                    "expected the uika-named parse error for " + property + ":\n"
+                            + result.getOutput());
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Integer> moduleReleases(Map<String, Object> doc) {
         List<Map<String, Object>> modules = (List<Map<String, Object>>) doc.get("modules");
