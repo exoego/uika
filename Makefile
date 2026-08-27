@@ -4,7 +4,7 @@
 	sbt-compile sbt-scripted sbt-clean \
 	maven-verify maven-clean \
 	mill-compile mill-test mill-clean \
-	clojure-test clojure-clean \
+	clojure-test clojure-clean clojure-stage \
 	lein-test lein-clean lein-stage \
 	bazel-test bazel-maven-test bazel-clean bazel-stage \
 	native-publish-local stage-all
@@ -140,10 +140,14 @@ mill-clean:
 # the tool writes v2 JSON by hand instead of sharing DumpFormat, so only a run
 # against the real CLI can catch the two drifting apart.
 clojure-test: cargo-build
+	cd $(CLOJURE_TOOL_DIR) && $(CLOJURE) -T:build javac
 	cd $(CLOJURE_TOOL_DIR) && UIKA_BIN=$(abspath target/debug/uika) $(CLOJURE) -M:test
 
 clojure-clean:
-	rm -rf $(CLOJURE_TOOL_DIR)/.cpcache
+	rm -rf $(CLOJURE_TOOL_DIR)/.cpcache $(CLOJURE_TOOL_DIR)/target
+
+clojure-stage:
+	cd $(CLOJURE_TOOL_DIR) && UIKA_VERSION=$(UIKA_VERSION) $(CLOJURE) -T:build stage
 
 # Real-CLI round trip, same reason as clojure-test: the dump JSON is hand-written.
 # mise exec puts lein itself on PATH for the script.
@@ -204,5 +208,6 @@ stage-all:
 	cd $(SBT_PLUGIN_DIR) && $(SBT) $(SBT_FLAGS) 'set ThisBuild / version := "$(UIKA_VERSION)"' publish
 	$(MAVEN) -f $(MAVEN_PLUGIN_DIR)/pom.xml -B -Prelease -Drevision=$(UIKA_VERSION) -DskipTests -Dinvoker.skip=true deploy
 	cd $(MILL_PLUGIN_DIR) && UIKA_VERSION=$(UIKA_VERSION) $(MILL) publishM2Local + stageChecksums
+	$(MAKE) clojure-stage UIKA_VERSION=$(UIKA_VERSION)
 	$(MAKE) lein-stage UIKA_VERSION=$(UIKA_VERSION)
 	$(MAKE) bazel-stage UIKA_VERSION=$(UIKA_VERSION)

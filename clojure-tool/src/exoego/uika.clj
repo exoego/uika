@@ -1,14 +1,15 @@
 (ns exoego.uika
-  "uika as a Clojure CLI tool: `clojure -Tuika dump-classpath` / `clojure -Tuika upgrade-check`.
+  "uika as a Clojure CLI tool: `clojure -T:uika dump-classpath` / `clojure -T:uika upgrade-check`.
 
-  Installed as a git dependency (`:deps/root \"clojure-tool\"`), so releasing it costs
-  nothing against the Maven Central quota. The repo tag doubles as the CLI version:
-  when the tool itself is resolved as a git dep, its own `:git/tag` in the runtime
-  basis names the matching uika-cli release. Everything not specific to tools.deps
-  lives in exoego.uika.core, shared with the Leiningen plugin."
+  Published to Maven Central as net.exoego.uika/clojure-uika and consumed through a
+  deps.edn alias that carries :ns-default itself, because tools.deps resolves no
+  usage data for :mvn coordinates (coord-usage :mvn is TBD upstream), so a
+  `-Ttools`-installed Maven tool would need every function call qualified. The
+  tool's own :mvn/version in the runtime basis names the matching uika-cli
+  release, so the alias pins both. Everything not specific to tools.deps lives
+  in exoego.uika.core, shared with the Leiningen plugin."
   (:require [clojure.java.basis :as basis]
             [clojure.java.io :as io]
-            [clojure.string :as str]
             [clojure.tools.deps :as deps]
             [clojure.tools.deps.util.dir :as deps-dir]
             [exoego.uika.core :as core]))
@@ -64,14 +65,20 @@
     (println "uika classpath dump:" (str out))
     (str out)))
 
-(defn- own-git-tag
-  "The :git/tag this tool was resolved with, when it came in as a git dep. That tag
-  is the repo release tag, so stripping the v prefix yields the uika-cli version."
+(defn version-from-libs
+  "The version this tool was resolved with, out of a basis :libs map: its own
+  Maven coordinate, the deps.edn alias flow the docs describe. A git or
+  :local/root install carries no such coordinate and falls back to
+  :cli-version / UIKA_CLI_VERSION, with the resolve-binary usage hint naming
+  the former."
+  [libs]
+  (some (fn [[lib {:mvn/keys [version]}]]
+          (when (= lib 'net.exoego.uika/clojure-uika) version))
+        libs))
+
+(defn- own-version
   []
-  (some (fn [[lib {:git/keys [tag]}]]
-          (when (and tag (str/starts-with? (str lib) "io.github.exoego/uika"))
-            (cond-> tag (str/starts-with? tag "v") (subs 1))))
-        (:libs (basis/current-basis))))
+  (version-from-libs (:libs (basis/current-basis))))
 
 (defn upgrade-check
   "Runs uika upgrade-check over a before/after pair of dumps.
@@ -80,18 +87,24 @@
   :fail-on           never | reachable | any (CLI default when omitted)
   :exclude-file      one path or a vector of paths
   :jdk-release       JDK API release; 0 disables, default is the running JVM's
+  :jfr               runtime class-load evidence as JFR: a recording, or a directory
+                     holding recordings and text logs mixed. Recordings are converted
+                     with the JDK's own JFR reader before the CLI runs, which needs
+                     this tool on Java 17+
   :class-load-log    one path or a vector: runtime class-load evidence in the CLI's
-                     text format (JFR conversion is not implemented in this tool yet)
+                     text format (a recording given here is converted too)
   :draft-exclude-file
                      where the CLI writes draft exclude rules for symbols never
                      observed loading, which needs :class-load-log too
-  :cli-version       uika-cli version; defaults to this tool's own git tag
-                     (UIKA_CLI_VERSION is consulted in between)
+  :cli-version       uika-cli version; defaults to this tool's own version, read
+                     from its Maven coordinate in the runtime basis
+                     (UIKA_CLI_VERSION is consulted in between, and a source
+                     install has no coordinate, so it needs one of the two)
   :cli-path          existing uika binary, skipping the download entirely
                      (UIKA_CLI_PATH does the same from the environment)"
   [{:keys [before after] :as args}]
   (when-not (and before after)
     (throw (ex-info "usage: clojure -Tuika upgrade-check :before <a.json> :after <b.json>" {})))
   (core/run-upgrade-check
-   (core/resolve-binary args own-git-tag "uika-cli version is unknown; pass :cli-version")
+   (core/resolve-binary args own-version "uika-cli version is unknown; pass :cli-version")
    args))

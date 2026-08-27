@@ -20,6 +20,14 @@
   ;; tools.deps on purpose: Leiningen resolves with its own Aether, and a second
   ;; resolver on the plugin classpath would be pure baggage.
   :source-paths ["src" "../clojure-tool/src-core"]
+  ;; JfrEvidence is compiled from a committed symlink into jvm-plugin-core, the same
+  ;; source-inclusion idea as src-core (and as bazel-rules/java), restricted to the
+  ;; one class core.clj cannot port: binary JFR parsing belongs to the JDK's own
+  ;; reader. --release 17 is the floor every build compiling jvm-plugin-core sets.
+  ;; The class loads lazily, so a lein on an older JVM loses only :jfr conversion,
+  ;; answered with a message rather than an UnsupportedClassVersionError trace.
+  :java-source-paths ["java-src"]
+  :javac-options ["--release" "17"]
   :dependencies [[org.clojure/data.json "2.5.2"]]
   ;; get-dependencies grew its :managed-dependencies arity in 2.7.0. Without a floor
   ;; an older lein answers with a raw ArityException instead of lein's own message.

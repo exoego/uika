@@ -4,7 +4,7 @@ Everything under the `net.exoego.uika` group is published to Maven Central in
 one shot when a GitHub release is published: the native CLI ZIPs (`uika-cli`
 with classifiers `linux-x86_64`, `macos-aarch64`, `macos-x86_64`,
 `windows-x86_64`), the Gradle plugin, the sbt plugin, the Maven plugin, the Mill
-plugin, and the Leiningen plugin.
+plugin, the Clojure CLI tool, and the Leiningen plugin.
 
 ## Release procedure
 
@@ -33,15 +33,15 @@ and where `net.exoego` stands are in the
 source. The free tier is roughly the 90th percentile of all publishers, about
 1,167 files, 78 MB, and 7 releases per month.
 
-The Clojure CLI tool is not part of the deployment at all: it ships as a git
-dependency resolved straight from the repo tag, so it adds zero files and zero
-releases to the metrics below.
-
-One `vX.Y.Z` tag is one deployment carrying seven components (`uika-cli`,
+One `vX.Y.Z` tag is one deployment carrying eight components (`uika-cli`,
 `uika-gradle-plugin`, the `net.exoego.uika.gradle.plugin` marker,
-`sbt-uika_2.12_1.0`, `uika-maven-plugin`, `mill-uika_mill1_3`, `lein-uika`).
-That is 108 files and about 3 MB per tag, so for uika alone Release Count is the binding metric, not file count or
-size. July 2026 shipped eight tags and tripped the release-count limit.
+`sbt-uika_2.12_1.0`, `uika-maven-plugin`, `mill-uika_mill1_3`, `clojure-uika`,
+`lein-uika`).
+That is 124 files and about 3 MB per tag (`clojure-uika` added 16: four
+artifacts, each with md5, sha1, and asc), so for uika alone Release Count is
+the binding metric, not file count or size. Riding the shared deployment is
+also why publishing the Clojure CLI tool costs no extra release against that
+metric. July 2026 shipped eight tags and tripped the release-count limit.
 
 All three metrics are metered per organization, so the quota is shared with
 every other project under `net.exoego`. uika is the heavy one because it ships

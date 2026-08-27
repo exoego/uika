@@ -290,15 +290,48 @@ Same rule as the Mill section: point-of-use comments and the tests in
   uika-cli distribution cannot go through it. The tool downloads from Maven Central
   directly (`UIKA_CLI_URL` overrides), unlike the JVM plugins which reuse the build's
   resolver.
-- The tool is distributed as a git dep (`:deps/root "clojure-tool"`), costing nothing
-  against the Central release quota. The CLI version default comes from the tool's own
-  `:git/tag` in `clojure.java.basis/current-basis` -- a tool installed from a tag knows
-  the matching CLI release with no stamping step. A `:local/root` install has no tag,
-  hence `:cli-version` / `UIKA_CLI_VERSION`.
-- jvm-plugin-core is NOT shared here: tools.deps does not compile Java sources and a
-  prep step would burden every consumer, so the small ports (classifier, ct.sym clamp,
-  extract) live in the ns with "keep in sync" markers. JFR conversion is deliberately
-  absent until that changes.
+- The tool is published to Central as `net.exoego.uika/clojure-uika` (build.clj's
+  `stage`, wired into stage-all and jreleaser.yml like the other plugins; it rides the
+  shared deployment, so it costs files but no extra release against the Central
+  quota). The documented consumption is a deps.edn ALIAS carrying `:ns-default
+  exoego.uika`, never `-Ttools install` from Maven: tools.deps has no usage lookup for
+  :mvn coordinates (`ext/coord-usage :mvn` is TBD upstream, checked through 0.31.1642
+  and the CLI-bundled copy), so a Maven-installed tool needs every call
+  ns-qualified. `:tools/usage` in deps.edn is for DEVELOPMENT `:local/root` (or git)
+  `-Ttools` installs, so manual testing matches the documented UX; it was missing
+  before the Maven switch, so the unqualified call the docs showed had never actually
+  worked. The CLI version default comes from the tool's own :mvn/version in
+  `clojure.java.basis/current-basis` (`version-from-libs`), so the alias's one
+  coordinate pins tool and CLI together. Git and :local/root installs are deliberately
+  UNSUPPORTED for version derivation (the tag branch was removed with zero released
+  users); they fall back to `:cli-version` / `UIKA_CLI_VERSION` with the usage hint
+  naming the former.
+- build.clj strips the empty `<repositories/>` element write-pom leaves behind even
+  with :mvn/repos dissoc'd from the basis (PomChecker rejects the element's presence,
+  the same rule lein-stage works around), and throws on a POPULATED block so a
+  regression dies in `make clojure-stage` instead of in the all-or-nothing Central
+  validation. The strip runs before b/jar so the jar-embedded pom matches the staged
+  .pom byte for byte.
+- jvm-plugin-core is mostly NOT shared here: tools.deps does not compile Java sources
+  in a git or :local/root install, so the small ports (classifier, ct.sym clamp,
+  extract) live in the ns with "keep in sync" markers. The ONE compiled exception is
+  JfrEvidence, because binary JFR parsing is the JDK reader's job and not
+  hand-portable: build.clj copies the single source out of jvm-plugin-core and javacs
+  it (--release 17) into the published jar, and lein-plugin compiles the same file
+  from a committed symlink under `java-src/`. core.clj calls it REFLECTIVELY
+  (`jfr-evidence` / `rewrite-evidence`): an (:import ...) would fail the whole ns
+  load on a source install without the class, taking the text-log flow down with it.
+  Class absent or JVM below 17 (which throws UnsupportedClassVersionError, not
+  ClassNotFoundException) degrades to text-only, and an explicit :jfr then fails
+  with the specific reason instead of forwarding a binary the CLI silently skips.
+  The whole class-load list goes through JfrEvidence.rewrite when the class is
+  present — the JVM plugins' shape — so a recording handed to :class-load-log
+  converts too, and the workdir leaf comes from the class's own WORK_DIR_NAME.
+  Tests need `clojure -T:build javac` first (the Makefile's clojure-test runs it;
+  the :test alias adds target/core-classes), and both frontends' JFR tests record
+  REAL recordings by running `java -XX:StartFlightRecording:... -version` — on some
+  JDKs every startup event carries a stack, so assertions must accept framed blocks
+  as well as bare `[class,load]` lines.
 
 ## Bazel Rules Notes
 
