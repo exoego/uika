@@ -111,6 +111,54 @@ if [ "$materialized_status" -ne 1 ]; then
   exit 1
 fi
 
+echo "--- jdk-release semantics against an argv-recording stub"
+# The real binary cannot show which flags it was handed, so this section swaps in a stub
+# that records its argv and UIKA_JDK. The stub ignores the dumps, so the earlier pair is
+# reused as-is.
+STUB=$WORK/stub-cli
+cat > "$STUB" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$@" > "$UIKA_STUB_ARGS"
+printf '%s' "${UIKA_JDK:-}" > "$UIKA_STUB_ARGS.jdk"
+exit 0
+EOF
+chmod +x "$STUB"
+
+# Default: the lowest declared release (11 from //app) reaches the CLI, paired with UIKA_JDK.
+UIKA_STUB_ARGS=$OUT/stub-args-default.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check -- \
+  --before "$OUT/before.json" --after "$OUT/after.json"
+if ! tr '\n' ' ' < "$OUT/stub-args-default.txt" | grep -q -- "--jdk-release 11 "; then
+  echo "the default check should pass --jdk-release 11, got:" >&2
+  cat "$OUT/stub-args-default.txt" >&2
+  exit 1
+fi
+if [ ! -s "$OUT/stub-args-default.txt.jdk" ]; then
+  echo "UIKA_JDK should be exported when --jdk-release is passed" >&2
+  exit 1
+fi
+
+# --jdkRelease 0 on the command line switches the layer off: no flag, no UIKA_JDK.
+UIKA_STUB_ARGS=$OUT/stub-args-zero.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check -- \
+  --before "$OUT/before.json" --after "$OUT/after.json" --jdkRelease 0
+if grep -qx -- "--jdk-release" "$OUT/stub-args-zero.txt"; then
+  echo "--jdkRelease 0 should omit --jdk-release, got:" >&2
+  cat "$OUT/stub-args-zero.txt" >&2
+  exit 1
+fi
+if [ -s "$OUT/stub-args-zero.txt.jdk" ]; then
+  echo "UIKA_JDK should not be exported when the layer is off" >&2
+  exit 1
+fi
+
+# jdk_release = 0 on the rule means the same off switch.
+UIKA_STUB_ARGS=$OUT/stub-args-attr-zero.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check_layer_off -- \
+  --before "$OUT/before.json" --after "$OUT/after.json"
+if grep -qx -- "--jdk-release" "$OUT/stub-args-attr-zero.txt"; then
+  echo "jdk_release = 0 on the rule should omit --jdk-release, got:" >&2
+  cat "$OUT/stub-args-attr-zero.txt" >&2
+  exit 1
+fi
+
 echo "--- runtime load evidence"
 JFR=$OUT/jfr
 # The flag is printed by the check target rather than written out here, so this recipe

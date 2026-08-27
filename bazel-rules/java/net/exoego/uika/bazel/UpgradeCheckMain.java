@@ -35,7 +35,10 @@ public final class UpgradeCheckMain {
         List<Path> classLoadLogs = new ArrayList<>();
         Path draftExcludeFile = null;
         Path jfr = null;
-        Integer override = UikaCli.overrideRelease(Integer.getInteger("uika.jdkRelease", 0));
+        // Raw, never through overrideRelease: that helper folds 0 into "unset", which is the
+        // dump's meaning of 0. Here 0 has to stay distinguishable, because it is the off
+        // switch (effectiveJdkRelease answers null for it and the flag is omitted).
+        int wanted = Integer.getInteger("uika.jdkRelease", -1);
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -46,7 +49,7 @@ public final class UpgradeCheckMain {
                 case "--classLoadLog" -> classLoadLogs.add(Manifest.workspacePath(args[++i]));
                 case "--jfr" -> jfr = Manifest.workspacePath(args[++i]);
                 case "--draftExcludeFile" -> draftExcludeFile = Manifest.workspacePath(args[++i]);
-                case "--jdkRelease" -> override = UikaCli.overrideRelease(Integer.valueOf(args[++i]));
+                case "--jdkRelease" -> wanted = Integer.parseInt(args[++i]);
                 default -> throw new IllegalArgumentException("unknown argument: " + args[i]);
             }
         }
@@ -65,7 +68,7 @@ public final class UpgradeCheckMain {
 
         JdkSource jdk = JdkSource.current();
         Integer release = UikaCli.effectiveJdkRelease(
-                wantedRelease(override), jdk, System.out::println);
+                wantedRelease(wanted), jdk, System.out::println);
         int status = UikaCli.runUpgradeCheck(cliBinary(), before, after, failOn, excludeFiles,
                 release, jdk, classLoadLogs, draftExcludeFile, System.out::println);
         System.exit(status);
@@ -104,14 +107,20 @@ public final class UpgradeCheckMain {
      * and under-claiming costs unverified references while over-claiming drops findings.
      * With no targets listed there is nothing to read and it falls through to the JVM
      * running this tool, which is Bazel's own Java runtime.
+     *
+     * <p>A non-negative value skips the derivation entirely, 0 included: 0 switches the
+     * layer off, and only a negative value means "derive".
      */
-    private static Integer wantedRelease(Integer override) throws IOException {
+    private static Integer wantedRelease(int wanted) throws IOException {
+        if (wanted >= 0) {
+            return wanted;
+        }
         String releases = System.getProperty("uika.releases");
         if (releases == null || releases.isEmpty()) {
-            return override != null ? override : DumpFormat.buildJvmRelease();
+            return DumpFormat.buildJvmRelease();
         }
         List<Module> modules = Manifest.parse(
-                Manifest.resolveRunfile(releases), override, Manifest::resolveRunfile);
+                Manifest.resolveRunfile(releases), null, Manifest::resolveRunfile);
         return DumpFormat.dumpRelease(modules);
     }
 

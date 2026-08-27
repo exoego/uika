@@ -49,7 +49,7 @@ def uika_upgrade_check(
         targets = [],
         fail_on = None,
         exclude_files = [],
-        jdk_release = 0,
+        jdk_release = -1,
         **kwargs):
     """Declares a `bazel run`-able target that checks a before/after pair of dumps.
 
@@ -64,7 +64,9 @@ def uika_upgrade_check(
         version, which over-claims for a target that pins a lower release.
       fail_on: never, reachable or any. Omitted leaves the CLI default.
       exclude_files: TOML files of known false positives, as workspace-relative paths.
-      jdk_release: the API release to resolve JDK escapes against. 0 switches the layer off.
+      jdk_release: the API release to resolve JDK escapes against. Negative, the default,
+        derives it from `targets`; 0 switches the layer off. The dump rule's knob folds 0
+        into the derived default instead, so the two attrs default differently on purpose.
       **kwargs: passed through to the generated java_binary (visibility, tags, ...).
     """
     releases = name + ".releases"
