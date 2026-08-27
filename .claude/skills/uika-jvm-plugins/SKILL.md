@@ -159,8 +159,8 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   value fails fast at configuration, and a DIRECTORY named `x.jfr` still
   counts as a directory), sbt `uikaJfr := Some(dir)`, Maven `-Duika.jfr` plus
   a hand-written `argLine` for collection (no mojo can inject into surefire),
-  so Maven alone bypasses the shared composer — its README/javadoc recipe must
-  be kept in sync with it by hand. Collection is JFR, not -Xlog, on purpose:
+  so Maven alone bypasses the shared composer — its `docs/maven.md`/javadoc
+  recipe must be kept in sync with it by hand. Collection is JFR, not -Xlog, on purpose:
   `jdk.ClassLoad` with stacks is an information superset of both -Xlog
   variants (stacks for every class, no single-substring filter, JDK 17+
   instead of 22+ for triggers), JFR generates pid-unique file names for a
@@ -190,7 +190,7 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   `Test/fork := true`; both sbt halves absolutize the directory (a relative
   value split across launch dir vs each fork's baseDirectory), and the
   buildSettings task reads the keys via `LocalRootProject / ...` so the
-  README's bare `uikaJfr := Some(...)` (root-project scope) reaches the
+  `docs/sbt.md`'s bare `uikaJfr := Some(...)` (root-project scope) reaches the
   check, not only ThisBuild.
   `UpgradeCheckTask.getDraftExcludeFile` is `@Internal`, NOT `@OutputFile`:
   declaring an output made a second invocation UP-TO-DATE and silently skipped
@@ -339,7 +339,7 @@ hold lives here.
 - JFR collection needs `--nocache_test_results`: a cached test forks no JVM and records
   nothing, with no symptom. It also needs `--sandbox_writable_path`, since the recording
   lands outside the sandbox on purpose. The `jfr-jvmopt` subcommand prints the flag AND
-  creates the directory, so the README recipe cannot drift from
+  creates the directory, so the `docs/bazel.md` recipe cannot drift from
   `UikaCli.jfrClassLoadJvmArg` the way Maven's hand-written argLine can.
 - The release archive is cut with `cp -RL` (`bazel-rules/stage.sh`, via `make
   bazel-stage`). The four jvm-plugin-core sources under `bazel-rules/java` are committed
