@@ -1,6 +1,4 @@
-# [Mill plugin](../mill-plugin/)
-
-[![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fmill-uika_mill1_3%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/mill-uika_mill1_3)
+# [Mill plugin](../mill-plugin/) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fmill-uika_mill1_3%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/mill-uika_mill1_3)
 
 One of uika's [build-tool integrations](../README.md#build-tool-plugins).
 Mill 1.x. One header line wires up a build of any size: the commands find every
@@ -71,7 +69,7 @@ To keep the base-branch resolution off the PR's critical path, cache the
 baseline as an artifact instead:
 [BASELINE-CACHING.md](../BASELINE-CACHING.md).
 
-## Knobs
+## Options
 
 - [`--failOn`](../README.md#violation-tiers-and---fail-on) and
   [`--excludeFile`](../README.md#excluding-known-false-positives---exclude-file)

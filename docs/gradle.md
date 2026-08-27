@@ -1,6 +1,4 @@
-# [Gradle plugin](../gradle-plugin/)
-
-[![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-gradle-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-gradle-plugin)
+# [Gradle plugin](../gradle-plugin/) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-gradle-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-gradle-plugin)
 
 One of uika's [build-tool integrations](../README.md#build-tool-plugins).
 Works with Groovy and Kotlin DSL builds (Gradle 9 / JVM 17+).
@@ -80,7 +78,7 @@ To keep the base-branch resolution off the PR's critical path, cache the
 baseline as an artifact instead:
 [BASELINE-CACHING.md](../BASELINE-CACHING.md).
 
-## Knobs
+## Options
 
 - [`failOn`](../README.md#violation-tiers-and---fail-on) and
   [`excludeFiles`](../README.md#excluding-known-false-positives---exclude-file)
