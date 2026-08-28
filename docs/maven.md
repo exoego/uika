@@ -194,6 +194,9 @@ exit 0, leaving the directory empty. Make it absolute in a multi-module build:
 surefire forks resolve a relative path against each module, the aggregator
 goal against the execution root. A command-line `-DargLine` replaces any
 POM-configured argLine (jacoco's agent included) — append to the POM's
-argLine instead when one exists.
+argLine instead when one exists. A build cache that replays test executions
+collects nothing: maven-build-cache-extension and the Develocity extension
+both skip surefire on a cache hit, so disable caching for the collect run,
+the same reason the Bazel recipe needs `--nocache_test_results`.
 [`--draft-exclude-file`](../README.md#runtime-load-evidence-jfr---class-load-log)
 maps to `-Duika.draftExcludeFile=`.
