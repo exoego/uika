@@ -13,7 +13,8 @@ import net.exoego.uika.plugin.core.{JfrEvidence, UikaCli}
  * The one part of the plugin that needs a mixin: `forkArgs` is a task on the test module
  * itself, out of reach of an [[ExternalModule]] command. Collection is keyed by the
  * `UIKA_JFR` environment variable because an ordinary test run has no task argument to
- * carry it; consumption stays explicit (`upgradeCheck --jfr`).
+ * carry it, and `upgradeCheck` reads the same variable back when `--jfr` is not given, so
+ * one option serves both phases.
  *
  * Mix this in LAST, and append to `super.forkArgs()` in any override of your own: `forkArgs`
  * is a plain list, so a `def forkArgs = Seq(...)` later in the linearization silently drops
@@ -30,7 +31,13 @@ trait UikaTestModule extends TestModule {
    *
    * `Task.Input`, not a cached `Task`: the `os.makeDir.all` below must run on EVERY
    * invocation, or a directory deleted between two runs with an unchanged `UIKA_JFR`
-   * would never be recreated (the cached value replays and the body is skipped).
+   * would never be recreated (the cached value replays and the body is skipped). The
+   * VALUE stays stable for a given `UIKA_JFR` on purpose: Mill watches every evaluated
+   * input by hash, so a per-evaluation nonce here makes `./mill -w` re-trigger forever.
+   * The cost of stability is that a cached test task can replay while the variable is
+   * set and record nothing, which is why docs/mill.md says to collect with `test` (a
+   * command, never cached) — the same reason Bazel's recipe needs
+   * `--nocache_test_results`.
    */
   def uikaJfrArgs: T[Seq[String]] = Task.Input {
     Task.env.get("UIKA_JFR").filter(_.nonEmpty) match {
@@ -44,6 +51,13 @@ trait UikaTestModule extends TestModule {
             s"uika: UIKA_JFR names a .jfr recording (consumption-only); test JVMs will not record: $dir"
           )
           Seq.empty[String]
+        } else if (os.isFile(dir)) {
+          // Fail fast like the Gradle plugin: a text log or a suffixless recording passes
+          // the suffix-only recording check, and os.makeDir.all on a regular file would
+          // die with a raw FileAlreadyExistsException naming neither uika nor the variable.
+          Task.fail(
+            s"uika: UIKA_JFR must name a directory (test JVMs record into it) or a .jfr recording, but $dir is neither"
+          )
         } else {
           // Load-bearing: a missing PARENT aborts JVM startup, but a missing leaf directory
           // under an existing parent makes JFR silently record to a single clobbered FILE.

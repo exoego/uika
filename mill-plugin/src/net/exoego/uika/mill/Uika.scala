@@ -29,7 +29,7 @@ object Uika extends ExternalModule {
    * classpath without its upstream modules' compile output existing anyway.
    *
    * @param jdkRelease the release to record every module as running on, instead of what each
-   *                   one compiles for. The same knob upgradeCheck takes, for the case the
+   *                   one compiles for. The same option upgradeCheck takes, for the case the
    *                   derivation cannot see: a build compiling `--release 11` that ships on a
    *                   21 runtime has no other way to say so.
    */
@@ -66,9 +66,11 @@ object Uika extends ExternalModule {
    *                   layer and a negative value, the default, derives the lowest release any
    *                   module compiles for, else the build JVM's, clamped by
    *                   [[UikaCli.effectiveJdkRelease]] to what its ct.sym serves. dumpClasspath
-   *                   takes the same knob for what it records as the application's release
+   *                   takes the same option for what it records as the application's release
    * @param jfr        a directory of JFR recordings from a test run of the current, not yet
-   *                   upgraded build, or a single `.jfr` recording
+   *                   upgraded build, or a single `.jfr` recording; defaults to `UIKA_JFR`,
+   *                   the variable that made the tests record, so one option serves both
+   *                   phases
    */
   def upgradeCheck(
       ev: Evaluator,
@@ -105,9 +107,13 @@ object Uika extends ExternalModule {
     }
     val binary = extractCli(resolver, version, Task.dest)
     // Recordings are converted here, never handed to the CLI: the CLI is JVM-free and must
-    // not read binary JFR.
+    // not read binary JFR. --jfr falls back to UIKA_JFR, the variable that made the tests
+    // record (UikaTestModule), so ONE option serves both phases the way the sibling tools'
+    // single option does. The flag stays the explicit override.
+    val jfrValue = Option(jfr).filter(_.nonEmpty)
+      .orElse(Task.env.get("UIKA_JFR").filter(_.nonEmpty))
     val classLoadLogs = JfrEvidence.rewrite(
-      Option(jfr).filter(_.nonEmpty).map(os.Path(_, workspace).toNIO).toSeq.asJava,
+      jfrValue.map(os.Path(_, workspace).toNIO).toSeq.asJava,
       (Task.dest / JfrEvidence.WORK_DIR_NAME).toNIO,
       log
     )
