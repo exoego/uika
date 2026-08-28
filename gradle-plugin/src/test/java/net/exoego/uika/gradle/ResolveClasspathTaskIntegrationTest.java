@@ -67,32 +67,48 @@ final class ResolveClasspathTaskIntegrationTest {
     }
 
     /// A Maven-produced dump writes coordinates AND the project key on reactor
-    /// dependencies, and the CLI excludes project-attributed coordinates from the version
-    /// diff. Rehydration must carry the key through a rewrite, or a rehydrated reactor
-    /// dependency diffs as Removed and floods the report.
+    /// dependencies. Those entries stay out of the repository fetch: their coordinates may
+    /// name a stale PUBLISHED release, and a fetched file would permanently bypass the
+    /// CLI's fallback to the producing module's classesDirs. Left untouched, the
+    /// attribution also survives, so the CLI keeps excluding the coordinates from the
+    /// version diff instead of reporting the reactor dependency as Removed.
     @Test
-    void keepsProjectAttributionOnRewrittenArtifacts() throws Exception {
+    void leavesReactorAttributedArtifactsAloneAndKeepsTheirAttribution() throws Exception {
         publishStubJar("stub-lib");
+        publishStubJar("reactor-lib");
         writeProject();
         Path input = write(projectDir.resolve("before.json"), """
                 {"modules":[{"module":":","classesDirs":[],"artifacts":[
                   {"group":"example","name":"stub-lib","version":"1.0.0",
-                   "file":"/nonexistent/stub-lib-1.0.0.jar","project":":lib"}]}]}
+                   "file":"/nonexistent/stub-lib-1.0.0.jar"},
+                  {"group":"example","name":"reactor-lib","version":"1.0.0",
+                   "file":"/nonexistent/reactor-lib-1.0.0.jar","project":":lib"}]}]}
                 """);
         Path output = projectDir.resolve("before-local.json");
 
-        assertTaskSuccess(run(input, output).build());
+        BuildResult result = run(input, output).build();
+        assertTaskSuccess(result);
+        // Pins three things at once: the external entry really was rewritten (a lenient
+        // fetch that silently failed would leave it intact and this test vacuous), the
+        // reactor entry was neither fetched nor counted unresolved, and nothing warned.
+        assertTrue(result.getOutput().contains("(1 rewritten, 0 unresolved)"),
+                () -> "expected exactly the external entry rewritten:\n" + result.getOutput());
 
         @SuppressWarnings("unchecked")
         Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> artifacts = (List<Map<String, Object>>) doc.get("artifacts");
-        Map<String, Object> rewritten = artifacts.stream()
-                .filter(artifact -> "stub-lib".equals(artifact.get("name")))
+        Map<String, Object> reactor = artifacts.stream()
+                .filter(artifact -> "reactor-lib".equals(artifact.get("name")))
                 .findFirst()
-                .orElseThrow(() -> new AssertionError("stub-lib missing from " + artifacts));
-        assertEquals(":lib", rewritten.get("project"),
-                "the project attribution was dropped by the rewrite");
+                .orElseThrow(() -> new AssertionError("reactor-lib missing from " + artifacts));
+        assertEquals(":lib", reactor.get("project"),
+                "the project attribution was dropped");
+        @SuppressWarnings("unchecked")
+        List<String> roots = (List<String>) doc.get("roots");
+        assertEquals("/nonexistent/reactor-lib-1.0.0.jar",
+                roots.get(((Number) reactor.get("root")).intValue()) + reactor.get("path"),
+                "the reactor entry must pass through untouched, published jars included");
     }
 
     /// The input dump must exist before the build starts. When a task produces it
@@ -149,7 +165,14 @@ final class ResolveClasspathTaskIntegrationTest {
     private void publishStubJar(String name) throws IOException {
         Path jar = repoDir.resolve("example/" + name + "/1.0.0/" + name + "-1.0.0.jar");
         Files.createDirectories(jar.getParent());
-        Files.write(jar, new byte[]{0x50, 0x4b, 0x05, 0x06});
+        // A real empty zip, not just the 4-byte EOCD signature: anything that ever opens
+        // the jar (an artifact transform, dependency verification) rejects a truncated one.
+        byte[] emptyZip = new byte[22];
+        emptyZip[0] = 0x50;
+        emptyZip[1] = 0x4b;
+        emptyZip[2] = 0x05;
+        emptyZip[3] = 0x06;
+        Files.write(jar, emptyZip);
     }
 
     /** v1 dump whose artifacts all point at nonexistent local paths. */
