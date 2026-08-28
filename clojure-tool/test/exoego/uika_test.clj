@@ -97,11 +97,16 @@
   ;; on a JVM that already is one. Mill and sbt carry the same guard.
   (let [resource (io/resource "net/exoego/uika/plugin/core/JfrEvidence.class")]
     (is (some? resource) "run clojure -T:build javac first (make clojure-test does)")
-    (with-open [in (io/input-stream resource)]
-      (let [header (.readNBytes in 8)
-            major (+ (* 256 (bit-and (aget header 6) 0xff))
-                     (bit-and (aget header 7) 0xff))]
-        (is (<= major 61) (str "class-file major " major " (61 = JDK 17)"))))))
+    ;; The class must come from target/core-classes, this build's own javac output,
+    ;; not from some jar on the classpath, or the guard validates bytes the current
+    ;; build.clj never produced.
+    (is (str/includes? (str resource) "core-classes") (str resource))
+    (when resource
+      (with-open [in (io/input-stream resource)]
+        (let [header (.readNBytes in 8)
+              major (+ (* 256 (bit-and (aget header 6) 0xff))
+                       (bit-and (aget header 7) 0xff))]
+          (is (<= major 61) (str "class-file major " major " (61 = JDK 17)")))))))
 
 (deftest upgrade-check-forwards-flags-and-fails-on-violations
   (let [dir (temp-dir)

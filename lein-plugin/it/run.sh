@@ -15,10 +15,20 @@ unset UIKA_VERSION
 
 # The 17 floor must hold on the compiled JfrEvidence (project.clj's --release 17), or a
 # 17 runtime dies with UnsupportedClassVersionError, which the reflective loader then
-# mis-reports as "needs a Java 17+ runtime". Mill and sbt carry the same guard.
-jar="$HOME/.m2/repository/net/exoego/uika/lein-uika/0.0.0-dev/lein-uika-0.0.0-dev.jar"
-major="$(unzip -p "$jar" net/exoego/uika/plugin/core/JfrEvidence.class \
-  | od -An -j6 -N2 -tu1 | awk '{print $1 * 256 + $2}')"
+# mis-reports as "needs a Java 17+ runtime". Mill and sbt carry the same guard. The
+# class is read from target/classes, the output the install above just compiled, never
+# from ~/.m2 (a :local-repo or a placeholder bump silently reroutes that path). head -c 8
+# plus NR==1, because BSD od emits a trailing offset line whose extra record turns the
+# awk output non-numeric, and the guard must fail on a missing or empty read rather than
+# pass open.
+class="$here/../target/classes/net/exoego/uika/plugin/core/JfrEvidence.class"
+if [ ! -f "$class" ]; then
+  echo "FAIL: $class was not compiled (is java-src/ still wired?)" >&2; exit 1
+fi
+major="$(head -c 8 "$class" | od -An -tu1 | awk 'NR==1{print $7 * 256 + $8}')"
+case "$major" in
+  ''|*[!0-9]*) echo "FAIL: could not read a class-file major from $class (got '$major')" >&2; exit 1;;
+esac
 if [ "$major" -gt 61 ]; then
   echo "FAIL: JfrEvidence.class has class-file major $major (61 = JDK 17)" >&2; exit 1
 fi
