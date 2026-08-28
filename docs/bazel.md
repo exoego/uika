@@ -56,9 +56,10 @@ instead. [`--failOn`](../README.md#violation-tiers-and---fail-on),
 `--draftExcludeFile` are the command-line spellings. `--failOn`, `--jdkRelease`
 and `--draftExcludeFile` override the rule's settings; `--excludeFile` and
 `--classLoadLog` are repeatable and append to them. A relative path in any of
-them resolves against the directory you ran `bazel` from, not the runfiles
-tree. The check target repeats `targets` only to read the API release they
-compile for, so it builds nothing.
+them resolves against the workspace root (`BUILD_WORKSPACE_DIRECTORY`),
+wherever you ran `bazel` from, and never against the runfiles tree. The check
+target repeats `targets` only to read the API release they compile for, so it
+builds nothing.
 
 The `uika.cli` module-extension tag overrides where the binary comes from.
 That is the pin for every case the release archive's checksum map cannot
