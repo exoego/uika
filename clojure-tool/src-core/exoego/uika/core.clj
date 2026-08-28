@@ -39,15 +39,18 @@
    (dump-json module-name artifacts class-dirs (.feature (Runtime/version))))
   ([module-name artifacts class-dirs jdk-release]
    (let [artifact-maps (vec artifacts)
-         module {"module" module-name
-                 "jdkRelease" jdk-release
-                 "classesDirs" (mapv (fn [^String p] {"root" 0 "path" p}) class-dirs)
-                 "artifactRefs" (vec (range (count artifact-maps)))}]
-     (json/write-str {"version" 2
-                      "jdkRelease" jdk-release
-                      "roots" [""]
-                      "artifacts" artifact-maps
-                      "modules" [module]}))))
+         ;; Omitted when nil, like DumpFormat's writer: a below-floor project JVM (lein
+         ;; probing a JDK 7 :java-cmd) has nothing servable to record, and a dump naming
+         ;; a below-floor release hard-fails the CLI's JDK-pair run.
+         module (cond-> {"module" module-name
+                         "classesDirs" (mapv (fn [^String p] {"root" 0 "path" p}) class-dirs)
+                         "artifactRefs" (vec (range (count artifact-maps)))}
+                  jdk-release (assoc "jdkRelease" jdk-release))]
+     (json/write-str (cond-> {"version" 2
+                              "roots" [""]
+                              "artifacts" artifact-maps
+                              "modules" [module]}
+                       jdk-release (assoc "jdkRelease" jdk-release))))))
 
 (defn- env
   "An environment variable, treating blank as unset. A CI `env:` block whose value
@@ -58,17 +61,18 @@
   (let [value (System/getenv name)]
     (when-not (str/blank? value) value)))
 
-(def ^:private cli-group
+(def cli-group
   "Port of UikaCli.GROUP; keep the two in sync (pinned by the sync test scraping the
-  Java source). A coordinate rename updates the five JVM tools through the constant,
-  and without the port it would silently strand the two Clojure frontends."
+  Java source). A coordinate rename updates the four JVM plugins through the constant
+  (Bazel's cli_repository.bzl hand-syncs its own path and needs its own edit), and
+  without the port it would silently strand the two Clojure frontends."
   "net.exoego.uika")
 
-(def ^:private cli-artifact
+(def cli-artifact
   "Port of UikaCli.ARTIFACT; keep the two in sync."
   "uika-cli")
 
-(def ^:private min-release
+(def min-release
   "Port of UikaCli.MIN_RELEASE; keep the two in sync. The lowest release the JDK API
   layer can serve, since ct.sym carries no older stubs."
   8)
@@ -76,8 +80,10 @@
 (defn- platform-classifier
   "Port of UikaCli.platformClassifier; keep the two in sync."
   []
-  (let [os (str/lower-case (System/getProperty "os.name" ""))
-        arch (str/lower-case (System/getProperty "os.arch" ""))
+  ;; Locale.ROOT like the Java original: the default locale turns an uppercase I
+  ;; into a dotless one on Turkish-locale machines, which would split the two ports.
+  (let [os (.toLowerCase ^String (System/getProperty "os.name" "") java.util.Locale/ROOT)
+        arch (.toLowerCase ^String (System/getProperty "os.arch" "") java.util.Locale/ROOT)
         x64 (contains? #{"amd64" "x86_64"} arch)
         arm64 (contains? #{"aarch64" "arm64"} arch)]
     (cond
@@ -214,7 +220,7 @@
   "Port of UikaCli.declaredRelease and parseRelease; keep them in sync. The API release
   a compiler-option list targets, or nil when it declares none. Both the space-separated
   and the --release=17 forms, -target as the weaker fallback, and the legacy 1.8 /
-  jvm-1.8 spellings normalized to 8. Anything below 8 is no declaration at all, so one
+  jvm-1.8 spellings normalized to 8. Anything below min-release is no declaration at all, so one
   legacy module cannot drag a build's minimum under the floor and switch the layer off."
   [options]
   (let [parse (fn [value]
@@ -253,7 +259,7 @@
   application runs on. It is the escape hatch for what the derivation cannot see, a project
   that ships on a JVM newer than anything it declares. Zero is not that statement, it means
   \"switch the API layer off\", so the dump keeps its derived value rather than taking JDK
-  move detection down with the layer. Below 8 is dropped for a harder reason: a dump naming
+  move detection down with the layer. Below min-release is dropped for a harder reason: a dump naming
   it sends upgrade-check to ask ct.sym for a release it has never carried, failing the run."
   [value]
   (when-let [release (release-number value)]

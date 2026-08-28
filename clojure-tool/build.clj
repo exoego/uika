@@ -80,7 +80,11 @@
                   ;; removes below.
                   (dissoc :mvn/repos))
         artifact (name lib)
-        staging-dir (str "target/staging-deploy/net/exoego/uika/" artifact "/" version)
+        ;; Derived from lib like the pom path below: a hardcoded segment would stage
+        ;; under the old group after a rename and fail Central's path-vs-pom validation.
+        staging-dir (str "target/staging-deploy/"
+                         (str/replace (namespace lib) "." "/")
+                         "/" artifact "/" version)
         jar-file (str "target/" artifact "-" version ".jar")
         sources-file (str "target/" artifact "-" version "-sources.jar")
         javadoc-file (str "target/" artifact "-" version "-javadoc.jar")]

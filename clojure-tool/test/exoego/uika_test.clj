@@ -111,30 +111,54 @@
 (deftest ports-stay-in-sync-with-uikacli
   ;; core.clj hand-ports UikaCli's constants because the Java class is never compiled
   ;; for the Clojure frontends. Scraping the Java source pins the ports, so a change on
-  ;; the Java side fails here instead of stranding lein and the -T tool on stale values
-  ;; (a coordinate rename would otherwise silently break only these two tools).
+  ;; the Java side fails here instead of stranding lein and the -T tool on stale values.
+  ;; Scrapes are anchored to the declarations and nil-guarded: a Java reformat fails as
+  ;; a clean comparison, and a lookalike constant elsewhere cannot win the match.
   (let [java-src (slurp (io/file ".." "jvm-plugin-core" "src" "main" "java"
                                  "net" "exoego" "uika" "plugin" "core" "UikaCli.java"))
         scrape (fn [re] (second (re-find re java-src)))]
-    (is (= (parse-long (scrape #"MIN_RELEASE = (\d+)")) @#'uika.core/min-release))
-    (is (= (scrape #"GROUP = \"([^\"]+)\"") @#'uika.core/cli-group))
-    (is (= (scrape #"ARTIFACT = \"([^\"]+)\"") @#'uika.core/cli-artifact))
-    ;; The unsupported-platform message names what IS published, like the Java side's.
-    (let [classifiers (distinct (map second (re-seq #"\"((?:linux|macos|windows)-(?:x86_64|aarch64))\"" java-src)))
-          original-name (System/getProperty "os.name")
-          original-arch (System/getProperty "os.arch")
-          message (try
-                    (System/setProperty "os.name" "solaris")
-                    (System/setProperty "os.arch" "sparc")
-                    (try (#'uika.core/platform-classifier)
-                         (catch clojure.lang.ExceptionInfo e (ex-message e)))
-                    (finally
-                      (System/setProperty "os.name" original-name)
-                      (System/setProperty "os.arch" original-arch)))]
-      (is (= 4 (count classifiers)) (pr-str classifiers))
-      (doseq [classifier classifiers]
-        (is (str/includes? (str message) classifier)
-            (str "the platform error should name " classifier ": " message))))))
+    (is (= @#'uika.core/min-release
+           (some-> (scrape #"int MIN_RELEASE = (\d+);") parse-long)))
+    (is (= @#'uika.core/cli-group (scrape #"String GROUP = \"([^\"]+)\";")))
+    (is (= @#'uika.core/cli-artifact (scrape #"String ARTIFACT = \"([^\"]+)\";")))
+    ;; The published-classifier list is compared WHOLE, scraped from the one message the
+    ;; Java side maintains next to its dispatch. A fixed vocabulary would let a new
+    ;; platform slip past, and a whole-file classifier scrape would count javadoc text.
+    (let [java-list (scrape #"\(available: ([^)]+)\)")
+          fake (fn [os arch]
+                 (let [orig-os (System/getProperty "os.name")
+                       orig-arch (System/getProperty "os.arch")]
+                   (try
+                     (System/setProperty "os.name" os)
+                     (System/setProperty "os.arch" arch)
+                     (try (#'uika.core/platform-classifier)
+                          (catch clojure.lang.ExceptionInfo e (ex-message e)))
+                     (finally
+                       (System/setProperty "os.name" orig-os)
+                       (System/setProperty "os.arch" orig-arch)))))]
+      (is (some? java-list) "could not scrape the (available: ...) list from UikaCli.java")
+      (is (str/includes? (str (fake "solaris" "sparc"))
+                         (str "(available: " java-list ")"))
+          "the ported error message must carry the Java side's list verbatim")
+      ;; The DISPATCH is pinned too, driven by the scraped list rather than a hardcoded
+      ;; table: every published classifier must come back from the cond for a matching
+      ;; os/arch, so a misspelled token cannot hide behind an accurate error string.
+      (doseq [classifier (map str/trim (str/split (str java-list) #","))]
+        (let [[os-token arch] (str/split classifier #"-" 2)
+              os ({"linux" "Linux" "macos" "Mac OS X" "windows" "Windows 11"} os-token)]
+          (is (some? os)
+              (str "unknown OS token in " classifier "; extend the sync test's os map"))
+          (when os
+            (is (= classifier (fake os arch))
+                (str classifier " did not dispatch from " os "/" arch))))))))
+
+(deftest dump-json-omits-an-unservable-release
+  ;; The lein probe arm can face a below-floor project JVM (a JDK 7 :java-cmd), and a
+  ;; dump naming a release ct.sym never carried hard-fails the CLI's JDK-pair run.
+  ;; Nothing servable means no field at all, the shape DumpFormat's writer emits.
+  (let [dump (json/read-str (uika.core/dump-json ":x" [] [] nil))]
+    (is (not (contains? dump "jdkRelease")))
+    (is (not (contains? (first (get dump "modules")) "jdkRelease")))))
 
 (deftest upgrade-check-forwards-flags-and-fails-on-violations
   (let [dir (temp-dir)
