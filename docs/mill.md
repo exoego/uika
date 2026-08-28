@@ -88,7 +88,7 @@ object test extends JavaTests, TestModule.Junit5, net.exoego.uika.mill.UikaTestM
 ```
 
 Export `UIKA_JFR=<dir>` for the test run; `upgradeCheck` reads the same
-variable back, so one knob serves both phases (`--jfr` is the explicit
+variable back, so one option serves both phases (`--jfr` is the explicit
 override). The mixin is needed because `forkArgs` is a task on the test module
 itself, out of reach of a command that finds the modules through the evaluator.
 While `UIKA_JFR` is set, tests re-run rather than replay from cache — a cached

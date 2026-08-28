@@ -14,7 +14,7 @@ import net.exoego.uika.plugin.core.{JfrEvidence, UikaCli}
  * itself, out of reach of an [[ExternalModule]] command. Collection is keyed by the
  * `UIKA_JFR` environment variable because an ordinary test run has no task argument to
  * carry it, and `upgradeCheck` reads the same variable back when `--jfr` is not given, so
- * one knob serves both phases.
+ * one option serves both phases.
  *
  * Mix this in LAST, and append to `super.forkArgs()` in any override of your own: `forkArgs`
  * is a plain list, so a `def forkArgs = Seq(...)` later in the linearization silently drops
