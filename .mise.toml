@@ -3,7 +3,7 @@ rust = { version = "1.98.0", components = "rustfmt,clippy" }
 gradle = "9.7.1"
 # The default backends (conda, asdf plugin) lag behind sbt releases and have
 # no 1.12.13 or later, so install the launcher from the GitHub release.
-"github:sbt/sbt" = "1.12.15"
+"github:sbt/sbt" = "1.13.0"
 maven = "3.9.16"
 clojure = "1.12.5.1664"
 # 2.13.0 is a broken package: its lein script points at a 2.12.1-SNAPSHOT
