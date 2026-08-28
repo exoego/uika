@@ -47,6 +47,10 @@ object UikaPlugin extends AutoPlugin {
     // N identical CLI runs in parallel, racing on the shared retrieve directory and on the
     // JFR work directory whose stale-conversion sweep deletes a sibling's fresh output.
     uikaUpgradeCheck / aggregate := false,
+    // One merge per BUILD for the same reason: the task already covers every project
+    // through its ScopeFilter, so aggregating the shell invocation ran the full merge
+    // once per project, in parallel, all writing the same uikaOutput file.
+    uikaDumpClasspath / aggregate := false,
     uikaUpgradeCheck := {
       val args = Def.spaceDelimited("<before.json> <after.json>").parsed
       if (args.length != 2) sys.error("usage: uikaUpgradeCheck <before.json> <after.json>")
