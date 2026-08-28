@@ -65,7 +65,7 @@ def uika_upgrade_check(
       fail_on: never, reachable or any. Omitted leaves the CLI default.
       exclude_files: TOML files of known false positives, as workspace-relative paths.
       jdk_release: the API release to resolve JDK escapes against. Negative, the default,
-        derives it from `targets`; 0 switches the layer off. The dump rule's knob folds 0
+        derives it from `targets`; 0 switches the layer off. The dump rule's option folds 0
         into the derived default instead, so the two attrs default differently on purpose.
       **kwargs: passed through to the generated java_binary (visibility, tags, ...).
     """
