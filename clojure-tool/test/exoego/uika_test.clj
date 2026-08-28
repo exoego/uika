@@ -108,6 +108,34 @@
                        (bit-and (aget header 7) 0xff))]
           (is (<= major 61) (str "class-file major " major " (61 = JDK 17)")))))))
 
+(deftest ports-stay-in-sync-with-uikacli
+  ;; core.clj hand-ports UikaCli's constants because the Java class is never compiled
+  ;; for the Clojure frontends. Scraping the Java source pins the ports, so a change on
+  ;; the Java side fails here instead of stranding lein and the -T tool on stale values
+  ;; (a coordinate rename would otherwise silently break only these two tools).
+  (let [java-src (slurp (io/file ".." "jvm-plugin-core" "src" "main" "java"
+                                 "net" "exoego" "uika" "plugin" "core" "UikaCli.java"))
+        scrape (fn [re] (second (re-find re java-src)))]
+    (is (= (parse-long (scrape #"MIN_RELEASE = (\d+)")) @#'uika.core/min-release))
+    (is (= (scrape #"GROUP = \"([^\"]+)\"") @#'uika.core/cli-group))
+    (is (= (scrape #"ARTIFACT = \"([^\"]+)\"") @#'uika.core/cli-artifact))
+    ;; The unsupported-platform message names what IS published, like the Java side's.
+    (let [classifiers (distinct (map second (re-seq #"\"((?:linux|macos|windows)-(?:x86_64|aarch64))\"" java-src)))
+          original-name (System/getProperty "os.name")
+          original-arch (System/getProperty "os.arch")
+          message (try
+                    (System/setProperty "os.name" "solaris")
+                    (System/setProperty "os.arch" "sparc")
+                    (try (#'uika.core/platform-classifier)
+                         (catch clojure.lang.ExceptionInfo e (ex-message e)))
+                    (finally
+                      (System/setProperty "os.name" original-name)
+                      (System/setProperty "os.arch" original-arch)))]
+      (is (= 4 (count classifiers)) (pr-str classifiers))
+      (doseq [classifier classifiers]
+        (is (str/includes? (str message) classifier)
+            (str "the platform error should name " classifier ": " message))))))
+
 (deftest upgrade-check-forwards-flags-and-fails-on-violations
   (let [dir (temp-dir)
         stub (io/file dir "uika")

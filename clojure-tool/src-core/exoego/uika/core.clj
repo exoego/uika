@@ -58,6 +58,21 @@
   (let [value (System/getenv name)]
     (when-not (str/blank? value) value)))
 
+(def ^:private cli-group
+  "Port of UikaCli.GROUP; keep the two in sync (pinned by the sync test scraping the
+  Java source). A coordinate rename updates the five JVM tools through the constant,
+  and without the port it would silently strand the two Clojure frontends."
+  "net.exoego.uika")
+
+(def ^:private cli-artifact
+  "Port of UikaCli.ARTIFACT; keep the two in sync."
+  "uika-cli")
+
+(def ^:private min-release
+  "Port of UikaCli.MIN_RELEASE; keep the two in sync. The lowest release the JDK API
+  layer can serve, since ct.sym carries no older stubs."
+  8)
+
 (defn- platform-classifier
   "Port of UikaCli.platformClassifier; keep the two in sync."
   []
@@ -70,7 +85,9 @@
       (and (str/includes? os "mac") arm64) "macos-aarch64"
       (and (str/includes? os "mac") x64) "macos-x86_64"
       (and (str/includes? os "windows") x64) "windows-x86_64"
-      :else (throw (ex-info (str "no uika-cli binary is published for " os "/" arch)
+      :else (throw (ex-info (str "no uika-cli binary is published for " os "/" arch
+                                 " (available: linux-x86_64, macos-aarch64,"
+                                 " macos-x86_64, windows-x86_64)")
                             {:os os :arch arch})))))
 
 (defn fetch-cli
@@ -88,8 +105,9 @@
     (when-not (.isFile binary)
       (.mkdirs cache-dir)
       (let [url (or (env "UIKA_CLI_URL")
-                    (str "https://repo1.maven.org/maven2/net/exoego/uika/uika-cli/"
-                         version "/uika-cli-" version "-" classifier ".zip"))
+                    (str "https://repo1.maven.org/maven2/"
+                         (str/replace cli-group "." "/") "/" cli-artifact "/"
+                         version "/" cli-artifact "-" version "-" classifier ".zip"))
             ;; Invocation-unique, deleted below: a fixed name in the shared cache
             ;; would let two cold-cache invocations read each other's half-written
             ;; download. The binary itself is already temp-file + atomic move.
@@ -206,7 +224,7 @@
                         text (if (str/starts-with? text "1.") (subs text 2) text)
                         release (try (Long/parseLong text)
                                      (catch NumberFormatException _ nil))]
-                    (when (and release (>= release 8)) release))))
+                    (when (and release (>= release min-release)) release))))
         options (mapv str (or options []))
         release-flags #{"--release" "-release" "--java-output-version" "-java-output-version"}
         target-flags #{"-target" "--target"}]
@@ -239,7 +257,7 @@
   it sends upgrade-check to ask ct.sym for a release it has never carried, failing the run."
   [value]
   (when-let [release (release-number value)]
-    (when (>= (long release) 8) (long release))))
+    (when (>= (long release) min-release) (long release))))
 
 (defn this-jvm
   "The JVM running this code, in the shape effective-jdk-release and the UIKA_JDK
@@ -265,9 +283,9 @@
         ;; differ by design, and blaming lein's own JVM sends the user to inspect a ct.sym
         ;; that was never consulted. Two reasons, two messages, for the same reason.
         (cond
-          (< effective 8)
+          (< effective min-release)
           (do (println (str "uika: skipping the JDK API layer (release " effective
-                            " is below the lowest release ct.sym serves, 8)"))
+                            " is below the lowest release ct.sym serves, " min-release ")"))
               nil)
 
           (not (.isFile (io/file home "lib" "ct.sym")))
