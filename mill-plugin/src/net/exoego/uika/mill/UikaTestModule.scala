@@ -31,7 +31,13 @@ trait UikaTestModule extends TestModule {
    *
    * `Task.Input`, not a cached `Task`: the `os.makeDir.all` below must run on EVERY
    * invocation, or a directory deleted between two runs with an unchanged `UIKA_JFR`
-   * would never be recreated (the cached value replays and the body is skipped).
+   * would never be recreated (the cached value replays and the body is skipped). The
+   * VALUE stays stable for a given `UIKA_JFR` on purpose: Mill watches every evaluated
+   * input by hash, so a per-evaluation nonce here makes `./mill -w` re-trigger forever.
+   * The cost of stability is that a cached test task can replay while the variable is
+   * set and record nothing, which is why docs/mill.md says to collect with `test` (a
+   * command, never cached) — the same reason Bazel's recipe needs
+   * `--nocache_test_results`.
    */
   def uikaJfrArgs: T[Seq[String]] = Task.Input {
     Task.env.get("UIKA_JFR").filter(_.nonEmpty) match {
@@ -45,19 +51,18 @@ trait UikaTestModule extends TestModule {
             s"uika: UIKA_JFR names a .jfr recording (consumption-only); test JVMs will not record: $dir"
           )
           Seq.empty[String]
+        } else if (os.isFile(dir)) {
+          // Fail fast like the Gradle plugin: a text log or a suffixless recording passes
+          // the suffix-only recording check, and os.makeDir.all on a regular file would
+          // die with a raw FileAlreadyExistsException naming neither uika nor the variable.
+          Task.fail(
+            s"uika: UIKA_JFR must name a directory (test JVMs record into it) or a .jfr recording, but $dir is neither"
+          )
         } else {
           // Load-bearing: a missing PARENT aborts JVM startup, but a missing leaf directory
           // under an existing parent makes JFR silently record to a single clobbered FILE.
           BuildCtx.withFilesystemCheckerDisabled(os.makeDir.all(dir))
-          // The nonce defeats testCached replay: a cached test forks no JVM and records
-          // nothing, with no symptom (Gradle closes this with upToDateWhen(false), Bazel
-          // with --nocache_test_results). A fresh value per evaluation keeps a cached
-          // test's inputs from ever matching while collection is on; without UIKA_JFR
-          // the args stay stable and ordinary caching is untouched.
-          Seq(
-            UikaCli.jfrClassLoadJvmArg(dir.toNIO),
-            s"-Duika.jfr.collect=${System.nanoTime()}"
-          )
+          Seq(UikaCli.jfrClassLoadJvmArg(dir.toNIO))
         }
     }
   }

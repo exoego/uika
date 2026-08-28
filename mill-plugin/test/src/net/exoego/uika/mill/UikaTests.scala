@@ -77,7 +77,9 @@ object UikaTests extends TestSuite {
     lazy val millDiscover: Discover = Discover[this.type]
   }
 
-  private val systemEnv: Map[String, String] = System.getenv().asScala.toMap
+  // Minus UIKA_JFR: upgradeCheck falls back to that variable, so a developer's exported
+  // collection directory must not leak into stub runs. Tests that want it add it back.
+  private val systemEnv: Map[String, String] = System.getenv().asScala.toMap - "UIKA_JFR"
 
   private def value[T](result: Either[ExecResult.Failing[?], UnitTester.Result[T]]): T =
     result.fold(failure => throw new RuntimeException(s"evaluation failed: $failure"), _.value)
@@ -331,11 +333,12 @@ object UikaTests extends TestSuite {
       }
     }
 
-    test("collection defeats testCached replay while UIKA_JFR is set") {
-      // A replayed testCached forks no JVM and records nothing, with no symptom: Gradle
-      // closes this with upToDateWhen(false), Bazel with --nocache_test_results. Mill's
-      // spelling is a per-evaluation nonce among the fork args, so a cached test's
-      // inputs never match while collection is on.
+    test("the injected args stay stable so watch mode never re-triggers on them") {
+      // Mill watches every evaluated Task.Input by hash and its poll re-runs on any
+      // change, so a per-evaluation nonce here would make `./mill -w` loop forever
+      // while UIKA_JFR is set. Stability is the contract. The cost is that a CACHED
+      // test replay records nothing, which is why docs/mill.md says to collect with
+      // `test` (a command, never cached).
       val jfrDir = os.temp.dir(prefix = "uika-jfr") / "recordings"
       Using.resource(UnitTester(
         stubCliBuild,
@@ -343,13 +346,32 @@ object UikaTests extends TestSuite {
         env = systemEnv + ("UIKA_JFR" -> jfrDir.toString)
       )) { tester =>
         def evaluate(): Seq[String] = value(tester(stubCliBuild.testJvm.test.forkArgs))
-        assert(evaluate() != evaluate())
+        assert(evaluate() == evaluate())
       }
-      // Without the variable the args must stay stable, or every ordinary test run
-      // would lose caching for nothing.
-      Using.resource(UnitTester(stubCliBuild, null, env = systemEnv - "UIKA_JFR")) { tester =>
+      Using.resource(UnitTester(stubCliBuild, null, env = systemEnv)) { tester =>
         def evaluate(): Seq[String] = value(tester(stubCliBuild.testJvm.test.forkArgs))
         assert(evaluate() == evaluate())
+      }
+    }
+
+    test("a file-valued UIKA_JFR fails loudly instead of dying inside makeDir") {
+      // A text log or a suffixless recording passes the suffix-only recording check,
+      // and os.makeDir.all on a regular file dies with a raw FileAlreadyExistsException
+      // naming neither uika nor the variable. The Gradle plugin fails fast on the same
+      // value shape, and so must this.
+      val log = os.temp.dir(prefix = "uika-jfr") / "loads.log"
+      os.write(log, "[class,load] example.App\n")
+      Using.resource(UnitTester(
+        stubCliBuild,
+        null,
+        env = systemEnv + ("UIKA_JFR" -> log.toString)
+      )) { tester =>
+        val failed = tester(stubCliBuild.testJvm.test.forkArgs)
+        assert(failed.isLeft)
+        assert(failed.fold(
+          failure => failure.toString.contains("UIKA_JFR must name a directory"),
+          _ => false
+        ))
       }
     }
 
@@ -378,6 +400,16 @@ object UikaTests extends TestSuite {
 
         val args = os.read(os.Path(s"$before.args"))
         assert(args.contains(s"--class-load-log $jfrDir"))
+
+        // --jfr stays the explicit override: with both set, the flag's directory must
+        // reach the CLI and the variable's must not.
+        val explicit = os.temp.dir(prefix = "uika-jfr-explicit")
+        value(tester(Uika.upgradeCheck(
+          tester.evaluator, before.toString, after.toString,
+          jfr = explicit.toString, cliVersion = "9.9.9")))
+        val overridden = os.read(os.Path(s"$before.args"))
+        assert(overridden.contains(s"--class-load-log $explicit"))
+        assert(!overridden.contains(jfrDir.toString))
       }
     }
 

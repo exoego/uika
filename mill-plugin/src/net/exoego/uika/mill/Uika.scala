@@ -109,7 +109,7 @@ object Uika extends ExternalModule {
     // Recordings are converted here, never handed to the CLI: the CLI is JVM-free and must
     // not read binary JFR. --jfr falls back to UIKA_JFR, the variable that made the tests
     // record (UikaTestModule), so ONE option serves both phases the way the sibling tools'
-    // single option does; the flag stays the explicit override.
+    // single option does. The flag stays the explicit override.
     val jfrValue = Option(jfr).filter(_.nonEmpty)
       .orElse(Task.env.get("UIKA_JFR").filter(_.nonEmpty))
     val classLoadLogs = JfrEvidence.rewrite(

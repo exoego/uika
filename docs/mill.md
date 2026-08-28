@@ -87,12 +87,15 @@ mix `UikaTestModule` into the test modules, last so its `forkArgs` wins:
 object test extends JavaTests, TestModule.Junit5, net.exoego.uika.mill.UikaTestModule
 ```
 
-Export `UIKA_JFR=<dir>` for the test run; `upgradeCheck` reads the same
-variable back, so one option serves both phases (`--jfr` is the explicit
-override). The mixin is needed because `forkArgs` is a task on the test module
-itself, out of reach of a command that finds the modules through the evaluator.
-While `UIKA_JFR` is set, tests re-run rather than replay from cache — a cached
-test forks no JVM and would record nothing.
+Export `UIKA_JFR=<dir>` for the test run, and keep it exported for the
+`upgradeCheck` step, which reads the same variable back (`--jfr` is the
+explicit override). One option serves both phases. The mixin is needed
+because `forkArgs` is a task on the test module itself, out of reach of a
+command that finds the modules through the evaluator.
+
+Collect with `test`. It is a Mill command and always forks, while a cached
+`testCached` replays without forking a JVM and records nothing, the same
+reason the Bazel recipe needs `--nocache_test_results`.
 
 Your own `override def forkArgs = Seq(...)` replaces the list and drops the injected
 flag. Append to `super.forkArgs()` instead. `./mill testLocal` does not fork, so it
