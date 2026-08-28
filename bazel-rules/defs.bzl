@@ -64,11 +64,22 @@ def uika_upgrade_check(
         version, which over-claims for a target that pins a lower release.
       fail_on: never, reachable or any. Omitted leaves the CLI default.
       exclude_files: TOML files of known false positives, as workspace-relative paths.
+        A comma in a path is rejected: the list rides one comma-joined property.
       jdk_release: the API release to resolve JDK escapes against. Negative, the default,
         derives it from `targets`; 0 switches the layer off. The dump rule's knob folds 0
         into the derived default instead, so the two attrs default differently on purpose.
       **kwargs: passed through to the generated java_binary (visibility, tags, ...).
     """
+    # The list rides one comma-joined -D property, so a comma inside a path would be
+    # silently split into two bogus paths. Fail loudly instead of encoding, the same
+    # decision the manifest makes for tab and newline.
+    for exclude_file in exclude_files:
+        if "," in exclude_file:
+            fail("uika_upgrade_check(name = %r): exclude_files entry %r carries a comma," %
+                 (name, exclude_file) +
+                 " the -Duika.excludeFiles delimiter; rename the path or pass it at run" +
+                 " time via --excludeFile")
+
     releases = name + ".releases"
     uika_classpath_manifest(
         name = releases,
