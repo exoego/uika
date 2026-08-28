@@ -158,7 +158,14 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   per project, in parallel, racing on the shared retrieve directory and on the
   JFR work directory whose stale-conversion sweep deletes a sibling's fresh
   output. For the same scoping reason the task reads `uikaJdkRelease` through
-  `LocalRootProject /`, as it already did for `uikaJfr`.
+  `LocalRootProject /`, as it already did for `uikaJfr`. The general rule for
+  whole-build ScopeFilter tasks: an inputKey must live in buildSettings with an
+  aggregate opt-out, while a plain taskKey (`uikaDumpClasspath`) belongs in
+  buildSettings OUTRIGHT — a projectSettings definition leaves every project
+  holding a live full-merge instance, which shell aggregation, `all`-joined
+  invocations and task-graph dependencies run in parallel against the one
+  `uikaOutput` path (IO.write truncates in place, so racing writers interleave
+  the JSON). Explicitly scoped invocations delegate to the one instance.
 - Runtime load evidence is ONE knob per tool pointed at one directory, serving
   both phases (collect on the base branch's test run, consume on the PR's
   check): Gradle `-PuikaJfr` (bare value defaults to `build/uika/jfr`; the

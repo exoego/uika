@@ -126,6 +126,28 @@ object UikaPlugin extends AutoPlugin {
         case 1 => sys.error("uika upgrade-check found broken references (see output above)")
         case n => sys.error(s"uika upgrade-check failed with exit code $n")
       }
+    },
+    // Defined at the BUILD level so the whole-build merge exists ONCE. A projectSettings
+    // definition left every project holding a live full-merge instance, which shell
+    // aggregation, `all`-joined invocations and task-graph dependencies ran in parallel
+    // against the one uikaOutput path (IO.write truncates in place, so racing writers
+    // can interleave the JSON). An explicitly scoped `app/uikaDumpClasspath` delegates
+    // here, so every spelling runs this one instance with the root's preferredRoots.
+    uikaDumpClasspath := {
+      val modules = uikaModuleClasspath.all(ScopeFilter(inAnyProject)).value
+      // LocalRootProject for the reason the check task gives above.
+      val out = (LocalRootProject / uikaOutput).value
+      IO.createDirectory(out.getParentFile)
+      IO.write(
+        out,
+        DumpFormat.writeV2(
+          modules.asJava,
+          List((LocalRootProject / baseDirectory).value.getAbsolutePath).asJava,
+          DumpFormat.dumpRelease(modules.asJava)
+        )
+      )
+      streams.value.log.info(s"uika classpath dump: $out")
+      out
     }
   )
 
@@ -233,20 +255,5 @@ object UikaPlugin extends AutoPlugin {
         else declared.minBy(_.intValue)
       )
     },
-    uikaDumpClasspath := {
-      val modules = uikaModuleClasspath.all(ScopeFilter(inAnyProject)).value
-      val out = uikaOutput.value
-      IO.createDirectory(out.getParentFile)
-      IO.write(
-        out,
-        DumpFormat.writeV2(
-          modules.asJava,
-          List(baseDirectory.value.getAbsolutePath).asJava,
-          DumpFormat.dumpRelease(modules.asJava)
-        )
-      )
-      streams.value.log.info(s"uika classpath dump: $out")
-      out
-    }
   )
 }

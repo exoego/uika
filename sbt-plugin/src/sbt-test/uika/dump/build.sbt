@@ -118,3 +118,16 @@ checkDump := {
   }, coreModule)
   assert(coreModule("jdkRelease") == 11.0, coreModule)
 }
+
+lazy val checkDumpRanOnce = taskKey[Unit]("Asserts the shell invocation ran the merge once, not once per project")
+
+// `sbt uikaDumpClasspath` aggregates by default, which ran the FULL-build merge once
+// per project, in parallel, all writing the same uikaOutput file. Each runner logs one
+// "uika classpath dump:" line into its own streams file, so one writer means exactly
+// one streams file carries the marker.
+checkDumpRanOnce := {
+  val outs = (baseDirectory.value ** "out").get.filter(_.isFile)
+  val writers = outs.count(f => IO.read(f).contains("uika classpath dump:"))
+  if (writers != 1)
+    sys.error(s"expected exactly one uikaDumpClasspath writer, found $writers")
+}
