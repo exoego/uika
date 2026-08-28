@@ -113,6 +113,30 @@ if [ "$got" != "8" ]; then
 fi
 echo "JDK 8 probe: jdkRelease 8"
 
+# A JDK 7 :java-cmd sits below the floor ct.sym can serve, and a dump naming such a
+# release hard-fails the CLI's JDK-pair run later. The dump must omit the field, never
+# record 7 and never fall back to lein's own JVM.
+shim7="$here/test-project/target/fake-jdk7-java"
+cat > "$shim7" <<SHIM
+#!/bin/sh
+case "\$*" in
+  *"-XshowSettings:properties"*)
+    echo "    java.home = /opt/fake-jdk7" >&2
+    echo "    java.specification.version = 1.7" >&2
+    exit 0 ;;
+esac
+exec "$real_java" "\$@"
+SHIM
+chmod +x "$shim7"
+lein update-in :uika dissoc :jdk-release \
+  -- update-in : assoc :java-cmd "\"$shim7\"" \
+  -- uika dump-classpath target/jdk7.json >/dev/null
+if grep -q '"jdkRelease"' target/jdk7.json; then
+  echo "FAIL: a below-floor :java-cmd still recorded a jdkRelease" >&2
+  tr -d ' ' < target/jdk7.json | sed -n 's/.*\("jdkRelease":[0-9]*\).*/\1/p' >&2; exit 1
+fi
+echo "JDK 7 probe: jdkRelease omitted"
+
 # :javac-options is the spelling that pins the API, so it must beat the probed JVM in
 # the dump, the way every other tool's declared release does. Passed on the fly so the
 # fixture keeps probing by default; 17 matches neither the fixture's :jdk-release 11

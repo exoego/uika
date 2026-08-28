@@ -124,16 +124,21 @@
     ;; a project compiling --release 8 on a 21 JVM would otherwise be over-claimed, the
     ;; direction that loses findings with nothing to show. The probe answers "which JVM
     ;; does lein start for this project", the only evidence left when nothing declares.
+    ;; The probe arm is floored: it is the one writer that can see a below-floor JVM
+    ;; (a JDK 7 :java-cmd), and a dump naming a release ct.sym never carried hard-fails
+    ;; the CLI's JDK-pair run later. dump-json omits the field when nothing is servable.
     (spit out (core/dump-json (str ":" (:name project)) artifacts class-dirs
                               (or (core/override-release (:jdk-release (:uika project)))
                                   (core/declared-release (:javac-options project))
-                                  (:feature (project-jvm project)))))
+                                  (let [feature (:feature (project-jvm project))]
+                                    (when (>= feature core/min-release) feature)))))
     (main/info "uika classpath dump:" (str out))))
 
 (defn- own-version
   "This plugin's version from its jar's pom.properties; nil in a source checkout."
   []
-  (when-let [resource (io/resource "META-INF/maven/net.exoego.uika/lein-uika/pom.properties")]
+  (when-let [resource (io/resource (str "META-INF/maven/" core/cli-group
+                                        "/lein-uika/pom.properties"))]
     (with-open [in (io/input-stream resource)]
       (let [props (doto (Properties.) (.load in))]
         (.getProperty props "version")))))

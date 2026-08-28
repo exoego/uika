@@ -72,8 +72,10 @@
   :cli-version / UIKA_CLI_VERSION, with the resolve-binary usage hint naming
   the former."
   [libs]
+  ;; The group half comes from the shared constant, so a coordinate rename cannot
+  ;; strand this lookup while the sync test stays green.
   (some (fn [[lib {:mvn/keys [version]}]]
-          (when (= lib 'net.exoego.uika/clojure-uika) version))
+          (when (= lib (symbol core/cli-group "clojure-uika")) version))
         libs))
 
 (defn- own-version
