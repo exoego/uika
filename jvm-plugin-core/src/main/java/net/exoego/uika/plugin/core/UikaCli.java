@@ -70,11 +70,18 @@ public final class UikaCli {
                     .orElseThrow(() -> new IOException(binaryName + " not found in " + zip));
             // Extract to a temp file and rename so a concurrent build never sees a partial binary.
             Path tmp = Files.createTempFile(targetDir, "uika", ".tmp");
-            try (InputStream in = zipFile.getInputStream(entry)) {
-                Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
+            try {
+                try (InputStream in = zipFile.getInputStream(entry)) {
+                    Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
+                }
+                tmp.toFile().setExecutable(true, false);
+                Files.move(tmp, binary, StandardCopyOption.REPLACE_EXISTING);
+            } finally {
+                // A truncated entry or a full disk between createTempFile and the move would
+                // otherwise orphan a binary-sized .tmp on every retry, and nothing ever
+                // reaps the install directory. The Clojure port carries the same cleanup.
+                Files.deleteIfExists(tmp);
             }
-            tmp.toFile().setExecutable(true, false);
-            Files.move(tmp, binary, StandardCopyOption.REPLACE_EXISTING);
         }
         return binary;
     }
