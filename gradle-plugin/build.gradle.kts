@@ -25,6 +25,11 @@ sourceSets {
     main {
         java.srcDir("../jvm-plugin-core/src/main/java")
     }
+    test {
+        // The shared class-file floor guard, mounted like the main sources so the Gradle
+        // and Maven builds run one copy instead of drifting twins.
+        java.srcDir("../jvm-plugin-core/src/test/java")
+    }
 }
 
 // Do not pin a toolchain; emit Java 17-compatible bytecode with the JVM running Gradle.

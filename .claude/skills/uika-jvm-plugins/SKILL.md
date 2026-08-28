@@ -21,9 +21,16 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   older build daemon -- the released sbt 0.8.0 shipped `UikaCli.class` as class-file
   major 65, needing a JDK 21 sbt, while Gradle and Maven ran fine on 17. Nothing in a
   new build catches this by itself, which is why it is written here and not only in
-  the build files. Mill guards it with a unit test reading the class-file major
-  version; sbt with a `checkClassFileVersions` task, because that build has no test
-  source set (its tests are scripted builds, which could only inspect a resolved jar).
+  the build files. Every build guards it: Mill with a unit test reading the class-file
+  major, sbt with `checkClassFileVersions` (its tests are scripted builds, which could
+  only inspect a resolved jar), Gradle and Maven with ONE shared sweeping test
+  (`jvm-plugin-core/src/test/java`, mounted into both like the main sources -- a
+  per-build twin whose bound went stale would never fail), the clojure-tool suite
+  reading the javac'd JfrEvidence off target/core-classes, and the lein IT reading it
+  from target/classes. The guards sweep or pin the BUILD's own output, never ~/.m2,
+  and fail on an empty read: BSD od's trailing line once turned the lein guard into a
+  permanent no-op on macOS, and Maven's incremental compiler ignores a changed
+  `maven.compiler.release`, which is why `make maven-verify` cleans first.
 - 17 is the true floor, not a convention: the core uses arrow switch and pattern
   `instanceof`. Raising it means raising the floor every plugin advertises.
 
