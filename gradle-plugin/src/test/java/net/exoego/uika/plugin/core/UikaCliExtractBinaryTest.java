@@ -16,10 +16,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/// A failed extraction must not orphan its temp file: the copy or the atomic move can
-/// fail (a truncated entry, a full disk), a retry creates a fresh temp file each time,
-/// and nothing ever reaps the leftovers from the install directory every JVM plugin
-/// shares. The Clojure port has carried this cleanup from the start.
+/// A failed extraction must not orphan its temp file. The copy or the move can fail (a
+/// truncated entry, a full disk), a retry creates a fresh temp file each time, and
+/// nothing ever reaps the leftovers from the per-project install directory. Every JVM
+/// plugin compiles this code (the directories are per tool, only the code is shared),
+/// and the Clojure port has carried the cleanup from the start.
 final class UikaCliExtractBinaryTest {
     @TempDir
     Path dir;
@@ -55,10 +56,9 @@ final class UikaCliExtractBinaryTest {
         Path zip = stubZip();
         assertThrows(IOException.class, () -> UikaCli.extractBinary(zip, installDir));
 
-        List<String> leftovers = fileNames(installDir).stream()
-                .filter(name -> name.endsWith(".tmp"))
-                .toList();
-        assertTrue(leftovers.isEmpty(), "orphaned temp files: " + leftovers);
+        // Exact contents, not a suffix filter: a leftover by ANY name must fail, and the
+        // planted directory is the only entry a clean failure leaves behind.
+        assertEquals(List.of(BINARY_NAME), fileNames(installDir));
     }
 
     private static List<String> fileNames(Path directory) throws IOException {

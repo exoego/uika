@@ -74,13 +74,31 @@ public final class UikaCli {
                 try (InputStream in = zipFile.getInputStream(entry)) {
                     Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
                 }
-                tmp.toFile().setExecutable(true, false);
-                Files.move(tmp, binary, StandardCopyOption.REPLACE_EXISTING);
-            } finally {
-                // A truncated entry or a full disk between createTempFile and the move would
-                // otherwise orphan a binary-sized .tmp on every retry, and nothing ever
-                // reaps the install directory. The Clojure port carries the same cleanup.
-                Files.deleteIfExists(tmp);
+                // setExecutable reports failure by returning false (a CIFS or FUSE mount
+                // rejecting chmod). Installing a 0600 binary would pin the failure, since
+                // the fast path above then skips extraction forever and every later run
+                // dies far away in ProcessBuilder with no cause in sight.
+                if (!tmp.toFile().setExecutable(true, false) && !tmp.toFile().canExecute()) {
+                    throw new IOException("could not mark " + tmp + " executable");
+                }
+                // ATOMIC_MOVE, because a plain REPLACE_EXISTING move unlinks the installed
+                // binary before renaming over it: a concurrent build in that gap sees
+                // ENOENT, or a sharing violation on Windows while the binary runs. The
+                // temp file lives in targetDir itself, so the rename cannot cross a file
+                // store.
+                Files.move(tmp, binary,
+                        StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException | RuntimeException primary) {
+                // A truncated entry or a full disk would otherwise orphan a binary-sized
+                // .tmp on every retry, and nothing ever reaps the install directory. The
+                // cleanup must not replace the root cause, so its own failure rides along
+                // as a suppressed exception instead of propagating.
+                try {
+                    Files.deleteIfExists(tmp);
+                } catch (IOException cleanup) {
+                    primary.addSuppressed(cleanup);
+                }
+                throw primary;
             }
         }
         return binary;
