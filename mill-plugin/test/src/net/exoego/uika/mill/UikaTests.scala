@@ -291,6 +291,18 @@ object UikaTests extends TestSuite {
       }
     }
 
+    test("--jdkRelease 0 leaves the dump's recorded release derived") {
+      // 0 only switches the API layer off. On the DUMP it has to keep the derived values:
+      // recording nothing there would take JDK move detection down with the layer, which is
+      // a different feature. This is the half docs/mill.md left unsaid.
+      Using.resource(UnitTester(stubCliBuild, null, env = systemEnv)) { tester =>
+        val out = os.Path(value(tester(Uika.dumpClasspath(tester.evaluator, jdkRelease = 0))))
+        val json = ujson.read(os.read(out))
+        assert(json("jdkRelease").num.toInt == 11)
+        assert(json("modules").arr.exists(_.obj.get("jdkRelease").map(_.num.toInt).contains(11)))
+      }
+    }
+
     test("jdk-release derivation reads a Scala module's scalacOptions") {
       // sbt reads the scalac option lists and docs/mill.md promises the same, so a pure-Scala
       // module pinning `-release` must reach the flag. Over-claiming is the silent direction:

@@ -172,6 +172,10 @@ degrading to a warning. The cache save and restore close that gap.
 - [`--jdkRelease`](../README.md#build-tool-plugins) overrides the release
   derived from `javacOptions` and `scalacOptions` (their mandatory halves
   included, since Mill compiles with both). Set 0 to disable the API layer.
+  `dumpClasspath` takes it too, where it names the release every module is
+  recorded as running on, for a build whose runtime is not what it compiles
+  against. There 0 means "keep the derived value" instead, because recording
+  nothing would take JDK move detection down with the API layer.
 
 ## Runtime load evidence (JFR)
 
