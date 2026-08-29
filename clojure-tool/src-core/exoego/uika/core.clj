@@ -260,10 +260,23 @@
   that ships on a JVM newer than anything it declares. Zero is not that statement, it means
   \"switch the API layer off\", so the dump keeps its derived value rather than taking JDK
   move detection down with the layer. Below min-release is dropped for a harder reason: a dump naming
-  it sends upgrade-check to ask ct.sym for a release it has never carried, failing the run."
-  [value]
-  (when-let [release (release-number value)]
-    (when (>= (long release) min-release) (long release))))
+  it sends upgrade-check to ask ct.sym for a release it has never carried, failing the run.
+
+  Two arities, as on the Java side. The one-argument form is silent; the two-argument form
+  explains itself when it drops a POSITIVE value, because the check side already says why it
+  skipped a below-floor release and the dump side saying nothing left half the story
+  untold. Zero stays silent either way, being the documented opt-out rather than a mistake."
+  ([value]
+   (when-let [release (release-number value)]
+     (when (>= (long release) min-release) (long release))))
+  ([value log]
+   (let [effective (override-release value)
+         requested (release-number value)]
+     (when (and (nil? effective) requested (pos? (long requested)))
+       (log (str "uika: ignoring jdk-release " requested " for the recorded release (below "
+                 min-release ", the lowest release ct.sym serves); the dump keeps what the"
+                 " project compiles for")))
+     effective)))
 
 (defn this-jvm
   "The JVM running this code, in the shape effective-jdk-release and the UIKA_JDK

@@ -39,7 +39,8 @@ object Uika extends ExternalModule {
     if (modules.isEmpty) {
       Task.fail("uika: no JavaModule found in this build")
     }
-    val declaredOverride = UikaCli.overrideRelease(Int.box(jdkRelease))
+    val declaredOverride =
+      UikaCli.overrideRelease(Int.box(jdkRelease), line => Task.log.info(line))
     val dumps = ev.execute(modules.map(moduleDumpTask(_, declaredOverride))).values.get
     val workspace = Task.ctx().workspace
     val out =

@@ -154,6 +154,28 @@ final class UikaPluginIntegrationTest {
         assertEquals(Map.of(":older", 11, ":newer", 17), moduleReleases(derived));
     }
 
+    /// A below-floor override is dropped, and used to be dropped in silence on the dump
+    /// side while the check side explained the same decision. Once for the build, not once
+    /// per module: the property is build-wide.
+    @Test
+    void aBelowFloorJdkReleasePropertyExplainsItself() throws Exception {
+        var output = projectDir.resolve("classpath.json");
+        writeMixedReleaseProject();
+
+        var result = runDump(output, "-PuikaJdkRelease=5");
+
+        var line = "ignoring jdkRelease 5";
+        assertTrue(result.getOutput().contains(line),
+                () -> "expected the dropped-override notice:\n" + result.getOutput());
+        var occurrences = result.getOutput().split(java.util.regex.Pattern.quote(line), -1).length - 1;
+        assertEquals(1, occurrences,
+                () -> "the build-wide property explained itself " + occurrences + " times");
+        // Dropped, so every module keeps what it compiles for.
+        @SuppressWarnings("unchecked")
+        var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        assertEquals(Map.of(":older", 11, ":newer", 17), moduleReleases(doc));
+    }
+
     @Test
     void malformedJdkReleasePropertyFailsWithAUikaMessage() throws Exception {
         writeMixedReleaseProject();

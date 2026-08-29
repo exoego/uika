@@ -36,7 +36,7 @@ public final class MergeMain {
         var output = "uika/classpath.json";
         String materialize = null;
         var fragmentDirs = new ArrayList<Path>();
-        Integer override = UikaCli.overrideRelease(Integer.getInteger("uika.jdkRelease", 0));
+        Integer override = UikaCli.overrideRelease(Integer.getInteger("uika.jdkRelease", 0), System.out::println);
 
         for (var i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -45,7 +45,7 @@ public final class MergeMain {
                 case "--output", "-o" -> output = Manifest.flagValue(args, ++i);
                 case "--materialize" -> materialize = Manifest.flagValue(args, ++i);
                 case "--jdkRelease" ->
-                        override = UikaCli.overrideRelease(Manifest.flagRelease(args, ++i));
+                        override = UikaCli.overrideRelease(Manifest.flagRelease(args, ++i), System.out::println);
                 default -> throw new IllegalArgumentException("unknown argument: " + args[i]);
             }
         }

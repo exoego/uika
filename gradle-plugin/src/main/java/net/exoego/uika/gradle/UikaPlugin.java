@@ -149,6 +149,11 @@ public class UikaPlugin implements Plugin<Project> {
         String configurationName = root.findProperty("uikaConfiguration") instanceof String s
                 ? s
                 : "runtimeClasspath";
+        // Once, here, rather than inside dumpJdkRelease, which runs per project: the property
+        // is build-wide, so a below-floor value owes exactly one line rather than one per
+        // module. The result is unused; each module reads the same property through the
+        // silent overload.
+        UikaCli.overrideRelease(jdkReleaseProperty(root), root.getLogger()::lifecycle);
 
         var merge =
                 root.getTasks().register("uikaDumpClasspath", MergeClasspathTask.class, task -> {

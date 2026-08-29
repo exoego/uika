@@ -128,7 +128,7 @@
     ;; (a JDK 7 :java-cmd), and a dump naming a release ct.sym never carried hard-fails
     ;; the CLI's JDK-pair run later. dump-json omits the field when nothing is servable.
     (spit out (core/dump-json (str ":" (:name project)) artifacts class-dirs
-                              (or (core/override-release (:jdk-release (:uika project)))
+                              (or (core/override-release (:jdk-release (:uika project)) main/info)
                                   (core/declared-release (:javac-options project))
                                   (let [feature (:feature (project-jvm project))]
                                     (when (>= feature core/min-release) feature)))))

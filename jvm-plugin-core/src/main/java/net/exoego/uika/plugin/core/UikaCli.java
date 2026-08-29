@@ -253,6 +253,25 @@ public final class UikaCli {
      * naming it would send upgrade-check to ask ct.sym for a release it has never carried,
      * failing the whole run.
      */
+    /**
+     * {@link #overrideRelease(Integer)}, explaining itself when it drops a positive value.
+     *
+     * <p>The check side already says why it skipped a below-floor release
+     * ({@link #effectiveJdkRelease}), and the dump side said nothing at all, so
+     * {@code jdkRelease = 5} produced one explanation for half of what it did. Zero stays
+     * silent because it is the documented opt-out rather than a mistake, the same split
+     * {@code effectiveJdkRelease} makes.
+     */
+    public static Integer overrideRelease(Integer override, Consumer<String> log) {
+        Integer effective = overrideRelease(override);
+        if (effective == null && override != null && override > 0) {
+            log.accept("uika: ignoring jdkRelease " + override + " for the recorded release ("
+                    + "below " + MIN_RELEASE + ", the lowest release ct.sym serves); the dump"
+                    + " keeps what each module compiles for");
+        }
+        return effective;
+    }
+
     public static Integer overrideRelease(Integer override) {
         return override != null && override >= MIN_RELEASE ? override : null;
     }

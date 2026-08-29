@@ -60,7 +60,7 @@
               (if (.isAbsolute f) f (io/file dir (str f))))]
     (io/make-parents out)
     (spit out (core/dump-json (str ":" (.getName (io/file dir))) artifacts class-dirs
-                              (or (core/override-release jdk-release)
+                              (or (core/override-release jdk-release println)
                                   (.feature (Runtime/version)))))
     (println "uika classpath dump:" (str out))
     (str out)))

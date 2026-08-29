@@ -134,6 +134,15 @@ object UikaPlugin extends AutoPlugin {
     // can interleave the JSON). An explicitly scoped `app/uikaDumpClasspath` delegates
     // here, so every spelling runs this one instance with the root's preferredRoots.
     uikaDumpClasspath := {
+      // Once, here, rather than inside uikaModuleClasspath, which runs per project: the
+      // setting is build-wide, so a below-floor value owes exactly one line. The result is
+      // unused; each module reads the same setting through the silent overload. The logger
+      // is hoisted because sbt's macro rejects a `.value` inside a lambda.
+      val overrideLog = streams.value.log
+      UikaCli.overrideRelease(
+        Int.box((LocalRootProject / uikaJdkRelease).value),
+        (line: String) => overrideLog.info(line)
+      )
       val modules = uikaModuleClasspath.all(ScopeFilter(inAnyProject)).value
       // LocalRootProject for the reason the check task gives above.
       val out = (LocalRootProject / uikaOutput).value

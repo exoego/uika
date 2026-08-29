@@ -141,7 +141,7 @@ public final class DumpClasspathMojo extends AbstractMojo {
             }
         }
 
-        Integer override = UikaCli.overrideRelease(jdkRelease);
+        Integer override = UikaCli.overrideRelease(jdkRelease, line -> getLog().info(line));
         return new ClasspathDump.Module(moduleNames.get(reactorProject), classesDirs, artifacts,
                 override != null ? override : JdkReleases.declaredRelease(reactorProject));
     }

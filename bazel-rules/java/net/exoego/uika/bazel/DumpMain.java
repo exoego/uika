@@ -23,7 +23,7 @@ public final class DumpMain {
 
     public static void main(String[] args) throws IOException {
         Path manifest = Manifest.resolveRunfile(required("uika.manifest"));
-        Integer override = UikaCli.overrideRelease(Integer.getInteger("uika.jdkRelease", 0));
+        Integer override = UikaCli.overrideRelease(Integer.getInteger("uika.jdkRelease", 0), System.out::println);
 
         var output = "uika/classpath.json";
         String materialize = null;
@@ -32,7 +32,7 @@ public final class DumpMain {
                 case "--output", "-o" -> output = Manifest.flagValue(args, ++i);
                 case "--materialize" -> materialize = Manifest.flagValue(args, ++i);
                 case "--jdkRelease" ->
-                        override = UikaCli.overrideRelease(Manifest.flagRelease(args, ++i));
+                        override = UikaCli.overrideRelease(Manifest.flagRelease(args, ++i), System.out::println);
                 default -> throw new IllegalArgumentException("unknown argument: " + args[i]);
             }
         }
