@@ -1,4 +1,5 @@
 .PHONY: help build check test fmt fmt-check clean probe placeholder-check \
+	rewrite rewrite-check \
 	cargo-build cargo-release cargo-test cargo-clippy cargo-fmt cargo-fmt-check \
 	gradle-build gradle-check gradle-test gradle-clean \
 	sbt-compile sbt-scripted sbt-clean \
@@ -53,6 +54,7 @@ help:
 		'Useful direct targets:' \
 		'  make cargo-release' \
 		'  make probe        Answer-check fixture verdicts against a real JVM' \
+		'  make rewrite      Rewrite Java locals to var (rewrite-check verifies only)' \
 		'  make gradle-check' \
 		'  make sbt-scripted' \
 		'  make maven-verify' \
@@ -78,9 +80,9 @@ placeholder-check:
 	done
 	@echo "version placeholders: all 0.0.0-dev"
 
-check: placeholder-check cargo-fmt-check cargo-clippy cargo-test gradle-check sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
+check: placeholder-check rewrite-check cargo-fmt-check cargo-clippy cargo-test gradle-check sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
-test: cargo-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
+test: rewrite cargo-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
 fmt: cargo-fmt
 
@@ -111,6 +113,18 @@ cargo-fmt-check:
 # fixtures are tiny, and cargo test has already built target/debug in CI.
 probe: cargo-build
 	UIKA=target/debug/uika JAVA="$(JAVA)" sh tools/jvm-probe/run-fixtures.sh
+
+# Keeps local variable declarations on var (recipes and version pins in
+# tools/openrewrite/rewrite.gradle, applied as an init script so the plugin builds stay
+# untouched). Runs through the gradle-plugin build, which mounts jvm-plugin-core, so the
+# shared sources and their symlink consumers are covered. The maven mojos, the
+# bazel-rules mains and tools/jvm-probe sit outside every Gradle source set and were
+# converted once when this was introduced.
+rewrite:
+	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) --init-script $(CURDIR)/tools/openrewrite/rewrite.gradle rewriteRun
+
+rewrite-check:
+	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) --init-script $(CURDIR)/tools/openrewrite/rewrite.gradle rewriteDryRun
 
 gradle-build:
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) build

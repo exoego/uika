@@ -14,6 +14,10 @@ $ cargo build --release --features memstats   # memory breakdown (counting alloc
 Measure with release builds. Debug builds are roughly 10x slower, and
 `memstats` swaps in a counting allocator, so it is not a throughput benchmark.
 
+Java sources declare local variables with `var`. `make test` applies the
+OpenRewrite recipes in place before running anything, and `make check` runs the
+verify-only variant that CI enforces. `make rewrite` applies them on demand.
+
 ## Test fixtures and goldens
 
 The integration tests replay real incidents against unmodified JARs from Maven
