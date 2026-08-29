@@ -14,3 +14,10 @@ assert log.text.contains("BUILD FAILURE") :
 // reader whether the gate found something or the CLI never ran, so it is worth pinning.
 assert log.text.contains("MojoExecutionException") :
     "exit 2 was not a MojoExecutionException:\n${log.text}"
+
+// The stub writes this to STDERR, and it is the only stub in the repo that does. It can
+// only reach the log through UikaCli.runUpgradeCheck's redirectErrorStream, so this is
+// what pins that: without it a CLI usage error would leave the user with a bare exit code
+// and the reason discarded into a pipe nobody reads.
+assert log.text.contains("[INFO] uika-stub: usage error") :
+    "the CLI's stderr did not reach the mojo logger:\n${log.text}"
