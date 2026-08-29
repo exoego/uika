@@ -18,6 +18,8 @@ import org.gradle.api.tasks.TaskAction;
 import org.gradle.work.DisableCachingByDefault;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
@@ -101,29 +103,24 @@ public abstract class UpgradeCheckTask extends DefaultTask {
     @Internal
     public abstract DirectoryProperty getJfrWorkDir();
 
+    /**
+     * A binary to run instead of resolving one, from {@code UIKA_CLI_PATH}.
+     *
+     * <p>Wired from a {@code providers.environmentVariable} rather than read with
+     * {@code System.getenv} in the task action, so the configuration cache treats the
+     * variable as the build input it is and a changed value invalidates the entry.
+     */
+    @Input
+    @Optional
+    public abstract Property<String> getCliPath();
+
     /** Where the binary is extracted, scoped by version and classifier below this directory. */
     @Internal
     public abstract DirectoryProperty getInstallDir();
 
     @TaskAction
     public void run() throws Exception {
-        if (!getCliVersion().isPresent()) {
-            throw new GradleException(
-                    "uika-cli version is unknown; pass -PuikaCliVersion=<version>");
-        }
-        var version = getCliVersion().get();
-        String classifier = UikaCli.platformClassifier();
-
-        Set<File> files = getCliZip().getFiles();
-        if (files.isEmpty()) {
-            throw new GradleException("uika-cli " + version + " (" + classifier
-                    + ") did not resolve to a distribution ZIP");
-        }
-        var zip = files.iterator().next();
-
-        var installDir = getInstallDir().get().getAsFile().toPath()
-                .resolve(version + "-" + classifier);
-        Path binary = UikaCli.extractBinary(zip.toPath(), installDir);
+        var binary = resolveBinary();
 
         List<Path> excludeFiles = getExcludeFiles().getFiles().stream()
                 .map(File::toPath)
@@ -160,5 +157,36 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         if (exit != 0) {
             throw new GradleException("uika upgrade-check failed with exit code " + exit);
         }
+    }
+
+    /// UIKA_CLI_PATH wins outright, so a build can point at a binary it already has without
+    /// the repositories, the version, or the platform classifier mattering at all. The
+    /// resolver path below is unchanged.
+    private Path resolveBinary() throws IOException {
+        if (getCliPath().isPresent() && !getCliPath().get().isBlank()) {
+            var binary = Path.of(getCliPath().get());
+            if (!Files.isRegularFile(binary)) {
+                throw new GradleException(
+                        UikaCli.CLI_PATH_ENV + " does not name a file: " + binary);
+            }
+            return binary;
+        }
+        if (!getCliVersion().isPresent()) {
+            throw new GradleException(
+                    "uika-cli version is unknown; pass -PuikaCliVersion=<version>");
+        }
+        var version = getCliVersion().get();
+        String classifier = UikaCli.platformClassifier();
+
+        Set<File> files = getCliZip().getFiles();
+        if (files.isEmpty()) {
+            throw new GradleException("uika-cli " + version + " (" + classifier
+                    + ") did not resolve to a distribution ZIP");
+        }
+        var zip = files.iterator().next();
+
+        var installDir = getInstallDir().get().getAsFile().toPath()
+                .resolve(version + "-" + classifier);
+        return UikaCli.extractBinary(zip.toPath(), installDir);
     }
 }

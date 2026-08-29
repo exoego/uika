@@ -169,18 +169,27 @@ object Uika extends ExternalModule {
       version: String,
       dest: os.Path
   )(using mill.api.TaskCtx): java.nio.file.Path = {
-    val classifier = UikaCli.platformClassifier()
-    // Intransitive, as in all three sibling plugins: the distribution is a native binary, and
-    // anything the POM ever gains would be downloaded and could win the zip pick below.
-    val dep = Dep.parse(
-      s"${UikaCli.GROUP}:${UikaCli.ARTIFACT}:$version;classifier=$classifier;type=zip"
-    ).exclude("*" -> "*")
-    val resolved =
-      resolver.classpath(Seq(dep), artifactTypes = Some(Set(coursier.Type("zip")))).map(_.path)
-    val zip = resolved.find(_.last.endsWith(".zip")).getOrElse(
-      Task.fail(s"uika-cli zip not found among ${resolved.mkString(", ")}")
-    )
-    UikaCli.extractBinary(zip.toNIO, (dest / s"cli-$version-$classifier").toNIO)
+    // UIKA_CLI_PATH wins outright, so an air-gapped build or one pointed at a locally built
+    // binary never reaches the resolver, the version, or the classifier.
+    Option(UikaCli.binaryOverride()) match {
+      case Some(path) =>
+        if (!java.nio.file.Files.isRegularFile(path))
+          Task.fail(s"${UikaCli.CLI_PATH_ENV} does not name a file: $path")
+        path
+      case None =>
+        val classifier = UikaCli.platformClassifier()
+        // Intransitive, as in all three sibling plugins: the distribution is a native binary,
+        // and anything the POM ever gains would be downloaded and could win the zip pick below.
+        val dep = Dep.parse(
+          s"${UikaCli.GROUP}:${UikaCli.ARTIFACT}:$version;classifier=$classifier;type=zip"
+        ).exclude("*" -> "*")
+        val resolved =
+          resolver.classpath(Seq(dep), artifactTypes = Some(Set(coursier.Type("zip")))).map(_.path)
+        val zip = resolved.find(_.last.endsWith(".zip")).getOrElse(
+          Task.fail(s"uika-cli zip not found among ${resolved.mkString(", ")}")
+        )
+        UikaCli.extractBinary(zip.toNIO, (dest / s"cli-$version-$classifier").toNIO)
+    }
   }
 
   /**

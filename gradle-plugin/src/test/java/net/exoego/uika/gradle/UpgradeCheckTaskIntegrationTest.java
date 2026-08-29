@@ -14,6 +14,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -585,6 +587,46 @@ final class UpgradeCheckTaskIntegrationTest {
                 () -> "CLI violation report did not reach the build log:\n" + result.getOutput());
         assertTrue(result.getOutput().contains("broken references"),
                 () -> "unexpected failure output:\n" + result.getOutput());
+    }
+
+    /// UIKA_CLI_PATH short-circuits resolution entirely, so a build can run air-gapped or
+    /// against a locally built binary. Without it the four resolver-based plugins had no way
+    /// to name a binary at all. No repository, no version and no classifier are involved,
+    /// which is why this asserts against a version that was never published.
+    @Test
+    void cliPathEnvironmentVariableSkipsResolution() throws Exception {
+        var binary = projectDir.resolve("uika-stub.sh");
+        Files.writeString(binary, """
+                #!/bin/sh
+                echo "$@" > "$3.args"
+                echo "uika-stub: dependency changes: 0"
+                exit 0
+                """);
+        assertTrue(binary.toFile().setExecutable(true), "could not make the stub executable");
+
+        var result = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        // Never published to the stub repository: resolving it would fail.
+                        "-PuikaCliVersion=0.0.0-never-published")
+                .withPluginClasspath()
+                .withEnvironment(Map.of(
+                        "UIKA_CLI_PATH", binary.toString(),
+                        // TestKit replaces the whole environment, and Gradle's daemon needs
+                        // these two to start.
+                        "PATH", System.getenv("PATH"),
+                        "HOME", System.getProperty("user.home")))
+                .forwardOutput()
+                .build();
+
+        assertEquals(TaskOutcome.SUCCESS,
+                Objects.requireNonNull(result.task(":uikaUpgradeCheck")).getOutcome());
+        assertTrue(Files.exists(Path.of(before + ".args")),
+                "the binary named by UIKA_CLI_PATH did not run");
     }
 
     private GradleRunner runner(String cliVersion) {

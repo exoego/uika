@@ -47,6 +47,26 @@ public final class UikaCli {
                 + " (available: linux-x86_64, macos-aarch64, macos-x86_64, windows-x86_64)");
     }
 
+    /** The environment variable that points a build at a binary it already has. */
+    public static final String CLI_PATH_ENV = "UIKA_CLI_PATH";
+
+    /**
+     * The binary {@code UIKA_CLI_PATH} names, or null when it is unset or blank.
+     *
+     * <p>Short-circuits acquisition entirely, so a build can run air-gapped, against a
+     * locally built binary, or with a stub, none of which the resolver path allows. The
+     * Bazel rules and both Clojure front ends already honour it; without it the four
+     * resolver-based plugins had no way to name a binary at all, which is also why each of
+     * their test suites has to publish a stub ZIP into a file repository.
+     *
+     * <p>Blank counts as unset, because a CI {@code env:} interpolation of a variable that
+     * is not set produces an empty string rather than nothing.
+     */
+    public static Path binaryOverride() {
+        var value = System.getenv(CLI_PATH_ENV);
+        return value == null || value.isBlank() ? null : Path.of(value);
+    }
+
     /**
      * Extracts the uika binary from the distribution ZIP into {@code targetDir} and returns its
      * path. Skips extraction when the binary is already there, so callers should scope

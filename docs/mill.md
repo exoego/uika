@@ -172,6 +172,10 @@ degrading to a warning. The cache save and restore close that gap.
 - [`--jdkRelease`](../README.md#build-tool-plugins) overrides the release
   derived from `javacOptions` and `scalacOptions` (their mandatory halves
   included, since Mill compiles with both). Set 0 to disable the API layer.
+- `UIKA_CLI_PATH` runs a binary you already have instead of resolving one, so a
+  build can run air-gapped or against a locally built CLI. It wins over the
+  version, and neither the repositories nor the platform classifier are
+  consulted.
 
 ## Runtime load evidence (JFR)
 
