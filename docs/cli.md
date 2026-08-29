@@ -8,8 +8,8 @@ project with a supported build tool never has to invoke it by hand.
 Use it directly when there is no plugin for your build, when you want to check
 a hand-assembled classpath with `check`, or when you are reproducing what a
 plugin ran. A plugin knows each module's resolved classpath, the release it
-compiles for, and where its build outputs are. A hand-written command line has
-to be told all three.
+compiles for, and where its build outputs are. A command line knows none of the
+three until you pass it.
 
 ## Getting the binary
 
@@ -147,8 +147,10 @@ come from one JVM.
 ## Checking a JDK upgrade
 
 `--jdk-release-old N --jdk-release-new M` makes the JDK upgrade itself the
-compared pair, so `--old` and `--new` become optional. A JDK API your classpath
-still references and release M dropped is then reported like any other removal.
+compared pair, which supplies both sides, so `--old` and `--new` must be
+omitted. Passing them alongside is rejected rather than ignored. A JDK API your
+classpath still references and release M dropped is then reported like any
+other removal.
 
 ```console
 $ uika check --jdk-release-old 11 --jdk-release-new 17 --classpath app.jar
@@ -166,8 +168,9 @@ an upgrade *to* the JDK you now run needs only that one JDK. Sealing changes
 are invisible here, because `ct.sym` stubs do not carry `PermittedSubclasses`
 and reporting them from the `jmods` side alone would be a false positive.
 
-From a build tool this needs no flag at all. The dumps record each module's
-release, and `upgrade-check` checks the move on its own. See [Checking a JDK
+From a build tool this needs no flag at all. Each dump records the API release
+the application runs on, per module, which is what lets `upgrade-check` see the
+move and check it on its own. See [Checking a JDK
 upgrade](../README.md#checking-a-jdk-upgrade).
 
 ## Exit codes

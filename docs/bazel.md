@@ -86,12 +86,15 @@ and never against the runfiles tree.
   is a label list, and the repeatable `--excludeFile` adds to it.
 - [`jdk_release`](#coordinates-and-jdk_release) is derived per target, and
   `--jdkRelease` overrides it on both rules and on `@uika//:merge`.
-- `--classLoadLog` (repeatable), `--jfr` and `--draftExcludeFile` carry
-  [runtime load evidence](#runtime-load-evidence-jfr). They have no attribute,
-  so evidence is passed at run time only.
-- `--materialize <dir>` on a dump hard-links every JAR it names into one
-  directory and points the dump there, which is what makes a baseline portable
-  to another machine. See [What a dump names](#what-a-dump-names).
+- `--classLoadLog` (repeatable) and `--jfr` supply
+  [runtime load evidence](#runtime-load-evidence-jfr). `--draftExcludeFile` is
+  where rules drafted from it are written. None of the three has an attribute,
+  so they are passed at run time only.
+- `--materialize <dir>` on a dump puts every JAR it names into one directory and
+  points the dump there, which is what makes a baseline portable to another
+  machine. It hard-links where the filesystem allows it, so the common case
+  costs no space, and copies where it does not, such as a destination on
+  another filesystem. See [What a dump names](#what-a-dump-names).
 
 ## PR gate on GitHub Actions
 

@@ -53,8 +53,9 @@ entry says otherwise.
   recorded as running on. There 0 means "keep the derived value" instead,
   because recording nothing would take JDK move detection down with the API
   layer.
-- `:jfr`, `:class-load-log` and `:draft-exclude-file` carry
+- `:jfr` and `:class-load-log` supply
   [runtime load evidence](#runtime-load-evidence-jfr), below.
+  `:draft-exclude-file` is where rules drafted from it are written.
 - `:cli-version` and `:cli-path` pick the binary, and `UIKA_CLI_VERSION`,
   `UIKA_CLI_PATH` and `UIKA_CLI_URL` do the same from the environment.
 - `dump-classpath` alone takes `:output` (default
