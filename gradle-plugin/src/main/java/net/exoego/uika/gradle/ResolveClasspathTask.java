@@ -49,7 +49,12 @@ import java.util.Set;
  *
  * <p>For JARs with classifiers (netty natives, etc.), the classifier is recovered from the
  * original file name "name-version-classifier.jar" so the exact artifact is requested.
- * Entries that cannot be resolved are warned and left unchanged (uika will skip them).
+ * The task fails when any coordinate-carrying artifact stays unresolved: only a scan target
+ * uika would skip with a warning, and an unresolved COMPARED-PAIR jar makes the check exit 2
+ * on a path this machine does not have. A failed rehydration is what lets the workflow fall
+ * back to dumping the baseline from a checkout. Project-attributed and coordinate-less
+ * entries are left unchanged and are exempt from that failure, for the reason
+ * {@link #wantedNotations} gives.
  */
 @DisableCachingByDefault(because = "Resolves artifacts through environment-specific Gradle repositories")
 public abstract class ResolveClasspathTask extends DefaultTask {
@@ -188,6 +193,14 @@ public abstract class ResolveClasspathTask extends DefaultTask {
             }
             rewrittenModules.add(new Module(module.path(), module.classesDirs(), artifacts,
                     module.jdkRelease()));
+        }
+
+        if (unresolved > 0) {
+            throw new GradleException("uika: " + unresolved + " artifact(s) could not be"
+                    + " resolved (warnings above). The rehydrated dump would name files this"
+                    + " machine does not have, and the check fails with \"cannot open\" on a"
+                    + " compared-pair jar, so no output is written. Fall back to dumping the"
+                    + " baseline from a checkout of the base commit.");
         }
 
         String json =
