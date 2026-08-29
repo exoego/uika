@@ -35,6 +35,11 @@ import java.io.File;
  * </pre>
  */
 public class UikaPlugin implements Plugin<Project> {
+    /** What every project the java plugin touches resolves, and what {@code -PuikaConfiguration}
+     * replaces. Named because {@link #requireResolvable} treats it as the one name that needs no
+     * guard. */
+    private static final String DEFAULT_CONFIGURATION = "runtimeClasspath";
+
     /**
      * The JDK API release the checked application runs on, the LOWEST any project in the
      * build targets.
@@ -148,7 +153,7 @@ public class UikaPlugin implements Plugin<Project> {
     public void apply(Project root) {
         String configurationName = root.findProperty("uikaConfiguration") instanceof String s
                 ? s
-                : "runtimeClasspath";
+                : DEFAULT_CONFIGURATION;
 
         var merge =
                 root.getTasks().register("uikaDumpClasspath", MergeClasspathTask.class, task -> {
@@ -383,10 +388,12 @@ public class UikaPlugin implements Plugin<Project> {
             // artifact view lists project-dependency JARs even when they have not been
             // built (the CLI falls back to the producing module's classesDirs).
             p.getGradle().projectsEvaluated(gradle -> moduleTask.configure(task -> {
-                var conf =
-                        p.getConfigurations().findByName(task.getConfigurationName().get());
+                var confName = task.getConfigurationName().get();
+                var conf = p.getConfigurations().findByName(confName);
                 var javaExt =
                         p.getExtensions().findByType(JavaPluginExtension.class);
+                task.getUnresolvableConfiguration().set(
+                        unresolvableConfiguration(p, confName, conf));
                 task.getEmptyDump().set(javaExt == null && conf == null);
                 // Here rather than at registration: compileJava's options.release and the
                 // java extension's targetCompatibility are both build-script settable, so
@@ -426,6 +433,46 @@ public class UikaPlugin implements Plugin<Project> {
 
     private static boolean buildOutputs(Project root) {
         return !"false".equals(String.valueOf(root.findProperty("uikaBuildOutputs")));
+    }
+
+    /**
+     * Why the named configuration cannot produce a classpath, or null when it can.
+     *
+     * <p>A missing or unresolvable configuration leaves {@code artifactEntries} unset, and
+     * the {@code emptyDump} guard only covers projects with no Java at all, so the module
+     * would land in the dump carrying its {@code classesDirs} and an empty classpath. The
+     * check then reports nothing broken for it because it was handed nothing to check.
+     *
+     * <p>Returned rather than thrown. This runs while the per-module task is being
+     * REALIZED, which happens on `gradle tasks` and on IDE sync, and the same file already
+     * catches an unsupported platform there for exactly that reason. The task action
+     * raises it instead, so only a run that actually asks for a dump fails.
+     *
+     * <p>Only for a project the java plugin touches, which is what creates
+     * {@code runtimeClasspath}. {@code JavaPluginExtension} would be the wrong test: it
+     * comes from {@code java-base}, so an Android or convention-plugin module that has the
+     * extension without a source set would fail a build that never asked for a different
+     * configuration. Only for a non-default name too, since the default cannot go missing
+     * where the java plugin is applied.
+     */
+    private static String unresolvableConfiguration(
+            Project p, String name, Configuration conf) {
+        if (!p.getPlugins().hasPlugin(JavaPlugin.class)
+                || DEFAULT_CONFIGURATION.equals(name)) {
+            return null;
+        }
+        if (conf == null) {
+            return "uika: project " + p.getPath() + " has no configuration \"" + name
+                    + "\". -PuikaConfiguration must name one every module resolves, or"
+                    + " override configurationName on that module's"
+                    + " uikaDumpModuleClasspath task.";
+        }
+        if (!conf.isCanBeResolved()) {
+            return "uika: configuration \"" + name + "\" of project " + p.getPath()
+                    + " cannot be resolved. -PuikaConfiguration wants a resolvable"
+                    + " configuration such as " + DEFAULT_CONFIGURATION + ".";
+        }
+        return null;
     }
 
     /**
