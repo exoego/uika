@@ -246,14 +246,6 @@ final class Manifest {
         return args[index];
     }
 
-    private static Integer release(String value) {
-        try {
-            return Integer.valueOf(value);
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("--jdkRelease wants a whole number, got " + value);
-        }
-    }
-
     /** The {@code --jdkRelease} value, named in the error rather than left to {@code valueOf}. */
     static Integer flagRelease(String[] args, int index) {
         String raw = flagValue(args, index);
