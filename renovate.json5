@@ -57,7 +57,11 @@
     // repository, so a bump breaks make rewrite-check. The pin rationale lives
     // in tools/openrewrite/rewrite.gradle.
     {
-      matchDepNames: ["org.openrewrite:plugin", "org.openrewrite.recipe:rewrite-migrate-java"],
+      matchDepNames: [
+        "org.openrewrite:plugin",
+        "org.openrewrite.recipe:rewrite-migrate-java",
+        "org.openrewrite.recipe:rewrite-static-analysis",
+      ],
       enabled: false,
     },
   ],
