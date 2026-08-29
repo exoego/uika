@@ -183,14 +183,20 @@ degrading to a warning. The cache save and restore close that gap.
 ## Runtime load evidence (JFR)
 
 Collect with the test JVM flag (`mvn test
--DargLine="-XX:StartFlightRecording:jdk.ClassLoad#enabled=true,jdk.ClassLoad#stackTrace=true,filename=<dir>"`),
-check with `-Duika.jfr=<dir>`. Create `<dir>` first: given a missing parent
-JFR aborts JVM startup, but given an existing parent it silently records to a
-single file at that path, every fork clobbering the last. Make it absolute in
-a multi-module build:
+-DargLine="-XX:StartFlightRecording:jdk.ClassLoad#enabled=true,jdk.ClassLoad#stackTrace=true,filename=<dir>"`;
+the flag syntax needs JDK 17+ test JVMs, and surefire can fork a different JVM
+than the build's), check with `-Duika.jfr=<dir>`. Create `<dir>` first: given
+a missing parent JFR aborts JVM startup, but given an existing parent it
+silently records to a single file at that path, every fork clobbering the
+last. Quote the `filename` value when `<dir>` carries a comma — the comma is
+the option delimiter, and an unquoted one silently truncates `filename=` with
+exit 0, leaving the directory empty. Make it absolute in a multi-module build:
 surefire forks resolve a relative path against each module, the aggregator
 goal against the execution root. A command-line `-DargLine` replaces any
 POM-configured argLine (jacoco's agent included) — append to the POM's
-argLine instead when one exists.
+argLine instead when one exists. A build cache that replays test executions
+collects nothing: maven-build-cache-extension and the Develocity extension
+both skip surefire on a cache hit, so disable caching for the collect run,
+the same reason the Bazel recipe needs `--nocache_test_results`.
 [`--draft-exclude-file`](../README.md#runtime-load-evidence-jfr---class-load-log)
 maps to `-Duika.draftExcludeFile=`.

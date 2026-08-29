@@ -73,7 +73,8 @@ public final class UpgradeCheckMojo extends AbstractMojo {
      * (JFR generates pid-unique file names for a directory-valued filename; create the
      * directory first — given a missing parent JFR aborts JVM startup, but given an
      * existing parent it silently records to a single FILE at that path, every fork
-     * clobbering the last), then
+     * clobbering the last — and quote the filename value when the path carries a comma,
+     * the option delimiter: unquoted it silently truncates with exit 0), then
      * check with {@code -Duika.jfr=/tmp/uika-jfr}. Keep this recipe in sync with
      * {@code UikaCli.jfrClassLoadJvmArg} by hand: no mojo can inject into surefire. Use
      * an absolute path in a multi-module build: surefire forks resolve a relative path
