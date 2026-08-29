@@ -13,7 +13,6 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -40,13 +39,13 @@ final class Manifest {
      */
     static List<Module> parse(Path manifest, Integer override, Function<String, Path> resolve)
             throws IOException {
-        List<Module> modules = new ArrayList<>();
+        var modules = new ArrayList<Module>();
         Builder current = null;
         for (String line : Files.readAllLines(manifest, StandardCharsets.UTF_8)) {
             if (line.isEmpty()) {
                 continue;
             }
-            String[] fields = line.split("\t", -1);
+            var fields = line.split("\t", -1);
             if (fields[0].equals("module")) {
                 if (current != null) {
                     modules.add(current.build(override));
@@ -124,7 +123,7 @@ final class Manifest {
      */
     static Path resolveRunfile(String path) {
         for (Path base : runfilesBases()) {
-            Path candidate = base.resolve(path).normalize();
+            var candidate = base.resolve(path).normalize();
             if (Files.exists(candidate)) {
                 try {
                     return candidate.toRealPath();
@@ -138,8 +137,8 @@ final class Manifest {
     }
 
     private static List<Path> runfilesBases() {
-        List<Path> bases = new ArrayList<>();
-        Path cwd = Paths.get("").toAbsolutePath();
+        var bases = new ArrayList<Path>();
+        var cwd = Paths.get("").toAbsolutePath();
         bases.add(cwd);
         if (cwd.getParent() != null) {
             bases.add(cwd.getParent());
@@ -190,7 +189,7 @@ final class Manifest {
      */
     static Path resolveExecroot(Path execroot, String path) {
         for (Path base : executionBases(execroot)) {
-            Path candidate = base.resolve(path).normalize();
+            var candidate = base.resolve(path).normalize();
             if (Files.exists(candidate)) {
                 try {
                     return candidate.toRealPath();
@@ -205,10 +204,10 @@ final class Manifest {
     }
 
     private static List<Path> executionBases(Path execroot) {
-        List<Path> bases = new ArrayList<>();
+        var bases = new ArrayList<Path>();
         bases.add(execroot);
         // <output base>/execroot/<workspace name>, so the output base is two levels up.
-        Path workspaceDir = execroot.getParent();
+        var workspaceDir = execroot.getParent();
         if (workspaceDir != null && workspaceDir.getParent() != null) {
             bases.add(workspaceDir.getParent());
         }
@@ -221,10 +220,10 @@ final class Manifest {
      * path is long because it carries the whole download URL.
      */
     static List<String> externalRoots(List<Module> modules) {
-        Set<String> roots = new LinkedHashSet<>();
+        var roots = new LinkedHashSet<String>();
         for (Module module : modules) {
             for (Artifact artifact : module.artifacts()) {
-                int external = artifact.file().indexOf("/external/");
+                var external = artifact.file().indexOf("/external/");
                 if (external >= 0) {
                     roots.add(artifact.file().substring(0, external + "/external/".length()));
                 }

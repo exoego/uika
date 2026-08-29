@@ -1,7 +1,6 @@
 package net.exoego.uika.maven;
 
 import net.exoego.uika.plugin.core.UikaCli;
-import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
 import org.apache.maven.project.MavenProject;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
@@ -82,13 +81,13 @@ final class JdkReleases {
      * and default-testCompile said 17, reporting 8 for a module that only ever compiles at 17.
      */
     private static Integer compilerPluginRelease(MavenProject project) {
-        Plugin compiler = project.getPlugin("org.apache.maven.plugins:maven-compiler-plugin");
+        var compiler = project.getPlugin("org.apache.maven.plugins:maven-compiler-plugin");
         if (compiler == null) {
             return null;
         }
         Integer pluginLevel = configuredRelease(compiler.getConfiguration());
         Integer lowest = null;
-        boolean anyExecution = false;
+        var anyExecution = false;
         for (PluginExecution execution : compiler.getExecutions()) {
             Integer effective = configuredRelease(execution.getConfiguration());
             if (effective == null) {
@@ -111,7 +110,7 @@ final class JdkReleases {
             return null;
         }
         for (String name : List.of("release", "target")) {
-            Xpp3Dom child = dom.getChild(name);
+            var child = dom.getChild(name);
             Integer release = child == null ? null : UikaCli.parseRelease(child.getValue());
             if (release != null) {
                 return release;

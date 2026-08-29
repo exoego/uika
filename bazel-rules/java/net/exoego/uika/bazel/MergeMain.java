@@ -11,8 +11,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
-import java.util.stream.Stream;
 
 /**
  * Merges the per-target fragments a sweep produced into one uika v2 dump.
@@ -35,12 +33,12 @@ public final class MergeMain {
 
     public static void main(String[] args) throws IOException {
         Path execroot = null;
-        String output = "uika/classpath.json";
+        var output = "uika/classpath.json";
         String materialize = null;
-        List<Path> fragmentDirs = new ArrayList<>();
+        var fragmentDirs = new ArrayList<Path>();
         Integer override = UikaCli.overrideRelease(Integer.getInteger("uika.jdkRelease", 0));
 
-        for (int i = 0; i < args.length; i++) {
+        for (var i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--execroot" -> execroot = Path.of(Manifest.flagValue(args, ++i));
                 case "--fragments" -> fragmentDirs.add(Path.of(Manifest.flagValue(args, ++i)));
@@ -56,9 +54,9 @@ public final class MergeMain {
                     + " --fragments \"$(bazel info bazel-bin)\" [--output <path>]");
         }
 
-        Path root = execroot;
+        var root = execroot;
         List<Module> modules = new ArrayList<>();
-        Set<String> seen = new LinkedHashSet<>();
+        var seen = new LinkedHashSet<String>();
         for (Path fragment : fragments(fragmentDirs)) {
             for (Module module : Manifest.parse(
                     fragment, override, raw -> Manifest.resolveExecroot(root, raw))) {
@@ -74,7 +72,7 @@ public final class MergeMain {
                     + fragmentDirs + "; run the aspect with --output_groups=uika_dump first");
         }
 
-        List<String> roots = new ArrayList<>();
+        var roots = new ArrayList<String>();
         if (materialize != null) {
             Path directory = Manifest.workspacePath(materialize);
             modules = Materialize.into(modules, directory);
@@ -101,12 +99,12 @@ public final class MergeMain {
      * flag is named after) finds nothing and reports it as a sweep that was never run.
      */
     private static List<Path> fragments(List<Path> directories) throws IOException {
-        List<Path> found = new ArrayList<>();
+        var found = new ArrayList<Path>();
         for (Path directory : directories) {
             if (!Files.isDirectory(directory)) {
                 continue;
             }
-            try (Stream<Path> walk = Files.walk(directory.toRealPath())) {
+            try (var walk = Files.walk(directory.toRealPath())) {
                 walk.filter(p -> p.getFileName().toString().endsWith(FRAGMENT_SUFFIX))
                         .forEach(found::add);
             }

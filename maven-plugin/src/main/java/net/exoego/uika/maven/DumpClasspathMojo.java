@@ -49,23 +49,23 @@ public final class DumpClasspathMojo extends AbstractMojo {
     public void execute() throws MojoExecutionException {
         // Attribution maps over the WHOLE reactor: a selected module may depend on an
         // unselected sibling, and that edge keeps its "project" key either way.
-        Map<String, MavenProject> reactorByGav = new HashMap<>();
+        var reactorByGav = new HashMap<String, MavenProject>();
         for (MavenProject reactorProject : session.getAllProjects()) {
             reactorByGav.put(gav(reactorProject), reactorProject);
         }
-        Map<MavenProject, String> moduleNames = moduleNames(session.getAllProjects());
+        var moduleNames = moduleNames(session.getAllProjects());
         // Modules over the SELECTED set only. Maven resolves dependencies for
         // session.getProjects(), so a -pl-excluded project has an empty getArtifacts()
         // and would land in the dump as a module with zero artifacts, silently
         // under-reporting. Without -pl the two sets are the same reactor.
-        List<ClasspathDump.Module> modules = new ArrayList<>();
+        var modules = new ArrayList<ClasspathDump.Module>();
         for (MavenProject reactorProject : session.getProjects()) {
             modules.add(moduleOf(reactorProject, reactorByGav, moduleNames));
         }
 
-        String root = session.getExecutionRootDirectory();
+        var root = session.getExecutionRootDirectory();
         String json = DumpFormat.writeV2(modules, List.of(root), DumpFormat.dumpRelease(modules));
-        File parent = outputFile.getParentFile();
+        var parent = outputFile.getParentFile();
         if (parent != null) {
             parent.mkdirs();
         }
@@ -83,11 +83,11 @@ public final class DumpClasspathMojo extends AbstractMojo {
      * name, so a collision would silently drop the second module from the check.
      */
     private static Map<MavenProject, String> moduleNames(List<MavenProject> reactorProjects) {
-        Map<String, Integer> artifactIdCounts = new HashMap<>();
+        var artifactIdCounts = new HashMap<String, Integer>();
         for (MavenProject project : reactorProjects) {
             artifactIdCounts.merge(project.getArtifactId(), 1, Integer::sum);
         }
-        Map<MavenProject, String> names = new HashMap<>();
+        var names = new HashMap<MavenProject, String>();
         for (MavenProject project : reactorProjects) {
             names.put(project, artifactIdCounts.get(project.getArtifactId()) > 1
                     ? ":" + project.getGroupId() + ":" + project.getArtifactId()
@@ -100,8 +100,8 @@ public final class DumpClasspathMojo extends AbstractMojo {
             MavenProject reactorProject,
             Map<String, MavenProject> reactorByGav,
             Map<MavenProject, String> moduleNames) {
-        List<String> classesDirs = new ArrayList<>();
-        File outputDirectory = new File(reactorProject.getBuild().getOutputDirectory());
+        var classesDirs = new ArrayList<String>();
+        var outputDirectory = new File(reactorProject.getBuild().getOutputDirectory());
         if (outputDirectory.exists()) {
             classesDirs.add(outputDirectory.getAbsolutePath());
         }
@@ -110,19 +110,19 @@ public final class DumpClasspathMojo extends AbstractMojo {
         // builds the real runtime classpath in. Keep it: per-module checking applies JVM
         // first-wins duplicate-class semantics to this list, and sorting could crown a
         // different duplicate than the real classpath does.
-        List<ClasspathDump.Artifact> artifacts = new ArrayList<>();
+        var artifacts = new ArrayList<ClasspathDump.Artifact>();
         Set<Artifact> projectArtifacts = reactorProject.getArtifacts();
         for (Artifact artifact : projectArtifacts) {
             if (!isRuntimeVisible(artifact)) {
                 continue;
             }
-            MavenProject sibling = reactorByGav.get(
+            var sibling = reactorByGav.get(
                     gav(artifact.getGroupId(), artifact.getArtifactId(), artifact.getVersion()));
             if (sibling != null) {
                 // Reactor dependency: attribute it to its producing module and never drop it.
                 // An unpackaged sibling (no jar yet) is dumped as its output directory, so the
                 // classpath stays complete without requiring a package phase first.
-                File file = artifact.getFile();
+                var file = artifact.getFile();
                 String path = file != null && file.exists()
                         ? file.getAbsolutePath()
                         : new File(sibling.getBuild().getOutputDirectory()).getAbsolutePath();
@@ -155,7 +155,7 @@ public final class DumpClasspathMojo extends AbstractMojo {
     }
 
     private boolean isRuntimeVisible(Artifact artifact) {
-        String scope = artifact.getScope();
+        var scope = artifact.getScope();
         return scope == null
                 || Artifact.SCOPE_COMPILE.equals(scope)
                 || Artifact.SCOPE_RUNTIME.equals(scope);

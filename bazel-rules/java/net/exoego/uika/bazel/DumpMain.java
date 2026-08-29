@@ -1,6 +1,5 @@
 package net.exoego.uika.bazel;
 
-import net.exoego.uika.plugin.core.ClasspathDump.Module;
 import net.exoego.uika.plugin.core.DumpFormat;
 import net.exoego.uika.plugin.core.UikaCli;
 
@@ -9,7 +8,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Turns the classpath manifest a {@code uika_dump} target builds into a uika v2 dump.
@@ -27,9 +25,9 @@ public final class DumpMain {
         Path manifest = Manifest.resolveRunfile(required("uika.manifest"));
         Integer override = UikaCli.overrideRelease(Integer.getInteger("uika.jdkRelease", 0));
 
-        String output = "uika/classpath.json";
+        var output = "uika/classpath.json";
         String materialize = null;
-        for (int i = 0; i < args.length; i++) {
+        for (var i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--output", "-o" -> output = Manifest.flagValue(args, ++i);
                 case "--materialize" -> materialize = Manifest.flagValue(args, ++i);
@@ -39,8 +37,8 @@ public final class DumpMain {
             }
         }
 
-        List<Module> modules = Manifest.parse(manifest, override, Manifest::resolveRunfile);
-        List<String> roots = new ArrayList<>();
+        var modules = Manifest.parse(manifest, override, Manifest::resolveRunfile);
+        var roots = new ArrayList<String>();
         if (materialize != null) {
             Path directory = Manifest.workspacePath(materialize);
             modules = Materialize.into(modules, directory);

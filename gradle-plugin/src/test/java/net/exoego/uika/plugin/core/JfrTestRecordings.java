@@ -31,14 +31,14 @@ public final class JfrTestRecordings {
      */
     public static void recordFreshClassLoadAtDepth(Path dir, Path jfr, String className,
             int depth) throws Exception {
-        Path source = dir.resolve(className + ".java");
+        var source = dir.resolve(className + ".java");
         Files.writeString(source, "public class " + className + " {}");
-        int rc = javax.tools.ToolProvider.getSystemJavaCompiler()
+        var rc = javax.tools.ToolProvider.getSystemJavaCompiler()
                 .run(null, null, null, "-d", dir.toString(), source.toString());
         if (rc != 0) {
             throw new IllegalStateException("javac failed for " + source);
         }
-        try (Recording recording = new Recording()) {
+        try (var recording = new Recording()) {
             recording.enable("jdk.ClassLoad").withStackTrace().withoutThreshold();
             recording.start();
             descend(depth, dir, className);
@@ -52,7 +52,7 @@ public final class JfrTestRecordings {
             descend(n - 1, dir, className);
             return;
         }
-        try (URLClassLoader loader =
+        try (var loader =
                 new URLClassLoader(new URL[] {dir.toUri().toURL()}, null)) {
             Class.forName(className, false, loader);
         }

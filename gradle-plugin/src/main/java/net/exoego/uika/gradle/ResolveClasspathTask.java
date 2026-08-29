@@ -6,7 +6,6 @@ import net.exoego.uika.plugin.core.DumpFormat;
 import groovy.json.JsonSlurper;
 import org.gradle.api.DefaultTask;
 import org.gradle.api.GradleException;
-import org.gradle.api.artifacts.component.ComponentIdentifier;
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
 import org.gradle.api.artifacts.result.ResolvedArtifactResult;
 import org.gradle.api.file.RegularFileProperty;
@@ -87,9 +86,9 @@ public abstract class ResolveClasspathTask extends DefaultTask {
 
     /** Static (captures nothing) so the configuration cache can serialize the mapped provider. */
     static List<ResolvedFile> toResolvedFiles(Collection<ResolvedArtifactResult> artifacts) {
-        List<ResolvedFile> files = new ArrayList<>();
+        var files = new ArrayList<ResolvedFile>();
         for (ResolvedArtifactResult result : artifacts) {
-            ComponentIdentifier id = result.getId().getComponentIdentifier();
+            var id = result.getId().getComponentIdentifier();
             if (id instanceof ModuleComponentIdentifier m) {
                 // Include the file name in the key to distinguish classifier variants.
                 files.add(new ResolvedFile(
@@ -103,13 +102,13 @@ public abstract class ResolveClasspathTask extends DefaultTask {
 
     @SuppressWarnings("unchecked")
     static List<Module> parseModules(String json) {
-        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parseText(json);
+        var doc = (Map<String, Object>) new JsonSlurper().parseText(json);
         return DumpFormat.normalize(doc);
     }
 
     @SuppressWarnings("unchecked")
     static Integer parseJdkRelease(String json) {
-        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parseText(json);
+        var doc = (Map<String, Object>) new JsonSlurper().parseText(json);
         return DumpFormat.jdkReleaseOf(doc);
     }
 
@@ -125,7 +124,7 @@ public abstract class ResolveClasspathTask extends DefaultTask {
      * CLI keeps that choice.
      */
     static Set<String> wantedNotations(List<Module> modules) {
-        Set<String> wanted = new LinkedHashSet<>();
+        var wanted = new LinkedHashSet<String>();
         for (Module module : modules) {
             for (Artifact artifact : module.artifacts()) {
                 String notation = notationOf(artifact);
@@ -140,15 +139,15 @@ public abstract class ResolveClasspathTask extends DefaultTask {
 
     @TaskAction
     public void resolve() throws IOException {
-        File input = getInputFile().get().getAsFile();
+        var input = getInputFile().get().getAsFile();
         String inputJson = Files.readString(input.toPath(), StandardCharsets.UTF_8);
-        List<Module> modules = parseModules(inputJson);
+        var modules = parseModules(inputJson);
         // Rehydration only fetches missing files; the releases stay the ones that produced
         // the dump, not the JVM doing the fetching. Each module's own carries forward with
         // it below, and this is the dump-level one.
         Integer jdkRelease = parseJdkRelease(inputJson);
 
-        Set<String> wanted = wantedNotations(modules);
+        var wanted = wantedNotations(modules);
         if (!wanted.isEmpty() && !getWiredAtConfiguration().getOrElse(false)) {
             throw new GradleException("uika: " + input + " did not exist when the build was"
                     + " configured, so Gradle could not set up resolution for " + wanted.size()
@@ -158,24 +157,24 @@ public abstract class ResolveClasspathTask extends DefaultTask {
         if (!wanted.isEmpty()) {
             getLogger().lifecycle("uika: resolving {} missing artifact(s) via Gradle", wanted.size());
         }
-        Map<String, File> resolvedByKey = new HashMap<>();
+        var resolvedByKey = new HashMap<String, File>();
         for (ResolvedFile resolved : getResolvedFiles().get()) {
             resolvedByKey.put(resolved.key(), new File(resolved.file()));
         }
 
         // Rebuild the common model with real paths.
-        int rewritten = 0;
-        int unresolved = 0;
-        List<Module> rewrittenModules = new ArrayList<>();
+        var rewritten = 0;
+        var unresolved = 0;
+        var rewrittenModules = new ArrayList<Module>();
         for (Module module : modules) {
-            List<Artifact> artifacts = new ArrayList<>();
+            var artifacts = new ArrayList<Artifact>();
             for (Artifact artifact : module.artifacts()) {
                 // Project-attributed entries pass through untouched and unwarned, for the
                 // reason wantedNotations gives. A rewrite that dropped the project key
                 // would also put those coordinates back into the version diff as Removed.
                 if (!new File(artifact.file()).exists() && artifact.group() != null
                         && artifact.project() == null) {
-                    File local = resolvedByKey.get(keyOf(artifact));
+                    var local = resolvedByKey.get(keyOf(artifact));
                     if (local != null) {
                         // The attribution rides along even though the guard above makes it
                         // null today, so a change to that guard cannot silently strip it.
@@ -206,8 +205,8 @@ public abstract class ResolveClasspathTask extends DefaultTask {
         String json =
                 DumpFormat.writeV2(
                         rewrittenModules, List.of(getRootDirPath().get()), jdkRelease);
-        File out = getOutputFile().get().getAsFile();
-        File parent = out.getParentFile();
+        var out = getOutputFile().get().getAsFile();
+        var parent = out.getParentFile();
         if (parent != null) {
             parent.mkdirs();
         }
@@ -226,13 +225,13 @@ public abstract class ResolveClasspathTask extends DefaultTask {
         if (artifact.group() == null || artifact.name() == null || artifact.version() == null) {
             return null;
         }
-        String base = artifact.name() + "-" + artifact.version();
-        String fileName = new File(artifact.file()).getName();
+        var base = artifact.name() + "-" + artifact.version();
+        var fileName = new File(artifact.file()).getName();
         String classifier = null;
         if (fileName.startsWith(base + "-") && fileName.endsWith(".jar")) {
             classifier = fileName.substring(base.length() + 1, fileName.length() - ".jar".length());
         }
-        String notation = artifact.group() + ":" + artifact.name() + ":" + artifact.version();
+        var notation = artifact.group() + ":" + artifact.name() + ":" + artifact.version();
         return classifier == null ? notation : notation + ":" + classifier;
     }
 }

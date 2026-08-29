@@ -5,7 +5,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -23,26 +22,26 @@ final class UikaCliJfrArgTest {
 
     @Test
     void composedArgMakesARealJvmDumpAConvertibleRecording() throws Exception {
-        boolean windows = System.getProperty("os.name", "").toLowerCase().contains("windows");
+        var windows = System.getProperty("os.name", "").toLowerCase().contains("windows");
         Path java = Path.of(System.getProperty("java.home"), "bin", windows ? "java.exe" : "java");
         String arg = UikaCli.jfrClassLoadJvmArg(dir);
 
-        Process process = new ProcessBuilder(java.toString(), arg, "-version")
+        var process = new ProcessBuilder(java.toString(), arg, "-version")
                 .redirectErrorStream(true)
                 .start();
-        String output = new String(process.getInputStream().readAllBytes());
+        var output = new String(process.getInputStream().readAllBytes());
         assertEquals(0, process.waitFor(), "java rejected " + arg + ":\n" + output);
 
         Path recording;
-        try (Stream<Path> files = Files.list(dir)) {
+        try (var files = Files.list(dir)) {
             recording = files
                     .filter(JfrEvidence::isRecording)
                     .findFirst()
                     .orElseThrow(() -> new AssertionError(
                             "no recording was dumped into " + dir + ":\n" + output));
         }
-        Path converted = dir.resolve("converted.log");
-        long events = JfrEvidence.convert(recording, converted);
+        var converted = dir.resolve("converted.log");
+        var events = JfrEvidence.convert(recording, converted);
         assertTrue(events > 0, "the recording carried no jdk.ClassLoad events");
         // Not java.lang.Object: the earliest bootstrap classes load before the recorder
         // engine is up, so a recording only carries later loads (JFR internals at least).
@@ -59,19 +58,19 @@ final class UikaCliJfrArgTest {
     /// the intended directory.
     @Test
     void composedArgSurvivesACommaInTheDirectory() throws Exception {
-        boolean windows = System.getProperty("os.name", "").toLowerCase().contains("windows");
+        var windows = System.getProperty("os.name", "").toLowerCase().contains("windows");
         Path java = Path.of(System.getProperty("java.home"), "bin", windows ? "java.exe" : "java");
         Path commaDir = Files.createDirectories(dir.resolve("comma,dir"));
         String arg = UikaCli.jfrClassLoadJvmArg(commaDir);
         assertTrue(arg.endsWith("\""), () -> "expected a quoted filename value in " + arg);
 
-        Process process = new ProcessBuilder(java.toString(), arg, "-version")
+        var process = new ProcessBuilder(java.toString(), arg, "-version")
                 .redirectErrorStream(true)
                 .start();
-        String output = new String(process.getInputStream().readAllBytes());
+        var output = new String(process.getInputStream().readAllBytes());
         assertEquals(0, process.waitFor(), "java rejected " + arg + ":\n" + output);
 
-        try (Stream<Path> files = Files.list(commaDir)) {
+        try (var files = Files.list(commaDir)) {
             assertTrue(files.anyMatch(JfrEvidence::isRecording),
                     () -> "no recording landed in " + commaDir + ":\n" + output);
         }

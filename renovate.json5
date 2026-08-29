@@ -53,5 +53,12 @@
       matchDepNames: ["sbt/sbt", "github:sbt/sbt"],
       allowedVersions: "<2",
     },
+    // OpenRewrite releases after these resolve only from an authenticated
+    // repository, so a bump breaks make rewrite-check. The pin rationale lives
+    // in tools/openrewrite/rewrite.gradle.
+    {
+      matchDepNames: ["org.openrewrite:plugin", "org.openrewrite.recipe:rewrite-migrate-java"],
+      enabled: false,
+    },
   ],
 }

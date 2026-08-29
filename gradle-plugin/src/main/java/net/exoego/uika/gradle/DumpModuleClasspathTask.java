@@ -2,7 +2,6 @@ package net.exoego.uika.gradle;
 
 import org.gradle.api.DefaultTask;
 import org.gradle.api.Project;
-import org.gradle.api.artifacts.component.ComponentIdentifier;
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier;
 import org.gradle.api.artifacts.result.ResolvedArtifactResult;
@@ -95,15 +94,15 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
     /** The main source set, or null without a Java-family plugin (one spelling for the
      * dump wiring and the uikaBuildOutputs dependsOn wiring). */
     static SourceSet mainSourceSet(Project p) {
-        JavaPluginExtension javaExt = p.getExtensions().findByType(JavaPluginExtension.class);
+        var javaExt = p.getExtensions().findByType(JavaPluginExtension.class);
         return javaExt == null ? null : javaExt.getSourceSets().findByName("main");
     }
 
     /** Static (captures nothing) so the configuration cache can serialize the mapped provider. */
     static List<Entry> toEntries(Collection<ResolvedArtifactResult> artifacts) {
-        List<Entry> entries = new ArrayList<>();
+        var entries = new ArrayList<Entry>();
         for (ResolvedArtifactResult artifact : artifacts) {
-            ComponentIdentifier id = artifact.getId().getComponentIdentifier();
+            var id = artifact.getId().getComponentIdentifier();
             String group = null;
             String name = null;
             String version = null;
@@ -129,8 +128,8 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
 
     @TaskAction
     public void dump() throws IOException {
-        File out = getOutputFile().get().getAsFile();
-        File parent = out.getParentFile();
+        var out = getOutputFile().get().getAsFile();
+        var parent = out.getParentFile();
         if (parent != null) {
             parent.mkdirs();
         }
@@ -139,16 +138,16 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
             return;
         }
 
-        StringBuilder json = new StringBuilder();
+        var json = new StringBuilder();
         json.append("{\"module\":").append(quote(getModulePath().get()));
-        Integer jdkRelease = getJdkRelease().getOrNull();
+        var jdkRelease = getJdkRelease().getOrNull();
         if (jdkRelease != null) {
             json.append(",\"jdkRelease\":").append(jdkRelease.intValue());
         }
 
         json.append(",\"classesDirs\":[");
-        boolean first = true;
-        boolean any = false;
+        var first = true;
+        var any = false;
         for (File dir : getClassesDirs().getFiles()) {
             // Do not include declared but unbuilt outputs (java/main in Kotlin-only modules, etc.).
             if (!dir.exists()) {

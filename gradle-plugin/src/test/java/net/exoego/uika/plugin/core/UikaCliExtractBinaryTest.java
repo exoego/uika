@@ -8,7 +8,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -29,8 +28,8 @@ final class UikaCliExtractBinaryTest {
             UikaCli.platformClassifier().startsWith("windows") ? "uika.exe" : "uika";
 
     private Path stubZip() throws IOException {
-        Path zip = dir.resolve("uika-cli.zip");
-        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(zip))) {
+        var zip = dir.resolve("uika-cli.zip");
+        try (var out = new ZipOutputStream(Files.newOutputStream(zip))) {
             out.putNextEntry(new ZipEntry("uika-1.0.0/" + BINARY_NAME));
             out.write("#!/bin/sh\n".getBytes(StandardCharsets.UTF_8));
             out.closeEntry();
@@ -40,7 +39,7 @@ final class UikaCliExtractBinaryTest {
 
     @Test
     void extractsTheBinaryWithNoTempLeftover() throws Exception {
-        Path installDir = dir.resolve("install");
+        var installDir = dir.resolve("install");
         Path binary = UikaCli.extractBinary(stubZip(), installDir);
         assertTrue(Files.isRegularFile(binary), "no binary at " + binary);
         assertEquals(List.of(BINARY_NAME), fileNames(installDir));
@@ -48,12 +47,12 @@ final class UikaCliExtractBinaryTest {
 
     @Test
     void failedExtractionLeavesNoTempFile() throws Exception {
-        Path installDir = dir.resolve("install");
+        var installDir = dir.resolve("install");
         // The binary's own path occupied by a non-empty DIRECTORY makes the atomic move
         // fail after the temp copy succeeded, which is exactly the orphaning window.
         Files.createDirectories(installDir.resolve(BINARY_NAME).resolve("occupied"));
 
-        Path zip = stubZip();
+        var zip = stubZip();
         assertThrows(IOException.class, () -> UikaCli.extractBinary(zip, installDir));
 
         // Exact contents, not a suffix filter: a leftover by ANY name must fail, and the
@@ -79,7 +78,7 @@ final class UikaCliExtractBinaryTest {
     }
 
     private static List<String> fileNames(Path directory) throws IOException {
-        try (Stream<Path> files = Files.list(directory)) {
+        try (var files = Files.list(directory)) {
             return files.map(path -> path.getFileName().toString()).sorted().toList();
         }
     }

@@ -14,6 +14,11 @@ $ cargo build --release --features memstats   # memory breakdown (counting alloc
 Measure with release builds. Debug builds are roughly 10x slower, and
 `memstats` swaps in a counting allocator, so it is not a throughput benchmark.
 
+Java sources are kept in shape by the OpenRewrite recipes in
+`tools/openrewrite/rewrite.gradle`. `make test` applies them in place before
+running anything, and `make check` runs the verify-only variant that CI
+enforces. `make rewrite` applies them on demand.
+
 ## Test fixtures and goldens
 
 The integration tests replay real incidents against unmodified JARs from Maven

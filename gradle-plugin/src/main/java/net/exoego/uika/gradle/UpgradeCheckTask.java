@@ -111,7 +111,7 @@ public abstract class UpgradeCheckTask extends DefaultTask {
             throw new GradleException(
                     "uika-cli version is unknown; pass -PuikaCliVersion=<version>");
         }
-        String version = getCliVersion().get();
+        var version = getCliVersion().get();
         String classifier = UikaCli.platformClassifier();
 
         Set<File> files = getCliZip().getFiles();
@@ -119,9 +119,9 @@ public abstract class UpgradeCheckTask extends DefaultTask {
             throw new GradleException("uika-cli " + version + " (" + classifier
                     + ") did not resolve to a distribution ZIP");
         }
-        File zip = files.iterator().next();
+        var zip = files.iterator().next();
 
-        Path installDir = getInstallDir().get().getAsFile().toPath()
+        var installDir = getInstallDir().get().getAsFile().toPath()
                 .resolve(version + "-" + classifier);
         Path binary = UikaCli.extractBinary(zip.toPath(), installDir);
 
@@ -137,14 +137,14 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         // JFR recordings on the knob (a .jfr value, or recordings inside a directory) are
         // converted to the CLI's text format here: the CLI is JVM-free and never reads
         // binary JFR, while this task always runs on a full JDK.
-        List<Path> classLoadLogs = net.exoego.uika.plugin.core.JfrEvidence.rewrite(
+        var classLoadLogs = net.exoego.uika.plugin.core.JfrEvidence.rewrite(
                 getClassLoadLogs().getFiles().stream().map(File::toPath).toList(),
                 getJfrWorkDir().get().getAsFile().toPath(),
                 getLogger()::lifecycle);
         Path draftExcludeFile = getDraftExcludeFile().isPresent()
                 ? getDraftExcludeFile().get().getAsFile().toPath()
                 : null;
-        int exit = UikaCli.runUpgradeCheck(binary,
+        var exit = UikaCli.runUpgradeCheck(binary,
                 getBeforeFile().get().getAsFile().toPath(),
                 getAfterFile().get().getAsFile().toPath(),
                 getFailOn().getOrElse("any"),

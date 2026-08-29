@@ -1,0 +1,38 @@
+// Applied with --init-script by make rewrite and make rewrite-check, so the
+// plugin builds themselves stay untouched.
+//
+// Versions are pinned. OpenRewrite moved artifact distribution to
+// artifacts.codegenomeproject.org, which rejects anonymous access, so plugin
+// 7.40.0 and later import a rewrite-bom that Maven Central never received and
+// latest.release stopped resolving. 7.39.0 imports rewrite-bom 8.89.0, which
+// Central still carries. Renovate is told not to bump these in renovate.json5.
+initscript {
+    repositories {
+        maven { url = uri("https://plugins.gradle.org/m2") }
+    }
+    dependencies {
+        classpath("org.openrewrite:plugin:7.39.0")
+    }
+}
+
+allprojects {
+    apply plugin: org.openrewrite.gradle.RewritePlugin
+    dependencies {
+        rewrite("org.openrewrite.recipe:rewrite-migrate-java:3.42.1")
+    }
+    rewrite {
+        activeRecipe("org.openrewrite.java.migrate.lang.UseVar")
+        // UseVar can strip the last use of an imported type from a file, so the
+        // import cleanup runs in the same pass.
+        activeRecipe("org.openrewrite.java.RemoveUnusedImports")
+        // rewriteDryRun is the CI gate, so findings must fail the build.
+        failOnDryRunResults = true
+    }
+    afterEvaluate {
+        if (repositories.isEmpty()) {
+            repositories {
+                mavenCentral()
+            }
+        }
+    }
+}

@@ -37,7 +37,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('gradle-plugin/**/*.gradle*', 'gradle-plugin/gradle.properties') }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('gradle-plugin/**/*.gradle*', 'gradle-plugin/gradle.properties', 'tools/openrewrite/rewrite.gradle') }}
           restore-keys: |
             gradle-${{ runner.os }}-
 
