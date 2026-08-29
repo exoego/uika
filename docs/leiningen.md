@@ -8,7 +8,8 @@ One of uika's [build-tool integrations](../README.md#build-tool-plugins).
 ;; Optional: gate only on reachable violations, and suppress known false positives.
 :uika {:fail-on "reachable"
        :exclude-files ["uika-exclude.toml"]
-       ;; Defaults to the plugin's own version; there is no command-line override.
+       ;; Defaults to the plugin's own version. There is no command-line override,
+       ;; but UIKA_CLI_VERSION overrides this from the environment.
        :cli-version "VERSION_PLACEHOLDER"}
 ```
 
@@ -33,7 +34,8 @@ downloads the CLI binary straight from Maven Central (`UIKA_CLI_URL` to
 override the URL, `:cli-path` or `UIKA_CLI_PATH` to point at a binary you
 already have and skip the download). `:jdk-release` defaults to the release
 `:javac-options` pins (`--release`, or `-target`); a project declaring neither
-falls back to the JVM the project's own code runs on (`:java-cmd`, probed).
+falls back to the JVM the project's own code runs on (`:java-cmd`, else
+`JAVA_CMD`, probed; a probe that fails warns and falls back to lein's own JVM).
 
 For [runtime load evidence](../README.md#runtime-load-evidence-jfr---class-load-log),
 collect by running the current build's tests with the JFR flag on the test

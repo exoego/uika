@@ -50,12 +50,13 @@ $ bazel run //:uika_upgrade_check -- --before /tmp/before.json --after /tmp/afte
 The CLI binary comes from a repository rule, so Bazel's repository cache holds
 it, a second run needs no network, and the release archive pins its checksum
 for every platform. `UIKA_CLI_PATH` points it at a binary you already have
-instead. [`--failOn`](../README.md#violation-tiers-and---fail-on),
-[`--excludeFile`](../README.md#excluding-known-false-positives---exclude-file),
-`--jdkRelease`, `--classLoadLog` and
-`--draftExcludeFile` are the command-line spellings. `--failOn`, `--jdkRelease`
-and `--draftExcludeFile` override the rule's settings; `--excludeFile` and
-`--classLoadLog` are repeatable and append to them. A relative path in any of
+instead. The check target takes its settings at run time as well:
+[`--failOn`](../README.md#violation-tiers-and---fail-on) and `--jdkRelease`
+override the `fail_on` and `jdk_release` attributes, and the repeatable
+[`--excludeFile`](../README.md#excluding-known-false-positives---exclude-file)
+appends to `exclude_files`. `--classLoadLog` (repeatable), `--jfr` and
+`--draftExcludeFile` have no attribute to override, so runtime load evidence is
+passed at run time only. A relative path in any of
 them resolves against the workspace root (`BUILD_WORKSPACE_DIRECTORY`),
 wherever you ran `bazel` from, and never against the runfiles tree. The check
 target repeats `targets` only to read the API release they compile for, so it
@@ -289,6 +290,13 @@ target of your own build is recorded by label the way the other tools record a
 project dependency. [`jdkRelease`](../README.md#build-tool-plugins) is
 derived per target from its `javacopts`, falling back to the Java toolchain's
 target version, and `jdk_release = N` on the rule overrides every module.
+
+`jdk_release` sits on both rules and the two default differently on purpose. On
+`uika_dump` it defaults to 0, which folds into the derived value, since 0 there
+would otherwise mean "record nothing" and take JDK move detection down with the
+API layer. On `uika_upgrade_check` it defaults to -1 for "derive" so that 0
+stays available as the switch that turns the API layer off. Both rules'
+binaries also take `--jdkRelease` at run time, `@uika//:merge` included.
 
 ## What a dump names
 
