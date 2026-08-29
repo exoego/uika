@@ -103,8 +103,18 @@ The [per-tool options](#build-tool-plugins) cover the other tools.
 
 ## What a check reports
 
-Every tool's check task runs the same report over the two dumps. When
-application roots are known (build outputs in the dump), violations are ranked:
+Every tool's check task runs the same report over the two dumps. A broken
+reference names the member, what it throws, and every class that still uses it:
+
+```console
+❌ kotlinx.coroutines.EventLoopKt.processNextEventInCurrentThread()
+    method removed, throws NoSuchMethodError at first call
+    used by 1 class:
+        io.ktor.utils.io.jvm.javaio.BlockingAdapter  (ktor-io-jvm-2.3.13.jar)
+```
+
+Violations that share one cause are collapsed into a suggestion naming the fix.
+When application roots are known (build outputs in the dump), they are ranked:
 reachable first, then the ones no static path reaches.
 
 ```console
