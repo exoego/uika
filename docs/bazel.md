@@ -129,6 +129,9 @@ jobs:
       # cache.
       - name: Fetch baseline artifact
         id: baseline
+        # the artifact carries the baseline JARs themselves, so only
+        # same-repo PRs take the fast path
+        if: github.event.pull_request.head.repo.full_name == github.repository
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}

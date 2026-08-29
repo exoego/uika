@@ -99,6 +99,28 @@ final class ResolveClasspathTaskIntegrationTest {
                 () -> "expected the explicit mid-build error:\n" + result.getOutput());
     }
 
+    /// An artifact absent from every repository (an expired snapshot, say) must fail the
+    /// task rather than write a dump naming another machine's path: rehydration success is
+    /// what makes the workflow skip its checkout-based fallback, and the check exits 2 on
+    /// a compared-pair jar it cannot open.
+    @Test
+    void failsWhenAnArtifactCannotBeResolved() throws Exception {
+        publishStubJar("stub-lib");
+        writeProject();
+        Path input = write(projectDir.resolve("before.json"),
+                dumpReferencing("stub-lib", "stub-unavailable"));
+        Path output = projectDir.resolve("before-local.json");
+
+        BuildResult result = run(input, output).buildAndFail();
+        assertTrue(result.getOutput().contains(
+                        "could not resolve example:stub-unavailable:1.0.0"),
+                () -> "expected the per-artifact warning:\n" + result.getOutput());
+        assertTrue(result.getOutput().contains("1 artifact(s) could not be resolved"),
+                () -> "expected the failure naming the unresolved count:\n" + result.getOutput());
+        assertTrue(Files.notExists(output),
+                "no output must be written for a partially rehydrated dump");
+    }
+
     private void writeProject() throws IOException {
         write(projectDir.resolve("settings.gradle.kts"), """
                 rootProject.name = "dummy-uika-consumer"

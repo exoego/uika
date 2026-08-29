@@ -95,6 +95,9 @@ jobs:
       # not cache.
       - name: Restore baseline dependencies
         id: baseline-deps
+        # a fork PR's build code could read private dependencies out of this
+        # cache, so only same-repo PRs take the fast path
+        if: github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/cache/restore@v6
         with:
           path: ~/.cache/coursier

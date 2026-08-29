@@ -49,7 +49,11 @@ import java.util.Set;
  *
  * <p>For JARs with classifiers (netty natives, etc.), the classifier is recovered from the
  * original file name "name-version-classifier.jar" so the exact artifact is requested.
- * Entries that cannot be resolved are warned and left unchanged (uika will skip them).
+ * The task fails when any coordinate-carrying artifact stays unresolved: only a scan target
+ * uika would skip with a warning, and an unresolved COMPARED-PAIR jar makes the check exit 2
+ * on a path this machine does not have. A failed rehydration is what lets the workflow fall
+ * back to dumping the baseline from a checkout. Coordinate-less (project) entries are left
+ * unchanged, since nothing could fetch them and the check treats them as scan targets.
  */
 @DisableCachingByDefault(because = "Resolves artifacts through environment-specific Gradle repositories")
 public abstract class ResolveClasspathTask extends DefaultTask {
@@ -173,6 +177,14 @@ public abstract class ResolveClasspathTask extends DefaultTask {
                     module.jdkRelease()));
         }
 
+        if (unresolved > 0) {
+            throw new GradleException("uika: " + unresolved + " artifact(s) could not be"
+                    + " resolved (warnings above). The rehydrated dump would name files this"
+                    + " machine does not have, and the check fails with \"cannot open\" on a"
+                    + " compared-pair jar, so no output is written. Fall back to dumping the"
+                    + " baseline from a checkout of the base commit.");
+        }
+
         String json =
                 DumpFormat.writeV2(
                         rewrittenModules, List.of(getRootDirPath().get()), jdkRelease);
@@ -182,8 +194,7 @@ public abstract class ResolveClasspathTask extends DefaultTask {
             parent.mkdirs();
         }
         Files.write(out.toPath(), json.getBytes(StandardCharsets.UTF_8));
-        getLogger().lifecycle("uika: rehydrated dump -> {} ({} rewritten, {} unresolved)",
-                out, rewritten, unresolved);
+        getLogger().lifecycle("uika: rehydrated dump -> {} ({} rewritten)", out, rewritten);
     }
 
     private static String keyOf(Artifact artifact) {
