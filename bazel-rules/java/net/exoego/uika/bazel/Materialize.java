@@ -38,16 +38,16 @@ final class Materialize {
     static List<Module> into(List<Module> modules, Path directory)
             throws IOException {
         Files.createDirectories(directory);
-        Set<Path> sources = realSources(modules);
-        Map<String, String> moved = new LinkedHashMap<>();
-        Set<String> taken = new LinkedHashSet<>();
-        List<Module> result = new ArrayList<>(modules.size());
+        var sources = realSources(modules);
+        var moved = new LinkedHashMap<String, String>();
+        var taken = new LinkedHashSet<String>();
+        var result = new ArrayList<Module>(modules.size());
         for (Module module : modules) {
-            List<String> classes = new ArrayList<>(module.classesDirs().size());
+            var classes = new ArrayList<String>(module.classesDirs().size());
             for (String source : module.classesDirs()) {
                 classes.add(one(source, directory, sources, moved, taken));
             }
-            List<Artifact> artifacts = new ArrayList<>(module.artifacts().size());
+            var artifacts = new ArrayList<Artifact>(module.artifacts().size());
             for (Artifact artifact : module.artifacts()) {
                 artifacts.add(new Artifact(
                         artifact.group(),
@@ -63,7 +63,7 @@ final class Materialize {
 
     /** Every file the dump names, so a destination that is one of them can be refused. */
     private static Set<Path> realSources(List<Module> modules) throws IOException {
-        Set<Path> sources = new LinkedHashSet<>();
+        var sources = new LinkedHashSet<Path>();
         for (Module module : modules) {
             for (String source : module.classesDirs()) {
                 sources.add(Path.of(source).toRealPath());
@@ -77,16 +77,16 @@ final class Materialize {
 
     private static String one(String source, Path directory, Set<Path> sources,
             Map<String, String> moved, Set<String> taken) throws IOException {
-        String already = moved.get(source);
+        var already = moved.get(source);
         if (already != null) {
             return already;
         }
         Path from = Path.of(source);
         // Two artifacts can share a file name (the same jar at two versions, or a
         // build output named like a dependency), and the second must not overwrite the first.
-        String name = from.getFileName().toString();
-        String candidate = name;
-        for (int n = 2; !taken.add(candidate); n++) {
+        var name = from.getFileName().toString();
+        var candidate = name;
+        for (var n = 2; !taken.add(candidate); n++) {
             candidate = n + "-" + name;
         }
         // Every Bazel classpath entry is a jar: JavaInfo and JavaRuntimeClasspathInfo both
@@ -97,7 +97,7 @@ final class Materialize {
             throw new IOException("cannot materialize " + from + ": it is a directory, and a"
                     + " Bazel classpath entry is always a jar");
         }
-        Path to = directory.resolve(candidate);
+        var to = directory.resolve(candidate);
         if (Files.exists(to)) {
             // Deleting a file the dump itself names destroys the bytes about to be copied.
             // A workspace that vendors its jars reaches this with --materialize vendor, and

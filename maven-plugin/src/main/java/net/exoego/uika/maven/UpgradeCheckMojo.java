@@ -9,7 +9,6 @@ import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
-import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
 import org.eclipse.aether.artifact.DefaultArtifact;
@@ -105,7 +104,7 @@ public final class UpgradeCheckMojo extends AbstractMojo {
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         String classifier = UikaCli.platformClassifier();
-        ArtifactRequest request = new ArtifactRequest(
+        var request = new ArtifactRequest(
                 new DefaultArtifact(UikaCli.GROUP, UikaCli.ARTIFACT, classifier, "zip", cliVersion),
                 remoteRepositories,
                 "uika");
@@ -130,7 +129,7 @@ public final class UpgradeCheckMojo extends AbstractMojo {
             // Recordings (a .jfr value, or recordings inside the directory) are converted
             // to the CLI's text format here: the CLI is JVM-free and never reads binary
             // JFR.
-            List<Path> classLoadLogs = JfrEvidence.rewrite(
+            var classLoadLogs = JfrEvidence.rewrite(
                     jfr != null ? List.of(jfr.toPath()) : List.of(),
                     Path.of(session.getExecutionRootDirectory(), "target", "uika",
                             JfrEvidence.WORK_DIR_NAME),

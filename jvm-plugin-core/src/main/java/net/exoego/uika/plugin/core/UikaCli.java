@@ -2,7 +2,6 @@ package net.exoego.uika.plugin.core;
 
 import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -12,7 +11,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
-import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 /**
@@ -29,10 +27,10 @@ public final class UikaCli {
 
     /** Maven classifier of the published binary for the current platform, e.g. "macos-aarch64". */
     public static String platformClassifier() {
-        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        String arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
-        boolean x64 = arch.equals("amd64") || arch.equals("x86_64");
-        boolean arm64 = arch.equals("aarch64") || arch.equals("arm64");
+        var os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        var arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
+        var x64 = arch.equals("amd64") || arch.equals("x86_64");
+        var arm64 = arch.equals("aarch64") || arch.equals("arm64");
         if (os.contains("linux") && x64) {
             return "linux-x86_64";
         }
@@ -56,13 +54,13 @@ public final class UikaCli {
      */
     public static Path extractBinary(Path zip, Path targetDir) throws IOException {
         String binaryName = platformClassifier().startsWith("windows") ? "uika.exe" : "uika";
-        Path binary = targetDir.resolve(binaryName);
+        var binary = targetDir.resolve(binaryName);
         if (Files.isRegularFile(binary)) {
             return binary;
         }
         Files.createDirectories(targetDir);
-        try (ZipFile zipFile = new ZipFile(zip.toFile())) {
-            ZipEntry entry = zipFile.stream()
+        try (var zipFile = new ZipFile(zip.toFile())) {
+            var entry = zipFile.stream()
                     .filter(e -> !e.isDirectory())
                     .filter(e -> e.getName().equals(binaryName)
                             || e.getName().endsWith("/" + binaryName))
@@ -71,7 +69,7 @@ public final class UikaCli {
             // Extract to a temp file and rename so a concurrent build never sees a partial binary.
             Path tmp = Files.createTempFile(targetDir, "uika", ".tmp");
             try {
-                try (InputStream in = zipFile.getInputStream(entry)) {
+                try (var in = zipFile.getInputStream(entry)) {
                     Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
                 }
                 // setExecutable reports failure by returning false (a CIFS or FUSE mount
@@ -185,9 +183,9 @@ public final class UikaCli {
      */
     public static Integer declaredRelease(List<String> options) {
         Integer target = null;
-        for (int i = 0; i < options.size(); i++) {
-            String option = options.get(i);
-            int separator = firstSeparator(option);
+        for (var i = 0; i < options.size(); i++) {
+            var option = options.get(i);
+            var separator = firstSeparator(option);
             String flag = separator < 0 ? option : option.substring(0, separator);
             String value = separator < 0
                     ? (i + 1 < options.size() ? options.get(i + 1) : null)
@@ -208,8 +206,8 @@ public final class UikaCli {
     }
 
     private static int firstSeparator(String option) {
-        int equals = option.indexOf('=');
-        int colon = option.indexOf(':');
+        var equals = option.indexOf('=');
+        var colon = option.indexOf(':');
         if (equals < 0) {
             return colon;
         }
@@ -225,7 +223,7 @@ public final class UikaCli {
         if (value == null) {
             return null;
         }
-        String text = value.trim();
+        var text = value.trim();
         if (text.startsWith("jvm-")) {
             text = text.substring("jvm-".length());
         }
@@ -233,7 +231,7 @@ public final class UikaCli {
             text = text.substring("1.".length());
         }
         try {
-            int release = Integer.parseInt(text);
+            var release = Integer.parseInt(text);
             return release < MIN_RELEASE ? null : release;
         } catch (NumberFormatException notARelease) {
             return null;
@@ -277,8 +275,8 @@ public final class UikaCli {
         if (target == null || target <= 0) {
             return null;
         }
-        int ctSymMax = jdk.feature() - 1;
-        int effective = Math.min(target, ctSymMax);
+        var ctSymMax = jdk.feature() - 1;
+        var effective = Math.min(target, ctSymMax);
         // Two different reasons, two different messages. Folding them made a below-floor
         // release report a missing ct.sym, sending the user to inspect a JDK that was fine.
         if (effective < MIN_RELEASE) {
@@ -316,7 +314,7 @@ public final class UikaCli {
      * in sync with this format by hand.
      */
     public static String jfrClassLoadJvmArg(Path dir) {
-        String filename = dir.toString();
+        var filename = dir.toString();
         if (filename.contains(",")) {
             filename = "\"" + filename + "\"";
         }
@@ -351,7 +349,7 @@ public final class UikaCli {
             List<Path> excludeFiles, Integer jdkRelease, JdkSource jdk, List<Path> classLoadLogs,
             Path draftExcludeFile, Consumer<String> output)
             throws IOException, InterruptedException {
-        List<String> command = new ArrayList<>(List.of(
+        var command = new ArrayList<String>(List.of(
                 binary.toString(), "upgrade-check",
                 "--before", before.toString(),
                 "--after", after.toString()));
@@ -379,15 +377,15 @@ public final class UikaCli {
             command.add("--draft-exclude-file");
             command.add(draftExcludeFile.toString());
         }
-        ProcessBuilder builder = new ProcessBuilder(command);
+        var builder = new ProcessBuilder(command);
         if (jdkRelease != null) {
             builder.environment().put("UIKA_JDK", jdk.home().toString());
         }
         builder.redirectErrorStream(true);
-        Process process = builder.start();
-        try (BufferedReader reader = new BufferedReader(
+        var process = builder.start();
+        try (var reader = new BufferedReader(
                 new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-            for (String line = reader.readLine(); line != null; line = reader.readLine()) {
+            for (var line = reader.readLine(); line != null; line = reader.readLine()) {
                 output.accept(line);
             }
         }

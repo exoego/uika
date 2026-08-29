@@ -23,10 +23,10 @@ final class JfrEvidenceTest {
 
     @Test
     void convertsClassLoadEventsIntoTheCliTextShapes() throws Exception {
-        Path jfr = dir.resolve("rec.jfr");
+        var jfr = dir.resolve("rec.jfr");
         JfrTestRecordings.recordFreshClassLoad(dir, jfr, "UikaJfrProbeCore");
-        Path out = dir.resolve("rec.log");
-        long events = JfrEvidence.convert(jfr, out);
+        var out = dir.resolve("rec.log");
+        var events = JfrEvidence.convert(jfr, out);
         assertTrue(events > 0, "no jdk.ClassLoad events were converted");
 
         String text = Files.readString(out);
@@ -42,14 +42,14 @@ final class JfrEvidenceTest {
 
     @Test
     void rewriteConvertsRecordingsGivenDirectlyOrInsideADirectory() throws Exception {
-        Path direct = dir.resolve("direct.jfr");
+        var direct = dir.resolve("direct.jfr");
         JfrTestRecordings.recordFreshClassLoad(dir, direct, "UikaJfrProbeRewrite");
         Path logsDir = Files.createDirectories(dir.resolve("load-logs"));
         Files.copy(direct, logsDir.resolve("nested.jfr"));
         Files.writeString(logsDir.resolve("plain.log"), "com.example.A\n");
 
-        Path work = dir.resolve("work");
-        List<Path> rewritten = JfrEvidence.rewrite(List.of(direct, logsDir), work, line -> {});
+        var work = dir.resolve("work");
+        var rewritten = JfrEvidence.rewrite(List.of(direct, logsDir), work, line -> {});
 
         assertFalse(rewritten.contains(direct), "the raw recording must not reach the CLI");
         assertTrue(rewritten.contains(logsDir), "the directory (its plain logs) must stay");
@@ -60,7 +60,7 @@ final class JfrEvidenceTest {
         // emit the probe's block exactly once: the CLI keeps only the first framed
         // block per class, and re-emitting it per fork recording is what made
         // conversions of large suites hundreds of MB of parsed-and-dropped text.
-        long withBlock = converted.stream().filter(p -> {
+        var withBlock = converted.stream().filter(p -> {
             try {
                 return Files.readString(p).contains("Java stack when loading UikaJfrProbeRewrite:");
             } catch (java.io.IOException e) {
@@ -79,11 +79,11 @@ final class JfrEvidenceTest {
     @Test
     void convertsASuffixlessRecordingByItsMagicBytes() throws Exception {
         Path logsDir = Files.createDirectories(dir.resolve("load-logs"));
-        Path suffixless = logsDir.resolve("prod-dump");
+        var suffixless = logsDir.resolve("prod-dump");
         JfrTestRecordings.recordFreshClassLoad(dir, suffixless, "UikaJfrProbeMagic");
 
-        Path work = dir.resolve("work");
-        List<Path> rewritten = JfrEvidence.rewrite(List.of(logsDir), work, line -> {});
+        var work = dir.resolve("work");
+        var rewritten = JfrEvidence.rewrite(List.of(logsDir), work, line -> {});
 
         List<Path> converted = rewritten.stream().filter(p -> p.startsWith(work)).toList();
         assertEquals(1, converted.size(),
@@ -100,16 +100,16 @@ final class JfrEvidenceTest {
     @Test
     void aTruncatedRecordingIsSkippedNotFatal() throws Exception {
         Path logsDir = Files.createDirectories(dir.resolve("load-logs"));
-        Path good = logsDir.resolve("good.jfr");
+        var good = logsDir.resolve("good.jfr");
         JfrTestRecordings.recordFreshClassLoad(dir, good, "UikaJfrProbeIntact");
         byte[] whole = Files.readAllBytes(good);
         // Truncated mid-chunk: valid magic, unreadable body — the SIGKILL shape.
         Files.write(logsDir.resolve("truncated.jfr"),
                 java.util.Arrays.copyOf(whole, whole.length / 2));
 
-        Path work = dir.resolve("work");
-        List<String> logged = new java.util.ArrayList<>();
-        List<Path> rewritten = JfrEvidence.rewrite(List.of(logsDir), work, logged::add);
+        var work = dir.resolve("work");
+        var logged = new java.util.ArrayList<String>();
+        var rewritten = JfrEvidence.rewrite(List.of(logsDir), work, logged::add);
 
         List<Path> converted = rewritten.stream()
                 .filter(p -> p.startsWith(work))
@@ -142,7 +142,7 @@ final class JfrEvidenceTest {
         Path stale = Files.writeString(work.resolve("jfr-9-gone.log"), "com.example.Stale\n");
         Path foreign = Files.writeString(work.resolve("notes.txt"), "keep me\n");
 
-        List<Path> rewritten = JfrEvidence.rewrite(List.of(), work, line -> {});
+        var rewritten = JfrEvidence.rewrite(List.of(), work, line -> {});
 
         assertTrue(rewritten.isEmpty(), () -> "nothing to rewrite, got: " + rewritten);
         assertFalse(Files.exists(stale), "the stale conversion must be deleted");
@@ -155,7 +155,7 @@ final class JfrEvidenceTest {
     @Test
     void recordingsBehindASymlinkedSubdirectoryAreConverted() throws Exception {
         Path real = Files.createDirectories(dir.resolve("real"));
-        Path rec = real.resolve("rec.jfr");
+        var rec = real.resolve("rec.jfr");
         JfrTestRecordings.recordFreshClassLoad(dir, rec, "UikaJfrProbeLinked");
         Path logsDir = Files.createDirectories(dir.resolve("load-logs"));
         try {
@@ -165,8 +165,8 @@ final class JfrEvidenceTest {
             org.junit.jupiter.api.Assumptions.abort("symlinks unsupported: " + e);
         }
 
-        Path work = dir.resolve("work");
-        List<Path> rewritten = JfrEvidence.rewrite(List.of(logsDir), work, line -> {});
+        var work = dir.resolve("work");
+        var rewritten = JfrEvidence.rewrite(List.of(logsDir), work, line -> {});
 
         List<Path> converted = rewritten.stream().filter(p -> p.startsWith(work)).toList();
         assertEquals(1, converted.size(),
@@ -184,9 +184,9 @@ final class JfrEvidenceTest {
     /// exactly the kind of drift promote-only evidence cannot surface on its own.
     @Test
     void deepCallerStacksKeepTheTriggerFrames() throws Exception {
-        Path jfr = dir.resolve("deep.jfr");
+        var jfr = dir.resolve("deep.jfr");
         JfrTestRecordings.recordFreshClassLoadAtDepth(dir, jfr, "UikaJfrProbeDeep", 100);
-        Path out = dir.resolve("deep.log");
+        var out = dir.resolve("deep.log");
         JfrEvidence.convert(jfr, out);
 
         String block = probeBlock(Files.readString(out), "UikaJfrProbeDeep");
@@ -205,10 +205,10 @@ final class JfrEvidenceTest {
     /// Windows, and a plain "\n" split would leave a trailing \r that fails both
     /// guards on the very first line.
     private static String probeBlock(String text, String probe) {
-        String header = "Java stack when loading " + probe + ":";
-        int start = text.indexOf(header);
+        var header = "Java stack when loading " + probe + ":";
+        var start = text.indexOf(header);
         assertTrue(start >= 0, () -> "no stack block for " + probe + ":\n" + head(text));
-        StringBuilder block = new StringBuilder();
+        var block = new StringBuilder();
         for (String line : text.substring(start).split("\\R")) {
             if (!line.equals(header) && !line.startsWith("\tat ")) {
                 break;

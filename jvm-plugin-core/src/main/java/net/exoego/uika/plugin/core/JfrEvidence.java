@@ -1,10 +1,7 @@
 package net.exoego.uika.plugin.core;
 
 import jdk.jfr.consumer.RecordedClass;
-import jdk.jfr.consumer.RecordedEvent;
 import jdk.jfr.consumer.RecordedFrame;
-import jdk.jfr.consumer.RecordedMethod;
-import jdk.jfr.consumer.RecordedStackTrace;
 import jdk.jfr.consumer.RecordingFile;
 
 import java.io.BufferedWriter;
@@ -20,7 +17,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
-import java.util.stream.Stream;
 
 /**
  * Converts JFR recordings into the class-load log text the uika CLI already parses. The
@@ -57,7 +53,7 @@ public final class JfrEvidence {
     public static boolean isRecording(Path path) {
         // getFileName() is null for filesystem roots — a degenerate but reachable knob
         // value that must not turn into a bare NPE.
-        Path name = path.getFileName();
+        var name = path.getFileName();
         if (name == null || !Files.isRegularFile(path)) {
             return false;
         }
@@ -73,7 +69,7 @@ public final class JfrEvidence {
      * is still a directory and keeps Test-JVM injection.
      */
     public static boolean valueNamesRecording(Path path) {
-        Path name = path.getFileName();
+        var name = path.getFileName();
         return name != null && name.toString().endsWith(".jfr") && !Files.isDirectory(path);
     }
 
@@ -112,12 +108,12 @@ public final class JfrEvidence {
      */
     private static long convert(Path recording, Path output, Map<String, Boolean> emitted)
             throws IOException {
-        long events = 0;
-        try (RecordingFile file = new RecordingFile(recording);
+        var events = 0L;
+        try (var file = new RecordingFile(recording);
                 BufferedWriter out = Files.newBufferedWriter(output)) {
-            List<String> frames = new ArrayList<>();
+            var frames = new ArrayList<String>();
             while (file.hasMoreEvents()) {
-                RecordedEvent event = file.readEvent();
+                var event = file.readEvent();
                 if (!"jdk.ClassLoad".equals(event.getEventType().getName())) {
                     continue;
                 }
@@ -127,9 +123,9 @@ public final class JfrEvidence {
                     continue;
                 }
                 events++;
-                String name = loaded.getName();
+                var name = loaded.getName();
                 frames.clear();
-                RecordedStackTrace stack = event.getStackTrace();
+                var stack = event.getStackTrace();
                 if (stack != null) {
                     // Unlike -Xlog:class+load+cause stacks, jdk.ClassLoad stacks start
                     // at the loading call site (no ClassLoader.defineClass machinery on
@@ -138,7 +134,7 @@ public final class JfrEvidence {
                         if (!frame.isJavaFrame()) {
                             continue;
                         }
-                        RecordedMethod method = frame.getMethod();
+                        var method = frame.getMethod();
                         frames.add("\tat " + method.getType().getName() + "."
                                 + method.getName() + "(line " + frame.getLineNumber()
                                 + ")");
@@ -192,8 +188,8 @@ public final class JfrEvidence {
      */
     public static List<Path> rewrite(List<Path> classLoadLogs, Path workDir, Consumer<String> log)
             throws IOException {
-        List<Path> rewritten = new ArrayList<>();
-        List<Path> recordings = new ArrayList<>();
+        var rewritten = new ArrayList<Path>();
+        var recordings = new ArrayList<Path>();
         for (Path entry : classLoadLogs) {
             if (isRecording(entry)) {
                 recordings.add(entry);
@@ -201,7 +197,7 @@ public final class JfrEvidence {
             }
             rewritten.add(entry);
             if (Files.isDirectory(entry)) {
-                try (Stream<Path> walk = Files.walk(entry, FileVisitOption.FOLLOW_LINKS)) {
+                try (var walk = Files.walk(entry, FileVisitOption.FOLLOW_LINKS)) {
                     walk.filter(JfrEvidence::isRecording).sorted().forEach(recordings::add);
                 } catch (UncheckedIOException e) {
                     // Files.walk wraps iteration failures (a symlink loop, an unreadable
@@ -211,7 +207,7 @@ public final class JfrEvidence {
             }
         }
         if (Files.isDirectory(workDir)) {
-            try (Stream<Path> stale = Files.list(workDir)) {
+            try (var stale = Files.list(workDir)) {
                 for (Path old : stale.filter(JfrEvidence::isConversion).toList()) {
                     Files.deleteIfExists(old);
                 }
@@ -220,19 +216,19 @@ public final class JfrEvidence {
         if (!recordings.isEmpty()) {
             Files.createDirectories(workDir);
         }
-        int n = 0;
-        Map<String, Boolean> emitted = new HashMap<>();
+        var n = 0;
+        var emitted = new HashMap<String, Boolean>();
         for (Path recording : recordings) {
-            String name = recording.getFileName().toString();
+            var name = recording.getFileName().toString();
             String base = name.endsWith(".jfr")
                     ? name.substring(0, name.length() - ".jfr".length())
                     : name;
-            Path output = workDir.resolve("jfr-" + ++n + "-" + base + ".log");
+            var output = workDir.resolve("jfr-" + ++n + "-" + base + ".log");
             long events;
             try {
                 events = convert(recording, output, emitted);
             } catch (IOException e) {
-                boolean partial = Files.isRegularFile(output);
+                var partial = Files.isRegularFile(output);
                 if (partial) {
                     rewritten.add(output);
                 }
@@ -255,7 +251,7 @@ public final class JfrEvidence {
 
     /** A file this class wrote into the workdir on some earlier run. */
     private static boolean isConversion(Path path) {
-        String name = path.getFileName().toString();
+        var name = path.getFileName().toString();
         return name.startsWith("jfr-") && name.endsWith(".log") && Files.isRegularFile(path);
     }
 }

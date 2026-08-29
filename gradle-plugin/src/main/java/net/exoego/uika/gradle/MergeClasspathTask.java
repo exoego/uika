@@ -41,10 +41,10 @@ public abstract class MergeClasspathTask extends DefaultTask {
     @TaskAction
     @SuppressWarnings("unchecked")
     public void merge() throws IOException {
-        List<Module> modules = new ArrayList<>();
-        JsonSlurper slurper = new JsonSlurper();
+        var modules = new ArrayList<Module>();
+        var slurper = new JsonSlurper();
         for (File fragment : getFragments().getFiles()) {
-            String text = new String(Files.readAllBytes(fragment.toPath()), StandardCharsets.UTF_8);
+            var text = new String(Files.readAllBytes(fragment.toPath()), StandardCharsets.UTF_8);
             if (text.isBlank()) {
                 continue; // Module without Java-family plugins.
             }
@@ -55,8 +55,8 @@ public abstract class MergeClasspathTask extends DefaultTask {
                         modules,
                         List.of(getRootDirPath().get()),
                         DumpFormat.dumpRelease(modules));
-        File out = getOutputFile().get().getAsFile();
-        File parent = out.getParentFile();
+        var out = getOutputFile().get().getAsFile();
+        var parent = out.getParentFile();
         if (parent != null) {
             parent.mkdirs();
         }

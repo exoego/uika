@@ -35,15 +35,15 @@ public final class DumpFormat {
     /** Normalize v1 / v2 / module fragments (one v1 module) into a common model. */
     @SuppressWarnings("unchecked")
     public static List<Module> normalize(Map<String, Object> doc) {
-        Object version = doc.get("version");
+        var version = doc.get("version");
         if (version instanceof Number n && n.intValue() == 2) {
             return fromV2(doc);
         }
-        List<Map<String, Object>> modules = (List<Map<String, Object>>) doc.get("modules");
+        var modules = (List<Map<String, Object>>) doc.get("modules");
         if (modules == null) {
             throw new IllegalArgumentException("not a uika classpath dump");
         }
-        List<Module> result = new ArrayList<>();
+        var result = new ArrayList<Module>();
         for (Map<String, Object> module : modules) {
             result.add(fromV1Module(module));
         }
@@ -52,9 +52,9 @@ public final class DumpFormat {
 
     @SuppressWarnings("unchecked")
     public static Module fromV1Module(Map<String, Object> module) {
-        List<String> classesDirs =
-                new ArrayList<>((List<String>) module.getOrDefault("classesDirs", List.of()));
-        List<Artifact> artifacts = new ArrayList<>();
+        var classesDirs =
+                new ArrayList<String>((List<String>) module.getOrDefault("classesDirs", List.of()));
+        var artifacts = new ArrayList<Artifact>();
         for (Map<String, Object> a :
                 (List<Map<String, Object>>) module.getOrDefault("artifacts", List.of())) {
             artifacts.add(new Artifact(
@@ -75,8 +75,8 @@ public final class DumpFormat {
 
     @SuppressWarnings("unchecked")
     private static List<Module> fromV2(Map<String, Object> doc) {
-        List<String> roots = (List<String>) doc.get("roots");
-        List<Artifact> artifacts = new ArrayList<>();
+        var roots = (List<String>) doc.get("roots");
+        var artifacts = new ArrayList<Artifact>();
         for (Map<String, Object> a : (List<Map<String, Object>>) doc.get("artifacts")) {
             artifacts.add(new Artifact(
                     (String) a.get("group"),
@@ -85,14 +85,14 @@ public final class DumpFormat {
                     roots.get(((Number) a.get("root")).intValue()) + a.get("path"),
                     (String) a.get("project")));
         }
-        List<Module> result = new ArrayList<>();
+        var result = new ArrayList<Module>();
         for (Map<String, Object> m : (List<Map<String, Object>>) doc.get("modules")) {
-            List<String> classesDirs = new ArrayList<>();
+            var classesDirs = new ArrayList<String>();
             for (Map<String, Object> dir :
                     (List<Map<String, Object>>) m.getOrDefault("classesDirs", List.of())) {
                 classesDirs.add(roots.get(((Number) dir.get("root")).intValue()) + dir.get("path"));
             }
-            List<Artifact> refs = new ArrayList<>();
+            var refs = new ArrayList<Artifact>();
             for (Object idx : (List<Object>) m.getOrDefault("artifactRefs", List.of())) {
                 refs.add(artifacts.get(((Number) idx).intValue()));
             }
@@ -119,7 +119,7 @@ public final class DumpFormat {
     public static int dumpRelease(List<Module> modules) {
         Integer lowest = null;
         for (Module module : modules) {
-            Integer release = module.jdkRelease();
+            var release = module.jdkRelease();
             if (release != null) {
                 lowest = lowest == null ? release : Math.min(lowest, release);
             }
@@ -146,10 +146,10 @@ public final class DumpFormat {
 
     /** Write as v2. roots are built dynamically from known prefixes plus generic markers. */
     public static String writeV2(List<Module> modules, List<String> preferredRoots, Integer jdkRelease) {
-        RootTable roots = new RootTable(preferredRoots);
+        var roots = new RootTable(preferredRoots);
 
-        Map<String, Integer> artifactIndex = new LinkedHashMap<>();
-        List<Artifact> table = new ArrayList<>();
+        var artifactIndex = new LinkedHashMap<String, Integer>();
+        var table = new ArrayList<Artifact>();
         for (Module module : modules) {
             for (Artifact a : module.artifacts()) {
                 if (artifactIndex.putIfAbsent(keyOf(a), table.size()) == null) {
@@ -158,9 +158,9 @@ public final class DumpFormat {
             }
         }
 
-        StringBuilder artifactsJson = new StringBuilder();
-        for (int i = 0; i < table.size(); i++) {
-            Artifact a = table.get(i);
+        var artifactsJson = new StringBuilder();
+        for (var i = 0; i < table.size(); i++) {
+            var a = table.get(i);
             if (i > 0) {
                 artifactsJson.append(',');
             }
@@ -174,14 +174,14 @@ public final class DumpFormat {
             if (a.project() != null) {
                 artifactsJson.append("\"project\":").append(quote(a.project())).append(',');
             }
-            int root = roots.indexOf(a.file());
+            var root = roots.indexOf(a.file());
             artifactsJson.append("\"root\":").append(root)
                     .append(",\"path\":").append(quote(roots.suffixOf(a.file(), root)))
                     .append('}');
         }
 
-        StringBuilder modulesJson = new StringBuilder();
-        boolean firstModule = true;
+        var modulesJson = new StringBuilder();
+        var firstModule = true;
         for (Module module : modules) {
             if (!firstModule) {
                 modulesJson.append(',');
@@ -192,13 +192,13 @@ public final class DumpFormat {
                 modulesJson.append(",\"jdkRelease\":").append(module.jdkRelease().intValue());
             }
             modulesJson.append(",\"classesDirs\":[");
-            boolean first = true;
+            var first = true;
             for (String dir : module.classesDirs()) {
                 if (!first) {
                     modulesJson.append(',');
                 }
                 first = false;
-                int root = roots.indexOf(dir);
+                var root = roots.indexOf(dir);
                 modulesJson.append("{\"root\":").append(root)
                         .append(",\"path\":").append(quote(roots.suffixOf(dir, root)))
                         .append('}');
@@ -215,14 +215,14 @@ public final class DumpFormat {
             modulesJson.append("]}");
         }
 
-        StringBuilder json = new StringBuilder();
+        var json = new StringBuilder();
         json.append("{\"version\":2");
         if (jdkRelease != null) {
             json.append(",\"jdkRelease\":").append(jdkRelease.intValue());
         }
         json.append(",\"roots\":[");
         List<String> built = roots.all();
-        for (int i = 0; i < built.size(); i++) {
+        for (var i = 0; i < built.size(); i++) {
             if (i > 0) {
                 json.append(',');
             }
@@ -235,9 +235,9 @@ public final class DumpFormat {
     }
 
     public static String quote(String s) {
-        StringBuilder sb = new StringBuilder(s.length() + 2).append('"');
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
+        var sb = new StringBuilder(s.length() + 2).append('"');
+        for (var i = 0; i < s.length(); i++) {
+            var c = s.charAt(i);
             switch (c) {
                 case '"' -> sb.append("\\\"");
                 case '\\' -> sb.append("\\\\");
@@ -278,10 +278,10 @@ public final class DumpFormat {
         }
 
         int indexOf(String path) {
-            int best = roots.indexOf("");
-            int bestLen = 0;
-            for (int i = 0; i < roots.size(); i++) {
-                String root = roots.get(i);
+            var best = roots.indexOf("");
+            var bestLen = 0;
+            for (var i = 0; i < roots.size(); i++) {
+                var root = roots.get(i);
                 if (!root.isEmpty() && path.startsWith(root) && root.length() > bestLen) {
                     best = i;
                     bestLen = root.length();
@@ -308,7 +308,7 @@ public final class DumpFormat {
 
         private static String derive(String path) {
             for (String marker : new String[] {"/modules-2/files-2.1/", "/.m2/repository/"}) {
-                int i = path.indexOf(marker);
+                var i = path.indexOf(marker);
                 if (i >= 0) {
                     return path.substring(0, i + marker.length());
                 }

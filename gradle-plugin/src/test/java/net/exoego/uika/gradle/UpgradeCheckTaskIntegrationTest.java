@@ -1,7 +1,6 @@
 package net.exoego.uika.gradle;
 
 import net.exoego.uika.plugin.core.UikaCli;
-import org.gradle.testkit.runner.BuildResult;
 import org.gradle.testkit.runner.BuildTask;
 import org.gradle.testkit.runner.GradleRunner;
 import org.gradle.testkit.runner.TaskOutcome;
@@ -84,7 +83,7 @@ final class UpgradeCheckTaskIntegrationTest {
 
     @Test
     void resolvesExtractsAndRunsCli() throws Exception {
-        BuildResult result = runner(CLEAN_VERSION).build();
+        var result = runner(CLEAN_VERSION).build();
 
         var task = result.task(":uikaUpgradeCheck");
         assertNotNull(task, "task did not run");
@@ -101,7 +100,7 @@ final class UpgradeCheckTaskIntegrationTest {
 
     @Test
     void passesFailOnToCli() throws Exception {
-        BuildResult result = runner(CLEAN_VERSION)
+        var result = runner(CLEAN_VERSION)
                 .withArguments(
                         "uikaUpgradeCheck",
                         "--stacktrace",
@@ -139,7 +138,7 @@ final class UpgradeCheckTaskIntegrationTest {
                 }
                 """.formatted(repoDir.toUri()));
 
-        BuildResult result = runner(CLEAN_VERSION).build();
+        var result = runner(CLEAN_VERSION).build();
 
         assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
         String args = Files.readString(Path.of(before + ".args"));
@@ -155,7 +154,7 @@ final class UpgradeCheckTaskIntegrationTest {
                 reason = "test"
                 """);
 
-        BuildResult result = runner(CLEAN_VERSION)
+        var result = runner(CLEAN_VERSION)
                 .withArguments(
                         "uikaUpgradeCheck",
                         "--stacktrace",
@@ -198,7 +197,7 @@ final class UpgradeCheckTaskIntegrationTest {
                 }
                 """.formatted(repoDir.toUri(), excludeFile.toString().replace("\\", "\\\\")));
 
-        BuildResult result = runner(CLEAN_VERSION).build();
+        var result = runner(CLEAN_VERSION).build();
 
         assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
         String args = Files.readString(Path.of(before + ".args"));
@@ -209,8 +208,8 @@ final class UpgradeCheckTaskIntegrationTest {
     @Test
     void passesClassLoadLogAndDraftFileToCli() throws Exception {
         Path logDir = Files.createDirectories(projectDir.resolve("load-logs"));
-        Path draft = projectDir.resolve("uika-draft.toml");
-        BuildResult result = runner(CLEAN_VERSION)
+        var draft = projectDir.resolve("uika-draft.toml");
+        var result = runner(CLEAN_VERSION)
                 .withArguments(
                         "uikaUpgradeCheck",
                         "--stacktrace",
@@ -234,7 +233,7 @@ final class UpgradeCheckTaskIntegrationTest {
     /// pid-unique file names), and without the property test JVMs stay untouched.
     @Test
     void classLoadLogPropertyInjectsTestJvmArgs() throws Exception {
-        Path logDir = projectDir.resolve("load-logs");
+        var logDir = projectDir.resolve("load-logs");
         write(projectDir.resolve("build.gradle.kts"), """
                 plugins {
                     java
@@ -254,7 +253,7 @@ final class UpgradeCheckTaskIntegrationTest {
                 }
                 """.formatted(repoDir.toUri()));
 
-        BuildResult with = GradleRunner.create()
+        var with = GradleRunner.create()
                 .withProjectDir(projectDir.toFile())
                 .withArguments("printTestJvmArgs", "-PuikaJfr=" + logDir)
                 .withPluginClasspath()
@@ -265,7 +264,7 @@ final class UpgradeCheckTaskIntegrationTest {
         assertTrue(with.getOutput().contains(expected),
                 () -> "expected " + expected + " in test JVM args:\n" + with.getOutput());
 
-        BuildResult without = GradleRunner.create()
+        var without = GradleRunner.create()
                 .withProjectDir(projectDir.toFile())
                 .withArguments("printTestJvmArgs")
                 .withPluginClasspath()
@@ -282,12 +281,12 @@ final class UpgradeCheckTaskIntegrationTest {
     /// at runtime (JfrTestRecordings explains why a member class cannot serve).
     @Test
     void convertsAJfrRecordingBeforeInvokingTheCli() throws Exception {
-        String probe = "UikaJfrProbeGradle";
-        Path jfr = projectDir.resolve("rec.jfr");
+        var probe = "UikaJfrProbeGradle";
+        var jfr = projectDir.resolve("rec.jfr");
         net.exoego.uika.plugin.core.JfrTestRecordings.recordFreshClassLoad(
                 projectDir, jfr, probe);
 
-        BuildResult result = runner(CLEAN_VERSION)
+        var result = runner(CLEAN_VERSION)
                 .withArguments(
                         "uikaUpgradeCheck",
                         "--stacktrace",
@@ -307,8 +306,8 @@ final class UpgradeCheckTaskIntegrationTest {
         assertTrue(!args.contains("rec.jfr"),
                 () -> "the raw recording must not reach the CLI: " + args);
         String converted = null;
-        String[] words = args.trim().split(" ");
-        for (int i = 0; i + 1 < words.length; i++) {
+        var words = args.trim().split(" ");
+        for (var i = 0; i + 1 < words.length; i++) {
             if (words[i].equals("--class-load-log")) {
                 converted = words[i + 1];
             }
@@ -347,7 +346,7 @@ final class UpgradeCheckTaskIntegrationTest {
                 }
                 """.formatted(repoDir.toUri()));
 
-        BuildResult injected = GradleRunner.create()
+        var injected = GradleRunner.create()
                 .withProjectDir(projectDir.toFile())
                 .withArguments("printTestJvmArgs", "-PuikaJfr")
                 .withPluginClasspath()
@@ -355,13 +354,13 @@ final class UpgradeCheckTaskIntegrationTest {
                 .build();
         // toRealPath: Gradle canonicalizes the project directory (macOS /var vs
         // /private/var), and the bare default is derived from it.
-        Path relocated = projectDir.toRealPath()
+        var relocated = projectDir.toRealPath()
                 .resolve("custom-build").resolve("uika").resolve("jfr");
         String expected = UikaCli.jfrClassLoadJvmArg(relocated);
         assertTrue(injected.getOutput().contains(expected),
                 () -> "expected " + expected + " in test JVM args:\n" + injected.getOutput());
 
-        BuildResult checked = GradleRunner.create()
+        var checked = GradleRunner.create()
                 .withProjectDir(projectDir.toFile())
                 .withArguments(
                         "uikaUpgradeCheck",
@@ -386,7 +385,7 @@ final class UpgradeCheckTaskIntegrationTest {
         // JDK's ct.sym never contains its own release.
         runner(CLEAN_VERSION).build();
 
-        int expected = Runtime.version().feature() - 1;
+        var expected = Runtime.version().feature() - 1;
         String args = Files.readString(Path.of(before + ".args"));
         assertTrue(args.contains("--jdk-release " + expected),
                 () -> "expected derived --jdk-release " + expected + " in CLI invocation: " + args);
@@ -394,7 +393,7 @@ final class UpgradeCheckTaskIntegrationTest {
         // environment happens to export.
         // The release and UIKA_JDK are one decision, so the exported home has to be the JDK
         // the release was clamped against, not merely non-empty.
-        String env = Files.readString(Path.of(before + ".env")).trim();
+        var env = Files.readString(Path.of(before + ".env")).trim();
         assertEquals(System.getProperty("java.home"), env,
                 "UIKA_JDK must be the JDK whose ct.sym the release was clamped against");
     }
@@ -517,8 +516,8 @@ final class UpgradeCheckTaskIntegrationTest {
     /// the ordering the check could start first and fail on the missing input.
     @Test
     void singleInvocationRunsDumpBeforeCheck() throws Exception {
-        Path afterDump = projectDir.resolve("after-dump.json");
-        BuildResult result = GradleRunner.create()
+        var afterDump = projectDir.resolve("after-dump.json");
+        var result = GradleRunner.create()
                 .withProjectDir(projectDir.toFile())
                 .withArguments(
                         "uikaDumpClasspath",
@@ -549,7 +548,7 @@ final class UpgradeCheckTaskIntegrationTest {
         // UP-TO-DATE, and silently skipped the whole check. Without the property set the
         // task has no output files either way and the guard asserts nothing.
         Path logDir = Files.createDirectories(projectDir.resolve("cc-load-logs"));
-        Path draft = projectDir.resolve("cc-draft.toml");
+        var draft = projectDir.resolve("cc-draft.toml");
         String[] args = {
                 "uikaUpgradeCheck",
                 "--configuration-cache",
@@ -559,7 +558,7 @@ final class UpgradeCheckTaskIntegrationTest {
                 "-PuikaCliVersion=" + CLEAN_VERSION,
                 "-PuikaJfr=" + logDir,
                 "-PuikaDraftExcludeFile=" + draft};
-        BuildResult first = runner(CLEAN_VERSION)
+        var first = runner(CLEAN_VERSION)
                 .withArguments(args)
                 .build();
         assertEquals(TaskOutcome.SUCCESS, first.task(":uikaUpgradeCheck").getOutcome());
@@ -568,7 +567,7 @@ final class UpgradeCheckTaskIntegrationTest {
         assertTrue(Files.exists(Path.of(before + ".marker")), "stub binary was not executed");
 
         Files.delete(Path.of(before + ".marker"));
-        BuildResult second = runner(CLEAN_VERSION)
+        var second = runner(CLEAN_VERSION)
                 .withArguments(args)
                 .build();
         assertEquals(TaskOutcome.SUCCESS, second.task(":uikaUpgradeCheck").getOutcome());
@@ -580,7 +579,7 @@ final class UpgradeCheckTaskIntegrationTest {
 
     @Test
     void violationExitCodeFailsTheBuild() {
-        BuildResult result = runner(VIOLATION_VERSION).buildAndFail();
+        var result = runner(VIOLATION_VERSION).buildAndFail();
 
         assertTrue(result.getOutput().contains("VIOLATION in stub.jar"),
                 () -> "CLI violation report did not reach the build log:\n" + result.getOutput());
@@ -604,10 +603,10 @@ final class UpgradeCheckTaskIntegrationTest {
     /** Lays out repoDir like a Maven repository: net/exoego/uika/uika-cli/<v>/uika-cli-<v>-<classifier>.zip. */
     private void publishStubCli(String version, String script) throws IOException {
         String classifier = UikaCli.platformClassifier();
-        Path dir = repoDir.resolve("net/exoego/uika/uika-cli/" + version);
+        var dir = repoDir.resolve("net/exoego/uika/uika-cli/" + version);
         Files.createDirectories(dir);
-        Path zip = dir.resolve("uika-cli-" + version + "-" + classifier + ".zip");
-        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(zip))) {
+        var zip = dir.resolve("uika-cli-" + version + "-" + classifier + ".zip");
+        try (var out = new ZipOutputStream(Files.newOutputStream(zip))) {
             out.putNextEntry(new ZipEntry("uika-" + version + "-" + classifier + "/uika"));
             out.write(script.getBytes(StandardCharsets.UTF_8));
             out.closeEntry();

@@ -29,7 +29,7 @@ final class UikaPluginIntegrationTest {
 
     @Test
     void writesClasspathDumpFromGeneratedProject() throws Exception {
-        Path output = projectDir.resolve("classpath.json");
+        var output = projectDir.resolve("classpath.json");
         write(projectDir.resolve("settings.gradle.kts"), """
                 rootProject.name = "dummy-uika-consumer"
                 include("app")
@@ -39,7 +39,7 @@ final class UikaPluginIntegrationTest {
                     id("net.exoego.uika")
                 }
                 """);
-        Path appDir = projectDir.resolve("app");
+        var appDir = projectDir.resolve("app");
         write(appDir.resolve("build.gradle.kts"), """
                 plugins {
                     java
@@ -59,7 +59,7 @@ final class UikaPluginIntegrationTest {
                 }
                 """);
 
-        BuildResult result = GradleRunner.create()
+        var result = GradleRunner.create()
                 .withProjectDir(projectDir.toFile())
                 .withArguments(
                         ":app:classes",
@@ -76,7 +76,7 @@ final class UikaPluginIntegrationTest {
         assertTrue(Files.isRegularFile(output), "classpath dump was not written: " + output);
 
         @SuppressWarnings("unchecked")
-        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
         assertEquals(2, ((Number) doc.get("version")).intValue());
         // upgrade-check compares this across the before/after dumps to check the JDK move
         // too. This project declares no target, so what it compiles against IS the build JVM.
@@ -85,19 +85,19 @@ final class UikaPluginIntegrationTest {
                 "dump must record the release the application runs on");
 
         @SuppressWarnings("unchecked")
-        List<Map<String, Object>> modules = (List<Map<String, Object>>) doc.get("modules");
-        Map<String, Object> appModule = modules.stream()
+        var modules = (List<Map<String, Object>>) doc.get("modules");
+        var appModule = modules.stream()
                 .filter(module -> Objects.equals(":app", module.get("module")))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError(":app module is missing from " + modules));
 
         @SuppressWarnings("unchecked")
-        List<Map<String, Object>> classesDirs =
+        var classesDirs =
                 (List<Map<String, Object>>) appModule.get("classesDirs");
         assertFalse(classesDirs.isEmpty(), ":app classesDirs is empty");
 
         String firstClassesDir = rootedPath(doc, classesDirs.get(0));
-        String expectedSuffix = "app/build/classes/java/main";
+        var expectedSuffix = "app/build/classes/java/main";
         assertTrue(firstClassesDir.endsWith(expectedSuffix),
                 () -> "expected classes dir to end with " + expectedSuffix
                         + ", got " + firstClassesDir);
@@ -109,13 +109,13 @@ final class UikaPluginIntegrationTest {
     /// them, the fallback for a module that declares nothing (like the root here).
     @Test
     void recordsTheReleaseEachModuleCompilesFor() throws Exception {
-        Path output = projectDir.resolve("classpath.json");
+        var output = projectDir.resolve("classpath.json");
         writeMixedReleaseProject();
 
         runDump(output);
 
         @SuppressWarnings("unchecked")
-        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
         assertEquals(11, ((Number) doc.get("jdkRelease")).intValue(),
                 "the dump-level release must be the lowest any module declares");
         assertEquals(11, moduleRelease(doc, ":older"));
@@ -133,13 +133,13 @@ final class UikaPluginIntegrationTest {
     /// module declares, because it is a statement about the whole build.
     @Test
     void jdkReleasePropertyOverridesWhatTheModulesDeclare() throws Exception {
-        Path output = projectDir.resolve("classpath.json");
+        var output = projectDir.resolve("classpath.json");
         writeMixedReleaseProject();
 
         runDump(output, "-PuikaJdkRelease=21");
 
         @SuppressWarnings("unchecked")
-        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
         assertEquals(21, ((Number) doc.get("jdkRelease")).intValue());
         assertEquals(Map.of(":older", 21, ":newer", 21), moduleReleases(doc));
 
@@ -149,7 +149,7 @@ final class UikaPluginIntegrationTest {
         runDump(output, "-PuikaJdkRelease=0");
 
         @SuppressWarnings("unchecked")
-        Map<String, Object> derived = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        var derived = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
         assertEquals(11, ((Number) derived.get("jdkRelease")).intValue());
         assertEquals(Map.of(":older", 11, ":newer", 17), moduleReleases(derived));
     }
@@ -162,7 +162,7 @@ final class UikaPluginIntegrationTest {
         // property is parsed during apply(), so an unguarded parse killed EVERY invocation,
         // `gradle tasks` included, with a raw NumberFormatException naming no uika anything.
         for (String property : List.of("-PuikaJdkRelease=eleven", "-PuikaJdkRelease")) {
-            BuildResult result = GradleRunner.create()
+            var result = GradleRunner.create()
                     .withProjectDir(projectDir.toFile())
                     .withArguments("tasks", property)
                     .withPluginClasspath()
@@ -175,8 +175,8 @@ final class UikaPluginIntegrationTest {
 
     @SuppressWarnings("unchecked")
     private static Map<String, Integer> moduleReleases(Map<String, Object> doc) {
-        List<Map<String, Object>> modules = (List<Map<String, Object>>) doc.get("modules");
-        Map<String, Integer> releases = new LinkedHashMap<>();
+        var modules = (List<Map<String, Object>>) doc.get("modules");
+        var releases = new LinkedHashMap<String, Integer>();
         for (Map<String, Object> module : modules) {
             releases.put((String) module.get("module"),
                     module.get("jdkRelease") instanceof Number n ? n.intValue() : null);
@@ -186,8 +186,8 @@ final class UikaPluginIntegrationTest {
 
     @SuppressWarnings("unchecked")
     private static Integer moduleRelease(Map<String, Object> doc, String modulePath) {
-        List<Map<String, Object>> modules = (List<Map<String, Object>>) doc.get("modules");
-        Map<String, Object> module = modules.stream()
+        var modules = (List<Map<String, Object>>) doc.get("modules");
+        var module = modules.stream()
                 .filter(m -> Objects.equals(modulePath, m.get("module")))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError(modulePath + " is missing from " + modules));
@@ -218,17 +218,17 @@ final class UikaPluginIntegrationTest {
 
     @Test
     void secondRunPicksUpDependencyChanges() throws Exception {
-        Path output = projectDir.resolve("classpath.json");
+        var output = projectDir.resolve("classpath.json");
         writeToggleJarProject();
 
-        BuildResult first = runDump(output);
+        var first = runDump(output);
         assertTaskSuccess(first, ":app:uikaDumpModuleClasspath");
         assertTrue(artifactPaths(output).stream().anyMatch(p -> p.endsWith("first.jar")),
                 "first.jar is missing from the initial dump");
         assertFalse(artifactPaths(output).stream().anyMatch(p -> p.endsWith("second.jar")),
                 "second.jar should not be in the initial dump");
 
-        BuildResult second = runDump(output, "-PuikaTestExtraJar=true");
+        var second = runDump(output, "-PuikaTestExtraJar=true");
         assertTaskSuccess(second, ":app:uikaDumpModuleClasspath");
         assertTrue(artifactPaths(output).stream().anyMatch(p -> p.endsWith("second.jar")),
                 "dump does not reflect the dependency added after the first run");
@@ -239,10 +239,10 @@ final class UikaPluginIntegrationTest {
     /// module's own classes before dumping (no manual dependsOn, no pre-build step).
     @Test
     void attributesProjectDependenciesAndBuildsOutputsByDefault() throws Exception {
-        Path output = projectDir.resolve("classpath.json");
+        var output = projectDir.resolve("classpath.json");
         writeMultiModuleProject();
 
-        BuildResult result = runDump(output);
+        var result = runDump(output);
         assertTaskSuccess(result, ":lib:jar");
         assertTaskSuccess(result, ":app:compileJava");
         assertTaskSuccess(result, ":app:uikaDumpModuleClasspath");
@@ -255,10 +255,10 @@ final class UikaPluginIntegrationTest {
     /// silently losing the module from the classpath.
     @Test
     void buildOutputsOptOutSkipsCompilation() throws Exception {
-        Path output = projectDir.resolve("classpath.json");
+        var output = projectDir.resolve("classpath.json");
         writeMultiModuleProject();
 
-        BuildResult result = runDump(output, "-PuikaBuildOutputs=false");
+        var result = runDump(output, "-PuikaBuildOutputs=false");
         assertTrue(result.task(":lib:jar") == null,
                 ":lib:jar must not run with uikaBuildOutputs=false");
         assertTrue(result.task(":app:compileJava") == null,
@@ -273,10 +273,10 @@ final class UikaPluginIntegrationTest {
     /// cache can never pin a stale classpath.
     @Test
     void configurationCacheReusesDumpAndStaysCorrect() throws Exception {
-        Path output = projectDir.resolve("classpath.json");
+        var output = projectDir.resolve("classpath.json");
         writeToggleJarProject();
 
-        BuildResult first = runDump(output, "--configuration-cache");
+        var first = runDump(output, "--configuration-cache");
         assertTaskSuccess(first, ":app:uikaDumpModuleClasspath");
         assertTrue(first.getOutput().contains("Configuration cache entry stored"),
                 () -> "no configuration cache entry was stored:\n" + first.getOutput());
@@ -284,14 +284,14 @@ final class UikaPluginIntegrationTest {
                 "first.jar is missing from the initial dump");
 
         Files.delete(output);
-        BuildResult second = runDump(output, "--configuration-cache");
+        var second = runDump(output, "--configuration-cache");
         assertTaskSuccess(second, ":app:uikaDumpModuleClasspath");
         assertTrue(second.getOutput().contains("Configuration cache entry reused"),
                 () -> "the configuration cache entry was not reused:\n" + second.getOutput());
         assertTrue(artifactPaths(output).stream().anyMatch(p -> p.endsWith("first.jar")),
                 "first.jar is missing from the cache-reuse dump");
 
-        BuildResult third = runDump(output, "--configuration-cache", "-PuikaTestExtraJar=true");
+        var third = runDump(output, "--configuration-cache", "-PuikaTestExtraJar=true");
         assertTaskSuccess(third, ":app:uikaDumpModuleClasspath");
         assertTrue(artifactPaths(output).stream().anyMatch(p -> p.endsWith("second.jar")),
                 "dump does not reflect the dependency added after the cached run");
@@ -301,10 +301,10 @@ final class UikaPluginIntegrationTest {
     /// cache: a reused entry still builds the dependency jar and dumps the attribution.
     @Test
     void configurationCacheReusesMultiModuleDump() throws Exception {
-        Path output = projectDir.resolve("classpath.json");
+        var output = projectDir.resolve("classpath.json");
         writeMultiModuleProject();
 
-        BuildResult first = runDump(output, "--configuration-cache");
+        var first = runDump(output, "--configuration-cache");
         assertTrue(first.getOutput().contains("Configuration cache entry stored"),
                 () -> "no configuration cache entry was stored:\n" + first.getOutput());
         assertTaskSuccess(first, ":lib:jar");
@@ -312,7 +312,7 @@ final class UikaPluginIntegrationTest {
         assertAppAttributesLib(output);
 
         Files.delete(output);
-        BuildResult second = runDump(output, "--configuration-cache");
+        var second = runDump(output, "--configuration-cache");
         assertTrue(second.getOutput().contains("Configuration cache entry reused"),
                 () -> "the configuration cache entry was not reused:\n" + second.getOutput());
         assertTaskSuccess(second, ":app:uikaDumpModuleClasspath");
@@ -325,10 +325,10 @@ final class UikaPluginIntegrationTest {
     /// attribution on both the store and the reuse run, and still nothing is compiled.
     @Test
     void configurationCacheReusesResolutionOnlyDump() throws Exception {
-        Path output = projectDir.resolve("classpath.json");
+        var output = projectDir.resolve("classpath.json");
         writeMultiModuleProject();
 
-        BuildResult first = runDump(output, "--configuration-cache", "-PuikaBuildOutputs=false");
+        var first = runDump(output, "--configuration-cache", "-PuikaBuildOutputs=false");
         assertTrue(first.getOutput().contains("Configuration cache entry stored"),
                 () -> "no configuration cache entry was stored:\n" + first.getOutput());
         assertTrue(first.task(":lib:jar") == null,
@@ -337,7 +337,7 @@ final class UikaPluginIntegrationTest {
         assertUnbuiltLibAttributed(output);
 
         Files.delete(output);
-        BuildResult second = runDump(output, "--configuration-cache", "-PuikaBuildOutputs=false");
+        var second = runDump(output, "--configuration-cache", "-PuikaBuildOutputs=false");
         assertTrue(second.getOutput().contains("Configuration cache entry reused"),
                 () -> "the configuration cache entry was not reused:\n" + second.getOutput());
         assertTrue(second.task(":lib:jar") == null,
@@ -349,9 +349,9 @@ final class UikaPluginIntegrationTest {
     /** The unbuilt :lib jar is listed with its project attribution (the file need not exist). */
     @SuppressWarnings("unchecked")
     private static void assertUnbuiltLibAttributed(Path output) {
-        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
-        List<Map<String, Object>> artifacts = (List<Map<String, Object>>) doc.get("artifacts");
-        Map<String, Object> libArtifact = artifacts.stream()
+        var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        var artifacts = (List<Map<String, Object>>) doc.get("artifacts");
+        var libArtifact = artifacts.stream()
                 .filter(a -> Objects.equals(":lib", a.get("project")))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError(
@@ -362,18 +362,18 @@ final class UikaPluginIntegrationTest {
     /** The :app module's dump attributes the :lib project-dependency jar and lists built classesDirs. */
     private static void assertAppAttributesLib(Path output) throws IOException {
         @SuppressWarnings("unchecked")
-        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
         @SuppressWarnings("unchecked")
-        List<Map<String, Object>> modules = (List<Map<String, Object>>) doc.get("modules");
-        Map<String, Object> appModule = modules.stream()
+        var modules = (List<Map<String, Object>>) doc.get("modules");
+        var appModule = modules.stream()
                 .filter(module -> Objects.equals(":app", module.get("module")))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError(":app module is missing from " + modules));
         @SuppressWarnings("unchecked")
-        List<Map<String, Object>> artifacts = (List<Map<String, Object>>) doc.get("artifacts");
+        var artifacts = (List<Map<String, Object>>) doc.get("artifacts");
         @SuppressWarnings("unchecked")
-        List<Number> refs = (List<Number>) appModule.get("artifactRefs");
-        Map<String, Object> libArtifact = refs.stream()
+        var refs = (List<Number>) appModule.get("artifactRefs");
+        var libArtifact = refs.stream()
                 .map(i -> artifacts.get(i.intValue()))
                 .filter(a -> Objects.equals(":lib", a.get("project")))
                 .findFirst()
@@ -384,7 +384,7 @@ final class UikaPluginIntegrationTest {
         assertTrue(Files.isRegularFile(Path.of(libPath)),
                 "the dependsOn wiring must have built " + libPath);
         @SuppressWarnings("unchecked")
-        List<Map<String, Object>> classesDirs =
+        var classesDirs =
                 (List<Map<String, Object>>) appModule.get("classesDirs");
         assertFalse(classesDirs.isEmpty(), ":app classesDirs is empty: " + appModule);
     }
@@ -400,7 +400,7 @@ final class UikaPluginIntegrationTest {
                     id("net.exoego.uika")
                 }
                 """);
-        Path appDir = projectDir.resolve("app");
+        var appDir = projectDir.resolve("app");
         write(appDir.resolve("build.gradle.kts"), """
                 plugins {
                     java
@@ -477,15 +477,15 @@ final class UikaPluginIntegrationTest {
 
     @SuppressWarnings("unchecked")
     private static List<String> artifactPaths(Path output) {
-        Map<String, Object> doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
-        List<Map<String, Object>> artifacts = (List<Map<String, Object>>) doc.get("artifacts");
+        var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        var artifacts = (List<Map<String, Object>>) doc.get("artifacts");
         return artifacts.stream().map(a -> rootedPath(doc, a)).toList();
     }
 
     @SuppressWarnings("unchecked")
     private static String rootedPath(Map<String, Object> doc, Map<String, Object> rootedPath) {
-        List<String> roots = (List<String>) doc.get("roots");
-        int root = ((Number) rootedPath.get("root")).intValue();
+        var roots = (List<String>) doc.get("roots");
+        var root = ((Number) rootedPath.get("root")).intValue();
         return roots.get(root) + rootedPath.get("path");
     }
 

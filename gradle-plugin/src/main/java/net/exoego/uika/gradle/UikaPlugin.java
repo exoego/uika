@@ -4,13 +4,11 @@ import net.exoego.uika.plugin.core.UikaCli;
 import org.gradle.api.GradleException;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
-import org.gradle.api.Task;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.ModuleDependency;
 import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.tasks.SourceSet;
-import org.gradle.api.tasks.TaskProvider;
 import org.gradle.api.tasks.compile.JavaCompile;
 
 import java.io.File;
@@ -74,7 +72,7 @@ public class UikaPlugin implements Plugin<Project> {
      * with a raw NumberFormatException naming no uika anything.
      */
     static Integer jdkReleaseProperty(Project root) {
-        Object value = root.findProperty("uikaJdkRelease");
+        var value = root.findProperty("uikaJdkRelease");
         if (value == null) {
             return null;
         }
@@ -115,14 +113,14 @@ public class UikaPlugin implements Plugin<Project> {
      * {@code targetCompatibility} would.
      */
     static Integer declaredRelease(Project project) {
-        JavaPluginExtension java =
+        var java =
                 project.getExtensions().findByType(JavaPluginExtension.class);
         if (java == null) {
             return null;
         }
-        Task compile = project.getTasks().findByName(JavaPlugin.COMPILE_JAVA_TASK_NAME);
+        var compile = project.getTasks().findByName(JavaPlugin.COMPILE_JAVA_TASK_NAME);
         if (compile instanceof JavaCompile javaCompile) {
-            Integer release = javaCompile.getOptions().getRelease().getOrNull();
+            var release = javaCompile.getOptions().getRelease().getOrNull();
             if (release != null) {
                 return UikaCli.parseRelease(release.toString());
             }
@@ -137,10 +135,10 @@ public class UikaPlugin implements Plugin<Project> {
      * multiple versions of a module in one configuration would be conflict-resolved down to
      * the highest. */
     private static Configuration detachedFor(Project root, String notation) {
-        ModuleDependency dependency =
+        var dependency =
                 (ModuleDependency) root.getDependencies().create(notation);
         dependency.setTransitive(false);
-        Configuration configuration =
+        var configuration =
                 root.getConfigurations().detachedConfiguration(dependency);
         configuration.setTransitive(false);
         return configuration;
@@ -152,11 +150,11 @@ public class UikaPlugin implements Plugin<Project> {
                 ? s
                 : "runtimeClasspath";
 
-        TaskProvider<MergeClasspathTask> merge =
+        var merge =
                 root.getTasks().register("uikaDumpClasspath", MergeClasspathTask.class, task -> {
                     task.setGroup("uika");
                     task.setDescription("Merge resolved classpaths for all modules into uika JSON");
-                    Object override = root.findProperty("uikaOutput");
+                    var override = root.findProperty("uikaOutput");
                     if (override != null) {
                         task.getOutputFile().set(root.file(override.toString()));
                     } else {
@@ -166,15 +164,15 @@ public class UikaPlugin implements Plugin<Project> {
                     task.getRootDirPath().set(root.getProjectDir().getAbsolutePath());
                 });
 
-        TaskProvider<ResolveClasspathTask> resolve =
+        var resolve =
                 root.getTasks().register("uikaResolveClasspath", ResolveClasspathTask.class, task -> {
                     task.setGroup("uika");
                     task.setDescription("Rehydrate a classpath dump from another environment into real paths here (Gradle fetches missing JARs)");
-                    Object input = root.findProperty("uikaInput");
+                    var input = root.findProperty("uikaInput");
                     if (input != null) {
                         task.getInputFile().set(root.file(input.toString()));
                     }
-                    Object output = root.findProperty("uikaResolveOutput");
+                    var output = root.findProperty("uikaResolveOutput");
                     if (output != null) {
                         task.getOutputFile().set(root.file(output.toString()));
                     } else {
@@ -191,7 +189,7 @@ public class UikaPlugin implements Plugin<Project> {
         // The content is read through providers.fileContents, which registers it as a
         // configuration input: a cached entry is never reused for a changed dump.
         root.afterEvaluate(r -> resolve.configure(task -> {
-            String content = root.getProviders()
+            var content = root.getProviders()
                     .fileContents(task.getInputFile())
                     .getAsText()
                     .getOrNull();
@@ -215,41 +213,41 @@ public class UikaPlugin implements Plugin<Project> {
         // that relocates layout.buildDirectory after the plugins block make the tests
         // write one directory while the check read another — and resolving it eagerly at
         // apply time would capture the pre-relocation build directory for both.
-        org.gradle.api.provider.Provider<File> jfrDir = jfrDir(root);
+        var jfrDir = jfrDir(root);
 
-        TaskProvider<UpgradeCheckTask> upgradeCheck =
+        var upgradeCheck =
                 root.getTasks().register("uikaUpgradeCheck", UpgradeCheckTask.class, task -> {
                     task.setGroup("uika");
                     task.setDescription("Run uika upgrade-check between two dumps (the CLI binary is fetched via this build's repositories)");
-                    Object before = root.findProperty("uikaBefore");
+                    var before = root.findProperty("uikaBefore");
                     if (before != null) {
                         task.getBeforeFile().set(root.file(before.toString()));
                     }
-                    Object after = root.findProperty("uikaAfter");
+                    var after = root.findProperty("uikaAfter");
                     if (after != null) {
                         task.getAfterFile().set(root.file(after.toString()));
                     }
-                    Object cliVersion = root.findProperty("uikaCliVersion");
+                    var cliVersion = root.findProperty("uikaCliVersion");
                     if (cliVersion != null) {
                         task.getCliVersion().set(cliVersion.toString());
                     } else {
                         // Default to the plugin's own version (Implementation-Version in the plugin jar),
                         // so bumping the plugin coordinate also bumps the CLI.
-                        String own = UikaPlugin.class.getPackage().getImplementationVersion();
+                        var own = UikaPlugin.class.getPackage().getImplementationVersion();
                         if (own != null) {
                             task.getCliVersion().convention(own);
                         }
                     }
-                    Object failOn = root.findProperty("uikaFailOn");
+                    var failOn = root.findProperty("uikaFailOn");
                     task.getFailOn().convention(failOn != null ? failOn.toString() : "any");
-                    Object excludeFile = root.findProperty("uikaExcludeFile");
+                    var excludeFile = root.findProperty("uikaExcludeFile");
                     if (excludeFile != null) {
                         task.getExcludeFiles().from(root.file(excludeFile.toString()));
                     }
                     if (jfrDir != null) {
                         task.getClassLoadLogs().from(jfrDir);
                     }
-                    Object draftExcludeFile = root.findProperty("uikaDraftExcludeFile");
+                    var draftExcludeFile = root.findProperty("uikaDraftExcludeFile");
                     if (draftExcludeFile != null) {
                         task.getDraftExcludeFile().set(root.file(draftExcludeFile.toString()));
                     }
@@ -293,7 +291,7 @@ public class UikaPlugin implements Plugin<Project> {
                 // platformClassifier() again and reports the same error on execution.
                 return;
             }
-            String notation = UikaCli.GROUP + ":" + UikaCli.ARTIFACT + ":"
+            var notation = UikaCli.GROUP + ":" + UikaCli.ARTIFACT + ":"
                     + task.getCliVersion().get() + ":" + classifier + "@zip";
             task.getCliZip().from(detachedFor(root, notation));
         }));
@@ -342,7 +340,7 @@ public class UikaPlugin implements Plugin<Project> {
         }
 
         root.allprojects(p -> {
-            TaskProvider<DumpModuleClasspathTask> moduleTask = p.getTasks().register(
+            var moduleTask = p.getTasks().register(
                     "uikaDumpModuleClasspath", DumpModuleClasspathTask.class, task -> {
                         task.setDescription("Write this module's resolved classpath as a uika JSON fragment");
                         task.getOutputFile().convention(
@@ -382,9 +380,9 @@ public class UikaPlugin implements Plugin<Project> {
             // artifact view lists project-dependency JARs even when they have not been
             // built (the CLI falls back to the producing module's classesDirs).
             p.getGradle().projectsEvaluated(gradle -> moduleTask.configure(task -> {
-                Configuration conf =
+                var conf =
                         p.getConfigurations().findByName(task.getConfigurationName().get());
-                JavaPluginExtension javaExt =
+                var javaExt =
                         p.getExtensions().findByType(JavaPluginExtension.class);
                 task.getEmptyDump().set(javaExt == null && conf == null);
                 // Here rather than at registration: compileJava's options.release and the
@@ -438,16 +436,16 @@ public class UikaPlugin implements Plugin<Project> {
      * abort at startup with a JFR error that never mentions uika.
      */
     private static org.gradle.api.provider.Provider<File> jfrDir(Project root) {
-        Object value = root.findProperty("uikaJfr");
+        var value = root.findProperty("uikaJfr");
         if (value == null) {
             return null;
         }
-        String path = value.toString();
+        var path = value.toString();
         if (path.isEmpty()) {
             return root.getLayout().getBuildDirectory().dir("uika/jfr")
                     .map(org.gradle.api.file.Directory::getAsFile);
         }
-        File dir = root.file(path);
+        var dir = root.file(path);
         if (dir.isFile() && !jfrValueIsRecording(root)) {
             throw new org.gradle.api.GradleException(
                     "-PuikaJfr must name a directory (test JVMs record into it) or a .jfr"
@@ -466,7 +464,7 @@ public class UikaPlugin implements Plugin<Project> {
      * build directory.
      */
     private static boolean jfrValueIsRecording(Project root) {
-        Object value = root.findProperty("uikaJfr");
+        var value = root.findProperty("uikaJfr");
         return value != null && !value.toString().isEmpty()
                 && net.exoego.uika.plugin.core.JfrEvidence.valueNamesRecording(
                         root.file(value.toString()).toPath());

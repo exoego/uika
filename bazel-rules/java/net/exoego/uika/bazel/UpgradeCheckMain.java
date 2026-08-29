@@ -1,6 +1,5 @@
 package net.exoego.uika.bazel;
 
-import net.exoego.uika.plugin.core.ClasspathDump.Module;
 import net.exoego.uika.plugin.core.DumpFormat;
 import net.exoego.uika.plugin.core.JfrEvidence;
 import net.exoego.uika.plugin.core.UikaCli;
@@ -31,16 +30,16 @@ public final class UpgradeCheckMain {
         Path before = null;
         Path after = null;
         String failOn = property("uika.failOn");
-        List<Path> excludeFiles = paths(property("uika.excludeFiles"));
-        List<Path> classLoadLogs = new ArrayList<>();
+        var excludeFiles = paths(property("uika.excludeFiles"));
+        var classLoadLogs = new ArrayList<Path>();
         Path draftExcludeFile = null;
         Path jfr = null;
         // Raw, never through overrideRelease: that helper folds 0 into "unset", which is the
         // dump's meaning of 0. Here 0 has to stay distinguishable, because it is the off
         // switch (effectiveJdkRelease answers null for it and the flag is omitted).
-        int wanted = Integer.getInteger("uika.jdkRelease", -1);
+        var wanted = Integer.getInteger("uika.jdkRelease", -1);
 
-        for (int i = 0; i < args.length; i++) {
+        for (var i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--before" -> before = Manifest.workspacePath(args[++i]);
                 case "--after" -> after = Manifest.workspacePath(args[++i]);
@@ -78,7 +77,7 @@ public final class UpgradeCheckMain {
         JdkSource jdk = JdkSource.current();
         Integer release = UikaCli.effectiveJdkRelease(
                 wantedRelease(wanted), jdk, System.out::println);
-        int status = UikaCli.runUpgradeCheck(cliBinary(), before, after, failOn, excludeFiles,
+        var status = UikaCli.runUpgradeCheck(cliBinary(), before, after, failOn, excludeFiles,
                 release, jdk, evidence, draftExcludeFile, System.out::println);
         System.exit(status);
     }
@@ -132,7 +131,7 @@ public final class UpgradeCheckMain {
         if (releases == null || releases.isEmpty()) {
             return DumpFormat.buildJvmRelease();
         }
-        List<Module> modules = Manifest.parse(
+        var modules = Manifest.parse(
                 Manifest.resolveRunfile(releases), null, Manifest::resolveRunfile);
         return DumpFormat.dumpRelease(modules);
     }
@@ -161,7 +160,7 @@ public final class UpgradeCheckMain {
     }
 
     private static List<Path> paths(String commaSeparated) {
-        List<Path> paths = new ArrayList<>();
+        var paths = new ArrayList<Path>();
         if (commaSeparated != null) {
             for (String entry : commaSeparated.split(",")) {
                 if (!entry.isBlank()) {

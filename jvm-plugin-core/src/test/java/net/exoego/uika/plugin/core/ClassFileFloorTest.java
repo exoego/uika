@@ -7,7 +7,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -32,12 +31,12 @@ final class ClassFileFloorTest {
         Path classesDir = Path.of(
                 UikaCli.class.getProtectionDomain().getCodeSource().getLocation().toURI());
         List<Path> classFiles;
-        try (Stream<Path> walk = Files.walk(classesDir)) {
+        try (var walk = Files.walk(classesDir)) {
             classFiles = walk.filter(path -> path.toString().endsWith(".class")).toList();
         }
         assertFalse(classFiles.isEmpty(), "no compiled classes found under " + classesDir);
 
-        List<String> offenders = new ArrayList<>();
+        var offenders = new ArrayList<String>();
         for (Path classFile : classFiles) {
             byte[] header;
             try (InputStream in = Files.newInputStream(classFile)) {
@@ -47,7 +46,7 @@ final class ClassFileFloorTest {
                             && (header[0] & 0xff) == 0xca && (header[1] & 0xff) == 0xfe
                             && (header[2] & 0xff) == 0xba && (header[3] & 0xff) == 0xbe,
                     classFile + " is not a class file");
-            int major = ((header[6] & 0xff) << 8) | (header[7] & 0xff);
+            var major = ((header[6] & 0xff) << 8) | (header[7] & 0xff);
             if (major > 61) {
                 offenders.add(classesDir.relativize(classFile) + "=" + major);
             }

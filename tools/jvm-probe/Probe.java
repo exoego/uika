@@ -13,7 +13,6 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Answer-checks uika verdicts against a real JVM. Reads the JSON Lines stream
@@ -68,8 +67,8 @@ public final class Probe {
         Path verdicts = null;
         String classpath = null;
         String oldClasspath = null;
-        boolean failOnFp = false;
-        for (int i = 0; i < args.length; i++) {
+        var failOnFp = false;
+        for (var i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--verdicts" -> verdicts = Path.of(args[++i]);
                 case "--classpath" -> classpath = args[++i];
@@ -98,15 +97,15 @@ public final class Probe {
     static int run(Path verdicts, ClassLoader newLoader, ClassLoader oldLoader, boolean failOnFp)
             throws IOException {
         // verdict -> outcome -> count, over distinct records
-        Map<String, Map<Outcome, Integer>> matrix = new LinkedHashMap<>();
-        Set<String> fpCandidates = new LinkedHashSet<>();
-        Set<String> fnCandidates = new LinkedHashSet<>();
-        Set<String> inconclusive = new LinkedHashSet<>();
-        Set<String> errors = new LinkedHashSet<>();
-        Set<String> seen = new HashSet<>();
-        int preExisting = 0;
-        long records = 0;
-        long lineNo = 0;
+        var matrix = new LinkedHashMap<String, Map<Outcome, Integer>>();
+        var fpCandidates = new LinkedHashSet<String>();
+        var fnCandidates = new LinkedHashSet<String>();
+        var inconclusive = new LinkedHashSet<String>();
+        var errors = new LinkedHashSet<String>();
+        var seen = new HashSet<String>();
+        var preExisting = 0;
+        var records = 0L;
+        var lineNo = 0L;
 
         try (BufferedReader reader = Files.newBufferedReader(verdicts)) {
             String line;
@@ -190,13 +189,13 @@ public final class Probe {
     }
 
     static String describe(Rec rec) {
-        Ref r = rec.ref();
+        var r = rec.ref();
         String member = r.memberName() == null ? "" : "." + r.memberName() + " " + r.memberDesc();
         return rec.sourceClass() + " -> " + r.kind() + " " + r.owner() + member;
     }
 
     static URLClassLoader loader(String classpath) throws IOException {
-        List<URL> urls = new ArrayList<>();
+        var urls = new ArrayList<URL>();
         for (String entry : classpath.split(":")) {
             if (!entry.isEmpty()) urls.add(Path.of(entry).toUri().toURL());
         }
@@ -206,7 +205,7 @@ public final class Probe {
 
     static Result probe(Rec rec, ClassLoader loader) {
         try {
-            Class<?> owner = Class.forName(dots(rec.ref().owner()), false, loader);
+            var owner = Class.forName(dots(rec.ref().owner()), false, loader);
             MethodHandles.Lookup lookup = lookupFor(rec, loader);
             if (rec.ref().kind().equals("class")) {
                 // Class.forName performs no access check; accessClass models the
@@ -234,7 +233,7 @@ public final class Probe {
      */
     static MethodHandles.Lookup lookupFor(Rec rec, ClassLoader loader) throws IllegalAccessException {
         try {
-            Class<?> src = Class.forName(dots(rec.sourceClass()), false, loader);
+            var src = Class.forName(dots(rec.sourceClass()), false, loader);
             return MethodHandles.privateLookupIn(src, MethodHandles.lookup());
         } catch (ClassNotFoundException | LinkageError e) {
             return MethodHandles.lookup();
@@ -269,12 +268,12 @@ public final class Probe {
 
     static Result probeField(Rec rec, Class<?> owner, MethodHandles.Lookup lookup,
                              ClassLoader loader) {
-        Ref ref = rec.ref();
+        var ref = rec.ref();
         try {
-            Class<?> type = fieldType(ref.memberDesc(), loader);
+            var type = fieldType(ref.memberDesc(), loader);
             // The JVM allows a final-field write inside the declaring class's own
             // initializers, which the stream cannot distinguish; probe those as reads.
-            boolean write = Boolean.TRUE.equals(ref.fieldWrite())
+            var write = Boolean.TRUE.equals(ref.fieldWrite())
                     && !rec.sourceClass().equals(ref.owner());
             if (ref.expectedStatic() == null) {
                 try {
@@ -328,10 +327,10 @@ public final class Probe {
 
     @SuppressWarnings("unchecked")
     static Rec parseRec(String line) {
-        Map<String, Object> o = (Map<String, Object>) Json.parse(line);
-        Map<String, Object> r = (Map<String, Object>) o.get("reference");
-        Map<String, Object> m = (Map<String, Object>) r.get("member");
-        Ref ref = new Ref(
+        var o = (Map<String, Object>) Json.parse(line);
+        var r = (Map<String, Object>) o.get("reference");
+        var m = (Map<String, Object>) r.get("member");
+        var ref = new Ref(
                 (String) r.get("kind"),
                 (String) r.get("owner"),
                 m == null ? null : (String) m.get("name"),
@@ -356,8 +355,8 @@ public final class Probe {
         }
 
         static Object parse(String s) {
-            Json p = new Json(s);
-            Object v = p.value();
+            var p = new Json(s);
+            var v = p.value();
             p.ws();
             if (p.i != s.length()) throw p.err("trailing data");
             return v;
@@ -365,7 +364,7 @@ public final class Probe {
 
         private Object value() {
             ws();
-            char c = peek();
+            var c = peek();
             return switch (c) {
                 case '{' -> object();
                 case '[' -> array();
@@ -379,7 +378,7 @@ public final class Probe {
 
         private Map<String, Object> object() {
             expect('{');
-            Map<String, Object> map = new LinkedHashMap<>();
+            var map = new LinkedHashMap<String, Object>();
             ws();
             if (peek() == '}') {
                 i++;
@@ -387,12 +386,12 @@ public final class Probe {
             }
             while (true) {
                 ws();
-                String key = string();
+                var key = string();
                 ws();
                 expect(':');
                 map.put(key, value());
                 ws();
-                char c = next();
+                var c = next();
                 if (c == '}') return map;
                 if (c != ',') throw err("expected , or }");
             }
@@ -400,7 +399,7 @@ public final class Probe {
 
         private List<Object> array() {
             expect('[');
-            List<Object> list = new ArrayList<>();
+            var list = new ArrayList<Object>();
             ws();
             if (peek() == ']') {
                 i++;
@@ -409,7 +408,7 @@ public final class Probe {
             while (true) {
                 list.add(value());
                 ws();
-                char c = next();
+                var c = next();
                 if (c == ']') return list;
                 if (c != ',') throw err("expected , or ]");
             }
@@ -417,15 +416,15 @@ public final class Probe {
 
         private String string() {
             expect('"');
-            StringBuilder sb = new StringBuilder();
+            var sb = new StringBuilder();
             while (true) {
-                char c = next();
+                var c = next();
                 if (c == '"') return sb.toString();
                 if (c != '\\') {
                     sb.append(c);
                     continue;
                 }
-                char esc = next();
+                var esc = next();
                 switch (esc) {
                     case '"', '\\', '/' -> sb.append(esc);
                     case 'b' -> sb.append('\b');
@@ -435,7 +434,7 @@ public final class Probe {
                     case 't' -> sb.append('\t');
                     case 'u' -> {
                         if (i + 4 > s.length()) throw err("truncated \\u escape");
-                        String hex = s.substring(i, i + 4);
+                        var hex = s.substring(i, i + 4);
                         try {
                             sb.append((char) Integer.parseInt(hex, 16));
                         } catch (NumberFormatException e) {
@@ -449,9 +448,9 @@ public final class Probe {
         }
 
         private Object number() {
-            int start = i;
+            var start = i;
             while (i < s.length() && "+-.eE0123456789".indexOf(s.charAt(i)) >= 0) i++;
-            String text = s.substring(start, i);
+            var text = s.substring(start, i);
             if (text.isEmpty()) throw err("unexpected character");
             return text.contains(".") || text.contains("e") || text.contains("E")
                     ? (Object) Double.parseDouble(text)
@@ -474,7 +473,7 @@ public final class Probe {
         }
 
         private char next() {
-            char c = peek();
+            var c = peek();
             i++;
             return c;
         }
