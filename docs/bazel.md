@@ -47,6 +47,8 @@ $ bazel run //:uika_resolution_dump -- --output /tmp/before.json
 $ bazel run //:uika_upgrade_check -- --before /tmp/before.json --after /tmp/after.json
 ```
 
+## Options
+
 The CLI binary comes from a repository rule, so Bazel's repository cache holds
 it, a second run needs no network, and the release archive pins its checksum
 for every platform. `UIKA_CLI_PATH` points it at a binary you already have

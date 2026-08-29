@@ -18,6 +18,8 @@ $ lein uika dump-classpath /tmp/after.json
 $ lein uika upgrade-check /tmp/before.json /tmp/after.json
 ```
 
+## Options
+
 The whole `:uika` map is
 [`:fail-on`](../README.md#violation-tiers-and---fail-on),
 [`:exclude-files`](../README.md#excluding-known-false-positives---exclude-file),
@@ -34,6 +36,8 @@ override the URL, `:cli-path` or `UIKA_CLI_PATH` to point at a binary you
 already have and skip the download). `:jdk-release` defaults to the release
 `:javac-options` pins (`--release`, or `-target`); a project declaring neither
 falls back to the JVM the project's own code runs on (`:java-cmd`, probed).
+
+## Runtime load evidence (JFR)
 
 For [runtime load evidence](../README.md#runtime-load-evidence-jfr---class-load-log),
 collect by running the current build's tests with the JFR flag on the test

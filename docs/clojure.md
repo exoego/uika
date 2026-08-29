@@ -22,6 +22,8 @@ $ clojure -T:uika upgrade-check :before '"/tmp/before.json"' :after '"/tmp/after
       :fail-on reachable :exclude-file '"uika-exclude.toml"'   # :cli-version to override
 ```
 
+## Options
+
 The dump records the resolved Maven coordinates from the project's own
 `deps.edn` basis (`:local/root` and git deps are coordinate-less, like the other
 tools' project dependencies), and `upgrade-check` downloads the platform binary
