@@ -106,7 +106,7 @@
                      (UIKA_CLI_PATH does the same from the environment)"
   [{:keys [before after] :as args}]
   (when-not (and before after)
-    (throw (ex-info "usage: clojure -Tuika upgrade-check :before <a.json> :after <b.json>" {})))
+    (throw (ex-info "usage: clojure -T:uika upgrade-check :before <a.json> :after <b.json>" {})))
   (core/run-upgrade-check
    (core/resolve-binary args own-version "uika-cli version is unknown; pass :cli-version")
    args))
