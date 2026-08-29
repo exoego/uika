@@ -62,10 +62,7 @@ object UikaPlugin extends AutoPlugin {
       // built binary never reaches the resolver, the version, or the classifier. Read above
       // the version check on purpose: with an override there is no version to want.
       val binary = Option(UikaCli.binaryOverride()) match {
-        case Some(path) =>
-          if (!java.nio.file.Files.isRegularFile(path))
-            sys.error(s"${UikaCli.CLI_PATH_ENV} does not name a file: $path")
-          path
+        case Some(path) => path
         case None =>
           val version = (LocalRootProject / uikaCliVersion).value match {
             case "" => sys.error("""uika-cli version is unknown; set uikaCliVersion := "<version>"""")

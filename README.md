@@ -414,9 +414,11 @@ tool:
 All of them write the same dump format: every module's resolved runtime
 classpath as coordinate-annotated JSON, kept per module so `upgrade-check` can
 [check each against its own resolution](#per-module-checking-upgrade-check).
-Feed two dumps to `uika upgrade-check`, or one to `uika check
---classpath-file` (more accurate than a hand-assembled classpath, and reduces
-unverified references). A dump also refers to build outputs. Each page says
+Feed two dumps to `uika upgrade-check`, which is what every tool's check task
+runs. One dump also feeds `uika check --classpath-file` (more accurate than a
+hand-assembled classpath, and reduces unverified references). That one stays a
+CLI command. No build-tool integration exposes `check`, so it wants a uika
+binary on the path. A dump also refers to build outputs. Each page says
 how its dump command builds them, and the [PR gate](#pr-gate-on-github-actions-the-main-use-case)
 shows which baseline dumps can skip them.
 

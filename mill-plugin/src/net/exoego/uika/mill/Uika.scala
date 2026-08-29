@@ -86,7 +86,13 @@ object Uika extends ExternalModule {
   // which would defeat both UikaCli.extractBinary's skip-if-present and JfrEvidence.rewrite's
   // stale-conversion sweep. The other three plugins extract into their build directory.
   ) = Task.Command(exclusive = true, persistent = true) {
-    val version = cliVersion match {
+    // Task.env, never System.getenv: the latter is the DAEMON's environment, captured when
+    // the server started, so `UIKA_CLI_PATH=... ./mill` would be ignored against a warm
+    // daemon. This file already reads UIKA_JFR that way.
+    val overrideBinary = Option(UikaCli.overrideFrom(Task.env.getOrElse(UikaCli.CLI_PATH_ENV, null)))
+    // Demanded only when something has to be resolved: with an override there is no version
+    // to want, and failing here would contradict the documented "it wins over the version".
+    lazy val version = cliVersion match {
       case "" =>
         Option(getClass.getPackage.getImplementationVersion).filter(_.nonEmpty).getOrElse(
           Task.fail("uika-cli version is unknown; pass --cliVersion <version>")
@@ -101,11 +107,13 @@ object Uika extends ExternalModule {
     // own resolver keeps that promise -- a `defaultResolver()` call here would be lifted into
     // an unconditional task edge by the command macro and evaluated even on the Some branch.
     val modules = javaModules(ev)
-    val resolver = modules.headOption match {
-      case Some(m) => ev.execute(Seq(m.defaultResolver)).values.get.head
-      case None => Task.fail("uika: no JavaModule found in this build")
+    val binary = overrideBinary.getOrElse {
+      val resolver = modules.headOption match {
+        case Some(m) => ev.execute(Seq(m.defaultResolver)).values.get.head
+        case None => Task.fail("uika: no JavaModule found in this build")
+      }
+      extractCli(resolver, version, Task.dest)
     }
-    val binary = extractCli(resolver, version, Task.dest)
     // Recordings are converted here, never handed to the CLI: the CLI is JVM-free and must
     // not read binary JFR. --jfr falls back to UIKA_JFR, the variable that made the tests
     // record (UikaTestModule), so ONE option serves both phases the way the sibling tools'
@@ -169,27 +177,18 @@ object Uika extends ExternalModule {
       version: String,
       dest: os.Path
   )(using mill.api.TaskCtx): java.nio.file.Path = {
-    // UIKA_CLI_PATH wins outright, so an air-gapped build or one pointed at a locally built
-    // binary never reaches the resolver, the version, or the classifier.
-    Option(UikaCli.binaryOverride()) match {
-      case Some(path) =>
-        if (!java.nio.file.Files.isRegularFile(path))
-          Task.fail(s"${UikaCli.CLI_PATH_ENV} does not name a file: $path")
-        path
-      case None =>
-        val classifier = UikaCli.platformClassifier()
-        // Intransitive, as in all three sibling plugins: the distribution is a native binary,
-        // and anything the POM ever gains would be downloaded and could win the zip pick below.
-        val dep = Dep.parse(
-          s"${UikaCli.GROUP}:${UikaCli.ARTIFACT}:$version;classifier=$classifier;type=zip"
-        ).exclude("*" -> "*")
-        val resolved =
-          resolver.classpath(Seq(dep), artifactTypes = Some(Set(coursier.Type("zip")))).map(_.path)
-        val zip = resolved.find(_.last.endsWith(".zip")).getOrElse(
-          Task.fail(s"uika-cli zip not found among ${resolved.mkString(", ")}")
-        )
-        UikaCli.extractBinary(zip.toNIO, (dest / s"cli-$version-$classifier").toNIO)
-    }
+    val classifier = UikaCli.platformClassifier()
+    // Intransitive, as in all three sibling plugins: the distribution is a native binary,
+    // and anything the POM ever gains would be downloaded and could win the zip pick below.
+    val dep = Dep.parse(
+      s"${UikaCli.GROUP}:${UikaCli.ARTIFACT}:$version;classifier=$classifier;type=zip"
+    ).exclude("*" -> "*")
+    val resolved =
+      resolver.classpath(Seq(dep), artifactTypes = Some(Set(coursier.Type("zip")))).map(_.path)
+    val zip = resolved.find(_.last.endsWith(".zip")).getOrElse(
+      Task.fail(s"uika-cli zip not found among ${resolved.mkString(", ")}")
+    )
+    UikaCli.extractBinary(zip.toNIO, (dest / s"cli-$version-$classifier").toNIO)
   }
 
   /**

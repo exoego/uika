@@ -63,8 +63,32 @@ public final class UikaCli {
      * is not set produces an empty string rather than nothing.
      */
     public static Path binaryOverride() {
-        var value = System.getenv(CLI_PATH_ENV);
-        return value == null || value.isBlank() ? null : Path.of(value);
+        return overrideFrom(System.getenv(CLI_PATH_ENV));
+    }
+
+    /**
+     * The same check for a value a build read for itself, because Mill and Gradle must not
+     * call {@link #binaryOverride()}: Mill's daemon environment is stale by the time a task
+     * runs, and Gradle needs the variable to be a declared configuration input.
+     *
+     * <p>Executable, not merely present. {@link #extractBinary} refuses to install a binary
+     * it could not mark executable, with a comment about dying "far away in ProcessBuilder
+     * with no cause in sight" -- and an artifact round trip is the likeliest way a
+     * hand-supplied binary loses the bit, since actions/upload-artifact does not preserve
+     * it.
+     */
+    public static Path overrideFrom(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        var binary = Path.of(value);
+        if (!Files.isRegularFile(binary)) {
+            throw new IllegalStateException(CLI_PATH_ENV + " does not name a file: " + binary);
+        }
+        if (!Files.isExecutable(binary)) {
+            throw new IllegalStateException(CLI_PATH_ENV + " is not executable: " + binary);
+        }
+        return binary;
     }
 
     /**

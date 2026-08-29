@@ -19,7 +19,6 @@ import org.gradle.work.DisableCachingByDefault;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
@@ -107,8 +106,9 @@ public abstract class UpgradeCheckTask extends DefaultTask {
      * A binary to run instead of resolving one, from {@code UIKA_CLI_PATH}.
      *
      * <p>Wired from a {@code providers.environmentVariable} rather than read with
-     * {@code System.getenv} in the task action, so the configuration cache treats the
-     * variable as the build input it is and a changed value invalidates the entry.
+     * {@code System.getenv}, which the configuration cache would record as a
+     * configuration input and invalidate the whole entry on. Through a provider the value
+     * is re-read at execution instead, so the entry stays reusable.
      */
     @Input
     @Optional
@@ -163,13 +163,13 @@ public abstract class UpgradeCheckTask extends DefaultTask {
     /// the repositories, the version, or the platform classifier mattering at all. The
     /// resolver path below is unchanged.
     private Path resolveBinary() throws IOException {
-        if (getCliPath().isPresent() && !getCliPath().get().isBlank()) {
-            var binary = Path.of(getCliPath().get());
-            if (!Files.isRegularFile(binary)) {
-                throw new GradleException(
-                        UikaCli.CLI_PATH_ENV + " does not name a file: " + binary);
-            }
-            return binary;
+        // The shared check, not a local copy: it also rejects a path that exists and is not
+        // executable, which is how an artifact round trip usually breaks a hand-supplied
+        // binary. Through the property rather than System.getenv, so the configuration
+        // cache sees the variable as a declared input.
+        Path override = UikaCli.overrideFrom(getCliPath().getOrNull());
+        if (override != null) {
+            return override;
         }
         if (!getCliVersion().isPresent()) {
             throw new GradleException(

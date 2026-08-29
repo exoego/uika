@@ -264,9 +264,10 @@ public class UikaPlugin implements Plugin<Project> {
                         task.getJdkRelease().convention(
                                 root.getProviders().provider(() -> defaultJdkRelease(root)));
                     }
-                    // Through the provider API, not System.getenv in the task action: the
-                    // configuration cache then records the variable as a build input and a
-                    // changed value invalidates the entry instead of being ignored.
+                    // Through the provider API, not System.getenv: reading the environment
+                    // at configuration time makes it a configuration input and invalidates
+                    // the whole cache entry when it changes. A provider is re-read at
+                    // execution, so the entry survives.
                     task.getCliPath().set(
                             root.getProviders().environmentVariable(UikaCli.CLI_PATH_ENV));
                     task.getInstallDir().convention(root.getLayout().getBuildDirectory().dir("uika/cli"));

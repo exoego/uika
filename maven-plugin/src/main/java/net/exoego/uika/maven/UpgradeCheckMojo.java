@@ -18,7 +18,6 @@ import org.eclipse.aether.resolution.ArtifactResolutionException;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -123,9 +122,6 @@ public final class UpgradeCheckMojo extends AbstractMojo {
             } catch (ArtifactResolutionException e) {
                 throw new MojoExecutionException("failed to resolve " + request.getArtifact(), e);
             }
-        } else if (!Files.isRegularFile(override)) {
-            throw new MojoExecutionException(
-                    UikaCli.CLI_PATH_ENV + " does not name a file: " + override);
         }
 
         List<Path> excludeFilePaths = excludeFiles.stream().map(File::toPath).toList();
