@@ -29,8 +29,8 @@ public final class UikaCli {
     public static String platformClassifier() {
         var os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         var arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
-        var x64 = arch.equals("amd64") || arch.equals("x86_64");
-        var arm64 = arch.equals("aarch64") || arch.equals("arm64");
+        var x64 = "amd64".equals(arch) || "x86_64".equals(arch);
+        var arm64 = "aarch64".equals(arch) || "arm64".equals(arch);
         if (os.contains("linux") && x64) {
             return "linux-x86_64";
         }
@@ -194,11 +194,11 @@ public final class UikaCli {
             if (release == null) {
                 continue;
             }
-            if (flag.equals("--release") || flag.equals("-release")
-                    || flag.equals("--java-output-version") || flag.equals("-java-output-version")) {
+            if ("--release".equals(flag) || "-release".equals(flag)
+                    || "--java-output-version".equals(flag) || "-java-output-version".equals(flag)) {
                 return release;
             }
-            if (target == null && (flag.equals("-target") || flag.equals("--target"))) {
+            if (target == null && ("-target".equals(flag) || "--target".equals(flag))) {
                 target = release;
             }
         }

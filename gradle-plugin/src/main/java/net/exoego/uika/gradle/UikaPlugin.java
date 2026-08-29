@@ -343,6 +343,9 @@ public class UikaPlugin implements Plugin<Project> {
             var moduleTask = p.getTasks().register(
                     "uikaDumpModuleClasspath", DumpModuleClasspathTask.class, task -> {
                         task.setDescription("Write this module's resolved classpath as a uika JSON fragment");
+                        // The declared inputs cannot see the resolution result; an
+                        // up-to-date hit would reuse a stale dump.
+                        task.getOutputs().upToDateWhen(t -> false);
                         task.getOutputFile().convention(
                                 p.getLayout().getBuildDirectory().file("uika/module-classpath.json"));
                         task.getConfigurationName().convention(configurationName);

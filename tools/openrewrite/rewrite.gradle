@@ -19,12 +19,15 @@ allprojects {
     apply plugin: org.openrewrite.gradle.RewritePlugin
     dependencies {
         rewrite("org.openrewrite.recipe:rewrite-migrate-java:3.42.1")
+        rewrite("org.openrewrite.recipe:rewrite-static-analysis:2.41.1")
     }
     rewrite {
         activeRecipe("org.openrewrite.java.migrate.lang.UseVar")
         // UseVar can strip the last use of an imported type from a file, so the
         // import cleanup runs in the same pass.
         activeRecipe("org.openrewrite.java.RemoveUnusedImports")
+        activeRecipe("org.openrewrite.java.migrate.lang.StringFormatted")
+        activeRecipe("org.openrewrite.staticanalysis.CommonStaticAnalysis")
         // rewriteDryRun is the CI gate, so findings must fail the build.
         failOnDryRunResults = true
     }

@@ -46,7 +46,7 @@ final class Manifest {
                 continue;
             }
             var fields = line.split("\t", -1);
-            if (fields[0].equals("module")) {
+            if ("module".equals(fields[0])) {
                 if (current != null) {
                     modules.add(current.build(override));
                 }
