@@ -52,8 +52,9 @@ import java.util.Set;
  * The task fails when any coordinate-carrying artifact stays unresolved: only a scan target
  * uika would skip with a warning, and an unresolved COMPARED-PAIR jar makes the check exit 2
  * on a path this machine does not have. A failed rehydration is what lets the workflow fall
- * back to dumping the baseline from a checkout. Coordinate-less (project) entries are left
- * unchanged, since nothing could fetch them and the check treats them as scan targets.
+ * back to dumping the baseline from a checkout. Project-attributed and coordinate-less
+ * entries are left unchanged and are exempt from that failure, for the reason
+ * {@link #wantedNotations} gives.
  */
 @DisableCachingByDefault(because = "Resolves artifacts through environment-specific Gradle repositories")
 public abstract class ResolveClasspathTask extends DefaultTask {
@@ -211,7 +212,8 @@ public abstract class ResolveClasspathTask extends DefaultTask {
             parent.mkdirs();
         }
         Files.write(out.toPath(), json.getBytes(StandardCharsets.UTF_8));
-        getLogger().lifecycle("uika: rehydrated dump -> {} ({} rewritten)", out, rewritten);
+        getLogger().lifecycle("uika: rehydrated dump -> {} ({} rewritten, {} unresolved)",
+                out, rewritten, unresolved);
     }
 
     private static String keyOf(Artifact artifact) {
