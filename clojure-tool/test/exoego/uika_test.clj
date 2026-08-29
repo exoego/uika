@@ -239,14 +239,29 @@
   ;; A CI-templated :exec-args reaches the CONFIG keys the same way, so they need the same
   ;; guard: :cli-path "" used to exec the empty string, and :cli-version "" used to build a
   ;; Central URL with an empty version segment.
-  (is (thrown-with-msg?
-       clojure.lang.ExceptionInfo #"usage hint"
-       (uika.core/resolve-binary {:cli-path "" :cli-version ""} (constantly nil) "usage hint")))
-  ;; A real value still wins, so the guard cannot have swallowed the knob itself.
-  (is (= "/tmp/uika-bin"
-         (.getPath (uika.core/resolve-binary {:cli-path "/tmp/uika-bin"}
-                                        (constantly nil)
-                                        "usage hint")))))
+  ;;
+  ;; The env reader is stubbed. Without that this test reads the ambient environment: it
+  ;; FAILS on a machine with UIKA_CLI_PATH exported (which lein-plugin/it/run.sh and the
+  ;; docs both use) and DOWNLOADS from Maven Central with UIKA_CLI_VERSION set.
+  (let [no-env (constantly nil)]
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"usage hint"
+         (uika.core/resolve-binary {:cli-path ""} (constantly nil) "usage hint" no-env)))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"usage hint"
+         (uika.core/resolve-binary {:cli-version ""} (constantly nil) "usage hint" no-env)))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"usage hint"
+         (uika.core/resolve-binary {:cli-path "   "} (constantly nil) "usage hint" no-env)))
+    ;; A real value still wins, so the guard cannot have swallowed the knob itself.
+    (is (= "/tmp/uika-bin"
+           (.getPath (uika.core/resolve-binary
+                      {:cli-path "/tmp/uika-bin"} (constantly nil) "usage hint" no-env))))
+    ;; And the environment fallback the guard argues from still works.
+    (is (= "/tmp/from-env"
+           (.getPath (uika.core/resolve-binary
+                      {} (constantly nil) "usage hint"
+                      {"UIKA_CLI_PATH" "/tmp/from-env"}))))))
 
 (deftest jfr-recordings-are-converted-for-the-cli
   ;; A REAL recording, not a synthetic file: only the JDK's own writer produces the
