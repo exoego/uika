@@ -189,13 +189,12 @@ resolved local paths.
   project instead. Only the dump fails, and only for a project the java plugin
   touches. For a build where the name exists on some modules only, override
   `configurationName` on the others' `uikaDumpModuleClasspath` task.
-- `classLoadLogs` is the build-script property for
-  [text evidence](../README.md#runtime-load-evidence-jfr) you
-  produced some other way, such as `-Xlog:class+load` output or a classlist.
-  `-PuikaJfr` adds its directory to the same property, so recordings and text
-  logs mix freely there. Only the property itself takes a bare text file:
-  `-PuikaJfr` rejects one, because a test JVM told to record into it aborts at
-  startup.
+- `classLoadLogs` is the build-script property for [text
+  evidence](runtime-load-evidence.md) you produced some other way, such as
+  `-Xlog:class+load` output or a classlist. `-PuikaJfr` adds its directory to
+  the same property, so recordings and text logs mix freely there. Only the
+  property itself takes a bare text file: `-PuikaJfr` rejects one, because a
+  test JVM told to record into it aborts at startup.
 - `UIKA_CLI_PATH` runs a binary you already have instead of resolving one, so a
   build can run air-gapped or against a locally built CLI. It wins over the CLI
   version, nothing is downloaded, and a value that is not an executable file
@@ -203,10 +202,9 @@ resolved local paths.
 
 ## Runtime load evidence (JFR)
 
-`-PuikaJfr=<dir>` makes every `Test` task record class loads into a
-[JFR recording](../README.md#runtime-load-evidence-jfr) there
-(and run for real — an `UP-TO-DATE` or `FROM-CACHE` test task forks no JVM and
-would collect nothing), and makes `uikaUpgradeCheck` convert and read the
-directory back. A bare `-PuikaJfr` uses `build/uika/jfr`.
-[`--draft-exclude-file`](../README.md#runtime-load-evidence-jfr)
-maps to `-PuikaDraftExcludeFile=`.
+`-PuikaJfr=<dir>` makes every `Test` task record class loads into a [JFR
+recording](runtime-load-evidence.md) there (and run for real — an `UP-TO-DATE`
+or `FROM-CACHE` test task forks no JVM and would collect nothing), and makes
+`uikaUpgradeCheck` convert and read the directory back. A bare `-PuikaJfr` uses
+`build/uika/jfr`. [`--draft-exclude-file`](runtime-load-evidence.md) maps to
+`-PuikaDraftExcludeFile=`.
