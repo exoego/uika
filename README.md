@@ -59,44 +59,13 @@ Clojure CLI tool or the Bazel rules, so declare it in your build first: see
 
 ### PR gate on GitHub Actions (the main use case)
 
-For Gradle:
+A `linkage-check` workflow dumps a baseline from the PR's base branch and
+the PR's own classpath, and fails the PR on broken references between the
+two. Each tool's page carries the copy-pasteable workflow, including an
+optional `dump-baseline` job that takes the base-branch resolution off the
+PR's critical path:
 
-```yaml
-name: dependency binary incompatibility check
-on: pull_request
-
-jobs:
-  upgrade-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      # ... You may need to setup Java/Gradle here ....
-
-      - name: Dump baseline classpath (base branch)
-        id: baseline
-        continue-on-error: true
-        run: |
-          git checkout ${{ github.event.pull_request.base.sha }}
-          if ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json -PuikaBuildOutputs=false; then
-            status=0
-          else
-            status=1
-          fi
-          git checkout -
-          exit $status
-
-      - name: Dump PR classpath
-        run: ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
-
-      - name: Check broken references
-        if: steps.baseline.outcome == 'success'
-        run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
-```
-
-The other tools use the same three steps with different commands, and each
-tool's page carries this workflow adapted to it:
-
+- [Gradle](docs/gradle.md#pr-gate-on-github-actions)
 - [sbt](docs/sbt.md#pr-gate-on-github-actions)
 - [Maven](docs/maven.md#pr-gate-on-github-actions)
 - [Mill](docs/mill.md#pr-gate-on-github-actions)
@@ -104,20 +73,12 @@ tool's page carries this workflow adapted to it:
 - [Leiningen](docs/leiningen.md#pr-gate-on-github-actions)
 - [Bazel](docs/bazel.md#pr-gate-on-github-actions)
 
-The baseline dump skips the build outputs where the tool can, because the
-base branch is only there for its resolved versions. The baseline step is
-`continue-on-error` and the check is gated on its outcome, so a PR whose base
-cannot produce a baseline (the PR that introduces this setup itself, say)
-skips the check instead of failing it. The gate arms from the next PR on.
-
-To keep the base-branch resolution off the PR's critical path, dump the
-baseline once per push instead and cache it as an artifact keyed by SHA:
-[BASELINE-CACHING.md](BASELINE-CACHING.md).
-
 ### Runtime load evidence from the base branch (optional)
 
-[Runtime load evidence](#runtime-load-evidence-jfr---class-load-log) rides the
-same artifact flow: the base branch runs its test suite with JFR class-load
+[Runtime load evidence](#runtime-load-evidence-jfr---class-load-log) rides
+the same artifact flow as the
+[cached baseline](docs/gradle.md#caching-the-baseline): the base branch runs
+its test suite with JFR class-load
 recording on, uploads the recordings, and the PR job downloads them by
 `base.sha` and adds one flag. A ⚠️ class that provably loads during tests then
 fails `--fail-on reachable` instead of being deprioritized (a 💤 latent
@@ -360,7 +321,8 @@ production recording, say — is consumption-only: the check converts it, test
 JVMs are left untouched. The injected flag needs JDK 17+ test JVMs (the
 event-settings syntax), so leave the option off for an older test leg.
 
-The intended CI shape mirrors [baseline caching](BASELINE-CACHING.md): the
+The intended CI shape mirrors
+[baseline caching](docs/gradle.md#caching-the-baseline): the
 base branch's test run records once per push and stores the directory as an
 artifact, and the dependency PR's `upgrade-check` downloads it and points the
 same option at it. The plugins convert recordings with the JDK's own JFR reader

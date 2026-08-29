@@ -36,27 +36,107 @@ $ ./gradlew uikaUpgradeCheck \
 
 The dump task builds the module outputs by default. Pass
 `-PuikaBuildOutputs=false` for a resolution-only dump, which is what the
-[PR gate](../README.md#pr-gate-on-github-actions-the-main-use-case) uses on
-the base branch.
+[PR gate](#pr-gate-on-github-actions) uses on the base branch.
 
 ## PR gate on GitHub Actions
 
+The `linkage-check` job dumps a baseline from the PR's base branch and the
+PR's own classpath, and fails on broken references between the two. The
+`dump-baseline` job and the marked steps are the optional caching half,
+explained in [Caching the baseline](#caching-the-baseline).
+
 ```yaml
-name: dependency binary incompatibility check
-on: pull_request
+# .github/workflows/linkage-check.yml
+name: linkage-check
+on:
+  pull_request:
+    # every place a dependency version can be declared
+    paths:
+      - '**.gradle'
+      - '**.gradle.kts'
+      - '**.versions.toml'
+      - '**/gradle.properties'
+      - '**/gradle.lockfile'
+      - .github/workflows/linkage-check.yml
+  push:
+    branches: [develop]
+  workflow_dispatch:   # backfill the current tip
+
+# a PR update supersedes the running check, and baseline dumps get per-SHA
+# groups so a develop push never cancels one
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
 
 jobs:
-  upgrade-check:
+  # Optional: dumps the baseline once per push so the PR job can fetch it
+  # instead of resolving the base branch. To opt out, delete this job, the
+  # push and workflow_dispatch triggers, and the marked steps in
+  # linkage-check.
+  dump-baseline:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
       # ... You may need to setup Java/Gradle here ....
 
-      - name: Dump baseline classpath (base branch)
-        id: baseline
+      - run: ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/classpath.json -PuikaBuildOutputs=false
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: uika-baseline-${{ github.sha }}
+          path: /tmp/classpath.json
+          retention-days: 30   # a PR's base.sha is always a recent tip
+
+  linkage-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read   # to read the baseline artifact
+    steps:
+      - uses: actions/checkout@v7
+
+      # ... You may need to setup Java/Gradle here ....
+
+      # Cached-baseline fast path. These steps skip while no artifact
+      # exists. Delete them together with the dump-baseline job if you do
+      # not cache.
+      - name: Fetch baseline artifact
+        id: baseline-artifact
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh api \
+            "repos/${{ github.repository }}/actions/artifacts?name=uika-baseline-${{ github.event.pull_request.base.sha }}&per_page=5" \
+            --jq '[.artifacts[] | select(.expired == false)][0].id // empty')
+          test -n "$id"
+          gh api "repos/${{ github.repository }}/actions/artifacts/$id/zip" > /tmp/baseline.zip
+          unzip -o /tmp/baseline.zip -d /tmp/baseline
+          mv /tmp/baseline/classpath.json /tmp/before-remote.json
+
+      - name: Rehydrate baseline to local paths
+        id: rehydrate
+        if: steps.baseline-artifact.outcome == 'success'
+        continue-on-error: true
+        run: >
+          ./gradlew uikaResolveClasspath
+          -PuikaInput=/tmp/before-remote.json -PuikaResolveOutput=/tmp/before.json
+
+      - name: Dump PR classpath
+        # `classes` so the build outputs anchor the reachability ranking
+        run: ./gradlew classes uikaDumpClasspath -PuikaOutput=/tmp/after.json
+
+      - name: Dump baseline classpath (fallback)
+        id: baseline-fallback
+        if: steps.rehydrate.outcome != 'success'
+        # a PR whose base cannot produce a baseline skips the check instead
+        # of failing it
         continue-on-error: true
         run: |
+          git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
           git checkout ${{ github.event.pull_request.base.sha }}
           if ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json -PuikaBuildOutputs=false; then
             status=0
@@ -66,17 +146,31 @@ jobs:
           git checkout -
           exit $status
 
-      - name: Dump PR classpath
-        run: ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
-
       - name: Check broken references
-        if: steps.baseline.outcome == 'success'
-        run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
+        if: steps.rehydrate.outcome == 'success' || steps.baseline-fallback.outcome == 'success'
+        run: >
+          ./gradlew uikaUpgradeCheck
+          -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
 ```
 
-To keep the base-branch resolution off the PR's critical path, cache the
-baseline as an artifact instead:
-[BASELINE-CACHING.md](../BASELINE-CACHING.md).
+### Caching the baseline
+
+The fallback resolves the base branch on the PR runner, which puts a
+second checkout and a cold Gradle start on the PR's critical path every time.
+The baseline only feeds the version diff, so the `dump-baseline` job
+produces it once per push instead. The fallback stays for SHAs with no
+usable baseline. Those are SHAs predating the job, expired artifacts, and
+PRs not targeting `develop`. Deleting the marked blocks is also safe,
+because an `if:` reads a missing step's outcome as empty, never as
+`success`.
+
+A fetched dump names JARs by absolute path, and the old versions it names
+are not on the PR runner, because the PR job resolves the new versions and
+nothing pulls the old ones in on its own. A compared-pair JAR uika cannot
+open exits 2 rather than degrading to a warning. The rehydrate step closes
+both gaps by fetching what is missing through the build's own
+repositories, mirrors, and credentials, and rewriting the dump to the
+resolved local paths.
 
 ## Options
 

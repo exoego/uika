@@ -73,7 +73,7 @@ count_materialized, _ = broken(materialized_report)
 if status(materialized_report) != 1 or count_materialized == 0:
     fail("the materialized baseline should have found the guava breaks")
 
-# The claim the README and BASELINE-CACHING.md make: a baseline that still points into
+# The claim the README and docs/bazel.md make: a baseline that still points into
 # bazel-out is worthless once those jars are gone, and uika answers with FEWER breaks and a
 # warning rather than an error. Asserted rather than stated, because a silent shortfall is
 # exactly the failure this test exists to pin down.
