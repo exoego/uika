@@ -71,10 +71,11 @@ the CLI is fetched, and where `jdkRelease` comes from.
 
 ### PR gate on GitHub Actions (the main use case)
 
-A `linkage-check` workflow dumps a baseline from the PR's base branch and the
-PR's own classpath, and fails the PR on broken references between the two.
-Every tool page carries that workflow, including an optional `dump-baseline`
-job that takes the base-branch resolution off the PR's critical path.
+Every tool page carries a copy-pasteable workflow. It dumps the classpath of
+the PR's base branch and of the PR itself, and fails the PR on broken
+references between the two. An optional second job dumps the baseline once per
+push instead, which takes the base-branch resolution off the PR's critical
+path.
 
 ### Runtime load evidence from the base branch (optional)
 
