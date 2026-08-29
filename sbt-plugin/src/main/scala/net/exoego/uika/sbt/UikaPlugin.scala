@@ -208,18 +208,29 @@ object UikaPlugin extends AutoPlugin {
         .map(_.data.getAbsoluteFile)
         .distinct
       val runtimeFiles = runtimeEntries.toSet
+      // An UpdateReport carries one report per configuration, and a jar on several of them
+      // (compile, runtime, test ...) appears once in each. DumpFormat dedups the artifact
+      // TABLE but emits one artifactRef per entry, so without this the module's ref list
+      // repeated the same jar once per configuration -- eight times for scala-library on a
+      // plain build -- and the CLI, which pushes one scan target per entry, re-read it that
+      // many times. Distinct over the tuple rather than the Artifact, which has no equals,
+      // and before mapping so first-wins input order survives.
       val artifacts = update.value.configurations
         .flatMap(_.modules)
         .flatMap { module =>
           module.artifacts.collect {
             case (_, file) if runtimeFiles(file.getAbsoluteFile) =>
-              new ClasspathDump.Artifact(
+              (
                 module.module.organization,
                 module.module.name,
                 module.module.revision,
                 file.getAbsolutePath
               )
           }
+        }
+        .distinct
+        .map { case (organization, name, revision, path) =>
+          new ClasspathDump.Artifact(organization, name, revision, path)
         }
       // Unmanaged jars (lib/*.jar, unmanagedClasspath additions) have no update.value
       // entry, so without a fallback they vanish from the dump although they are on the
