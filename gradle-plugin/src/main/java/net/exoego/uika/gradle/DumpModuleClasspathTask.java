@@ -44,11 +44,6 @@ import static net.exoego.uika.plugin.core.DumpFormat.quote;
 @DisableCachingByDefault(because = "Classpath resolution is environment-dependent and cheap to rerun")
 public abstract class DumpModuleClasspathTask extends DefaultTask {
 
-    public DumpModuleClasspathTask() {
-        // The declared inputs cannot see the resolution result; an up-to-date hit would reuse a stale dump.
-        getOutputs().upToDateWhen(task -> false);
-    }
-
     /** One dumped artifact row, extracted from ResolvedArtifactResult so the configuration
      * cache can serialize it. */
     record Entry(String group, String name, String version, String projectPath, String file)
@@ -112,7 +107,7 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
                 name = m.getModule();
                 version = m.getVersion();
             } else if (id instanceof ProjectComponentIdentifier project
-                    && project.getBuild().getBuildPath().equals(":")) {
+                    && ":".equals(project.getBuild().getBuildPath())) {
                 // Attribute project-dependency jars to their producing module so uika can
                 // fall back to that module's classesDirs when the jar was never built.
                 // Only for this build's own projects: an included build's project path

@@ -111,11 +111,15 @@ public final class Probe {
             String line;
             while ((line = reader.readLine()) != null) {
                 lineNo++;
-                if (line.isBlank()) continue;
+                if (line.isBlank()) {
+                    continue;
+                }
                 records++;
                 // One stream line per bytecode call site; identical duplicates get
                 // one probe and one report entry.
-                if (!seen.add(line)) continue;
+                if (!seen.add(line)) {
+                    continue;
+                }
                 Rec rec;
                 try {
                     rec = parseRec(line);
@@ -130,13 +134,13 @@ public final class Probe {
                 switch (result.outcome()) {
                     case ERROR -> errors.add(describe(rec) + " -> " + result.detail());
                     case LINKS -> {
-                        if (rec.verdict().equals("broken")) {
+                        if ("broken".equals(rec.verdict())) {
                             fpCandidates.add(describe(rec) + " [" + rec.reason() + "] links fine");
                         }
                     }
                     case FAILS -> {
                         Outcome old = oldLoader == null ? null : probe(rec, oldLoader).outcome();
-                        if (rec.verdict().equals("broken")) {
+                        if ("broken".equals(rec.verdict())) {
                             // A break uika confirmed should link on the old side. When the
                             // probe cannot even reproduce that, its new-side failure is
                             // not evidence of agreement (unloadable source class or an
@@ -183,7 +187,9 @@ public final class Probe {
     }
 
     static void printList(String header, Collection<String> items) {
-        if (items.isEmpty()) return;
+        if (items.isEmpty()) {
+            return;
+        }
         System.out.println(header + ":");
         items.forEach(i -> System.out.println("  " + i));
     }
@@ -197,7 +203,9 @@ public final class Probe {
     static URLClassLoader loader(String classpath) throws IOException {
         var urls = new ArrayList<URL>();
         for (String entry : classpath.split(":")) {
-            if (!entry.isEmpty()) urls.add(Path.of(entry).toUri().toURL());
+            if (!entry.isEmpty()) {
+                urls.add(Path.of(entry).toUri().toURL());
+            }
         }
         // Platform parent: JDK classes resolve, the probe's own classes do not leak in.
         return new URLClassLoader(urls.toArray(new URL[0]), ClassLoader.getPlatformClassLoader());
@@ -207,7 +215,7 @@ public final class Probe {
         try {
             var owner = Class.forName(dots(rec.ref().owner()), false, loader);
             MethodHandles.Lookup lookup = lookupFor(rec, loader);
-            if (rec.ref().kind().equals("class")) {
+            if ("class".equals(rec.ref().kind())) {
                 // Class.forName performs no access check; accessClass models the
                 // JVMS 5.4.3.1 CONSTANT_Class resolution check from the referencing
                 // class (a package-private owner in another package must fail).
@@ -242,10 +250,12 @@ public final class Probe {
 
     static Result probeMethod(Ref ref, Class<?> owner, MethodHandles.Lookup lookup,
                               ClassLoader loader) {
-        if (ref.memberName().equals("<clinit>")) return new Result(Outcome.SKIP, "<clinit>");
+        if ("<clinit>".equals(ref.memberName())) {
+            return new Result(Outcome.SKIP, "<clinit>");
+        }
         try {
             MethodType mt = MethodType.fromMethodDescriptorString(ref.memberDesc(), loader);
-            if (ref.memberName().equals("<init>")) {
+            if ("<init>".equals(ref.memberName())) {
                 lookup.findConstructor(owner, mt.changeReturnType(void.class));
             } else if (ref.expectedStatic() == null) {
                 // Constant-pool-only reference with no opcode context: either linkage form counts.
@@ -295,11 +305,17 @@ public final class Probe {
                           boolean isStatic, boolean write)
             throws NoSuchFieldException, IllegalAccessException {
         if (isStatic) {
-            if (write) lookup.findStaticSetter(owner, name, type);
-            else lookup.findStaticGetter(owner, name, type);
+            if (write) {
+                lookup.findStaticSetter(owner, name, type);
+            } else {
+                lookup.findStaticGetter(owner, name, type);
+            }
         } else {
-            if (write) lookup.findSetter(owner, name, type);
-            else lookup.findGetter(owner, name, type);
+            if (write) {
+                lookup.findSetter(owner, name, type);
+            } else {
+                lookup.findGetter(owner, name, type);
+            }
         }
     }
 
@@ -358,7 +374,9 @@ public final class Probe {
             var p = new Json(s);
             var v = p.value();
             p.ws();
-            if (p.i != s.length()) throw p.err("trailing data");
+            if (p.i != s.length()) {
+                throw p.err("trailing data");
+            }
             return v;
         }
 
@@ -392,8 +410,12 @@ public final class Probe {
                 map.put(key, value());
                 ws();
                 var c = next();
-                if (c == '}') return map;
-                if (c != ',') throw err("expected , or }");
+                if (c == '}') {
+                    return map;
+                }
+                if (c != ',') {
+                    throw err("expected , or }");
+                }
             }
         }
 
@@ -409,8 +431,12 @@ public final class Probe {
                 list.add(value());
                 ws();
                 var c = next();
-                if (c == ']') return list;
-                if (c != ',') throw err("expected , or ]");
+                if (c == ']') {
+                    return list;
+                }
+                if (c != ',') {
+                    throw err("expected , or ]");
+                }
             }
         }
 
@@ -419,7 +445,9 @@ public final class Probe {
             var sb = new StringBuilder();
             while (true) {
                 var c = next();
-                if (c == '"') return sb.toString();
+                if (c == '"') {
+                    return sb.toString();
+                }
                 if (c != '\\') {
                     sb.append(c);
                     continue;
@@ -433,7 +461,9 @@ public final class Probe {
                     case 'r' -> sb.append('\r');
                     case 't' -> sb.append('\t');
                     case 'u' -> {
-                        if (i + 4 > s.length()) throw err("truncated \\u escape");
+                        if (i + 4 > s.length()) {
+                            throw err("truncated \\u escape");
+                        }
                         var hex = s.substring(i, i + 4);
                         try {
                             sb.append((char) Integer.parseInt(hex, 16));
@@ -449,26 +479,36 @@ public final class Probe {
 
         private Object number() {
             var start = i;
-            while (i < s.length() && "+-.eE0123456789".indexOf(s.charAt(i)) >= 0) i++;
+            while (i < s.length() && "+-.eE0123456789".indexOf(s.charAt(i)) >= 0) {
+                i++;
+            }
             var text = s.substring(start, i);
-            if (text.isEmpty()) throw err("unexpected character");
+            if (text.isEmpty()) {
+                throw err("unexpected character");
+            }
             return text.contains(".") || text.contains("e") || text.contains("E")
                     ? (Object) Double.parseDouble(text)
                     : (Object) Long.parseLong(text);
         }
 
         private Object literal(String text, Object value) {
-            if (!s.startsWith(text, i)) throw err("expected " + text);
+            if (!s.startsWith(text, i)) {
+                throw err("expected " + text);
+            }
             i += text.length();
             return value;
         }
 
         private void ws() {
-            while (i < s.length() && Character.isWhitespace(s.charAt(i))) i++;
+            while (i < s.length() && Character.isWhitespace(s.charAt(i))) {
+                i++;
+            }
         }
 
         private char peek() {
-            if (i >= s.length()) throw err("unexpected end");
+            if (i >= s.length()) {
+                throw err("unexpected end");
+            }
             return s.charAt(i);
         }
 
@@ -479,7 +519,9 @@ public final class Probe {
         }
 
         private void expect(char c) {
-            if (next() != c) throw err("expected " + c);
+            if (next() != c) {
+                throw err("expected " + c);
+            }
         }
 
         private IllegalArgumentException err(String message) {

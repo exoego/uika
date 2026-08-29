@@ -1,9 +1,9 @@
 package net.exoego.uika.gradle;
 
+import groovy.json.JsonSlurper;
 import net.exoego.uika.plugin.core.ClasspathDump.Artifact;
 import net.exoego.uika.plugin.core.ClasspathDump.Module;
 import net.exoego.uika.plugin.core.DumpFormat;
-import groovy.json.JsonSlurper;
 import org.gradle.api.DefaultTask;
 import org.gradle.api.GradleException;
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier;

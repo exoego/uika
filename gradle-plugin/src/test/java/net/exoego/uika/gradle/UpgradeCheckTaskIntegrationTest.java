@@ -308,7 +308,7 @@ final class UpgradeCheckTaskIntegrationTest {
         String converted = null;
         var words = args.trim().split(" ");
         for (var i = 0; i + 1 < words.length; i++) {
-            if (words[i].equals("--class-load-log")) {
+            if ("--class-load-log".equals(words[i])) {
                 converted = words[i + 1];
             }
         }
