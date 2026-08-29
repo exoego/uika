@@ -1,4 +1,4 @@
-load("@rules_java//java:defs.bzl", "java_library")
+load("@rules_java//java:defs.bzl", "java_library", "java_test")
 
 _RELEASE_17 = ["--release", "17"]
 
@@ -59,6 +59,23 @@ java_library(
     javacopts = _RELEASE_17,
     srcs = ["net/exoego/uika/bazel/MergeMain.java"],
     visibility = ["//visibility:public"],
+    deps = [
+        ":core",
+        ":manifest",
+    ],
+)
+
+# A plain main() rather than a JUnit suite, and use_testrunner = False so Bazel takes the
+# exit code as the verdict. The ruleset's only dependency is rules_java, and pulling in a
+# test framework would put a maven.install network fetch in front of a suite whose whole
+# point is running without one.
+java_test(
+    name = "manifest_test",
+    size = "small",
+    javacopts = _RELEASE_17,
+    srcs = ["net/exoego/uika/bazel/ManifestSelfTest.java"],
+    main_class = "net.exoego.uika.bazel.ManifestSelfTest",
+    use_testrunner = False,
     deps = [
         ":core",
         ":manifest",
