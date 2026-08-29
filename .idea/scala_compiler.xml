@@ -5,7 +5,11 @@
     <profile name="sbt 1" modules="sbt-uika" />
     <profile name="sbt 2" modules="sbt-uika.test">
       <option name="deprecationWarnings" value="true" />
+      <option name="uncheckedWarnings" value="true" />
+      <option name="featureWarnings" value="true" />
       <parameters>
+        <parameter value="-Xlint" />
+        <parameter value="-Ywarn-unused:imports,privates,locals" />
         <parameter value="-Wconf:cat=unused-nowarn:s" />
         <parameter value="-Xsource:3" />
         <parameter value="-Wconf:cat=unused-nowarn:s" />
@@ -14,7 +18,11 @@
     </profile>
     <profile name="sbt 3" modules="sbt-uika.main">
       <option name="deprecationWarnings" value="true" />
+      <option name="uncheckedWarnings" value="true" />
+      <option name="featureWarnings" value="true" />
       <parameters>
+        <parameter value="-Xlint" />
+        <parameter value="-Ywarn-unused:imports,privates,locals" />
         <parameter value="-Wconf:cat=unused-nowarn:s" />
         <parameter value="-Xsource:3" />
       </parameters>
