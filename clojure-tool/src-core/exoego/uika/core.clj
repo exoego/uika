@@ -163,12 +163,19 @@
   used to be read only by the Leiningen plugin, where the positional argv has no
   room for the per-run override that `-T` expresses as :cli-path."
   [{:keys [cli-path cli-version]} default-version-fn usage-hint]
-  (if-let [path (or cli-path (env "UIKA_CLI_PATH"))]
-    (io/file (str path))
-    (fetch-cli (str (or cli-version
-                        (env "UIKA_CLI_VERSION")
-                        (default-version-fn)
-                        (throw (ex-info usage-hint {})))))))
+  ;; blank->nil on the CONFIG keys too, not just the environment: the `env` helper above
+  ;; exists because an empty string is truthy in Clojure, and a CI-templated :exec-args
+  ;; reaches these two keys the same way a CI `env:` block reaches the variables. Without
+  ;; it :cli-path "" execs the empty string and :cli-version "" builds a Central URL with
+  ;; an empty version segment.
+  (let [cli-path (when-not (str/blank? (some-> cli-path str)) cli-path)
+        cli-version (when-not (str/blank? (some-> cli-version str)) cli-version)]
+    (if-let [path (or cli-path (env "UIKA_CLI_PATH"))]
+      (io/file (str path))
+      (fetch-cli (str (or cli-version
+                          (env "UIKA_CLI_VERSION")
+                          (default-version-fn)
+                          (throw (ex-info usage-hint {}))))))))
 
 (defn- release-number
   "The knob as a long. Deliberately NOT part of the UikaCli.effectiveJdkRelease port:

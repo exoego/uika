@@ -226,6 +226,20 @@
   (is (nil? (uika/version-from-libs
              {'org.clojure/clojure {:mvn/version "1.12.5"}}))))
 
+(deftest blank-cli-knobs-are-treated-as-unset
+  ;; The `env` helper blanks empty variables because an empty string is truthy in Clojure.
+  ;; A CI-templated :exec-args reaches the CONFIG keys the same way, so they need the same
+  ;; guard: :cli-path "" used to exec the empty string, and :cli-version "" used to build a
+  ;; Central URL with an empty version segment.
+  (is (thrown-with-msg?
+       clojure.lang.ExceptionInfo #"usage hint"
+       (uika.core/resolve-binary {:cli-path "" :cli-version ""} (constantly nil) "usage hint")))
+  ;; A real value still wins, so the guard cannot have swallowed the knob itself.
+  (is (= "/tmp/uika-bin"
+         (.getPath (uika.core/resolve-binary {:cli-path "/tmp/uika-bin"}
+                                        (constantly nil)
+                                        "usage hint")))))
+
 (deftest jfr-recordings-are-converted-for-the-cli
   ;; A REAL recording, not a synthetic file: only the JDK's own writer produces the
   ;; chunk format the converter reads. `java -version` under StartFlightRecording
