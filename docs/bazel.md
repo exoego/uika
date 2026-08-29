@@ -242,6 +242,14 @@ $ bazel run @uika//:merge -- --output /tmp/after.json \
     --execroot "$(bazel info execution_root)" --fragments "$BIN"
 ```
 
+The sweep has no `build_outputs = False` counterpart, so it always builds and
+records each matched target's own jars. `//...` includes the `uika_dump`
+targets, whose `targets` attribute applies the same aspect, so a parameterized
+command-line instance would be a second aspect over the same targets and both
+would declare the same fragment file, which Bazel rejects as conflicting
+actions. Use a `uika_dump` target with `build_outputs = False` for a baseline
+that must resolve without building.
+
 Every Java target the pattern matches becomes a module, so narrow the pattern to
 keep the count sane. `upgrade-check` runs once per module, and a bare `//...`
 sweeps your test targets and the `uika_dump` targets themselves along with the
