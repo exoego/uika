@@ -166,8 +166,8 @@ degrading to a warning. The cache save and restore close that gap.
 
 ## Options
 
-- [`--failOn`](../README.md#violation-tiers-and---fail-on) and
-  [`--excludeFile`](../README.md#excluding-known-false-positives---exclude-file)
+- [`--failOn`](../README.md#violation-tiers-and-the-failon-threshold) and
+  [`--excludeFile`](../README.md#excluding-known-false-positives)
   (repeatable) are plain command-line flags, shown above.
 - [`--jdkRelease`](../README.md#build-tool-plugins) overrides the release
   derived from `javacOptions` and `scalacOptions` (their mandatory halves
@@ -177,7 +177,7 @@ degrading to a warning. The cache save and restore close that gap.
   against. There 0 means "keep the derived value" instead, because recording
   nothing would take JDK move detection down with the API layer.
 - `--jfr` (or `UIKA_JFR`) also carries
-  [text evidence](../README.md#runtime-load-evidence-jfr---class-load-log).
+  [text evidence](../README.md#runtime-load-evidence-jfr).
   Anything in that directory that is not a recording is passed on unchanged, so
   `-Xlog:class+load` output and a classlist mix with the recordings. There is no
   separate flag.
@@ -188,7 +188,7 @@ degrading to a warning. The cache save and restore close that gap.
 
 ## Runtime load evidence (JFR)
 
-To collect [runtime load evidence](../README.md#runtime-load-evidence-jfr---class-load-log),
+To collect [runtime load evidence](../README.md#runtime-load-evidence-jfr),
 mix `UikaTestModule` into the test modules, last so its `forkArgs` wins:
 
 ```scala
@@ -208,5 +208,5 @@ reason the Bazel recipe needs `--nocache_test_results`.
 Your own `override def forkArgs = Seq(...)` replaces the list and drops the injected
 flag. Append to `super.forkArgs()` instead. `./mill testLocal` does not fork, so it
 records nothing.
-[`--draft-exclude-file`](../README.md#runtime-load-evidence-jfr---class-load-log)
+[`--draft-exclude-file`](../README.md#runtime-load-evidence-jfr)
 maps to `--draftExcludeFile`.

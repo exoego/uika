@@ -42,9 +42,9 @@ at the tools.build `compile-clj` output to include it.
 Every option is a keyword argument on the call, `upgrade-check` unless the
 entry says otherwise.
 
-- [`:fail-on`](../README.md#violation-tiers-and---fail-on) is `never`,
+- [`:fail-on`](../README.md#violation-tiers-and-the-failon-threshold) is `never`,
   `reachable` or `any`.
-- [`:exclude-file`](../README.md#excluding-known-false-positives---exclude-file)
+- [`:exclude-file`](../README.md#excluding-known-false-positives)
   takes one path or a vector of paths.
 - There is no module model to read a compile target from, so
   [`:jdk-release`](../README.md#build-tool-plugins) defaults to the project's
@@ -69,7 +69,7 @@ entry says otherwise.
 
 Collect by running the current, not yet upgraded build's test suite (or a
 staging soak) with
-[JFR recording class loads](../README.md#runtime-load-evidence-jfr---class-load-log).
+[JFR recording class loads](../README.md#runtime-load-evidence-jfr).
 There is no test task to inject the flag into, so add it to your own test JVM
 invocation, the way the Maven recipe does:
 
@@ -95,7 +95,7 @@ text logs in the same directory ride along unchanged, and a recording handed
 to `:class-load-log` is converted too. Conversion needs the tool itself on
 Java 17+, the same floor the recording test JVMs already have for the flag
 syntax.
-[`:draft-exclude-file`](../README.md#runtime-load-evidence-jfr---class-load-log)
+[`:draft-exclude-file`](../README.md#runtime-load-evidence-jfr)
 drafts exclude rules from the same evidence.
 
 ## PR gate on GitHub Actions

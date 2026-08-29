@@ -174,8 +174,8 @@ resolved local paths.
 
 ## Options
 
-- [`failOn`](../README.md#violation-tiers-and---fail-on) and
-  [`excludeFiles`](../README.md#excluding-known-false-positives---exclude-file)
+- [`failOn`](../README.md#violation-tiers-and-the-failon-threshold) and
+  [`excludeFiles`](../README.md#excluding-known-false-positives)
   are shown in the build script above. The command-line forms are
   `-PuikaFailOn=` and `-PuikaExcludeFile=` (single file).
 - [`jdkRelease`](../README.md#build-tool-plugins) is derived from
@@ -190,7 +190,7 @@ resolved local paths.
   touches. For a build where the name exists on some modules only, override
   `configurationName` on the others' `uikaDumpModuleClasspath` task.
 - `classLoadLogs` is the build-script property for
-  [text evidence](../README.md#runtime-load-evidence-jfr---class-load-log) you
+  [text evidence](../README.md#runtime-load-evidence-jfr) you
   produced some other way, such as `-Xlog:class+load` output or a classlist.
   `-PuikaJfr` adds its directory to the same property, so recordings and text
   logs mix freely there. Only the property itself takes a bare text file:
@@ -204,9 +204,9 @@ resolved local paths.
 ## Runtime load evidence (JFR)
 
 `-PuikaJfr=<dir>` makes every `Test` task record class loads into a
-[JFR recording](../README.md#runtime-load-evidence-jfr---class-load-log) there
+[JFR recording](../README.md#runtime-load-evidence-jfr) there
 (and run for real — an `UP-TO-DATE` or `FROM-CACHE` test task forks no JVM and
 would collect nothing), and makes `uikaUpgradeCheck` convert and read the
 directory back. A bare `-PuikaJfr` uses `build/uika/jfr`.
-[`--draft-exclude-file`](../README.md#runtime-load-evidence-jfr---class-load-log)
+[`--draft-exclude-file`](../README.md#runtime-load-evidence-jfr)
 maps to `-PuikaDraftExcludeFile=`.

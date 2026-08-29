@@ -172,8 +172,8 @@ degrading to a warning. The cache save and restore close that gap.
 
 ## Options
 
-- [`failOn`](../README.md#violation-tiers-and---fail-on) and
-  [`excludeFiles`](../README.md#excluding-known-false-positives---exclude-file)
+- [`failOn`](../README.md#violation-tiers-and-the-failon-threshold) and
+  [`excludeFiles`](../README.md#excluding-known-false-positives)
   are configured above. The command-line forms are `-Duika.failOn=` and
   `-Duika.excludeFiles=`, the latter comma-separated, so suppressing a finding
   for one CI run needs no POM edit. Both follow Maven's ordinary precedence, so
@@ -184,7 +184,7 @@ degrading to a warning. The cache save and restore close that gap.
   `maven.compiler.release`/`maven.compiler.target`. Override with
   `<jdkRelease>` or `-Duika.jdkRelease=`, or set 0 to disable the API layer.
 - `<jfr>` / `-Duika.jfr` also carries
-  [text evidence](../README.md#runtime-load-evidence-jfr---class-load-log).
+  [text evidence](../README.md#runtime-load-evidence-jfr).
   Anything in that directory that is not a recording is passed on unchanged, so
   `-Xlog:class+load` output and a classlist mix with the recordings. There is no
   separate parameter.
@@ -211,5 +211,5 @@ argLine instead when one exists. A build cache that replays test executions
 collects nothing: maven-build-cache-extension and the Develocity extension
 both skip surefire on a cache hit, so disable caching for the collect run,
 the same reason the Bazel recipe needs `--nocache_test_results`.
-[`--draft-exclude-file`](../README.md#runtime-load-evidence-jfr---class-load-log)
+[`--draft-exclude-file`](../README.md#runtime-load-evidence-jfr)
 maps to `-Duika.draftExcludeFile=`.

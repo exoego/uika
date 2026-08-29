@@ -80,9 +80,9 @@ to `exclude_files`. A relative path in any of them resolves against the
 workspace root (`BUILD_WORKSPACE_DIRECTORY`), wherever you ran `bazel` from,
 and never against the runfiles tree.
 
-- [`fail_on`](../README.md#violation-tiers-and---fail-on) is `never`,
+- [`fail_on`](../README.md#violation-tiers-and-the-failon-threshold) is `never`,
   `reachable` or `any`, and `--failOn` overrides it.
-- [`exclude_files`](../README.md#excluding-known-false-positives---exclude-file)
+- [`exclude_files`](../README.md#excluding-known-false-positives)
   is a label list, and the repeatable `--excludeFile` adds to it.
 - [`jdk_release`](#coordinates-and-jdk_release) is derived per target, and
   `--jdkRelease` overrides it on both rules and on `@uika//:merge`.

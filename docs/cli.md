@@ -31,7 +31,7 @@ Lists breaking changes between two versions of one library. Each line opens
 with the change kind, which is also what `--json` puts in its `kind` field, so
 `jq '.breaking_changes[] | select(.kind == "class_became_final")'` selects
 those lines. The same snake_case kinds are what
-[`--exclude-file`](../README.md#excluding-known-false-positives---exclude-file)
+[`--exclude-file`](../README.md#excluding-known-false-positives)
 rules match on.
 
 ```console
@@ -75,7 +75,7 @@ scanned 372 classes: ❌ 1 broken (of which 💥 1 reachable, ⚠️ 0 not prove
   repeatable.
 - `--app` takes your own build outputs, as class directories or JARs. They are
   the roots the [reachability
-  ranking](../README.md#violation-tiers-and---fail-on) walks from. Without
+  ranking](../README.md#violation-tiers-and-the-failon-threshold) walks from. Without
   them every violation stays 💥.
 - `--classpath-file` reads a dump written by any of the plugins and adds its
   artifacts and build outputs to the scan targets. It is more accurate than a
@@ -96,7 +96,7 @@ shows](../README.md#what-a-check-reports).
 
 - `--merged` checks the union of all modules' classpaths as one flat
   classpath, instead of [checking each module against its own
-  resolution](../README.md#per-module-checking-upgrade-check). It is also the
+  resolution](../README.md#per-module-checking). It is also the
   automatic fallback for dumps that carry no per-module artifact data. No
   plugin exposes it.
 
@@ -111,15 +111,25 @@ $ uika dump some.jar
 
 ## Options shared by `check` and `upgrade-check`
 
-- [`--fail-on`](../README.md#violation-tiers-and---fail-on) decides the exit
+- [`--fail-on`](../README.md#violation-tiers-and-the-failon-threshold) decides the exit
   code only. The report is printed the same way regardless.
-- [`--exclude-file`](../README.md#excluding-known-false-positives---exclude-file)
+- [`--exclude-file`](../README.md#excluding-known-false-positives)
   is repeatable, and rules from every file given are merged.
-- [`--class-load-log`](../README.md#runtime-load-evidence-jfr---class-load-log)
-  is repeatable and takes text evidence, or a directory of it. The CLI reads
-  no binary JFR, which is why the plugins convert recordings before invoking
-  it. Convert one by hand with the `jfr print` recipe in that section.
-- [`--draft-exclude-file`](../README.md#runtime-load-evidence-jfr---class-load-log)
+- [`--class-load-log`](../README.md#runtime-load-evidence-jfr) is repeatable and
+  takes text evidence, or a directory of it. The CLI reads no binary JFR, which
+  is why the plugins convert recordings before invoking it. Without one,
+  convert a recording by hand:
+
+  ```console
+  jfr print --json --events jdk.ClassLoad rec.jfr \
+    | jq -r '.recording.events[].values.loadedClass.name
+             | select(startswith("[") | not) | "[class,load] \(.)"'
+  ```
+
+  That yields tagged class-load lines the CLI reads (classes only, no triggers;
+  the tag keeps default-package names accepted, and the filter drops array
+  classes).
+- [`--draft-exclude-file`](../README.md#runtime-load-evidence-jfr)
   writes draft exclude rules from that evidence. It requires
   `--class-load-log`.
 - [`--jdk-release N`](../README.md#how-it-works) layers the JDK API of release
