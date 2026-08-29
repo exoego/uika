@@ -100,6 +100,13 @@ final class ReleaseDerivationTest {
         // fine, so the two reasons must stay distinguishable.
         assertFalse(log.get(0).contains("no usable ct.sym"),
                 () -> "below-floor was reported as a missing ct.sym: " + log);
+        // Reachable without a fake JVM too: Maven, sbt and Bazel all pass an explicit knob
+        // value straight through, so `jdkRelease = 5` on a modern JDK lands here as well.
+        var direct = new ArrayList<String>();
+        assertNull(UikaCli.effectiveJdkRelease(5, jdk(home, 21), direct::add));
+        assertEquals(1, direct.size(), () -> "expected exactly one line: " + direct);
+        assertTrue(direct.get(0).contains("below the lowest release ct.sym serves"),
+                () -> "wrong reason for an explicit below-floor knob: " + direct);
     }
 
     @Test
@@ -151,8 +158,11 @@ final class ReleaseDerivationTest {
         for (var target = UikaCli.MIN_RELEASE; target <= 30; target++) {
             Integer effective = UikaCli.effectiveJdkRelease(target, jdk(home, 21), line -> { });
             var wanted = target;
-            assertTrue(effective == null || effective <= wanted,
-                    () -> "release " + wanted + " was raised to " + effective);
+            // The exact value, not `<= wanted`: with a ceiling of 20 and a floor of 8 this
+            // can never legitimately answer null, so tolerating null would admit the
+            // "silently switched the layer off" regression the test exists for.
+            assertEquals(Math.min(wanted, 20), effective,
+                    () -> "release " + wanted + " came back as " + effective);
         }
     }
 
