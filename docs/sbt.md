@@ -174,6 +174,11 @@ degrading to a warning. The cache save and restore close that gap.
 - [`jdkRelease`](../README.md#build-tool-plugins) is derived from
   `javacOptions` and `scalacOptions`. Override with `uikaJdkRelease :=`, or
   set 0 to disable the API layer.
+- `uikaJfr` also carries
+  [text evidence](../README.md#runtime-load-evidence-jfr---class-load-log).
+  Anything in that directory that is not a recording is passed on unchanged, so
+  `-Xlog:class+load` output and a classlist mix with the recordings. There is no
+  separate key.
 - `UIKA_CLI_PATH` runs a binary you already have instead of resolving one, so a
   build can run air-gapped or against a locally built CLI. It wins over the CLI
   version, nothing is downloaded, and a value that is not an executable file

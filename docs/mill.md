@@ -176,6 +176,11 @@ degrading to a warning. The cache save and restore close that gap.
   recorded as running on, for a build whose runtime is not what it compiles
   against. There 0 means "keep the derived value" instead, because recording
   nothing would take JDK move detection down with the API layer.
+- `--jfr` (or `UIKA_JFR`) also carries
+  [text evidence](../README.md#runtime-load-evidence-jfr---class-load-log).
+  Anything in that directory that is not a recording is passed on unchanged, so
+  `-Xlog:class+load` output and a classlist mix with the recordings. There is no
+  separate flag.
 - `UIKA_CLI_PATH` runs a binary you already have instead of resolving one, so a
   build can run air-gapped or against a locally built CLI. It wins over the CLI
   version, nothing is downloaded, and a value that is not an executable file

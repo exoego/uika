@@ -101,43 +101,13 @@ and in the PR job, after downloading the artifact into `/tmp/uika-jfr`:
 
 The [per-tool options](#build-tool-plugins) cover the other tools.
 
-## Command reference
+## What a check reports
+
+Every tool's check task runs the same report over the two dumps. When
+application roots are known (build outputs in the dump), violations are ranked:
+reachable first, then the ones no static path reaches.
 
 ```console
-# List breaking changes between old/new versions of a library.
-# Each line opens with the change kind, which is also what --json puts in its "kind" field:
-# jq '.breaking_changes[] | select(.kind == "class_became_final")' selects those lines.
-$ uika diff guava-22.0.jar guava-23.0-rc1.jar [--json]
-CLASS BECAME FINAL     com/google/common/collect/BoundType
-FIELD REMOVED          com/google/common/graph/GraphConstants.EDGE_CONNECTING_NOT_IN_GRAPH Ljava/lang/String;
-METHOD ACCESS NARROWED com/google/common/collect/Iterators$ConcatenatedIterator.<init> (Ljava/util/Iterator;)V (public -> package-private)
-
-breaking changes: 93 (classes: 26, methods: 61, fields: 6)
-
-# Find usages of breaking changes across classpath JARs / your build output
-# (--old/--new may be repeated to check several changed libraries in one run)
-# Exit codes: 0 = clean, 1 = violations found, 2 = error
-$ uika check --old kotlinx-coroutines-core-jvm-1.7.1.jar \
-             --new kotlinx-coroutines-core-jvm-1.11.0.jar \
-             --classpath ktor-io-jvm-2.3.13.jar:other-dep.jar \
-             --app build/classes/kotlin/main
-checked kotlinx-coroutines-core-jvm-1.7.1.jar -> kotlinx-coroutines-core-jvm-1.11.0.jar against 3 scan targets
-
---------------------------------------------------------------------------------
-💥 reachable from the application (likely to break)
---------------------------------------------------------------------------------
-
-❌ kotlinx.coroutines.EventLoopKt.processNextEventInCurrentThread()
-    method removed, throws NoSuchMethodError at first call
-    used by 1 class:
-        io.ktor.utils.io.jvm.javaio.BlockingAdapter  (ktor-io-jvm-2.3.13.jar)
-
-scanned 372 classes: ❌ 1 broken (of which 💥 1 reachable, ⚠️ 0 not proven reachable), ❓ 5 unverified references (hierarchy escapes the analyzed scope)
-
-# Detect broken references caused by every artifact whose version changed.
-# When application roots are known (build outputs in the dump, or --app), violations
-# are ranked: reachable first, then the ones no static path reaches.
-$ uika upgrade-check --before /tmp/before.json --after /tmp/after.json
 dependency changes: 1
     CHANGED io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
 
@@ -163,10 +133,11 @@ per-module check: 2 of 41 modules changed their resolved versions (39 unchanged)
     why: ...
 
 scanned 145213 classes: ❌ 42 broken (of which 💥 25 reachable, ⚠️ 17 not proven reachable), ❓ 205 unverified references (hierarchy escapes the analyzed scope)
-
-# Debugging aid: dump the extracted API surface of a JAR
-$ uika dump some.jar
 ```
+
+The plugins run a `uika` binary they fetch themselves, so the command line
+behind this is an implementation detail. [The CLI page](docs/cli.md) covers it,
+for a build with no plugin and for `check`, the one command no plugin exposes.
 
 ### Violation tiers and `--fail-on`
 
@@ -221,8 +192,9 @@ legitimately resolve different versions of one coordinate (e.g. one service
 on netty 4.1, a newer one on 4.2). So each module is checked against what it 
 actually resolves, not against a flattened union: modules whose versions did 
 not move are skipped, and every violation names the modules that exhibit it
-(`modules:` in the text report, a `modules` array in JSON). `--merged`
-restores the flat union check.
+(`modules:` in the text report, a `modules` array in JSON). The CLI's
+[`--merged`](docs/cli.md#uika-upgrade-check) restores the flat union check; no
+plugin exposes it.
 
 ### Excluding known false positives (`--exclude-file`)
 
@@ -411,16 +383,18 @@ tool:
 - [Leiningen](docs/leiningen.md)
 - [Bazel](docs/bazel.md)
 
+A build with none of them drives [the CLI](docs/cli.md) by hand instead.
+
 All of them write the same dump format: every module's resolved runtime
 classpath as coordinate-annotated JSON, kept per module so `upgrade-check` can
 [check each against its own resolution](#per-module-checking-upgrade-check).
-Feed two dumps to `uika upgrade-check`, which is what every tool's check task
-runs. One dump also feeds `uika check --classpath-file` (more accurate than a
-hand-assembled classpath, and reduces unverified references). That one stays a
-CLI command. No build-tool integration exposes `check`, so it wants a uika
-binary on the path. A dump also refers to build outputs. Each page says
-how its dump command builds them, and the [PR gate](#pr-gate-on-github-actions-the-main-use-case)
-shows which baseline dumps can skip them.
+Every tool's check task feeds two of them to the CLI. One dump also feeds
+[`uika check --classpath-file`](docs/cli.md#uika-check), which is more accurate
+than a hand-assembled classpath and reduces unverified references. That one
+stays a CLI command, because no integration exposes `check`. A dump also refers
+to build outputs. Each page says how its dump command builds them, and the
+[PR gate](#pr-gate-on-github-actions-the-main-use-case) shows which baseline
+dumps can skip them.
 
 The upgrade-check task fetches the CLI itself as
 `net.exoego.uika:uika-cli:<version>:<platform>@zip` through the build's own
@@ -477,43 +451,48 @@ artifact, and copies bundled inside fat JARs are not false positives.
 References that escape into unanalyzed classes are counted as "unverified"
 rather than silently ignored.
 
-Most escapes lead into the JDK. Passing `--jdk-release N` (on `check` and
-`upgrade-check`) layers the JDK API of release N under the resolution scope,
-read from the `ct.sym` file of the JDK named by `UIKA_JDK` (checked first,
-authoritative when set), else `JAVA_HOME`, so those references conclude as OK
-or broken instead of unverified. N must be older than the installed JDK (its
-own release is not in `ct.sym`). The layer sits under both the old and the new
-side, so gaps in `ct.sym` cancel out instead of producing false positives from
-missing stubs. Without the flag nothing changes, and uika still needs no JVM
-to run.
+Most escapes lead into the JDK, so every tool layers the JDK API of one release
+under the resolution scope and lets those references conclude as OK or broken.
+The stubs come from the `ct.sym` file of the JDK named by `UIKA_JDK` (checked
+first, authoritative when set), else `JAVA_HOME`, and the release has to be
+older than that JDK, whose own release `ct.sym` does not carry. The layer sits
+under both the old and the new side, so gaps in `ct.sym` cancel out instead of
+producing false positives from missing stubs. It is what turns 16 unverified
+references into 0 on a guava 22 -> 23 check of selenium-remote-driver, with the
+broken count unchanged.
 
-```console
-$ uika check --old guava-22.0.jar --new guava-23.0-rc1.jar \
-             --classpath selenium-remote-driver-3.4.0.jar
-...
-scanned 205 classes: ❌ 2 broken, ❓ 16 unverified references (hierarchy escapes the analyzed scope)
-
-$ uika check --old guava-22.0.jar --new guava-23.0-rc1.jar \
-             --classpath selenium-remote-driver-3.4.0.jar --jdk-release 17
-...
-scanned 205 classes: ❌ 2 broken
-```
+Each tool derives the release from what its modules compile for, so nothing has
+to be configured. The `jdkRelease` setting overrides it, and 0 switches the
+layer off. On the CLI the layer is opt-in instead, through
+[`--jdk-release N`](docs/cli.md#options-shared-by-check-and-upgrade-check).
+Either way uika still needs no JVM to run.
 
 ### Checking a JDK upgrade
 
-`--jdk-release-old N --jdk-release-new M` makes the JDK upgrade itself the compared
-pair, so `--old` and `--new` become optional. A JDK API your classpath still
-references and release M dropped is then reported like any other removal.
+A JDK upgrade breaks an application the same way a library upgrade does, and it
+needs no configuration to catch. Each dump records the API release every module
+runs on, so bumping what your build compiles for and re-running the dump is
+enough. `upgrade-check` sees the two dumps disagree, and checks that move
+alongside the dependency moves in one report, scoped to the modules that made
+it. A JDK API your classpath still references and the new release dropped is
+then reported like any other removal:
 
 ```console
-$ uika check --jdk-release-old 11 --jdk-release-new 17 --classpath app.jar
-checked JDK 11 -> JDK 17 against 1 scan target
+dependency changes: none
 
+per-module check: 0 of 1 modules changed their resolved versions (1 unchanged)
+    JDK 11 -> 17  scanned 2 classes, ❌ 1 broken, 0 unverified
+...
 ❌ java.rmi.activation.ActivationGroup
     class removed, throws NoClassDefFoundError at first use
     used by 1 class:
-        UsesRemoved  (app.jar)
+        UsesRemoved  (app.jar) [JDK 11 -> 17]
 ```
+
+Dumps written before the plugins recorded the release carry no value, and a
+missing value on either side is never read as a JDK move. A build whose runtime
+is not what it compiles for says so with the tool's `jdkRelease` setting, which
+is recorded as the release of every module.
 
 Releases below the installed JDK come from its `ct.sym`; the installed JDK's own
 release comes from its `jmods/`, which `ct.sym` never carries. Checking an upgrade
@@ -521,23 +500,8 @@ release comes from its `jmods/`, which `ct.sym` never carries. Checking an upgra
 invisible here, because `ct.sym` stubs do not carry `PermittedSubclasses`, and
 reporting them from the `jmods` side alone would be a false positive.
 
-From the build-tool plugins this needs no flag. The classpath dump records the
-release of the JVM that wrote it, so bumping your toolchain and re-running the
-dump is enough — `upgrade-check` sees the two dumps disagree and checks the JDK
-move alongside the dependency moves, in one report.
-
-```console
-$ uika upgrade-check --before before.json --after after.json
-dependency changes: none
-
-per-module check: 0 of 1 modules changed their resolved versions (1 unchanged)
-    JDK 11 -> 17  scanned 2 classes, ❌ 1 broken, 0 unverified
-...
-        UsesRemoved  (app.jar) [JDK 11 -> 17]
-```
-
-Dumps written before the plugins recorded the release carry no value, and a
-missing value on either side is never read as a JDK move.
+The CLI takes the same pair explicitly, with
+[`--jdk-release-old` and `--jdk-release-new`](docs/cli.md#checking-a-jdk-upgrade).
 
 ## Development
 
@@ -549,8 +513,8 @@ Releases are described in [PUBLISHING.md](PUBLISHING.md).
 ## Known limitations (PoC)
 
 - References whose hierarchy escapes into unanalyzed classes are conservatively
-  treated as OK (reported only as an "unverified" count, which passing the
-  complete runtime classpath via `--classpath` reduces)
+  treated as OK (reported only as an "unverified" count, which a complete
+  runtime classpath reduces, and which is what a dump gives you)
 - Multi-release JARs are analyzed at their base classes only
   (`META-INF/versions/` is ignored)
 - `InvokeDynamic` bootstrap synthetic names are excluded

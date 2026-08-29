@@ -31,19 +31,39 @@ is taken from the tool's own coordinate in the runtime basis, so the one
 `:mvn/version` in the alias pins the tool and the CLI together;
 `:cli-version` and `UIKA_CLI_VERSION` override it, in that order.
 
-`dump-classpath` takes `:dir` to point at another project's `deps.edn`,
-defaulting to the working directory. `upgrade-check` takes `:evidence-work-dir`
-for where recordings are converted, defaulting to `target/uika`.
-
-There is no module model to read a compile target from, so
-[`:jdk-release`](../README.md#build-tool-plugins) defaults to the project's
-own JVM release. Set it to override that, or to 0 to disable the API layer.
-
 One Clojure-specific caveat. Interop calls without type hints go through
 runtime reflection and leave no reference in the constant pool, so uika sees
 the Java dependencies on the classpath at full strength but only the
 type-hinted, AOT-compiled part of the Clojure code itself; point `:class-dir`
 at the tools.build `compile-clj` output to include it.
+
+## Options
+
+Every option is a keyword argument on the call, `upgrade-check` unless the
+entry says otherwise.
+
+- [`:fail-on`](../README.md#violation-tiers-and---fail-on) is `never`,
+  `reachable` or `any`.
+- [`:exclude-file`](../README.md#excluding-known-false-positives---exclude-file)
+  takes one path or a vector of paths.
+- There is no module model to read a compile target from, so
+  [`:jdk-release`](../README.md#build-tool-plugins) defaults to the project's
+  own JVM release. Set it to override that, or to 0 to disable the API layer.
+  `dump-classpath` takes it too, where it names the release the application is
+  recorded as running on. There 0 means "keep the derived value" instead,
+  because recording nothing would take JDK move detection down with the API
+  layer.
+- `:jfr`, `:class-load-log` and `:draft-exclude-file` carry
+  [runtime load evidence](#runtime-load-evidence-jfr), below.
+- `:cli-version` and `:cli-path` pick the binary, and `UIKA_CLI_VERSION`,
+  `UIKA_CLI_PATH` and `UIKA_CLI_URL` do the same from the environment.
+- `dump-classpath` alone takes `:output` (default
+  `target/uika/classpath.json`), `:dir` to point at another project's
+  `deps.edn` (default: where the tool was invoked), `:aliases` to include in
+  the resolution, and `:class-dir` for the AOT output of a tools.build
+  `compile-clj`. The project's own `:paths` are recorded either way.
+- `upgrade-check` alone takes `:evidence-work-dir`, where recordings are
+  converted, defaulting to `target/uika`.
 
 ## Runtime load evidence (JFR)
 

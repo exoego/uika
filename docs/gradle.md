@@ -189,6 +189,13 @@ resolved local paths.
   project instead. Only the dump fails, and only for a project the java plugin
   touches. For a build where the name exists on some modules only, override
   `configurationName` on the others' `uikaDumpModuleClasspath` task.
+- `classLoadLogs` is the build-script property for
+  [text evidence](../README.md#runtime-load-evidence-jfr---class-load-log) you
+  produced some other way, such as `-Xlog:class+load` output or a classlist.
+  `-PuikaJfr` adds its directory to the same property, so recordings and text
+  logs mix freely there. Only the property itself takes a bare text file:
+  `-PuikaJfr` rejects one, because a test JVM told to record into it aborts at
+  startup.
 - `UIKA_CLI_PATH` runs a binary you already have instead of resolving one, so a
   build can run air-gapped or against a locally built CLI. It wins over the CLI
   version, nothing is downloaded, and a value that is not an executable file
