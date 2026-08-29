@@ -20,7 +20,6 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -48,24 +47,21 @@ public final class UpgradeCheckMojo extends AbstractMojo {
     private String failOn;
 
     /**
-     * TOML files of known false positives to suppress, passed as repeated {@code --exclude-file}.
-     * Configured as a nested list ({@code <excludeFiles><excludeFile>...</excludeFile></excludeFiles>}).
-     * See {@link #excludeFilesProperty} for the command-line form.
-     */
-    @Parameter
-    private List<File> excludeFiles = new ArrayList<>();
-
-    /**
-     * The command-line form of {@link #excludeFiles}, comma-separated and appended to it, so
-     * suppressing a finding for one CI run needs no POM edit. A relative entry resolves
-     * against the execution root, like the other file properties on this aggregator mojo.
+     * TOML files of known false positives to suppress, passed as repeated
+     * {@code --exclude-file}. As a nested list in the POM
+     * ({@code <excludeFiles><excludeFile>...</excludeFile></excludeFiles>}), or as a
+     * comma-separated {@code -Duika.excludeFiles=a.toml,b.toml}.
      *
-     * <p>Comma-separated because a Maven property is one string and the Bazel rules already
-     * carry the list the same way. A path containing a comma cannot be expressed here, since
-     * the comma is the delimiter; use {@code <excludeFiles>} for one.
+     * <p>One parameter, not two: plexus splits a property expression on commas for a
+     * collection parameter ({@code AbstractCollectionConverter.csvToXml}) and aligns each
+     * relative entry to the basedir through {@code FileConverter}, so the command-line form
+     * needs no code. It follows Maven's ordinary precedence as a result -- a POM
+     * {@code <excludeFiles>} shadows the property rather than being appended to, the same
+     * as every other knob on this mojo. A path containing a comma has to go in the POM,
+     * since the comma is the delimiter there.
      */
     @Parameter(property = "uika.excludeFiles")
-    private String excludeFilesProperty;
+    private List<File> excludeFiles = new ArrayList<>();
 
     /**
      * JDK API release for the CLI's {@code --jdk-release} (resolves JDK hierarchy escapes
@@ -131,10 +127,12 @@ public final class UpgradeCheckMojo extends AbstractMojo {
 
         Path installDir = Path.of(session.getExecutionRootDirectory(),
                 "target", "uika", "cli-" + cliVersion + "-" + classifier);
-        List<Path> excludeFilePaths = new ArrayList<>(excludeFiles.stream()
+        // Nulls, not blanks: plexus turns an empty CSV entry into a null element, and a
+        // -D list assembled by a CI script picks up doubled or trailing commas.
+        List<Path> excludeFilePaths = excludeFiles.stream()
+                .filter(java.util.Objects::nonNull)
                 .map(File::toPath)
-                .toList());
-        excludeFilePaths.addAll(propertyExcludeFiles());
+                .toList();
         int exit;
         try {
             Path binary = UikaCli.extractBinary(zip.toPath(), installDir);
@@ -170,20 +168,4 @@ public final class UpgradeCheckMojo extends AbstractMojo {
         }
     }
 
-    /**
-     * {@code -Duika.excludeFiles} split on the comma, blank entries dropped. Relative entries
-     * resolve against the execution root, which is what Maven itself does for the {@code File}
-     * parameters on this aggregator mojo, so the two spellings agree on what a bare name means.
-     */
-    private List<Path> propertyExcludeFiles() {
-        if (excludeFilesProperty == null || excludeFilesProperty.isBlank()) {
-            return List.of();
-        }
-        Path root = Path.of(session.getExecutionRootDirectory());
-        return Arrays.stream(excludeFilesProperty.split(","))
-                .map(String::trim)
-                .filter(entry -> !entry.isEmpty())
-                .map(root::resolve)
-                .toList();
-    }
 }

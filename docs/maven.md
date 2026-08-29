@@ -175,10 +175,10 @@ degrading to a warning. The cache save and restore close that gap.
 - [`failOn`](../README.md#violation-tiers-and---fail-on) and
   [`excludeFiles`](../README.md#excluding-known-false-positives---exclude-file)
   are configured above. The command-line forms are `-Duika.failOn=` and
-  `-Duika.excludeFiles=`, the latter comma-separated and appended to the POM
-  list, so suppressing a finding for one CI run needs no POM edit. A path
-  containing a comma has to go in `<excludeFiles>`, since the comma is the
-  delimiter.
+  `-Duika.excludeFiles=`, the latter comma-separated, so suppressing a finding
+  for one CI run needs no POM edit. Both follow Maven's ordinary precedence, so
+  a POM `<configuration>` entry shadows the property. A path containing a comma
+  has to go in `<excludeFiles>`, since the comma is the delimiter there.
 - [`jdkRelease`](../README.md#build-tool-plugins) is derived from
   maven-compiler-plugin's `<release>`/`<target>`, else
   `maven.compiler.release`/`maven.compiler.target`. Override with

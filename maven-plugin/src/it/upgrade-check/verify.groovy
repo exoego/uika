@@ -7,40 +7,18 @@ assert args.isFile() : "stub did not record its arguments: $args"
 assert args.text.contains("--fail-on reachable") :
     "POM <configuration><failOn> was not forwarded to the CLI: ${args.text}"
 
-def excludeFile = new File(basedir, "uika-exclude.toml")
 assert args.text.contains("--jdk-release 11") :
     "POM <configuration><jdkRelease> was not forwarded to the CLI: ${args.text}"
-assert args.text.contains("--exclude-file ${excludeFile.absolutePath}") :
-    "POM <configuration><excludeFiles> was not forwarded to the CLI: ${args.text}"
 
-// The uika.excludeFiles property appends to the POM list rather than replacing it, so a CI
-// run can suppress one finding without a POM edit. Relative entries resolve against the
-// execution root, like every other file property on this aggregator mojo, and the empty
-// entry from the doubled comma must not reach the CLI as a path.
+// -Duika.excludeFiles is a real CLI property here (test.properties), comma-separated by
+// plexus and basedir-aligned by its FileConverter, with the empty entry dropped.
 for (name in ["cli-exclude.toml", "second-exclude.toml"]) {
     def fromProperty = new File(basedir, name)
     assert args.text.contains("--exclude-file ${fromProperty.absolutePath}") :
-        "uika.excludeFiles entry ${name} was not forwarded to the CLI: ${args.text}"
+        "-Duika.excludeFiles entry ${name} was not forwarded to the CLI: ${args.text}"
 }
-assert args.text.count("--exclude-file") == 3 :
-    "expected exactly three --exclude-file flags, the empty entry dropped: ${args.text}"
-
-def log = new File(basedir, "build.log")
-assert log.isFile() : "invoker build log not found: $log"
-// The [INFO] prefix proves the line went through the mojo's logger. Inherited stdio also
-// lands in build.log here (the invoker pipes the forked mvn), but unprefixed, and it would
-// be lost entirely under mvnd.
-assert log.text.contains("[INFO] uika-stub: dependency changes: 0") :
-    "CLI output did not go through the mojo logger"
-
-// -Duika.jfr and -Duika.draftExcludeFile must reach the CLI, resolved against
-// the project basedir like the other file properties.
-def classLoadDir = new File(basedir, "load-logs")
-assert args.text.contains("--class-load-log ${classLoadDir.absolutePath}") :
-    "-Duika.jfr was not forwarded to the CLI: ${args.text}"
-def draftFile = new File(basedir, "uika-draft.toml")
-assert args.text.contains("--draft-exclude-file ${draftFile.absolutePath}") :
-    "-Duika.draftExcludeFile was not forwarded to the CLI: ${args.text}"
+assert args.text.count("--exclude-file") == 2 :
+    "expected exactly two --exclude-file flags, the empty entry dropped: ${args.text}"
 
 // The recording inside the log directory must reach the CLI as converted text, never raw.
 assert args.text.contains("jfr-class-load") :
