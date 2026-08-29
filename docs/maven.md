@@ -1,6 +1,6 @@
 # [Maven plugin](../maven-plugin/) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-maven-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-maven-plugin)
 
-One of uika's [build-tool integrations](../README.md#build-tool-plugins).
+One of uika's [build-tool integrations](build-tools.md).
 
 ```xml
 <build>
@@ -179,7 +179,7 @@ degrading to a warning. The cache save and restore close that gap.
   for one CI run needs no POM edit. Both follow Maven's ordinary precedence, so
   a POM `<configuration>` entry shadows the property. A path containing a comma
   has to go in `<excludeFiles>`, since the comma is the delimiter there.
-- [`jdkRelease`](../README.md#build-tool-plugins) is derived from
+- [`jdkRelease`](build-tools.md#jdkrelease) is derived from
   maven-compiler-plugin's `<release>`/`<target>`, else
   `maven.compiler.release`/`maven.compiler.target`. Override with
   `<jdkRelease>` or `-Duika.jdkRelease=`, or set 0 to disable the API layer.

@@ -1,6 +1,6 @@
 # [Gradle plugin](../gradle-plugin/) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-gradle-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-gradle-plugin)
 
-One of uika's [build-tool integrations](../README.md#build-tool-plugins).
+One of uika's [build-tool integrations](build-tools.md).
 Works with Groovy and Kotlin DSL builds (Gradle 9 / JVM 17+).
 
 ```kotlin
@@ -178,7 +178,7 @@ resolved local paths.
   [`excludeFiles`](../README.md#excluding-known-false-positives)
   are shown in the build script above. The command-line forms are
   `-PuikaFailOn=` and `-PuikaExcludeFile=` (single file).
-- [`jdkRelease`](../README.md#build-tool-plugins) is derived from
+- [`jdkRelease`](build-tools.md#jdkrelease) is derived from
   `compileJava`'s `options.release`, else target compatibility. Override with
   `-PuikaJdkRelease=` on both the dump and the check, or set 0 to disable the
   API layer.

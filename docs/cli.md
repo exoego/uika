@@ -1,7 +1,7 @@
 # CLI
 
 The `uika` binary is the engine every
-[build-tool integration](../README.md#build-tool-plugins) runs. The plugins
+[build-tool integration](build-tools.md) runs. The plugins
 fetch it, derive its arguments from the build, and print what it reports, so a
 project with a supported build tool never has to invoke it by hand.
 

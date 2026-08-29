@@ -1,6 +1,6 @@
 # [Clojure CLI tool](../clojure-tool/) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fclojure-uika%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/clojure-uika)
 
-One of uika's [build-tool integrations](../README.md#build-tool-plugins).
+One of uika's [build-tool integrations](build-tools.md).
 The tool is published to Maven Central as `net.exoego.uika/clojure-uika` and
 declared as a deps.edn alias, the same shape tools.build uses. The alias
 carries `:ns-default` itself, which is what keeps the invocations below
@@ -47,7 +47,7 @@ entry says otherwise.
 - [`:exclude-file`](../README.md#excluding-known-false-positives)
   takes one path or a vector of paths.
 - There is no module model to read a compile target from, so
-  [`:jdk-release`](../README.md#build-tool-plugins) defaults to the project's
+  [`:jdk-release`](build-tools.md#jdkrelease) defaults to the project's
   own JVM release. Set it to override that, or to 0 to disable the API layer.
   `dump-classpath` takes it too, where it names the release the application is
   recorded as running on. There 0 means "keep the derived value" instead,

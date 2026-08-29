@@ -1,6 +1,6 @@
 # [Mill plugin](../mill-plugin/) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fmill-uika_mill1_3%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/mill-uika_mill1_3)
 
-One of uika's [build-tool integrations](../README.md#build-tool-plugins).
+One of uika's [build-tool integrations](build-tools.md).
 Mill 1.x. One header line wires up a build of any size: the commands find every
 non-test `JavaModule` themselves. Only JFR collection needs a mixin, because
 `forkArgs` is a task on the test module itself.
@@ -169,7 +169,7 @@ degrading to a warning. The cache save and restore close that gap.
 - [`--failOn`](../README.md#violation-tiers-and-the-failon-threshold) and
   [`--excludeFile`](../README.md#excluding-known-false-positives)
   (repeatable) are plain command-line flags, shown above.
-- [`--jdkRelease`](../README.md#build-tool-plugins) overrides the release
+- [`--jdkRelease`](build-tools.md#jdkrelease) overrides the release
   derived from `javacOptions` and `scalacOptions` (their mandatory halves
   included, since Mill compiles with both). Set 0 to disable the API layer.
   `dumpClasspath` takes it too, where it names the release every module is
