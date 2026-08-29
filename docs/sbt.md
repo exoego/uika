@@ -1,6 +1,6 @@
 # [sbt plugin](../sbt-plugin/) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fsbt-uika_2.12_1.0%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/sbt-uika_2.12_1.0)
 
-One of uika's [build-tool integrations](../README.md#build-tool-plugins).
+One of uika's [build-tool integrations](build-tools.md).
 
 ```scala
 // project/plugins.sbt
@@ -171,7 +171,7 @@ degrading to a warning. The cache save and restore close that gap.
   [`excludeFiles`](../README.md#excluding-known-false-positives)
   are settings, shown above. `set uikaFailOn := "reachable"` works from the
   sbt shell without editing the build.
-- [`jdkRelease`](../README.md#build-tool-plugins) is derived from
+- [`jdkRelease`](build-tools.md#jdkrelease) is derived from
   `javacOptions` and `scalacOptions`. Override with `uikaJdkRelease :=`, or
   set 0 to disable the API layer.
 - `uikaJfr` also carries

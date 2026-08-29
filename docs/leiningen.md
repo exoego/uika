@@ -1,6 +1,6 @@
 # [Leiningen plugin](../lein-plugin/) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Flein-uika%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/lein-uika)
 
-One of uika's [build-tool integrations](../README.md#build-tool-plugins).
+One of uika's [build-tool integrations](build-tools.md).
 
 ```clojure
 ;; project.clj
@@ -41,7 +41,7 @@ flag.
   `"reachable"` or `"any"`.
 - [`:exclude-files`](../README.md#excluding-known-false-positives)
   takes a vector of paths.
-- [`:jdk-release`](../README.md#build-tool-plugins) defaults to the release
+- [`:jdk-release`](build-tools.md#jdkrelease) defaults to the release
   `:javac-options` pins (`--release`, or `-target`); a project declaring neither
   falls back to the JVM the project's own code runs on (`:java-cmd`, else
   `JAVA_CMD`, probed; a probe that fails warns and falls back to lein's own
