@@ -210,11 +210,19 @@ object UikaPlugin extends AutoPlugin {
       val runtimeFiles = runtimeEntries.toSet
       // An UpdateReport carries one report per configuration, and a jar on several of them
       // (compile, runtime, test ...) appears once in each. DumpFormat dedups the artifact
-      // TABLE but emits one artifactRef per entry, so without this the module's ref list
-      // repeated the same jar once per configuration -- eight times for scala-library on a
-      // plain build -- and the CLI, which pushes one scan target per entry, re-read it that
-      // many times. Distinct over the tuple rather than the Artifact, which has no equals,
-      // and before mapping so first-wins input order survives.
+      // TABLE but emits one artifactRef per entry, so without this a module's ref list
+      // repeated the same jar once per configuration: measured 3.9x on this plugin's own
+      // build, 17 configuration reports over 88 distinct files.
+      //
+      // The cost is dump SIZE, not scan time. The CLI deduplicates scan targets before it
+      // opens anything (cli/src/lib.rs's `seen` set, and gradle.rs when it builds them from
+      // the artifact table), so a repeated ref costs one exists() and nothing more. What it
+      // does cost is a CI artifact and a serde parse proportional to the configuration
+      // count, and a dump that stops describing the classpath.
+      //
+      // Distinct over the tuple rather than the Artifact, which defines no equals, and
+      // before the map so the resolver order the CLI's first-wins semantics rely on
+      // survives.
       val artifacts = update.value.configurations
         .flatMap(_.modules)
         .flatMap { module =>

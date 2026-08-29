@@ -104,8 +104,8 @@ checkDump := {
   }, s"no unmanaged-jar entry for $vendored in $module")
 
   // An UpdateReport repeats a jar once per configuration it appears on, so the ref list
-  // used to carry scala-library eight times over. The CLI pushes one scan target per ref
-  // and re-reads the jar for each, and the dump stops describing the classpath.
+  // used to carry scala-library eight times over. The CLI deduplicates scan targets, so
+  // the cost is the dump's size and its fidelity as a description of the classpath.
   assert(artifactRefs.distinct == artifactRefs,
     s"duplicate artifactRefs: ${artifactRefs.diff(artifactRefs.distinct).map(artifacts)}")
 
