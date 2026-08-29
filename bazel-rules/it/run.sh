@@ -224,4 +224,34 @@ python3 "$RULES/it/assert_dump.py" "$OUT/before.json" "$OUT/after.json" \
   "$OUT/resolution.json" "$OUT/report.txt" \
   "$OUT/before-materialized.json" "$OUT/baseline-jars" "$OUT/materialized-report.txt"
 
+echo "--- exclude_files comma guard"
+# The attr rides one comma-joined -D property, so a comma inside a path would be
+# silently split into two bogus paths. The macro fails loudly instead, the same
+# decision manifest.bzl makes for tab and newline. A separate package, added after
+# the //... sweep above so the sweep never loads it.
+mkdir -p badcheck
+cat > badcheck/BUILD.bazel <<'EOF'
+load("@uika//:defs.bzl", "uika_upgrade_check")
+
+uika_upgrade_check(
+    name = "bad",
+    exclude_files = ["ex,cludes.toml"],
+)
+EOF
+set +e
+"$BAZEL" build //badcheck:bad > "$OUT/comma-guard.txt" 2>&1
+guard_status=$?
+set -e
+rm -rf badcheck
+if [ "$guard_status" -eq 0 ]; then
+  echo "a comma-carrying exclude_files entry should fail the load" >&2
+  cat "$OUT/comma-guard.txt" >&2
+  exit 1
+fi
+if ! grep -q "carries a comma" "$OUT/comma-guard.txt"; then
+  echo "expected the uika comma message:" >&2
+  cat "$OUT/comma-guard.txt" >&2
+  exit 1
+fi
+
 echo "bazel integration test passed"

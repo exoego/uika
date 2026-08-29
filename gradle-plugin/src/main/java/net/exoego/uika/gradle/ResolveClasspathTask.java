@@ -112,13 +112,24 @@ public abstract class ResolveClasspathTask extends DefaultTask {
         return DumpFormat.jdkReleaseOf(doc);
     }
 
-    /** Notations (g:n:v[:classifier]) of coordinate-carrying artifacts whose file is absent here. */
+    /**
+     * Notations (g:n:v[:classifier]) of coordinate-carrying artifacts whose file is absent
+     * here.
+     *
+     * <p>Project-attributed artifacts are never wanted, even when they carry coordinates
+     * the way a Maven reactor dependency does. Their coordinates may also name a PUBLISHED
+     * release, and fetching that would hand the CLI a stale jar while permanently
+     * bypassing its own fallback, which substitutes the producing module's classesDirs
+     * whenever the file is missing. Left alone, the entry keeps its attribution and the
+     * CLI keeps that choice.
+     */
     static Set<String> wantedNotations(List<Module> modules) {
         Set<String> wanted = new LinkedHashSet<>();
         for (Module module : modules) {
             for (Artifact artifact : module.artifacts()) {
                 String notation = notationOf(artifact);
-                if (notation != null && !new File(artifact.file()).exists()) {
+                if (notation != null && artifact.project() == null
+                        && !new File(artifact.file()).exists()) {
                     wanted.add(notation);
                 }
             }
@@ -158,11 +169,17 @@ public abstract class ResolveClasspathTask extends DefaultTask {
         for (Module module : modules) {
             List<Artifact> artifacts = new ArrayList<>();
             for (Artifact artifact : module.artifacts()) {
-                if (!new File(artifact.file()).exists() && artifact.group() != null) {
+                // Project-attributed entries pass through untouched and unwarned, for the
+                // reason wantedNotations gives. A rewrite that dropped the project key
+                // would also put those coordinates back into the version diff as Removed.
+                if (!new File(artifact.file()).exists() && artifact.group() != null
+                        && artifact.project() == null) {
                     File local = resolvedByKey.get(keyOf(artifact));
                     if (local != null) {
+                        // The attribution rides along even though the guard above makes it
+                        // null today, so a change to that guard cannot silently strip it.
                         artifact = new Artifact(artifact.group(), artifact.name(),
-                                artifact.version(), local.getAbsolutePath());
+                                artifact.version(), local.getAbsolutePath(), artifact.project());
                         rewritten++;
                     } else {
                         unresolved++;

@@ -78,10 +78,37 @@
       <version>2.0.22</version>
       <scope>provided</scope>
     </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <!-- Kept at the same version the Gradle plugin's test suite uses. -->
+      <version>6.1.3</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <!-- Pinned like the Gradle build pins it, so a surefire or JUnit bump cannot
+           break provider selection into a silent zero-test run. -->
+      <groupId>org.junit.platform</groupId>
+      <artifactId>junit-platform-launcher</artifactId>
+      <version>6.1.3</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
     <plugins>
+      <plugin>
+        <!-- Pinned for reproducibility across Maven versions (3.9.16's own binding is
+             already 3.5.4). failIfNoTests, because this module's only test is the
+             class-file floor guard and a provider mismatch silently running zero tests
+             would green a build the guard exists to fail. -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.6</version>
+        <configuration>
+          <failIfNoTests>true</failIfNoTests>
+        </configuration>
+      </plugin>
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>flatten-maven-plugin</artifactId>
@@ -120,6 +147,18 @@
             <configuration>
               <sources>
                 <source>${project.basedir}/../jvm-plugin-core/src/main/java</source>
+              </sources>
+            </configuration>
+          </execution>
+          <execution>
+            <id>add-shared-jvm-core-tests</id>
+            <phase>generate-test-sources</phase>
+            <goals>
+              <goal>add-test-source</goal>
+            </goals>
+            <configuration>
+              <sources>
+                <source>${project.basedir}/../jvm-plugin-core/src/test/java</source>
               </sources>
             </configuration>
           </execution>

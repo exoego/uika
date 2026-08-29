@@ -133,8 +133,11 @@ sbt-scripted:
 sbt-clean:
 	cd $(SBT_PLUGIN_DIR) && $(SBT) $(SBT_FLAGS) clean
 
+# clean, because maven-compiler-plugin's incremental check does not treat a changed
+# maven.compiler.release as an input. Without it a local floor edit recompiles nothing and
+# the class-file guard green-lights the stale classes.
 maven-verify:
-	$(MAVEN) -f $(MAVEN_PLUGIN_DIR)/pom.xml -B verify
+	$(MAVEN) -f $(MAVEN_PLUGIN_DIR)/pom.xml -B clean verify
 
 maven-clean:
 	$(MAVEN) -f $(MAVEN_PLUGIN_DIR)/pom.xml -B clean

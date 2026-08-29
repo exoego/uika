@@ -77,7 +77,9 @@ object UikaTests extends TestSuite {
     lazy val millDiscover: Discover = Discover[this.type]
   }
 
-  private val systemEnv: Map[String, String] = System.getenv().asScala.toMap
+  // Minus UIKA_JFR: upgradeCheck falls back to that variable, so a developer's exported
+  // collection directory must not leak into stub runs. Tests that want it add it back.
+  private val systemEnv: Map[String, String] = System.getenv().asScala.toMap - "UIKA_JFR"
 
   private def value[T](result: Either[ExecResult.Failing[?], UnitTester.Result[T]]): T =
     result.fold(failure => throw new RuntimeException(s"evaluation failed: $failure"), _.value)
@@ -328,6 +330,86 @@ object UikaTests extends TestSuite {
         assert(release(":scalamod").contains(11))
         assert(release(":javamod").contains(17))
         assert(json("jdkRelease").num.toInt == 11)
+      }
+    }
+
+    test("the injected args stay stable so watch mode never re-triggers on them") {
+      // Mill watches every evaluated Task.Input by hash and its poll re-runs on any
+      // change, so a per-evaluation nonce here would make `./mill -w` loop forever
+      // while UIKA_JFR is set. Stability is the contract. The cost is that a CACHED
+      // test replay records nothing, which is why docs/mill.md says to collect with
+      // `test` (a command, never cached).
+      val jfrDir = os.temp.dir(prefix = "uika-jfr") / "recordings"
+      Using.resource(UnitTester(
+        stubCliBuild,
+        null,
+        env = systemEnv + ("UIKA_JFR" -> jfrDir.toString)
+      )) { tester =>
+        def evaluate(): Seq[String] = value(tester(stubCliBuild.testJvm.test.forkArgs))
+        assert(evaluate() == evaluate())
+      }
+      Using.resource(UnitTester(stubCliBuild, null, env = systemEnv)) { tester =>
+        def evaluate(): Seq[String] = value(tester(stubCliBuild.testJvm.test.forkArgs))
+        assert(evaluate() == evaluate())
+      }
+    }
+
+    test("a file-valued UIKA_JFR fails loudly instead of dying inside makeDir") {
+      // A text log or a suffixless recording passes the suffix-only recording check,
+      // and os.makeDir.all on a regular file dies with a raw FileAlreadyExistsException
+      // naming neither uika nor the variable. The Gradle plugin fails fast on the same
+      // value shape, and so must this.
+      val log = os.temp.dir(prefix = "uika-jfr") / "loads.log"
+      os.write(log, "[class,load] example.App\n")
+      Using.resource(UnitTester(
+        stubCliBuild,
+        null,
+        env = systemEnv + ("UIKA_JFR" -> log.toString)
+      )) { tester =>
+        val failed = tester(stubCliBuild.testJvm.test.forkArgs)
+        assert(failed.isLeft)
+        assert(failed.fold(
+          failure => failure.toString.contains("UIKA_JFR must name a directory"),
+          _ => false
+        ))
+      }
+    }
+
+    test("upgradeCheck --jfr falls back to UIKA_JFR") {
+      // One knob serving both phases, like the sibling tools' single option: the same
+      // variable that made the tests record is read back by the check, so a CI recipe
+      // sets UIKA_JFR once. --jfr stays the explicit override.
+      val repo = os.temp.dir(prefix = "uika-stub-repo")
+      publishStubCli(repo, "9.9.9", "#!/bin/sh\necho \"$@\" > \"$3.args\"\nexit 0\n")
+      val jfrDir = os.temp.dir(prefix = "uika-jfr-consume")
+      Using.resource(UnitTester(
+        stubCliBuild,
+        null,
+        env = systemEnv ++ Map(
+          "UIKA_TEST_REPO" -> repo.toNIO.toUri.toASCIIString,
+          "UIKA_JFR" -> jfrDir.toString
+        )
+      )) { tester =>
+        val before = stubCliBuild.moduleDir / "before.json"
+        val after = stubCliBuild.moduleDir / "after.json"
+        os.write.over(before, "{}", createFolders = true)
+        os.write.over(after, "{}")
+
+        value(tester(Uika.upgradeCheck(
+          tester.evaluator, before.toString, after.toString, cliVersion = "9.9.9")))
+
+        val args = os.read(os.Path(s"$before.args"))
+        assert(args.contains(s"--class-load-log $jfrDir"))
+
+        // --jfr stays the explicit override: with both set, the flag's directory must
+        // reach the CLI and the variable's must not.
+        val explicit = os.temp.dir(prefix = "uika-jfr-explicit")
+        value(tester(Uika.upgradeCheck(
+          tester.evaluator, before.toString, after.toString,
+          jfr = explicit.toString, cliVersion = "9.9.9")))
+        val overridden = os.read(os.Path(s"$before.args"))
+        assert(overridden.contains(s"--class-load-log $explicit"))
+        assert(!overridden.contains(jfrDir.toString))
       }
     }
 

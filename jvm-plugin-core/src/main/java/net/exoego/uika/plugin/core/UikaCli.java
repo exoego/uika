@@ -70,13 +70,59 @@ public final class UikaCli {
                     .orElseThrow(() -> new IOException(binaryName + " not found in " + zip));
             // Extract to a temp file and rename so a concurrent build never sees a partial binary.
             Path tmp = Files.createTempFile(targetDir, "uika", ".tmp");
-            try (InputStream in = zipFile.getInputStream(entry)) {
-                Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
+            try {
+                try (InputStream in = zipFile.getInputStream(entry)) {
+                    Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
+                }
+                // setExecutable reports failure by returning false (a CIFS or FUSE mount
+                // rejecting chmod). Installing a 0600 binary would pin the failure, since
+                // the fast path above then skips extraction forever and every later run
+                // dies far away in ProcessBuilder with no cause in sight.
+                if (!tmp.toFile().setExecutable(true, false) && !tmp.toFile().canExecute()) {
+                    throw new IOException("could not mark " + tmp + " executable");
+                }
+                moveIntoPlace(tmp, binary);
+            } catch (IOException | RuntimeException primary) {
+                // A truncated entry or a full disk would otherwise orphan a binary-sized
+                // .tmp on every retry, and nothing ever reaps the install directory. The
+                // cleanup must not replace the root cause, so its own failure rides along
+                // as a suppressed exception instead of propagating.
+                try {
+                    Files.deleteIfExists(tmp);
+                } catch (IOException cleanup) {
+                    primary.addSuppressed(cleanup);
+                }
+                throw primary;
             }
-            tmp.toFile().setExecutable(true, false);
-            Files.move(tmp, binary, StandardCopyOption.REPLACE_EXISTING);
         }
         return binary;
+    }
+
+    /**
+     * Installs the fully written temp file at the binary's path. Package-private for the
+     * collision test only: the losing side of the rename race cannot be staged through
+     * {@link #extractBinary}, whose fast path returns as soon as the winner's binary exists.
+     */
+    static void moveIntoPlace(Path tmp, Path binary) throws IOException {
+        // ATOMIC_MOVE, because a plain REPLACE_EXISTING move unlinks the installed
+        // binary before renaming over it: a concurrent build in that gap sees
+        // ENOENT, or a sharing violation on Windows while the binary runs. The
+        // temp file lives next to the binary, so the rename cannot cross a file
+        // store.
+        try {
+            Files.move(tmp, binary,
+                    StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException lostRace) {
+            // Whether ATOMIC_MOVE replaces an existing target is implementation-specific
+            // (Files.move's javadoc), so two builds racing past the fast path can land
+            // the loser here just after the winner installed the binary. The winner's
+            // binary came from the same zip entry, so reuse it and drop the loser's
+            // copy; with no binary in place the failure is real.
+            if (!Files.isRegularFile(binary)) {
+                throw lostRace;
+            }
+            Files.deleteIfExists(tmp);
+        }
     }
 
     /**

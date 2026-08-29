@@ -14,7 +14,7 @@ ThisBuild / uikaExcludeFiles := Seq(baseDirectory.value / "uika-exclude.toml")
 ```
 
 ```console
-$ sbt uikaDumpClasspath   # writes target/uika/classpath.json (override via the uikaOutput setting)
+$ sbt uikaDumpClasspath   # writes target/uika/classpath.json (override via uikaOutput, set bare in build.sbt or at ThisBuild)
 $ sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"   # uikaCliVersion setting to override
 ```
 

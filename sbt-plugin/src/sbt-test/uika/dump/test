@@ -1,3 +1,7 @@
 > prepareVendoredJar
 > app/compile
 > checkDump
+
+# The shell invocation must run the merge once for the whole build.
+> uikaDumpClasspath
+> checkDumpRanOnce
