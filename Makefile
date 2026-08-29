@@ -199,8 +199,13 @@ lein-stage:
 # The ruleset's own Java classes, in the module's own workspace. No network: the test
 # carries a plain main() rather than a JUnit suite precisely so the ruleset keeps
 # rules_java as its only dependency.
+# --symlink_prefix=/ suppresses the bazel-out/bazel-bin convenience symlinks. Without it
+# this target plants them in the ruleset itself, and stage.sh copies the module with
+# `cp -RL`, which DEREFERENCES them -- the release archive would carry the whole output
+# base. .gitignore's note that "the integration test runs in a temp copy and never creates
+# them here" is what this target would otherwise falsify.
 bazel-unit-test:
-	cd $(BAZEL_RULES_DIR) && $(BAZELISK) test //java:manifest_test
+	cd $(BAZEL_RULES_DIR) && $(BAZELISK) test --symlink_prefix=/ //java:manifest_test
 
 # Real-CLI round trip, same reason as clojure-test and lein-test: the dump is written by
 # a tool the Rust side never sees, so only a run against the real binary catches drift.
@@ -217,7 +222,11 @@ bazel-maven-test: cargo-build
 # copy while it still exists, or Bazel keeps a multi-gigabyte tree for a directory that is
 # gone.
 bazel-clean:
-	@cd $(BAZEL_RULES_DIR) && $(BAZELISK) clean --expunge >/dev/null 2>&1 || true
+	@if [ -d "$(BAZEL_RULES_DIR)/bazel-out" ] || [ -d "$$HOME/.cache/bazel" ]; then \
+		cd $(BAZEL_RULES_DIR) && $(BAZELISK) clean --expunge >/dev/null 2>&1 || true; \
+	fi
+	@rm -rf $(BAZEL_RULES_DIR)/bazel-bin $(BAZEL_RULES_DIR)/bazel-out \
+		$(BAZEL_RULES_DIR)/bazel-testlogs $(BAZEL_RULES_DIR)/bazel-bazel-rules
 	@for dir in $(BAZEL_IT_DIR) $(BAZEL_MAVEN_IT_DIR); do \
 		if [ -d "$$dir/ws" ]; then \
 			cd $$dir/ws && $(BAZELISK) clean --expunge >/dev/null 2>&1 || true; \

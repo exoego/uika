@@ -23,6 +23,7 @@ import java.util.function.Function;
  */
 public final class ManifestSelfTest {
     private static int failures;
+    private static int checks;
 
     public static void main(String[] args) throws IOException {
         parsesModulesWithReleasesAndDeps();
@@ -30,13 +31,21 @@ public final class ManifestSelfTest {
         rejectsMalformedLines();
         flagValueRejectsMissingAndEmptyValues();
         flagReleaseNamesTheFlagOnGarbage();
-        workspacePathKeepsAnAbsolutePath();
+        flagValueIsUsedByTheBinariesThatHaveIt();
 
+        // A floor, not a total: `failures` counts only what FAILED, so a deleted call in
+        // main or an early return inside a method would otherwise be a silent pass. The
+        // class-file floor guard next door fails on an empty sweep for the same reason.
+        var expected = 25;
+        if (checks < expected) {
+            System.err.println("only " + checks + " checks ran, expected at least " + expected);
+            System.exit(1);
+        }
         if (failures > 0) {
             System.err.println(failures + " check(s) failed");
             System.exit(1);
         }
-        System.out.println("ManifestSelfTest: all checks passed");
+        System.out.println("ManifestSelfTest: " + checks + " checks passed");
     }
 
     private static void parsesModulesWithReleasesAndDeps() throws IOException {
@@ -62,8 +71,12 @@ public final class ManifestSelfTest {
                 "javacopts must beat the toolchain, got " + app.jdkRelease());
         check(app.classesDirs().equals(List.of("app.jar")), "wrong classes: " + app.classesDirs());
         check(app.artifacts().size() == 2, "wrong dep count: " + app.artifacts().size());
-        check("com.google.guava".equals(app.artifacts().get(0).group()), "coordinates lost");
-        check(app.artifacts().get(0).project() == null, "an external dep gained a project");
+        var guava = app.artifacts().get(0);
+        check("com.google.guava".equals(guava.group()), "wrong group: " + guava.group());
+        check("guava".equals(guava.name()), "wrong name: " + guava.name());
+        check("22.0".equals(guava.version()), "wrong version: " + guava.version());
+        check("guava.jar".equals(guava.file()), "wrong file: " + guava.file());
+        check(guava.project() == null, "an external dep gained a project");
         // A target of the build itself carries no coordinates and is attributed by label,
         // the way the other tools record a project dependency.
         check(app.artifacts().get(1).group() == null, "a project dep gained coordinates");
@@ -88,6 +101,7 @@ public final class ManifestSelfTest {
 
         // The override is a statement about the whole build, so it replaces what each module
         // declares rather than sitting beside it.
+        check(modules.size() == 2, "expected two modules, got " + modules.size());
         check(modules.stream().allMatch(m -> Integer.valueOf(17).equals(m.jdkRelease())),
                 "the override did not reach every module");
     }
@@ -126,10 +140,16 @@ public final class ManifestSelfTest {
         check(Integer.valueOf(17).equals(Manifest.flagRelease(good, 1)), "flagRelease misparsed");
     }
 
-    private static void workspacePathKeepsAnAbsolutePath() {
-        Path absolute = Path.of("tmp", "before.json").toAbsolutePath();
-        check(absolute.equals(Manifest.workspacePath(absolute.toString())),
-                "an absolute path was rewritten");
+    /// Deliberately NOT a workspacePath test. Both of its branches return an absolute
+    /// argument unchanged -- `Path.resolve` answers `other` verbatim when `other` is
+    /// absolute -- so an absolute-path assertion holds even with the isAbsolute check
+    /// deleted. The branch worth testing is a RELATIVE path resolving against
+    /// BUILD_WORKSPACE_DIRECTORY, which `bazel test` does not set and which the method
+    /// reads straight from System.getenv, so it needs a seam this class does not have.
+    private static void flagValueIsUsedByTheBinariesThatHaveIt() {
+        String[] args = {"--output", "dump.json", "--jdkRelease", "17"};
+        check("dump.json".equals(Manifest.flagValue(args, 1)), "flagValue dropped a value");
+        check(Integer.valueOf(17).equals(Manifest.flagRelease(args, 3)), "flagRelease misparsed");
     }
 
     private static List<Module> parse(String manifest, Integer override) throws IOException {
@@ -152,13 +172,16 @@ public final class ManifestSelfTest {
             body.run();
             check(false, what + " was accepted");
         } catch (IllegalArgumentException expected) {
-            // what the guards throw
+            // Counted, not just tolerated: the floor in main is only a floor if the
+            // passing path of every check registers.
+            check(true, what);
         } catch (Exception unexpected) {
             check(false, what + " threw " + unexpected);
         }
     }
 
     private static void check(boolean condition, String message) {
+        checks++;
         if (!condition) {
             System.err.println("FAIL: " + message);
             failures++;
