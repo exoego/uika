@@ -47,11 +47,20 @@ public final class UpgradeCheckMojo extends AbstractMojo {
     private String failOn;
 
     /**
-     * TOML files of known false positives to suppress, passed as repeated {@code --exclude-file}.
-     * Configured as a nested list ({@code <excludeFiles><excludeFile>...</excludeFile></excludeFiles>})
-     * since Maven properties do not support lists.
+     * TOML files of known false positives to suppress, passed as repeated
+     * {@code --exclude-file}. As a nested list in the POM
+     * ({@code <excludeFiles><excludeFile>...</excludeFile></excludeFiles>}), or as a
+     * comma-separated {@code -Duika.excludeFiles=a.toml,b.toml}.
+     *
+     * <p>One parameter, not two: plexus splits a property expression on commas for a
+     * collection parameter ({@code AbstractCollectionConverter.csvToXml}) and aligns each
+     * relative entry to the basedir through {@code FileConverter}, so the command-line form
+     * needs no code. It follows Maven's ordinary precedence as a result -- a POM
+     * {@code <excludeFiles>} shadows the property rather than being appended to, the same
+     * as every other knob on this mojo. A path containing a comma has to go in the POM,
+     * since the comma is the delimiter there.
      */
-    @Parameter
+    @Parameter(property = "uika.excludeFiles")
     private List<File> excludeFiles = new ArrayList<>();
 
     /**
@@ -124,7 +133,14 @@ public final class UpgradeCheckMojo extends AbstractMojo {
             }
         }
 
-        List<Path> excludeFilePaths = excludeFiles.stream().map(File::toPath).toList();
+        Path installDir = Path.of(session.getExecutionRootDirectory(),
+                "target", "uika", "cli-" + cliVersion + "-" + classifier);
+        // Nulls, not blanks: plexus turns an empty CSV entry into a null element, and a
+        // -D list assembled by a CI script picks up doubled or trailing commas.
+        List<Path> excludeFilePaths = excludeFiles.stream()
+                .filter(java.util.Objects::nonNull)
+                .map(File::toPath)
+                .toList();
         int exit;
         try {
             Path binary = override != null
@@ -162,4 +178,5 @@ public final class UpgradeCheckMojo extends AbstractMojo {
             throw new MojoExecutionException("uika upgrade-check failed with exit code " + exit);
         }
     }
+
 }

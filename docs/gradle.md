@@ -182,6 +182,13 @@ resolved local paths.
   `compileJava`'s `options.release`, else target compatibility. Override with
   `-PuikaJdkRelease=` on both the dump and the check, or set 0 to disable the
   API layer.
+- `-PuikaConfiguration=` picks which configuration the dump resolves, default
+  `runtimeClasspath`. A configuration that a project lacks or cannot resolve
+  contributes no artifacts, which would leave that module in the dump with an
+  empty classpath and nothing to check, so the dump task fails naming the
+  project instead. Only the dump fails, and only for a project the java plugin
+  touches. For a build where the name exists on some modules only, override
+  `configurationName` on the others' `uikaDumpModuleClasspath` task.
 - `UIKA_CLI_PATH` runs a binary you already have instead of resolving one, so a
   build can run air-gapped or against a locally built CLI. It wins over the CLI
   version, nothing is downloaded, and a value that is not an executable file

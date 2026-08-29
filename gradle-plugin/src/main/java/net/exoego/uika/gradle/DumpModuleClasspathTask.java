@@ -71,6 +71,15 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
     @Internal
     public abstract Property<Boolean> getEmptyDump();
 
+    /**
+     * Why this module's named configuration cannot produce a classpath, or absent when it
+     * can. Carried as a property rather than thrown while the task is wired, so `gradle
+     * tasks` and IDE sync still work and only a real dump fails.
+     */
+    @Input
+    @Optional
+    public abstract Property<String> getUnresolvableConfiguration();
+
     /** The main source set's classes dirs. Declared-but-unbuilt dirs are filtered at
      * execution time (java/main in Kotlin-only modules, etc.). */
     @Internal
@@ -127,6 +136,9 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
         var parent = out.getParentFile();
         if (parent != null) {
             parent.mkdirs();
+        }
+        if (getUnresolvableConfiguration().isPresent()) {
+            throw new org.gradle.api.GradleException(getUnresolvableConfiguration().get());
         }
         if (getEmptyDump().getOrElse(false)) {
             Files.write(out.toPath(), new byte[0]);
