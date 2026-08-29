@@ -186,26 +186,66 @@ final class UikaPluginIntegrationTest {
         for (String name : List.of("nosuchConfiguration", "implementation")) {
             var result = GradleRunner.create()
                     .withProjectDir(projectDir.toFile())
-                    .withArguments("uikaDumpClasspath", "-PuikaConfiguration=" + name)
+                    .withArguments("uikaDumpClasspath", "--stacktrace",
+                            "-PuikaOutput=" + projectDir.resolve("classpath.json"),
+                            "-PuikaConfiguration=" + name)
                     .withPluginClasspath()
                     .buildAndFail();
+            // The message must name the project, which is the whole point of it.
             assertTrue(result.getOutput().contains("-PuikaConfiguration"),
-                    "expected a uika-named error naming the property for " + name + ":\n"
+                    () -> "expected the uika-named error for " + name + ":\n"
+                            + result.getOutput());
+            // Naming the project is the message's whole value; which module trips first
+            // is scheduling, so assert the shape rather than a particular path.
+            assertTrue(result.getOutput().contains("project :"),
+                    () -> "the error does not name the offending project for " + name + ":\n"
                             + result.getOutput());
         }
     }
 
-    /// The guard must not reach the default: every project the java plugin touches has
-    /// runtimeClasspath, and naming it explicitly has to behave exactly like not naming it.
+    /// The failure belongs to the dump, not to the build. This same file catches an
+    /// unsupported platform while wiring for the same reason: the per-module task is
+    /// realized by `gradle tasks` and by IDE sync, and a bad value for a dump-only property
+    /// must not break those.
     @Test
-    void defaultConfigurationIsUnaffectedByTheGuard() throws Exception {
-        var output = projectDir.resolve("classpath.json");
+    void anUnresolvableConfigurationDoesNotBreakUnrelatedInvocations() throws Exception {
         writeMixedReleaseProject();
 
-        runDump(output, "-PuikaConfiguration=runtimeClasspath");
+        var result = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments("tasks", "-PuikaConfiguration=nosuchConfiguration")
+                .withPluginClasspath()
+                .build();
+
+        assertEquals(TaskOutcome.SUCCESS,
+                Objects.requireNonNull(result.task(":tasks")).getOutcome());
+    }
+
+    /// The exemption is keyed on the java PLUGIN, which is what creates runtimeClasspath.
+    /// JavaPluginExtension would be wrong: java-base creates it without a source set or a
+    /// runtimeClasspath, so an Android or convention-plugin module would fail a build that
+    /// never asked for a different configuration.
+    @Test
+    void aJavaBaseProjectIsExemptFromTheGuard() throws Exception {
+        Files.createDirectories(projectDir.resolve("base"));
+        write(projectDir.resolve("settings.gradle.kts"), """
+                rootProject.name = "mixed"
+                include("base")
+                """);
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins { id("net.exoego.uika") }
+                """);
+        // java-base gives the project a JavaPluginExtension and no runtimeClasspath.
+        write(projectDir.resolve("base/build.gradle.kts"), """
+                plugins { `java-base` }
+                """);
+
+        var output = projectDir.resolve("classpath.json");
+        runDump(output, "-PuikaConfiguration=nosuchConfiguration");
 
         assertTrue(Files.exists(output), "dump was not written: " + output);
     }
+
 
     @SuppressWarnings("unchecked")
     private static Map<String, Integer> moduleReleases(Map<String, Object> doc) {
