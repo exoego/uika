@@ -173,6 +173,80 @@ final class UikaPluginIntegrationTest {
         }
     }
 
+    /// -PuikaConfiguration naming something a module cannot resolve used to leave that
+    /// module in the dump with its classesDirs and ZERO artifacts, silently: the emptyDump
+    /// guard only covers projects with no Java at all, so the check then reported nothing
+    /// broken for a module it was handed no classpath for.
+    @Test
+    void unresolvableConfigurationPropertyFailsInsteadOfEmptyingTheDump() throws Exception {
+        writeMixedReleaseProject();
+
+        // Absent everywhere, and present but not resolvable (implementation is a bucket you
+        // declare into). Both produced the same silent empty artifact list.
+        for (String name : List.of("nosuchConfiguration", "implementation")) {
+            var result = GradleRunner.create()
+                    .withProjectDir(projectDir.toFile())
+                    .withArguments("uikaDumpClasspath", "--stacktrace",
+                            "-PuikaOutput=" + projectDir.resolve("classpath.json"),
+                            "-PuikaConfiguration=" + name)
+                    .withPluginClasspath()
+                    .buildAndFail();
+            // The message must name the project, which is the whole point of it.
+            assertTrue(result.getOutput().contains("-PuikaConfiguration"),
+                    () -> "expected the uika-named error for " + name + ":\n"
+                            + result.getOutput());
+            // Naming the project is the message's whole value; which module trips first
+            // is scheduling, so assert the shape rather than a particular path.
+            assertTrue(result.getOutput().contains("project :"),
+                    () -> "the error does not name the offending project for " + name + ":\n"
+                            + result.getOutput());
+        }
+    }
+
+    /// The failure belongs to the dump, not to the build. This same file catches an
+    /// unsupported platform while wiring for the same reason: the per-module task is
+    /// realized by `gradle tasks` and by IDE sync, and a bad value for a dump-only property
+    /// must not break those.
+    @Test
+    void anUnresolvableConfigurationDoesNotBreakUnrelatedInvocations() throws Exception {
+        writeMixedReleaseProject();
+
+        var result = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments("tasks", "-PuikaConfiguration=nosuchConfiguration")
+                .withPluginClasspath()
+                .build();
+
+        assertEquals(TaskOutcome.SUCCESS,
+                Objects.requireNonNull(result.task(":tasks")).getOutcome());
+    }
+
+    /// The exemption is keyed on the java PLUGIN, which is what creates runtimeClasspath.
+    /// JavaPluginExtension would be wrong: java-base creates it without a source set or a
+    /// runtimeClasspath, so an Android or convention-plugin module would fail a build that
+    /// never asked for a different configuration.
+    @Test
+    void aJavaBaseProjectIsExemptFromTheGuard() throws Exception {
+        Files.createDirectories(projectDir.resolve("base"));
+        write(projectDir.resolve("settings.gradle.kts"), """
+                rootProject.name = "mixed"
+                include("base")
+                """);
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins { id("net.exoego.uika") }
+                """);
+        // java-base gives the project a JavaPluginExtension and no runtimeClasspath.
+        write(projectDir.resolve("base/build.gradle.kts"), """
+                plugins { `java-base` }
+                """);
+
+        var output = projectDir.resolve("classpath.json");
+        runDump(output, "-PuikaConfiguration=nosuchConfiguration");
+
+        assertTrue(Files.exists(output), "dump was not written: " + output);
+    }
+
+
     @SuppressWarnings("unchecked")
     private static Map<String, Integer> moduleReleases(Map<String, Object> doc) {
         var modules = (List<Map<String, Object>>) doc.get("modules");

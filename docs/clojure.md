@@ -26,9 +26,14 @@ The dump records the resolved Maven coordinates from the project's own
 `deps.edn` basis (`:local/root` and git deps are coordinate-less, like the other
 tools' project dependencies), and `upgrade-check` downloads the platform binary
 from Maven Central (`UIKA_CLI_URL` to override the URL, `UIKA_CLI_PATH` to skip
-the download). The binary's version is taken from the tool's own coordinate in
-the runtime basis, so the one `:mvn/version` in the alias pins the tool and the
-CLI together.
+the download, or `:cli-path` to do the same from the call). The binary's version
+is taken from the tool's own coordinate in the runtime basis, so the one
+`:mvn/version` in the alias pins the tool and the CLI together;
+`:cli-version` and `UIKA_CLI_VERSION` override it, in that order.
+
+`dump-classpath` takes `:dir` to point at another project's `deps.edn`,
+defaulting to the working directory. `upgrade-check` takes `:evidence-work-dir`
+for where recordings are converted, defaulting to `target/uika`.
 
 There is no module model to read a compile target from, so
 [`:jdk-release`](../README.md#build-tool-plugins) defaults to the project's
