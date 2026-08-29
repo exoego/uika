@@ -178,9 +178,11 @@ over-approximation, so ⚠️ is a signal to deprioritize rather than a guarante
 and reflection driven purely by external configuration stays invisible.
 Anything not provably unreachable stays 💥.
 
-Without usable roots every violation stays 💥, so `reachable` behaves like
-`any`. That is what a dump taken without building the outputs gives you, and
-what roots matching no scanned class give you (a warning names the cause).
+Without usable roots nothing can be labelled ⚠️, so `reachable` behaves like
+`any` over everything except the 💤 tier below, which comes from the scanned
+bytecode and survives. That is what a dump taken without building the outputs
+gives you, and what roots matching no scanned class give you (a warning names
+the cause).
 
 **Invocation evidence (💤).** `AbstractMethodError` is the one break that does
 not fire when the class loads. A concrete class inheriting an unimplemented
