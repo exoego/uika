@@ -224,6 +224,37 @@ python3 "$RULES/it/assert_dump.py" "$OUT/before.json" "$OUT/after.json" \
   "$OUT/resolution.json" "$OUT/report.txt" \
   "$OUT/before-materialized.json" "$OUT/baseline-jars" "$OUT/materialized-report.txt"
 
+echo "--- upgrade-check argument guards"
+# DumpMain and MergeMain route every parse through Manifest.flagValue; the check binary
+# used to read args[++i] bare. An unset shell variable in `--before "$BASELINE"` arrives
+# as an empty string, which workspacePath turns into the workspace ROOT rather than
+# failing, so the CLI got handed a directory where a dump belongs.
+assert_check_rejects() {
+  what=$1
+  shift
+  set +e
+  UIKA_CLI_PATH=$STUB "$BAZEL" run //:check -- "$@" > "$OUT/arg-guard.txt" 2>&1
+  guard_status=$?
+  set -e
+  if [ "$guard_status" -eq 0 ]; then
+    echo "expected $what to be rejected" >&2
+    cat "$OUT/arg-guard.txt" >&2
+    exit 1
+  fi
+  if ! grep -qE "missing value for|wants a whole number" "$OUT/arg-guard.txt"; then
+    echo "expected a named argument error for $what, got:" >&2
+    cat "$OUT/arg-guard.txt" >&2
+    exit 1
+  fi
+}
+
+assert_check_rejects "an empty --before" \
+  --before "" --after "$OUT/after.json"
+assert_check_rejects "a trailing --after" \
+  --before "$OUT/before.json" --after
+assert_check_rejects "a non-numeric --jdkRelease" \
+  --before "$OUT/before.json" --after "$OUT/after.json" --jdkRelease abc
+
 echo "--- exclude_files comma guard"
 # The attr rides one comma-joined -D property, so a comma inside a path would be
 # silently split into two bogus paths. The macro fails loudly instead, the same

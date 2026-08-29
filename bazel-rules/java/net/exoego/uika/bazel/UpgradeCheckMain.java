@@ -23,7 +23,9 @@ public final class UpgradeCheckMain {
 
     public static void main(String[] args) throws IOException, InterruptedException {
         if (args.length > 0 && "jfr-jvmopt".equals(args[0])) {
-            printJfrJvmOpt(args.length > 1 ? args[1] : "uika/jfr");
+            // Guarded like the flags below: an empty directory argument would create and
+            // record into the workspace root.
+            printJfrJvmOpt(args.length > 1 ? Manifest.flagValue(args, 1) : "uika/jfr");
             return;
         }
 
@@ -41,14 +43,22 @@ public final class UpgradeCheckMain {
 
         for (var i = 0; i < args.length; i++) {
             switch (args[i]) {
-                case "--before" -> before = Manifest.workspacePath(args[++i]);
-                case "--after" -> after = Manifest.workspacePath(args[++i]);
-                case "--failOn" -> failOn = args[++i];
-                case "--excludeFile" -> excludeFiles.add(Manifest.workspacePath(args[++i]));
-                case "--classLoadLog" -> classLoadLogs.add(Manifest.workspacePath(args[++i]));
-                case "--jfr" -> jfr = Manifest.workspacePath(args[++i]);
-                case "--draftExcludeFile" -> draftExcludeFile = Manifest.workspacePath(args[++i]);
-                case "--jdkRelease" -> wanted = Integer.parseInt(args[++i]);
+                // Every value through Manifest.flagValue, like DumpMain and MergeMain. A bare
+                // args[++i] reads past the end on a trailing flag, and takes an empty string
+                // as a path: an unset shell variable in `--before "$BASELINE"` arrives here
+                // as "", which workspacePath turns into the workspace ROOT rather than
+                // failing, and the CLI is handed a directory where a dump belongs.
+                case "--before" -> before = Manifest.workspacePath(Manifest.flagValue(args, ++i));
+                case "--after" -> after = Manifest.workspacePath(Manifest.flagValue(args, ++i));
+                case "--failOn" -> failOn = Manifest.flagValue(args, ++i);
+                case "--excludeFile" ->
+                        excludeFiles.add(Manifest.workspacePath(Manifest.flagValue(args, ++i)));
+                case "--classLoadLog" ->
+                        classLoadLogs.add(Manifest.workspacePath(Manifest.flagValue(args, ++i)));
+                case "--jfr" -> jfr = Manifest.workspacePath(Manifest.flagValue(args, ++i));
+                case "--draftExcludeFile" ->
+                        draftExcludeFile = Manifest.workspacePath(Manifest.flagValue(args, ++i));
+                case "--jdkRelease" -> wanted = Manifest.flagRelease(args, ++i);
                 default -> throw new IllegalArgumentException("unknown argument: " + args[i]);
             }
         }
