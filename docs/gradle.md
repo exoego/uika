@@ -182,6 +182,11 @@ resolved local paths.
   `compileJava`'s `options.release`, else target compatibility. Override with
   `-PuikaJdkRelease=` on both the dump and the check, or set 0 to disable the
   API layer.
+- `-PuikaConfiguration=` picks which configuration the dump resolves, default
+  `runtimeClasspath`. It must name a resolvable configuration that every module
+  has, and the dump fails naming the module when one does not: a configuration
+  that misses or cannot resolve contributes no artifacts, which would leave that
+  module in the dump with an empty classpath and nothing to check.
 
 ## Runtime load evidence (JFR)
 

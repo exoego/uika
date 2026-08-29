@@ -173,6 +173,40 @@ final class UikaPluginIntegrationTest {
         }
     }
 
+    /// -PuikaConfiguration naming something a module cannot resolve used to leave that
+    /// module in the dump with its classesDirs and ZERO artifacts, silently: the emptyDump
+    /// guard only covers projects with no Java at all, so the check then reported nothing
+    /// broken for a module it was handed no classpath for.
+    @Test
+    void unresolvableConfigurationPropertyFailsInsteadOfEmptyingTheDump() throws Exception {
+        writeMixedReleaseProject();
+
+        // Absent everywhere, and present but not resolvable (implementation is a bucket you
+        // declare into). Both produced the same silent empty artifact list.
+        for (String name : List.of("nosuchConfiguration", "implementation")) {
+            var result = GradleRunner.create()
+                    .withProjectDir(projectDir.toFile())
+                    .withArguments("uikaDumpClasspath", "-PuikaConfiguration=" + name)
+                    .withPluginClasspath()
+                    .buildAndFail();
+            assertTrue(result.getOutput().contains("-PuikaConfiguration"),
+                    "expected a uika-named error naming the property for " + name + ":\n"
+                            + result.getOutput());
+        }
+    }
+
+    /// The guard must not reach the default: every project the java plugin touches has
+    /// runtimeClasspath, and naming it explicitly has to behave exactly like not naming it.
+    @Test
+    void defaultConfigurationIsUnaffectedByTheGuard() throws Exception {
+        var output = projectDir.resolve("classpath.json");
+        writeMixedReleaseProject();
+
+        runDump(output, "-PuikaConfiguration=runtimeClasspath");
+
+        assertTrue(Files.exists(output), "dump was not written: " + output);
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Integer> moduleReleases(Map<String, Object> doc) {
         var modules = (List<Map<String, Object>>) doc.get("modules");
