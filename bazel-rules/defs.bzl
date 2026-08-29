@@ -6,6 +6,32 @@ load("//private:dump.bzl", "uika_classpath_manifest")
 
 uika_classpath_aspect = _uika_classpath_aspect
 
+def _release_value(name, macro, jdk_release):
+    """The jdk_release to put on the command line, rejecting what is not a number.
+
+    These are macro parameters rather than typed rule attributes, so Bazel checks nothing
+    and `jdk_release = "seventeen"` used to reach the JVM as
+    `-Duika.jdkRelease=seventeen`, where `Integer.getInteger` answered its default and the
+    release was silently derived instead of overridden. Catching it here fails the load with
+    the target named, which is the earliest and clearest point. It does NOT cover a
+    hand-written `jvm_flags`, a `--jvmopt` or a `.bazelrc` line setting the property
+    directly, nor `@uika//:merge`, which no macro fronts; those still read through
+    `Integer.getInteger` and still fall back silently.
+
+    A digit string is accepted and normalized to an int, because `jdk_release = "17"` has
+    always worked and Gradle and the Clojure tool both take a numeric string for the same
+    knob. Normalizing also settles the base: `format` on an int always writes plain
+    decimal, so `"017"` cannot reach the JVM to be read as octal.
+    """
+    if type(jdk_release) == "int":
+        return jdk_release
+    if type(jdk_release) == "string":
+        digits = jdk_release[1:] if jdk_release.startswith("-") else jdk_release
+        if digits.isdigit():
+            return int(jdk_release)
+    fail("%s(name = %r): jdk_release wants a whole number, got %r" %
+         (macro, name, jdk_release))
+
 def uika_dump(name, targets, build_outputs = True, jdk_release = 0, **kwargs):
     """Declares a `bazel run`-able target that dumps `targets`' resolved classpaths.
 
@@ -25,6 +51,7 @@ def uika_dump(name, targets, build_outputs = True, jdk_release = 0, **kwargs):
         runtime is not what it compiles against. 0 keeps the derived value.
       **kwargs: passed through to the generated java_binary (visibility, tags, ...).
     """
+    jdk_release = _release_value(name, "uika_dump", jdk_release)
     manifest = name + ".manifest"
     uika_classpath_manifest(
         name = manifest,
@@ -70,6 +97,7 @@ def uika_upgrade_check(
         into the derived default instead, so the two attrs default differently on purpose.
       **kwargs: passed through to the generated java_binary (visibility, tags, ...).
     """
+    jdk_release = _release_value(name, "uika_upgrade_check", jdk_release)
     # The list rides one comma-joined -D property, so a comma inside a path would be
     # silently split into two bogus paths. Fail loudly instead of encoding, the same
     # decision the manifest makes for tab and newline.

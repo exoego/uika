@@ -17,6 +17,10 @@ lein-plugin/it/test-project/jfr-evidence/
 # Bazel convenience symlinks, if anyone runs bazel inside the ruleset itself. The
 # integration test runs in a temp copy and never creates them here.
 bazel-rules/bazel-*
+# Written by `make bazel-unit-test`. Not committed: lockFileVersion tracks the Bazel
+# that wrote it while MODULE.bazel advertises >=7.0.0, and the default
+# --lockfile_mode=update would let a test run dirty a tracked file.
+bazel-rules/MODULE.bazel.lock
 sbt-plugin/.idea/
 *.iml
 .mise.local.toml

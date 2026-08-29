@@ -255,6 +255,89 @@ assert_check_rejects "a trailing --after" \
 assert_check_rejects "a non-numeric --jdkRelease" \
   --before "$OUT/before.json" --after "$OUT/after.json" --jdkRelease abc
 
+# ...but a blank --failOn is UNSET, not an error. Every other integration drops it, and so
+# does this binary's own rule-attribute path, so rejecting it would make Bazel the one tool
+# where `--failOn "$UIKA_FAIL_ON"` with the variable unset fails the build.
+UIKA_STUB_ARGS=$OUT/stub-args-blank-failon.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check -- \
+  --before "$OUT/before.json" --after "$OUT/after.json" --failOn ""
+if grep -qx -- "--fail-on" "$OUT/stub-args-blank-failon.txt"; then
+  echo "a blank --failOn should be dropped, not forwarded:" >&2
+  cat "$OUT/stub-args-blank-failon.txt" >&2
+  exit 1
+fi
+
+echo "--- jdk_release type guard"
+# jdk_release is a macro parameter, so Bazel type-checks nothing. A string reached the JVM
+# as -Duika.jdkRelease=seventeen, and Integer.getInteger answers its default for anything
+# unparseable, so the build succeeded and the release was silently derived. Same package
+# trick as the comma guard below: added after the //... sweep so the sweep never loads it.
+# Both macros, because a guard on one is invisible to a test of the other, and the
+# numeric-string spelling, which has always worked and which Gradle and the Clojure tool
+# both accept for the same knob.
+mkdir -p badrelease goodrelease
+cat > badrelease/BUILD.bazel <<'EOF'
+load("@uika//:defs.bzl", "uika_dump", "uika_upgrade_check")
+
+uika_upgrade_check(
+    name = "bad",
+    jdk_release = "seventeen",
+)
+
+uika_dump(
+    name = "bad_dump",
+    targets = [],
+    jdk_release = "seventeen",
+)
+EOF
+cat > goodrelease/BUILD.bazel <<'EOF'
+load("@uika//:defs.bzl", "uika_upgrade_check")
+
+uika_upgrade_check(
+    name = "quoted",
+    jdk_release = "17",
+)
+EOF
+set +e
+"$BAZEL" build //badrelease:bad > "$OUT/release-guard.txt" 2>&1
+release_guard_status=$?
+set -e
+if [ "$release_guard_status" -eq 0 ]; then
+  echo "a non-numeric jdk_release should fail the load" >&2
+  cat "$OUT/release-guard.txt" >&2
+  exit 1
+fi
+if ! grep -q "jdk_release wants a whole number" "$OUT/release-guard.txt"; then
+  echo "expected the uika jdk_release message:" >&2
+  cat "$OUT/release-guard.txt" >&2
+  exit 1
+fi
+# The guard must reject the string on BOTH macros, not just the one that happened to be
+# tested first: deleting either call has to fail this.
+if ! grep -q "uika_dump(name = " "$OUT/release-guard.txt"; then
+  sed -i.bak '/uika_upgrade_check(/,/^)$/d' badrelease/BUILD.bazel && rm -f badrelease/BUILD.bazel.bak
+  set +e
+  "$BAZEL" build //badrelease:bad_dump > "$OUT/release-guard-dump.txt" 2>&1
+  dump_guard_status=$?
+  set -e
+  if [ "$dump_guard_status" -eq 0 ] ||
+     ! grep -q "uika_dump(name = " "$OUT/release-guard-dump.txt"; then
+    echo "uika_dump did not reject a non-numeric jdk_release:" >&2
+    cat "$OUT/release-guard-dump.txt" >&2
+    exit 1
+  fi
+fi
+rm -rf badrelease
+
+# A quoted number has always worked, and Gradle and the Clojure tool both take one, so the
+# guard must not have made Bazel the strict outlier.
+"$BAZEL" build //goodrelease:quoted > "$OUT/release-quoted.txt" 2>&1 || {
+  echo "a quoted numeric jdk_release must still load:" >&2
+  cat "$OUT/release-quoted.txt" >&2
+  rm -rf goodrelease
+  exit 1
+}
+rm -rf goodrelease
+
 echo "--- exclude_files comma guard"
 # The attr rides one comma-joined -D property, so a comma inside a path would be
 # silently split into two bogus paths. The macro fails loudly instead, the same

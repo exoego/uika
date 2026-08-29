@@ -50,7 +50,13 @@ public final class UpgradeCheckMain {
                 // failing, and the CLI is handed a directory where a dump belongs.
                 case "--before" -> before = Manifest.workspacePath(Manifest.flagValue(args, ++i));
                 case "--after" -> after = Manifest.workspacePath(Manifest.flagValue(args, ++i));
-                case "--failOn" -> failOn = Manifest.flagValue(args, ++i);
+                // Raw value, unlike its neighbours: an empty --failOn is DROPPED the way
+                // every other integration drops it, and the way the rule attribute already
+                // does (defs.bzl formats `fail_on or ""` and property() maps "" to null).
+                // Rejecting it would make Bazel the one tool where
+                // `--failOn "$UIKA_FAIL_ON"` with the variable unset is a hard error.
+                // The trailing-flag read stays guarded.
+                case "--failOn" -> failOn = Manifest.flagOptional(args, ++i);
                 case "--excludeFile" ->
                         excludeFiles.add(Manifest.workspacePath(Manifest.flagValue(args, ++i)));
                 case "--classLoadLog" ->

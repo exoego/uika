@@ -214,6 +214,14 @@
               (uika/upgrade-check {:before (str before) :after (str after)
                                    :cli-path (str failing-stub)})))))))
 
+(deftest usage-hint-names-the-documented-invocation
+  ;; -Tuika only resolves for a development `-Ttools install` from a local or git
+  ;; coordinate. The documented install is a deps.edn alias carrying :ns-default, which
+  ;; needs -T:uika, so the hint pointed users at a form their install does not have.
+  (is (thrown-with-msg?
+       clojure.lang.ExceptionInfo #"clojure -T:uika upgrade-check"
+       (uika/upgrade-check {}))))
+
 (deftest version-from-libs-reads-the-tools-own-maven-coordinate
   ;; The deps.edn alias flow: the one :mvn/version names the matching uika-cli
   ;; release. A git or :local/root install has no such coordinate on purpose
