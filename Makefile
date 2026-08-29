@@ -54,7 +54,7 @@ help:
 		'Useful direct targets:' \
 		'  make cargo-release' \
 		'  make probe        Answer-check fixture verdicts against a real JVM' \
-		'  make rewrite      Rewrite Java locals to var (rewrite-check verifies only)' \
+		'  make rewrite      Apply OpenRewrite recipes to Java sources (rewrite-check verifies only)' \
 		'  make gradle-check' \
 		'  make sbt-scripted' \
 		'  make maven-verify' \
@@ -114,12 +114,11 @@ cargo-fmt-check:
 probe: cargo-build
 	UIKA=target/debug/uika JAVA="$(JAVA)" sh tools/jvm-probe/run-fixtures.sh
 
-# Keeps local variable declarations on var (recipes and version pins in
-# tools/openrewrite/rewrite.gradle, applied as an init script so the plugin builds stay
-# untouched). Runs through the gradle-plugin build, which mounts jvm-plugin-core, so the
-# shared sources and their symlink consumers are covered. The maven mojos, the
-# bazel-rules mains and tools/jvm-probe sit outside every Gradle source set and were
-# converted once when this was introduced.
+# Applies the OpenRewrite recipes in tools/openrewrite/rewrite.gradle, passed as an
+# init script so the plugin builds stay untouched. Runs through the gradle-plugin
+# build, which mounts jvm-plugin-core, so the shared sources and their symlink
+# consumers are covered. The maven mojos, the bazel-rules mains and tools/jvm-probe
+# sit outside every Gradle source set, so the recipes do not reach them.
 rewrite:
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) --init-script $(CURDIR)/tools/openrewrite/rewrite.gradle rewriteRun
 
