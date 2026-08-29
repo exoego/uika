@@ -239,6 +239,20 @@ final class Manifest {
      * perfectly good relative path that would silently resolve every entry against the
      * working directory.
      */
+    /**
+     * Like {@link #flagValue}, but answers null for an empty value instead of rejecting it.
+     * For a flag whose empty spelling means "unset" everywhere else -- {@code --failOn},
+     * which {@code UikaCli.runUpgradeCheck} already drops with its own {@code isBlank}
+     * guard -- so a CI invocation interpolating an unset variable behaves here the way it
+     * does in the other six integrations. The trailing-flag read stays guarded.
+     */
+    static String flagOptional(String[] args, int index) {
+        if (index >= args.length) {
+            throw new IllegalArgumentException("missing value for " + args[index - 1]);
+        }
+        return args[index].isEmpty() ? null : args[index];
+    }
+
     static String flagValue(String[] args, int index) {
         if (index >= args.length || args[index].isEmpty()) {
             throw new IllegalArgumentException("missing value for " + args[index - 1]);

@@ -224,6 +224,48 @@ python3 "$RULES/it/assert_dump.py" "$OUT/before.json" "$OUT/after.json" \
   "$OUT/resolution.json" "$OUT/report.txt" \
   "$OUT/before-materialized.json" "$OUT/baseline-jars" "$OUT/materialized-report.txt"
 
+echo "--- upgrade-check argument guards"
+# DumpMain and MergeMain route every parse through Manifest.flagValue; the check binary
+# used to read args[++i] bare. An unset shell variable in `--before "$BASELINE"` arrives
+# as an empty string, which workspacePath turns into the workspace ROOT rather than
+# failing, so the CLI got handed a directory where a dump belongs.
+assert_check_rejects() {
+  what=$1
+  shift
+  set +e
+  UIKA_CLI_PATH=$STUB "$BAZEL" run //:check -- "$@" > "$OUT/arg-guard.txt" 2>&1
+  guard_status=$?
+  set -e
+  if [ "$guard_status" -eq 0 ]; then
+    echo "expected $what to be rejected" >&2
+    cat "$OUT/arg-guard.txt" >&2
+    exit 1
+  fi
+  if ! grep -qE "missing value for|wants a whole number" "$OUT/arg-guard.txt"; then
+    echo "expected a named argument error for $what, got:" >&2
+    cat "$OUT/arg-guard.txt" >&2
+    exit 1
+  fi
+}
+
+assert_check_rejects "an empty --before" \
+  --before "" --after "$OUT/after.json"
+assert_check_rejects "a trailing --after" \
+  --before "$OUT/before.json" --after
+assert_check_rejects "a non-numeric --jdkRelease" \
+  --before "$OUT/before.json" --after "$OUT/after.json" --jdkRelease abc
+
+# ...but a blank --failOn is UNSET, not an error. Every other integration drops it, and so
+# does this binary's own rule-attribute path, so rejecting it would make Bazel the one tool
+# where `--failOn "$UIKA_FAIL_ON"` with the variable unset fails the build.
+UIKA_STUB_ARGS=$OUT/stub-args-blank-failon.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check -- \
+  --before "$OUT/before.json" --after "$OUT/after.json" --failOn ""
+if grep -qx -- "--fail-on" "$OUT/stub-args-blank-failon.txt"; then
+  echo "a blank --failOn should be dropped, not forwarded:" >&2
+  cat "$OUT/stub-args-blank-failon.txt" >&2
+  exit 1
+fi
+
 echo "--- jdk_release type guard"
 # jdk_release is a macro parameter, so Bazel type-checks nothing. A string reached the JVM
 # as -Duika.jdkRelease=seventeen, and Integer.getInteger answers its default for anything
