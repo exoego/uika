@@ -50,17 +50,8 @@ $ bazel run //:uika_upgrade_check -- --before /tmp/before.json --after /tmp/afte
 The CLI binary comes from a repository rule, so Bazel's repository cache holds
 it, a second run needs no network, and the release archive pins its checksum
 for every platform. `UIKA_CLI_PATH` points it at a binary you already have
-instead. The check target takes its settings at run time as well:
-[`--failOn`](../README.md#violation-tiers-and---fail-on) and `--jdkRelease`
-override the `fail_on` and `jdk_release` attributes, and the repeatable
-[`--excludeFile`](../README.md#excluding-known-false-positives---exclude-file)
-appends to `exclude_files`. `--classLoadLog` (repeatable), `--jfr` and
-`--draftExcludeFile` have no attribute to override, so runtime load evidence is
-passed at run time only. A relative path in any of
-them resolves against the workspace root (`BUILD_WORKSPACE_DIRECTORY`),
-wherever you ran `bazel` from, and never against the runfiles tree. The check
-target repeats `targets` only to read the API release they compile for, so it
-builds nothing.
+instead. The check target repeats `targets` only to read the API release they
+compile for, so it builds nothing.
 
 The `uika.cli` module-extension tag overrides where the binary comes from.
 That is the pin for every case the release archive's checksum map cannot
@@ -80,6 +71,30 @@ use_repo(uika, "uika_cli")
 
 Each entry in `targets` becomes one module of the dump, named by its label, so
 `upgrade-check` checks each against its own resolution.
+
+## Options
+
+Every option is a rule attribute, a run-time flag, or both. A run-time flag
+wins over the attribute of the same name, except `--excludeFile`, which appends
+to `exclude_files`. A relative path in any of them resolves against the
+workspace root (`BUILD_WORKSPACE_DIRECTORY`), wherever you ran `bazel` from,
+and never against the runfiles tree.
+
+- [`fail_on`](../README.md#violation-tiers-and-the-failon-threshold) is `never`,
+  `reachable` or `any`, and `--failOn` overrides it.
+- [`exclude_files`](../README.md#excluding-known-false-positives)
+  is a label list, and the repeatable `--excludeFile` adds to it.
+- [`jdk_release`](#coordinates-and-jdk_release) is derived per target, and
+  `--jdkRelease` overrides it on both rules and on `@uika//:merge`.
+- `--classLoadLog` (repeatable) and `--jfr` supply
+  [runtime load evidence](#runtime-load-evidence-jfr). `--draftExcludeFile` is
+  where rules drafted from it are written. None of the three has an attribute,
+  so they are passed at run time only.
+- `--materialize <dir>` on a dump puts every JAR it names into one directory and
+  points the dump there, which is what makes a baseline portable to another
+  machine. It hard-links where the filesystem allows it, so the common case
+  costs no space, and copies where it does not, such as a destination on
+  another filesystem. See [What a dump names](#what-a-dump-names).
 
 ## PR gate on GitHub Actions
 

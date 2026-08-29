@@ -75,13 +75,13 @@ PR's critical path:
 
 ### Runtime load evidence from the base branch (optional)
 
-[Runtime load evidence](#runtime-load-evidence-jfr---class-load-log) rides
+[Runtime load evidence](#runtime-load-evidence-jfr) rides
 the same artifact flow as the
 [cached baseline](docs/gradle.md#caching-the-baseline): the base branch runs
 its test suite with JFR class-load
 recording on, uploads the recordings, and the PR job downloads them by
 `base.sha` and adds one flag. A ⚠️ class that provably loads during tests then
-fails `--fail-on reachable` instead of being deprioritized (a 💤 latent
+fails `failOn = reachable` instead of being deprioritized (a 💤 latent
 violation stays latent — loading proves the class reachable, not that anything
 invokes the affected member). For Gradle, next to the baseline dump:
 
@@ -101,43 +101,23 @@ and in the PR job, after downloading the artifact into `/tmp/uika-jfr`:
 
 The [per-tool options](#build-tool-plugins) cover the other tools.
 
-## Command reference
+## What a check reports
+
+Every tool's check task runs the same report over the two dumps. A broken
+reference names the member, what it throws, and every class that still uses it:
 
 ```console
-# List breaking changes between old/new versions of a library.
-# Each line opens with the change kind, which is also what --json puts in its "kind" field:
-# jq '.breaking_changes[] | select(.kind == "class_became_final")' selects those lines.
-$ uika diff guava-22.0.jar guava-23.0-rc1.jar [--json]
-CLASS BECAME FINAL     com/google/common/collect/BoundType
-FIELD REMOVED          com/google/common/graph/GraphConstants.EDGE_CONNECTING_NOT_IN_GRAPH Ljava/lang/String;
-METHOD ACCESS NARROWED com/google/common/collect/Iterators$ConcatenatedIterator.<init> (Ljava/util/Iterator;)V (public -> package-private)
-
-breaking changes: 93 (classes: 26, methods: 61, fields: 6)
-
-# Find usages of breaking changes across classpath JARs / your build output
-# (--old/--new may be repeated to check several changed libraries in one run)
-# Exit codes: 0 = clean, 1 = violations found, 2 = error
-$ uika check --old kotlinx-coroutines-core-jvm-1.7.1.jar \
-             --new kotlinx-coroutines-core-jvm-1.11.0.jar \
-             --classpath ktor-io-jvm-2.3.13.jar:other-dep.jar \
-             --app build/classes/kotlin/main
-checked kotlinx-coroutines-core-jvm-1.7.1.jar -> kotlinx-coroutines-core-jvm-1.11.0.jar against 3 scan targets
-
---------------------------------------------------------------------------------
-💥 reachable from the application (likely to break)
---------------------------------------------------------------------------------
-
 ❌ kotlinx.coroutines.EventLoopKt.processNextEventInCurrentThread()
     method removed, throws NoSuchMethodError at first call
     used by 1 class:
         io.ktor.utils.io.jvm.javaio.BlockingAdapter  (ktor-io-jvm-2.3.13.jar)
+```
 
-scanned 372 classes: ❌ 1 broken (of which 💥 1 reachable, ⚠️ 0 not proven reachable), ❓ 5 unverified references (hierarchy escapes the analyzed scope)
+Violations that share one cause are collapsed into a suggestion naming the fix.
+When application roots are known (build outputs in the dump), they are ranked:
+reachable first, then the ones no static path reaches.
 
-# Detect broken references caused by every artifact whose version changed.
-# When application roots are known (build outputs in the dump, or --app), violations
-# are ranked: reachable first, then the ones no static path reaches.
-$ uika upgrade-check --before /tmp/before.json --after /tmp/after.json
+```console
 dependency changes: 1
     CHANGED io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
 
@@ -163,12 +143,13 @@ per-module check: 2 of 41 modules changed their resolved versions (39 unchanged)
     why: ...
 
 scanned 145213 classes: ❌ 42 broken (of which 💥 25 reachable, ⚠️ 17 not proven reachable), ❓ 205 unverified references (hierarchy escapes the analyzed scope)
-
-# Debugging aid: dump the extracted API surface of a JAR
-$ uika dump some.jar
 ```
 
-### Violation tiers and `--fail-on`
+The plugins run a binary they fetch themselves, so the command line behind
+this is an implementation detail. [The CLI page](docs/cli.md) has it, for a
+build no plugin covers.
+
+### Violation tiers and the `failOn` threshold
 
 A changed library drags in transitive JARs your application never touches, so
 not every violation is worth the same attention. Each one lands in a tier, and
@@ -180,27 +161,28 @@ the report prints them in this order:
 | 💤 latent | class is reachable, but no scanned code invokes the affected member |
 | ⚠️ unproven | no static path from your application reaches the class |
 
-`check` and `upgrade-check` always print the full report; `--fail-on` only
-decides the exit code, as a threshold over exactly that split:
+The report always prints in full. `failOn` only decides the exit code, as a
+threshold over exactly that split:
 
 - `any` (default, strictest): exit 1 on any violation.
 - `reachable`: exit 1 only on 💥.
 - `never`: always exit 0, reporting violations as warnings only.
 
 So what fails CI is exactly what the report shows above the warning sections.
-Errors always exit 2 regardless of `--fail-on`.
+An error always fails the run, whatever the threshold.
 
-**Reachability (💥 vs ⚠️).** When application roots are available (the module
-`classesDirs` in a dump, or `--app` build outputs), uika walks the class-load
+**Reachability (💥 vs ⚠️).** When application roots are available (the build
+outputs a dump records for each module), uika walks the class-load
 graph from them and labels what it never reaches ⚠️. The walk is a deliberate
 over-approximation, so ⚠️ is a signal to deprioritize rather than a guarantee,
 and reflection driven purely by external configuration stays invisible.
 Anything not provably unreachable stays 💥.
 
-Without usable roots every violation stays 💥, so `reachable` behaves like
-`any`. That covers a bare `check --classpath ...` (nothing to walk from) and
-roots that matched no scanned class (build outputs not compiled, which prints a
-warning naming the cause).
+Without usable roots nothing can be labelled ⚠️, so `reachable` behaves like
+`any` over everything except the 💤 tier below, which comes from the scanned
+bytecode and survives. That is what a dump taken without building the outputs
+gives you, and what roots matching no scanned class give you (a warning names
+the cause).
 
 **Invocation evidence (💤).** `AbstractMethodError` is the one break that does
 not fire when the class loads. A concrete class inheriting an unimplemented
@@ -211,34 +193,34 @@ bytecode, and calls the violation latent when there is none. That evidence
 comes from bytecode rather than from application roots, so 💤 survives both
 degraded cases above. Like ⚠️ it is a confidence tier and not a proof, since a
 call through reflection or JNI, or from code outside the scan, stays invisible.
-[`--exclude-file`](#excluding-known-false-positives---exclude-file) can drop
-the whole category with `kind = "method_became_abstract"`.
+An [exclude file](#excluding-known-false-positives) can drop the whole
+category with `kind = "method_became_abstract"`.
 
-### Per-module checking (`upgrade-check`)
+### Per-module checking
 
 Each module gets its own JVM classpath at runtime, and two modules may
 legitimately resolve different versions of one coordinate (e.g. one service 
 on netty 4.1, a newer one on 4.2). So each module is checked against what it 
 actually resolves, not against a flattened union: modules whose versions did 
 not move are skipped, and every violation names the modules that exhibit it
-(`modules:` in the text report, a `modules` array in JSON). `--merged`
-restores the flat union check.
+(`modules:` in the report). Dumps carrying no per-module data fall back to the
+flat union check.
 
-### Excluding known false positives (`--exclude-file`)
+### Excluding known false positives
 
 Some violations are real breaks in the referenced API but never actually
 matter at runtime, because the only reference resolves through reflection
-the tool cannot see (see [Violation tiers](#violation-tiers-and---fail-on)).
+the tool cannot see (see [Violation tiers](#violation-tiers-and-the-failon-threshold)).
 commons-logging's `LogFactoryImpl` is the recurring example: it reflectively
 scans a `String[]` of class names at init, so a field like
 `classesToDiscover` shows up as removed even though no bytecode reference to
 it survives.
 
-`--fail-on reachable` already keeps that kind of violation from failing the
-build, but it is still printed on every run. `--exclude-file <path>`
-(repeatable; rules from every file given are merged) drops specific known
-false positives from the report entirely, with a required reason so the
-entry documents itself for whoever reads it next:
+`failOn = reachable` already keeps that kind of violation from failing the
+build, but it is still printed on every run. An exclude file drops specific
+known false positives from the report entirely, with a required reason so the
+entry documents itself for whoever reads it next. Every tool takes several, and
+the rules from all of them are merged:
 
 ```toml
 # uika-exclude.toml
@@ -279,9 +261,8 @@ reason = "we ship a shaded copy of the lagging artifact, so version-lag finals n
 
 `owner`/`member`/`descriptor` use raw JVM internal forms (`/`-separated owner
 names, `$` for nested classes, `<init>` for constructors, undecoded descriptors
-like `(Ljava/util/Date;)V`), so copy entries from the `--json` output rather
-than from the text report's dotted signatures (each violation's `reference`
-carries the raw `owner`, `member.name`, and `member.descriptor`).
+like `(Ljava/util/Date;)V`), rather than the dotted signatures the report
+prints. [`uika diff`](docs/cli.md#uika-diff) prints them in that form.
 
 `kind` is the violation kind in snake_case, for example `class_removed` or
 `method_became_abstract`; an unknown value is rejected at load with the valid
@@ -290,15 +271,14 @@ a kind from before it was split by direction and member kind
 (`class_kind_changed` still waives both of the flips that replaced it).
 
 A rule needs an `owner`, a `kind`, or both. The summary line reports how many
-violations were suppressed (`N suppressed by --exclude-file`), and a rule that
-matched nothing prints a warning, so stale entries do not go unnoticed as the
-checked libraries change.
+violations were suppressed, and a rule that matched nothing prints a warning,
+so stale entries do not go unnoticed as the checked libraries change.
 
 This is for false positives you have actually investigated, not a shortcut
 around triaging `⚠️  not proven reachable` violations wholesale; use
-`--fail-on reachable` for that instead.
+`failOn = reachable` for that instead.
 
-### Runtime load evidence (JFR, `--class-load-log`)
+### Runtime load evidence (JFR)
 
 The ⚠️ tier means "no static path found", and its blind spot is reflection. A
 JVM can close that gap: run the **current, not yet upgraded** build — its test
@@ -336,9 +316,8 @@ recordings. A ⚠️ violation whose referencing class appears in the evidence i
 promoted out of the tier and marked, trigger included:
 `⚡ observed loading at runtime (via java.lang.Class.forName from
 com.example.PluginRegistry.discover(...))` — the reflective edge the static
-walk could not see, documented for free. `--fail-on reachable` then fails on
-it, and `--json` carries the same evidence per violation (`observed_loading`,
-`load_trigger`).
+walk could not see, documented for free. `failOn = reachable` then fails on
+it.
 
 Ingestion is promote-only, the same stance reachability takes: absence of a
 load entry proves nothing beyond the observed runs (a different code path, a
@@ -355,48 +334,37 @@ never writes its final dump, so a crashed test fork contributes no evidence
 frames (`-XX:FlightRecorderOptions:stackdepth=` to raise), which truncates the
 harness side uika never reads — the trigger sits at the inner end.
 
-**Bring-your-own text logs.** `--class-load-log` also reads text evidence,
-mixed freely with recordings in one directory and parsed leniently:
-unified-logging `[class,load]` lines with any decorators (`-Xlog:class+load`
-output; other `-Xlog` streams sharing the file are skipped), plain class-name
-lists dotted or slashed (`-XX:DumpLoadedClassList` classlists), and
-`class+load+cause` stack blocks — the JDK 22+ flags
+**Bring-your-own text logs.** Text evidence is read too, mixed freely with
+recordings in one directory and parsed leniently: unified-logging
+`[class,load]` lines with any decorators (`-Xlog:class+load` output; other
+`-Xlog` streams sharing the file are skipped), plain class-name lists dotted or
+slashed (`-XX:DumpLoadedClassList` classlists), and `class+load+cause` stack
+blocks — the JDK 22+ flags
 (https://bugs.openjdk.org/browse/JDK-8193513,
 `-Xlog:class+load+cause=info -XX:LogClassLoadingCauseFor=<substring>`) remain
 the right tool for a *targeted* production look at one class, and uika reads
-their output too. Without a build tool, convert a recording by hand:
+their output too.
 
-```console
-jfr print --json --events jdk.ClassLoad rec.jfr \
-  | jq -r '.recording.events[].values.loadedClass.name
-           | select(startswith("[") | not) | "[class,load] \(.)"'
-```
+**Drafting an exclude file.** The deliberate consumer of the opposite signal.
+After soaking the evidence, symbols whose every violation is still ⚠️ *and* was
+never observed loading can be drafted into
+[exclude rules](#excluding-known-false-positives). Every drafted reason opens
+with `REVIEW:` and records exactly what the evidence shows (which classes,
+which logs); a symbol that also breaks a reachable or observed class is never
+drafted, because the rule would waive that real break too. The draft is input
+for a human: review each entry and delete what you cannot justify before
+committing the file. Drafting is refused when the evidence names no class at
+all, because an artifact that never downloaded or a test JVM that never forked
+would otherwise draft every unproven violation with a reason indistinguishable
+from a well-evidenced run. Drafting into a file that is also an exclude file is
+refused for the same reason it looks tempting: it would rewrite that file with
+only the drafted rules.
 
-yields tagged class-load lines the CLI reads (classes only, no triggers; the
-tag keeps default-package names accepted, and the filter drops array classes).
-
-**Drafting an exclude file (`--draft-exclude-file <path>`).** The deliberate
-consumer of the opposite signal. After soaking the evidence, symbols whose
-every violation is still ⚠️ *and* was never observed loading can be drafted
-into [`--exclude-file`](#excluding-known-false-positives---exclude-file)
-rules. Every drafted reason opens with `REVIEW:` and records exactly what the
-evidence shows (which classes, which logs); a symbol that also breaks a
-reachable or observed class is never drafted, because the rule would waive
-that real break too. The draft is input for a human: review each entry and
-delete what you cannot justify before committing the file. Requires
-`--class-load-log`, and refuses to draft when that evidence names no class at
-all: an artifact that never downloaded, a test JVM that never forked, or a
-directory holding only recordings would otherwise draft every unproven
-violation with a reason indistinguishable from a well-evidenced run. Drafting
-into a file that is also an `--exclude-file` is refused for the same reason it
-looks tempting: it would rewrite that file with only the drafted rules.
-
-A `--class-load-log` path that does not exist is skipped with a warning rather
-than failing the run: evidence is data another job produces, so its absence is
-an operational state, and the option can stay in a build that also runs on a
+An evidence path that does not exist is skipped with a warning rather than
+failing the run. Evidence is data another job produces, so its absence is an
+operational state, and the option can stay in a build that also runs on a
 laptop or a fork PR. Nothing is promoted from a path that is not there, which
-is what the warning says. Drafting from evidence that named no class at all is
-still refused.
+is what the warning says.
 
 ## Build-tool plugins
 
@@ -411,16 +379,14 @@ tool:
 - [Leiningen](docs/leiningen.md)
 - [Bazel](docs/bazel.md)
 
+A build none of them covers drives [the CLI](docs/cli.md) by hand instead.
+
 All of them write the same dump format: every module's resolved runtime
-classpath as coordinate-annotated JSON, kept per module so `upgrade-check` can
-[check each against its own resolution](#per-module-checking-upgrade-check).
-Feed two dumps to `uika upgrade-check`, which is what every tool's check task
-runs. One dump also feeds `uika check --classpath-file` (more accurate than a
-hand-assembled classpath, and reduces unverified references). That one stays a
-CLI command. No build-tool integration exposes `check`, so it wants a uika
-binary on the path. A dump also refers to build outputs. Each page says
-how its dump command builds them, and the [PR gate](#pr-gate-on-github-actions-the-main-use-case)
-shows which baseline dumps can skip them.
+classpath as coordinate-annotated JSON, kept per module so a check
+[runs each against its own resolution](#per-module-checking). A dump also
+refers to build outputs. Each page says how its dump command builds them, and
+the [PR gate](#pr-gate-on-github-actions-the-main-use-case) shows which
+baseline dumps can skip them.
 
 The upgrade-check task fetches the CLI itself as
 `net.exoego.uika:uika-cli:<version>:<platform>@zip` through the build's own
@@ -432,23 +398,21 @@ resolve the binary differently, and their pages say how. Every tool takes
 air-gapped build needs.
 
 Every tool spells the same options its own way, listed per page:
-[`failOn`](#violation-tiers-and---fail-on),
-[`excludeFiles`](#excluding-known-false-positives---exclude-file),
-[runtime load evidence](#runtime-load-evidence-jfr---class-load-log) (one
+[`failOn`](#violation-tiers-and-the-failon-threshold),
+[`excludeFiles`](#excluding-known-false-positives),
+[runtime load evidence](#runtime-load-evidence-jfr) (one
 directory serving both phases, collect on the base branch and consume on the
 PR), and `jdkRelease`.
 
-[`--jdk-release`](#how-it-works) needs no setting at all. The build runs on a
-JVM, so each tool derives the release from what the modules compile for. A
-build with several modules contributes the LOWEST of them, because one flag
-serves a run that checks all of them and under-claiming only costs unverified
-references while over-claiming drops findings. The result is clamped to what
-the selected JDK's `ct.sym` serves, which is the same JDK the CLI reads
-through `UIKA_JDK`. Override it with the tool's `jdkRelease` setting, or set 0
-to disable it.
+`jdkRelease` needs no setting at all. The build runs on a JVM, so each tool
+derives the release from what the modules compile for. A build with several
+modules contributes the LOWEST of them, because one value serves a run that
+checks all of them, and under-claiming only costs unverified references while
+over-claiming drops findings. The result is clamped to what the selected JDK's
+`ct.sym` serves. Override it with the setting, or set 0 to disable it.
 
 Each dump also records the release next to every module it lists, read the same
-way. That is what lets `upgrade-check` notice the application's own JDK moved
+way. That is what lets a check notice the application's own JDK moved
 between the two dumps and check that move too, scoped to the modules that made
 it. A module left on an older release is never checked against a sibling's
 upgrade, and a module that declares no target is recorded as running on the
@@ -477,67 +441,51 @@ artifact, and copies bundled inside fat JARs are not false positives.
 References that escape into unanalyzed classes are counted as "unverified"
 rather than silently ignored.
 
-Most escapes lead into the JDK. Passing `--jdk-release N` (on `check` and
-`upgrade-check`) layers the JDK API of release N under the resolution scope,
-read from the `ct.sym` file of the JDK named by `UIKA_JDK` (checked first,
-authoritative when set), else `JAVA_HOME`, so those references conclude as OK
-or broken instead of unverified. N must be older than the installed JDK (its
-own release is not in `ct.sym`). The layer sits under both the old and the new
-side, so gaps in `ct.sym` cancel out instead of producing false positives from
-missing stubs. Without the flag nothing changes, and uika still needs no JVM
-to run.
+Most escapes lead into the JDK, so every tool layers the JDK API of one release
+under the resolution scope and lets those references conclude as OK or broken.
+The stubs come from the `ct.sym` file of the JDK named by `UIKA_JDK` (checked
+first, authoritative when set), else `JAVA_HOME`, and the release has to be
+older than that JDK, whose own release `ct.sym` does not carry. The layer sits
+under both the old and the new side, so gaps in `ct.sym` cancel out instead of
+producing false positives from missing stubs. It is what turns 16 unverified
+references into 0 on a guava 22 -> 23 check of selenium-remote-driver, with the
+broken count unchanged.
 
-```console
-$ uika check --old guava-22.0.jar --new guava-23.0-rc1.jar \
-             --classpath selenium-remote-driver-3.4.0.jar
-...
-scanned 205 classes: ❌ 2 broken, ❓ 16 unverified references (hierarchy escapes the analyzed scope)
-
-$ uika check --old guava-22.0.jar --new guava-23.0-rc1.jar \
-             --classpath selenium-remote-driver-3.4.0.jar --jdk-release 17
-...
-scanned 205 classes: ❌ 2 broken
-```
+Each tool derives the release from what its modules compile for, so nothing has
+to be configured. The `jdkRelease` setting overrides it, and 0 switches the
+layer off. Either way uika still needs no JVM to run.
 
 ### Checking a JDK upgrade
 
-`--jdk-release-old N --jdk-release-new M` makes the JDK upgrade itself the compared
-pair, so `--old` and `--new` become optional. A JDK API your classpath still
-references and release M dropped is then reported like any other removal.
+A JDK upgrade breaks an application the same way a library upgrade does, and it
+needs no configuration to catch. Each dump records the API release every module
+runs on, so bumping what your build compiles for and re-running the dump is
+enough. The check sees the two dumps disagree and covers that move alongside
+the dependency moves in one report, scoped to the modules that made it. A JDK API your classpath still references and the new release dropped is
+then reported like any other removal:
 
 ```console
-$ uika check --jdk-release-old 11 --jdk-release-new 17 --classpath app.jar
-checked JDK 11 -> JDK 17 against 1 scan target
+dependency changes: none
 
+per-module check: 0 of 1 modules changed their resolved versions (1 unchanged)
+    JDK 11 -> 17  scanned 2 classes, ❌ 1 broken, 0 unverified
+...
 ❌ java.rmi.activation.ActivationGroup
     class removed, throws NoClassDefFoundError at first use
     used by 1 class:
-        UsesRemoved  (app.jar)
+        UsesRemoved  (app.jar) [JDK 11 -> 17]
 ```
+
+Dumps written before the plugins recorded the release carry no value, and a
+missing value on either side is never read as a JDK move. A build whose runtime
+is not what it compiles for says so with the tool's `jdkRelease` setting, which
+is recorded as the release of every module.
 
 Releases below the installed JDK come from its `ct.sym`; the installed JDK's own
 release comes from its `jmods/`, which `ct.sym` never carries. Checking an upgrade
 *to* the JDK you now run therefore needs only that one JDK. Sealing changes are
 invisible here, because `ct.sym` stubs do not carry `PermittedSubclasses`, and
 reporting them from the `jmods` side alone would be a false positive.
-
-From the build-tool plugins this needs no flag. The classpath dump records the
-release of the JVM that wrote it, so bumping your toolchain and re-running the
-dump is enough — `upgrade-check` sees the two dumps disagree and checks the JDK
-move alongside the dependency moves, in one report.
-
-```console
-$ uika upgrade-check --before before.json --after after.json
-dependency changes: none
-
-per-module check: 0 of 1 modules changed their resolved versions (1 unchanged)
-    JDK 11 -> 17  scanned 2 classes, ❌ 1 broken, 0 unverified
-...
-        UsesRemoved  (app.jar) [JDK 11 -> 17]
-```
-
-Dumps written before the plugins recorded the release carry no value, and a
-missing value on either side is never read as a JDK move.
 
 ## Development
 
@@ -549,8 +497,8 @@ Releases are described in [PUBLISHING.md](PUBLISHING.md).
 ## Known limitations (PoC)
 
 - References whose hierarchy escapes into unanalyzed classes are conservatively
-  treated as OK (reported only as an "unverified" count, which passing the
-  complete runtime classpath via `--classpath` reduces)
+  treated as OK (reported only as an "unverified" count, which a complete
+  runtime classpath reduces, and which is what a dump gives you)
 - Multi-release JARs are analyzed at their base classes only
   (`META-INF/versions/` is ignored)
 - `InvokeDynamic` bootstrap synthetic names are excluded

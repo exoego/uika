@@ -19,25 +19,45 @@ $ lein uika dump-classpath /tmp/after.json
 $ lein uika upgrade-check /tmp/before.json /tmp/after.json
 ```
 
-The whole `:uika` map is
-[`:fail-on`](../README.md#violation-tiers-and---fail-on),
-[`:exclude-files`](../README.md#excluding-known-false-positives---exclude-file),
-`:jdk-release` (0 disables), `:class-load-logs` (text format), `:jfr`,
-`:draft-exclude-file` (needs `:class-load-logs` or `:jfr`), `:cli-version` and
-`:cli-path`. Any other key is an error rather than a silent no-op, so a
-misspelling cannot quietly disable a flag. The CLI answers a lone
-`:draft-exclude-file` by naming `--class-load-log`, whose keyword form this map
-rejects as unknown.
-
 Leiningen's resolver does not handle a zip-packaged artifact, so the plugin
 downloads the CLI binary straight from Maven Central (`UIKA_CLI_URL` to
 override the URL, `:cli-path` or `UIKA_CLI_PATH` to point at a binary you
-already have and skip the download). `:jdk-release` defaults to the release
-`:javac-options` pins (`--release`, or `-target`); a project declaring neither
-falls back to the JVM the project's own code runs on (`:java-cmd`, else
-`JAVA_CMD`, probed; a probe that fails warns and falls back to lein's own JVM).
+already have and skip the download).
 
-For [runtime load evidence](../README.md#runtime-load-evidence-jfr---class-load-log),
+The dump excludes what only development pulls in (the `:base`/`:system`/`:user`/`:dev`
+profiles, so no nREPL, and `:provided`, which an uberjar leaves out) and runs the
+project's `:prep-tasks` first, so both `:aot` classes and `:java-source-paths` output
+are scanned. The [reflection caveat](clojure.md) of the Clojure code itself applies
+here too; `:class-dir` does not, because the dump takes its class directories
+from `:compile-path` and the project's own source and resource paths.
+
+## Options
+
+Every option is a key of the `:uika` map in `project.clj`. Any other key is an
+error rather than a silent no-op, so a misspelling cannot quietly disable a
+flag.
+
+- [`:fail-on`](../README.md#violation-tiers-and-the-failon-threshold) is `"never"`,
+  `"reachable"` or `"any"`.
+- [`:exclude-files`](../README.md#excluding-known-false-positives)
+  takes a vector of paths.
+- [`:jdk-release`](../README.md#build-tool-plugins) defaults to the release
+  `:javac-options` pins (`--release`, or `-target`); a project declaring neither
+  falls back to the JVM the project's own code runs on (`:java-cmd`, else
+  `JAVA_CMD`, probed; a probe that fails warns and falls back to lein's own
+  JVM). 0 disables the API layer.
+- `:jfr` takes a recording or a directory of recordings mixed with text logs,
+  and `:class-load-logs` takes text
+  [evidence](../README.md#runtime-load-evidence-jfr) on its
+  own. `:draft-exclude-file` drafts exclude rules from either, and needs one of
+  them. The CLI answers a lone `:draft-exclude-file` by naming
+  `--class-load-log`, whose keyword form this map rejects as unknown.
+- `:cli-version` and `:cli-path` pick the binary, as do `UIKA_CLI_VERSION` and
+  `UIKA_CLI_PATH` from the environment. There is no command-line override.
+
+## Runtime load evidence (JFR)
+
+For [runtime load evidence](../README.md#runtime-load-evidence-jfr),
 collect by running the current build's tests with the JFR flag on the test
 JVM. The plugin injects nothing, so add it yourself; a profile keeps it out of
 everyday runs:
@@ -58,13 +78,6 @@ unquoted it silently truncates with exit 0), and the test JVM needs JDK 17+ for
 the event-settings syntax. Then point `:jfr` at the directory. Recordings are
 converted with the JDK's own JFR reader before the CLI runs, which needs lein
 itself on Java 17+; `:class-load-logs` still takes text logs alongside.
-
-The dump excludes what only development pulls in (the `:base`/`:system`/`:user`/`:dev`
-profiles, so no nREPL, and `:provided`, which an uberjar leaves out) and runs the
-project's `:prep-tasks` first, so both `:aot` classes and `:java-source-paths` output
-are scanned. The [reflection caveat](clojure.md) of the Clojure code itself applies
-here too; `:class-dir` does not, because the dump takes its class directories
-from `:compile-path` and the project's own source and resource paths.
 
 ## PR gate on GitHub Actions
 
