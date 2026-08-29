@@ -61,6 +61,23 @@ final class UikaCliExtractBinaryTest {
         assertEquals(List.of(BINARY_NAME), fileNames(installDir));
     }
 
+    @Test
+    void lostMoveRaceReusesTheInstalledBinaryAndDropsTheTemp() throws Exception {
+        Path installDir = Files.createDirectories(dir.resolve("install"));
+        Path binary = Files.writeString(installDir.resolve(BINARY_NAME), "winner");
+        // Whether ATOMIC_MOVE replaces an existing target is implementation-specific, so
+        // the loser of a concurrent extraction can see its move fail with the winner's
+        // binary already installed. A directory as the temp file forces that combination
+        // on every platform (renaming a directory over a regular file always fails); the
+        // loser must fall back to the winner's binary and still clean up after itself.
+        Path tmp = Files.createDirectory(installDir.resolve("uika-race.tmp"));
+
+        UikaCli.moveIntoPlace(tmp, binary);
+
+        assertEquals("winner", Files.readString(binary));
+        assertEquals(List.of(BINARY_NAME), fileNames(installDir));
+    }
+
     private static List<String> fileNames(Path directory) throws IOException {
         try (Stream<Path> files = Files.list(directory)) {
             return files.map(path -> path.getFileName().toString()).sorted().toList();
