@@ -279,6 +279,32 @@ object UikaTests extends TestSuite {
       }
     }
 
+    test("UIKA_CLI_PATH runs a binary instead of resolving one") {
+      // Task.env, not System.getenv: the daemon's environment is captured at server start,
+      // so a System.getenv read would ignore this map entirely and the harness could not
+      // express the test at all.
+      val stub = os.temp(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$3.args\"\nexit 0\n",
+        prefix = "uika-stub",
+        perms = os.PermSet.fromString("rwxr-xr-x")
+      )
+      Using.resource(
+        UnitTester(stubCliBuild, null, env = systemEnv + (UikaCli.CLI_PATH_ENV -> stub.toString))
+      ) { tester =>
+        val before = os.temp("{}", suffix = ".json")
+        val after = os.temp("{}", suffix = ".json")
+        // A version that was never published: resolving it would fail, so the run passing
+        // is what proves resolution was skipped.
+        value(tester(Uika.upgradeCheck(
+          tester.evaluator,
+          before = before.toString,
+          after = after.toString,
+          cliVersion = "0.0.0-never-published"
+        )))
+        assert(os.exists(os.Path(before.toString + ".args")))
+      }
+    }
+
     test("--jdkRelease overrides what the modules declare in the dump") {
       // The derivation only sees what the build declares, so a build compiling for 11 and
       // shipping on 21 has no other way to say so. The override is a statement about the

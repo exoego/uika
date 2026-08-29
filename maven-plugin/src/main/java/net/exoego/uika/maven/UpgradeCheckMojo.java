@@ -113,16 +113,24 @@ public final class UpgradeCheckMojo extends AbstractMojo {
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
-        String classifier = UikaCli.platformClassifier();
-        var request = new ArtifactRequest(
-                new DefaultArtifact(UikaCli.GROUP, UikaCli.ARTIFACT, classifier, "zip", cliVersion),
-                remoteRepositories,
-                "uika");
-        File zip;
-        try {
-            zip = repositorySystem.resolveArtifact(repositorySession, request).getArtifact().getFile();
-        } catch (ArtifactResolutionException e) {
-            throw new MojoExecutionException("failed to resolve " + request.getArtifact(), e);
+        // UIKA_CLI_PATH wins outright, so an air-gapped build or one pointed at a locally
+        // built binary never reaches the resolver, the version, or the classifier.
+        Path override = UikaCli.binaryOverride();
+        File zip = null;
+        String classifier = null;
+        if (override == null) {
+            classifier = UikaCli.platformClassifier();
+            var request = new ArtifactRequest(
+                    new DefaultArtifact(
+                            UikaCli.GROUP, UikaCli.ARTIFACT, classifier, "zip", cliVersion),
+                    remoteRepositories,
+                    "uika");
+            try {
+                zip = repositorySystem.resolveArtifact(repositorySession, request)
+                        .getArtifact().getFile();
+            } catch (ArtifactResolutionException e) {
+                throw new MojoExecutionException("failed to resolve " + request.getArtifact(), e);
+            }
         }
 
         Path installDir = Path.of(session.getExecutionRootDirectory(),
@@ -135,7 +143,10 @@ public final class UpgradeCheckMojo extends AbstractMojo {
                 .toList();
         int exit;
         try {
-            Path binary = UikaCli.extractBinary(zip.toPath(), installDir);
+            Path binary = override != null
+                    ? override
+                    : UikaCli.extractBinary(zip.toPath(), Path.of(session.getExecutionRootDirectory(),
+                            "target", "uika", "cli-" + cliVersion + "-" + classifier));
             UikaCli.JdkSource jdk = UikaCli.JdkSource.current();
             Integer effectiveJdkRelease = UikaCli.effectiveJdkRelease(
                     jdkRelease != null ? jdkRelease : JdkReleases.lowest(session.getAllProjects()),

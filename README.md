@@ -427,7 +427,9 @@ The upgrade-check task fetches the CLI itself as
 dependency resolution, reusing its repositories, credentials, and cache, so
 there is no separate install step. The version defaults to the plugin's own, so
 one coordinate bump updates both. The Clojure CLI tool, Leiningen and Bazel
-resolve the binary differently, and their pages say how.
+resolve the binary differently, and their pages say how. Every tool takes
+`UIKA_CLI_PATH` to run a binary you already have instead, which is what an
+air-gapped build needs.
 
 Every tool spells the same options its own way, listed per page:
 [`failOn`](#violation-tiers-and---fail-on),

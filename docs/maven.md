@@ -183,6 +183,10 @@ degrading to a warning. The cache save and restore close that gap.
   maven-compiler-plugin's `<release>`/`<target>`, else
   `maven.compiler.release`/`maven.compiler.target`. Override with
   `<jdkRelease>` or `-Duika.jdkRelease=`, or set 0 to disable the API layer.
+- `UIKA_CLI_PATH` runs a binary you already have instead of resolving one, so a
+  build can run air-gapped or against a locally built CLI. It wins over the CLI
+  version, nothing is downloaded, and a value that is not an executable file
+  fails naming the variable.
 
 ## Runtime load evidence (JFR)
 

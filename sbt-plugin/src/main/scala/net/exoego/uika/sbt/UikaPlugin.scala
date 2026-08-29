@@ -55,24 +55,31 @@ object UikaPlugin extends AutoPlugin {
       // ThisBuild only, and the documented `set uikaFailOn := ...` shell form scopes to the
       // root project, which was silently ignored. Root-project scope still delegates to
       // ThisBuild, so both spellings work.
-      val version = (LocalRootProject / uikaCliVersion).value match {
-        case "" => sys.error("""uika-cli version is unknown; set uikaCliVersion := "<version>"""")
-        case v  => v
-      }
-      val classifier = UikaCli.platformClassifier()
       val log = streams.value.log
       val lm = (LocalRootProject / dependencyResolution).value
-      val module = ModuleID(UikaCli.GROUP, UikaCli.ARTIFACT, version)
-        .intransitive()
-        .artifacts(Artifact(UikaCli.ARTIFACT, "zip", "zip", classifier))
       val uikaDir = (LocalRootProject / target).value / "uika"
-      val files = lm
-        .retrieve(lm.wrapDependencyInModule(module), uikaDir / "cli-retrieve", log)
-        .fold(warning => throw warning.resolveException, identity)
-      val zip = files
-        .find(_.getName.endsWith(".zip"))
-        .getOrElse(sys.error(s"uika-cli zip not found among ${files.mkString(", ")}"))
-      val binary = UikaCli.extractBinary(zip.toPath, (uikaDir / s"cli-$version-$classifier").toPath)
+      // UIKA_CLI_PATH wins outright, so an air-gapped build or one pointed at a locally
+      // built binary never reaches the resolver, the version, or the classifier. Read above
+      // the version check on purpose: with an override there is no version to want.
+      val binary = Option(UikaCli.binaryOverride()) match {
+        case Some(path) => path
+        case None =>
+          val version = (LocalRootProject / uikaCliVersion).value match {
+            case "" => sys.error("""uika-cli version is unknown; set uikaCliVersion := "<version>"""")
+            case v  => v
+          }
+          val classifier = UikaCli.platformClassifier()
+          val module = ModuleID(UikaCli.GROUP, UikaCli.ARTIFACT, version)
+            .intransitive()
+            .artifacts(Artifact(UikaCli.ARTIFACT, "zip", "zip", classifier))
+          val files = lm
+            .retrieve(lm.wrapDependencyInModule(module), uikaDir / "cli-retrieve", log)
+            .fold(warning => throw warning.resolveException, identity)
+          val zip = files
+            .find(_.getName.endsWith(".zip"))
+            .getOrElse(sys.error(s"uika-cli zip not found among ${files.mkString(", ")}"))
+          UikaCli.extractBinary(zip.toPath, (uikaDir / s"cli-$version-$classifier").toPath)
+      }
       val excludeFiles = (LocalRootProject / uikaExcludeFiles).value.map(_.toPath).asJava
       val jdk = UikaCli.JdkSource.current()
       // The LOWEST release any subproject compiles for, because one flag serves a run that
