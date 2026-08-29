@@ -134,7 +134,16 @@ object UikaPlugin extends AutoPlugin {
     // can interleave the JSON). An explicitly scoped `app/uikaDumpClasspath` delegates
     // here, so every spelling runs this one instance with the root's preferredRoots.
     uikaDumpClasspath := {
-      val modules = uikaModuleClasspath.all(ScopeFilter(inAnyProject)).value
+      // A project with no compiled output of its own has nothing of the application to
+      // check, and every classpath entry it carries is inherited. The usual one is the
+      // aggregator root, which landed in the dump with empty classesDirs, no jdkRelease and
+      // a set of borrowed refs; the CLI reads that as a real module, gives it the dump-level
+      // release, and can plan a run for a module that does not exist. Gradle drops the same
+      // shape in MergeClasspathTask.
+      val modules = uikaModuleClasspath
+        .all(ScopeFilter(inAnyProject))
+        .value
+        .filter(!_.classesDirs().isEmpty)
       // LocalRootProject for the reason the check task gives above.
       val out = (LocalRootProject / uikaOutput).value
       IO.createDirectory(out.getParentFile)

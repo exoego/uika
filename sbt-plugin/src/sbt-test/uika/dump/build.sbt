@@ -108,6 +108,15 @@ checkDump := {
   assert(module("jdkRelease") == 17.0, module)
   assert(json("jdkRelease") == 11.0, json)
 
+  // The aggregator root compiles nothing, so it must not be a module. It used to land here
+  // with empty classesDirs, no jdkRelease and refs borrowed from the build's own
+  // dependencies, which the CLI reads as a real module it can plan a run for.
+  // By set, not by name: a scripted build's root takes its id from the temp directory it
+  // was copied into, so there is no stable name to exclude.
+  val moduleNames = json("modules").asInstanceOf[List[Map[String, Any]]].map(_("module"))
+  assert(moduleNames.toSet == Set(":core", ":app"),
+    s"only the projects that compile something belong in the dump: $moduleNames")
+
   // :core itself is dumped as a module with its own classesDirs.
   val coreModule = json("modules")
     .asInstanceOf[List[Map[String, Any]]]
