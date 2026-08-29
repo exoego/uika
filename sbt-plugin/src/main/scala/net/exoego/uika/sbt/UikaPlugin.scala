@@ -208,18 +208,37 @@ object UikaPlugin extends AutoPlugin {
         .map(_.data.getAbsoluteFile)
         .distinct
       val runtimeFiles = runtimeEntries.toSet
+      // An UpdateReport carries one report per configuration, and a jar on several of them
+      // (compile, runtime, test ...) appears once in each. DumpFormat dedups the artifact
+      // TABLE but emits one artifactRef per entry, so without this a module's ref list
+      // repeated the same jar once per configuration: measured 3.9x on this plugin's own
+      // build, 17 configuration reports over 88 distinct files.
+      //
+      // The cost is dump SIZE, not scan time. The CLI deduplicates scan targets before it
+      // opens anything (cli/src/lib.rs's `seen` set, and gradle.rs when it builds them from
+      // the artifact table), so a repeated ref costs one exists() and nothing more. What it
+      // does cost is a CI artifact and a serde parse proportional to the configuration
+      // count, and a dump that stops describing the classpath.
+      //
+      // Distinct over the tuple rather than the Artifact, which defines no equals, and
+      // before the map so the resolver order the CLI's first-wins semantics rely on
+      // survives.
       val artifacts = update.value.configurations
         .flatMap(_.modules)
         .flatMap { module =>
           module.artifacts.collect {
             case (_, file) if runtimeFiles(file.getAbsoluteFile) =>
-              new ClasspathDump.Artifact(
+              (
                 module.module.organization,
                 module.module.name,
                 module.module.revision,
                 file.getAbsolutePath
               )
           }
+        }
+        .distinct
+        .map { case (organization, name, revision, path) =>
+          new ClasspathDump.Artifact(organization, name, revision, path)
         }
       // Unmanaged jars (lib/*.jar, unmanagedClasspath additions) have no update.value
       // entry, so without a fallback they vanish from the dump although they are on the

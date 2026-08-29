@@ -103,6 +103,12 @@ checkDump := {
       roots(artifact("root").asInstanceOf[Double].toInt) + artifact("path") == vendored
   }, s"no unmanaged-jar entry for $vendored in $module")
 
+  // An UpdateReport repeats a jar once per configuration it appears on, so the ref list
+  // used to carry scala-library eight times over. The CLI deduplicates scan targets, so
+  // the cost is the dump's size and its fidelity as a description of the classpath.
+  assert(artifactRefs.distinct == artifactRefs,
+    s"duplicate artifactRefs: ${artifactRefs.diff(artifactRefs.distinct).map(artifacts)}")
+
   // Each module records the release IT compiles for, so upgrade-check can scope a JDK
   // move to the modules that made it; the dump-level value is the lowest of them.
   assert(module("jdkRelease") == 17.0, module)
