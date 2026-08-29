@@ -11,6 +11,13 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!-- The command-line form of excludeFiles, exercised as a project property rather than
+         a -D: invoker.goals is a List parameter, so Maven splits its value on commas and a
+         comma-carrying -D cannot survive it. The mojo reads ${uika.excludeFiles} either
+         way, so the binding under test is the same. The empty middle entry is deliberate;
+         a CI-assembled list ends up with doubled commas and they must drop rather than
+         reach clap as empty paths. -->
+    <uika.excludeFiles>cli-exclude.toml,,second-exclude.toml</uika.excludeFiles>
   </properties>
 
   <!-- Stub repository written by setup.groovy. -->

@@ -20,6 +20,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -48,11 +49,23 @@ public final class UpgradeCheckMojo extends AbstractMojo {
 
     /**
      * TOML files of known false positives to suppress, passed as repeated {@code --exclude-file}.
-     * Configured as a nested list ({@code <excludeFiles><excludeFile>...</excludeFile></excludeFiles>})
-     * since Maven properties do not support lists.
+     * Configured as a nested list ({@code <excludeFiles><excludeFile>...</excludeFile></excludeFiles>}).
+     * See {@link #excludeFilesProperty} for the command-line form.
      */
     @Parameter
     private List<File> excludeFiles = new ArrayList<>();
+
+    /**
+     * The command-line form of {@link #excludeFiles}, comma-separated and appended to it, so
+     * suppressing a finding for one CI run needs no POM edit. A relative entry resolves
+     * against the execution root, like the other file properties on this aggregator mojo.
+     *
+     * <p>Comma-separated because a Maven property is one string and the Bazel rules already
+     * carry the list the same way. A path containing a comma cannot be expressed here, since
+     * the comma is the delimiter; use {@code <excludeFiles>} for one.
+     */
+    @Parameter(property = "uika.excludeFiles")
+    private String excludeFilesProperty;
 
     /**
      * JDK API release for the CLI's {@code --jdk-release} (resolves JDK hierarchy escapes
@@ -118,7 +131,10 @@ public final class UpgradeCheckMojo extends AbstractMojo {
 
         Path installDir = Path.of(session.getExecutionRootDirectory(),
                 "target", "uika", "cli-" + cliVersion + "-" + classifier);
-        List<Path> excludeFilePaths = excludeFiles.stream().map(File::toPath).toList();
+        List<Path> excludeFilePaths = new ArrayList<>(excludeFiles.stream()
+                .map(File::toPath)
+                .toList());
+        excludeFilePaths.addAll(propertyExcludeFiles());
         int exit;
         try {
             Path binary = UikaCli.extractBinary(zip.toPath(), installDir);
@@ -152,5 +168,22 @@ public final class UpgradeCheckMojo extends AbstractMojo {
         if (exit != 0) {
             throw new MojoExecutionException("uika upgrade-check failed with exit code " + exit);
         }
+    }
+
+    /**
+     * {@code -Duika.excludeFiles} split on the comma, blank entries dropped. Relative entries
+     * resolve against the execution root, which is what Maven itself does for the {@code File}
+     * parameters on this aggregator mojo, so the two spellings agree on what a bare name means.
+     */
+    private List<Path> propertyExcludeFiles() {
+        if (excludeFilesProperty == null || excludeFilesProperty.isBlank()) {
+            return List.of();
+        }
+        Path root = Path.of(session.getExecutionRootDirectory());
+        return Arrays.stream(excludeFilesProperty.split(","))
+                .map(String::trim)
+                .filter(entry -> !entry.isEmpty())
+                .map(root::resolve)
+                .toList();
     }
 }

@@ -13,6 +13,18 @@ assert args.text.contains("--jdk-release 11") :
 assert args.text.contains("--exclude-file ${excludeFile.absolutePath}") :
     "POM <configuration><excludeFiles> was not forwarded to the CLI: ${args.text}"
 
+// The uika.excludeFiles property appends to the POM list rather than replacing it, so a CI
+// run can suppress one finding without a POM edit. Relative entries resolve against the
+// execution root, like every other file property on this aggregator mojo, and the empty
+// entry from the doubled comma must not reach the CLI as a path.
+for (name in ["cli-exclude.toml", "second-exclude.toml"]) {
+    def fromProperty = new File(basedir, name)
+    assert args.text.contains("--exclude-file ${fromProperty.absolutePath}") :
+        "uika.excludeFiles entry ${name} was not forwarded to the CLI: ${args.text}"
+}
+assert args.text.count("--exclude-file") == 3 :
+    "expected exactly three --exclude-file flags, the empty entry dropped: ${args.text}"
+
 def log = new File(basedir, "build.log")
 assert log.isFile() : "invoker build log not found: $log"
 // The [INFO] prefix proves the line went through the mojo's logger. Inherited stdio also
