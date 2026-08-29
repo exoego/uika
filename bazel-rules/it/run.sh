@@ -224,6 +224,36 @@ python3 "$RULES/it/assert_dump.py" "$OUT/before.json" "$OUT/after.json" \
   "$OUT/resolution.json" "$OUT/report.txt" \
   "$OUT/before-materialized.json" "$OUT/baseline-jars" "$OUT/materialized-report.txt"
 
+echo "--- jdk_release type guard"
+# jdk_release is a macro parameter, so Bazel type-checks nothing. A string reached the JVM
+# as -Duika.jdkRelease=seventeen, and Integer.getInteger answers its default for anything
+# unparseable, so the build succeeded and the release was silently derived. Same package
+# trick as the comma guard below: added after the //... sweep so the sweep never loads it.
+mkdir -p badrelease
+cat > badrelease/BUILD.bazel <<'EOF'
+load("@uika//:defs.bzl", "uika_upgrade_check")
+
+uika_upgrade_check(
+    name = "bad",
+    jdk_release = "seventeen",
+)
+EOF
+set +e
+"$BAZEL" build //badrelease:bad > "$OUT/release-guard.txt" 2>&1
+release_guard_status=$?
+set -e
+rm -rf badrelease
+if [ "$release_guard_status" -eq 0 ]; then
+  echo "a non-numeric jdk_release should fail the load" >&2
+  cat "$OUT/release-guard.txt" >&2
+  exit 1
+fi
+if ! grep -q "jdk_release wants a whole number" "$OUT/release-guard.txt"; then
+  echo "expected the uika jdk_release message:" >&2
+  cat "$OUT/release-guard.txt" >&2
+  exit 1
+fi
+
 echo "--- exclude_files comma guard"
 # The attr rides one comma-joined -D property, so a comma inside a path would be
 # silently split into two bogus paths. The macro fails loudly instead, the same

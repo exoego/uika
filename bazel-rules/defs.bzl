@@ -6,6 +6,20 @@ load("//private:dump.bzl", "uika_classpath_manifest")
 
 uika_classpath_aspect = _uika_classpath_aspect
 
+def _require_int(name, macro, jdk_release):
+    """Rejects a jdk_release that is not a number.
+
+    These are macro parameters rather than typed rule attributes, so Bazel checks nothing.
+    A string went through `format` into `-Duika.jdkRelease=seventeen`, and
+    `Integer.getInteger` answers its default for anything it cannot parse, so the build
+    succeeded and the release was silently derived instead of overridden. The Java side
+    cannot tell that apart from the attribute being left alone, which is why the guard has
+    to be here.
+    """
+    if type(jdk_release) != "int":
+        fail("%s(name = %r): jdk_release wants a whole number, got %r" %
+             (macro, name, jdk_release))
+
 def uika_dump(name, targets, build_outputs = True, jdk_release = 0, **kwargs):
     """Declares a `bazel run`-able target that dumps `targets`' resolved classpaths.
 
@@ -25,6 +39,7 @@ def uika_dump(name, targets, build_outputs = True, jdk_release = 0, **kwargs):
         runtime is not what it compiles against. 0 keeps the derived value.
       **kwargs: passed through to the generated java_binary (visibility, tags, ...).
     """
+    _require_int(name, "uika_dump", jdk_release)
     manifest = name + ".manifest"
     uika_classpath_manifest(
         name = manifest,
@@ -70,6 +85,7 @@ def uika_upgrade_check(
         into the derived default instead, so the two attrs default differently on purpose.
       **kwargs: passed through to the generated java_binary (visibility, tags, ...).
     """
+    _require_int(name, "uika_upgrade_check", jdk_release)
     # The list rides one comma-joined -D property, so a comma inside a path would be
     # silently split into two bogus paths. Fail loudly instead of encoding, the same
     # decision the manifest makes for tab and newline.
