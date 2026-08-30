@@ -55,8 +55,8 @@ is what the warning says.
 Evidence rides the same artifact flow as the
 [cached baseline](gradle.md#caching-the-baseline): the base branch runs its
 test suite with class-load recording on and uploads the recordings, and the
-[PR job](../README.md#pr-gate-on-github-actions-the-main-use-case) downloads
-them by `base.sha` and adds one flag. For Gradle, next to the baseline dump:
+[PR job](gradle.md#pr-gate-on-github-actions) downloads them by `base.sha` and
+adds one flag. For Gradle, next to the baseline dump:
 
 ```yaml
       - run: ./gradlew test -PuikaJfr=/tmp/uika-jfr

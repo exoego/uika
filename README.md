@@ -55,7 +55,7 @@ tools on the same inputs (wall time, peak memory, and what each one reports).
 
 Declare uika in your build, then run its dump and check tasks. Setup, the
 option spellings, the tool-specific caveats and a copy-pasteable GitHub Actions
-workflow live on one page per tool:
+workflow that gates PRs (the main use case) live on one page per tool:
 
 - [Gradle](docs/gradle.md)
 - [sbt](docs/sbt.md)
@@ -68,14 +68,6 @@ workflow live on one page per tool:
 A build none of them covers drives [the CLI](docs/cli.md) by hand instead.
 [What every integration shares](docs/build-tools.md) covers the dump format, how
 the CLI is fetched, and where `jdkRelease` comes from.
-
-### PR gate on GitHub Actions (the main use case)
-
-Every tool page carries a copy-pasteable workflow. It dumps the classpath of
-the PR's base branch and of the PR itself, and fails the PR on broken
-references between the two. An optional second job dumps the baseline once per
-push instead, which takes the base-branch resolution off the PR's critical
-path.
 
 ## What a check reports
 
