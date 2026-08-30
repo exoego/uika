@@ -164,6 +164,24 @@ call through reflection or JNI, or from code outside the scan, stays invisible.
 An [exclude file](#excluding-known-false-positives) can drop the whole
 category with `kind = "method_became_abstract"`.
 
+**Runtime load evidence (⚡).** The ⚠️ tier's blind spot is reflection, and a
+JVM closes it. Run the **current, not yet upgraded** build with JFR recording
+every class load, and a ⚠️ violation whose referencing class appears in the
+recording is promoted out of the tier and marked with the reflective edge the
+static walk could not see:
+
+```console
+⚡ observed loading at runtime (via java.lang.Class.forName from com.example.PluginRegistry.discover(...))
+```
+
+Ingestion is promote-only, the same stance reachability takes: absence of a
+load entry proves nothing beyond the observed runs, so no violation is ever
+demoted or dropped because of it. The same evidence drafts an exclude file
+from the opposite signal, the symbols that stayed unproven.
+[Runtime load evidence](docs/runtime-load-evidence.md) covers the flag, the
+plugins' one option, the text-log formats read alongside recordings, the CI
+shape that collects on the base branch, and the JFR caveats.
+
 ### Per-module checking
 
 Each module gets its own JVM classpath at runtime, and two modules may
@@ -278,27 +296,6 @@ so stale entries do not go unnoticed as the checked libraries change.
 This is for false positives you have actually investigated, not a shortcut
 around triaging `⚠️  not proven reachable` violations wholesale; use
 `failOn = reachable` for that instead.
-
-### Runtime load evidence (JFR)
-
-The ⚠️ tier means "no static path found", and its blind spot is reflection. A
-JVM closes that gap: run the **current, not yet upgraded** build with JFR
-recording every class load, and a ⚠️ violation whose referencing class appears
-in the recording is promoted out of the tier and marked with the reflective
-edge the static walk could not see:
-
-```console
-⚡ observed loading at runtime (via java.lang.Class.forName from com.example.PluginRegistry.discover(...))
-```
-
-Ingestion is promote-only, the same stance reachability takes: absence of a
-load entry proves nothing beyond the observed runs, so no violation is ever
-demoted or dropped because of it. The same evidence drafts an exclude file
-from the opposite signal, the symbols that stayed unproven.
-
-[Runtime load evidence](docs/runtime-load-evidence.md) covers the flag, the
-plugins' one option, the text-log formats read alongside recordings, the CI
-shape that collects on the base branch, and the JFR caveats.
 
 ## How it works
 
