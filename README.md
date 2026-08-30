@@ -25,6 +25,8 @@ reference recorded in the referencing binary's constant pool. Detection covers:
 - Static <-> instance mismatches `IncompatibleClassChangeError`
 - Newly-final classes/members `IncompatibleClassChangeError`
   (`VerifyError` on JDK 15 and older)
+- A lagging artifact still extending a class that is final on the runtime
+  classpath `IncompatibleClassChangeError`
 - Methods that became abstract `AbstractMethodError`
 - `new` on a class that became abstract or an interface `InstantiationError`
 - Class <-> interface flips `IncompatibleClassChangeError`
@@ -59,7 +61,7 @@ tools on the same inputs (wall time, peak memory, and what each one reports).
 
 ## Usage
 
-Declare uika in your build, then run its dump and check tasks. Find the 
+Declare uika in your build, then run its dump and check tasks. Find the
 common and tool-specific setup on one page per tool:
 
 - [Gradle](docs/gradle.md)
@@ -118,6 +120,17 @@ per-module check: 2 of 41 modules changed their resolved versions (39 unchanged)
 scanned 145213 classes: ❌ 42 broken (of which 💥 25 reachable, ⚠️ 17 not proven reachable), ❓ 205 unverified references (hierarchy escapes the analyzed scope)
 ```
 
+### Per-module checking
+
+Each module gets its own JVM classpath at runtime, and two modules may
+legitimately resolve different versions of one coordinate (e.g. one service
+on netty 4.1, a newer one on 4.2). So each module is checked against what it
+actually resolves rather than against a flattened union. Modules whose versions
+did not move are skipped, and every violation names the modules that exhibit it.
+Each referencing class carries a `[:app, :worker]` suffix, and each
+suggestion an `affected modules:` line. Dumps carrying no per-module data fall
+back to the flat union check.
+
 ### Violation tiers and the `failOn` threshold
 
 A changed library drags in transitive JARs your application never touches, so
@@ -137,8 +150,9 @@ threshold over exactly that split:
 - `reachable`: exit 1 only on 💥breaks.
 - `never`: always exit 0, reporting violations as warnings only.
 
-So what fails CI is exactly what the report shows above the warning sections.
-An error always fails the run, whatever the threshold.
+Under `reachable`, what fails CI is exactly the 💥 section at the top of the
+report. A tool error (bad input, an unreadable JAR) is not a violation at all,
+and fails the run under every threshold with its own exit code.
 
 #### Reachability (💥 breaks vs ⚠️ unproven)
 
@@ -184,21 +198,12 @@ of the tier and marked with the reflective edge the static walk could not see:
 
 Ingestion is promote-only, the same stance reachability takes: absence of a
 load entry proves nothing beyond the observed runs, so no violation is ever
-demoted or dropped because of it. The same evidence drafts an exclude file
-from the opposite signal, the symbols that stayed unproven.
+demoted or dropped because of it. The same evidence drafts an
+[exclude file](#excluding-known-false-positives) from the opposite signal, the
+symbols that stayed unproven.
 [Runtime load evidence](docs/runtime-load-evidence.md) covers the flag, the
 plugins' one option, the text-log formats read alongside recordings, the CI
 shape that collects on the base branch, and the JFR caveats.
-
-### Per-module checking
-
-Each module gets its own JVM classpath at runtime, and two modules may
-legitimately resolve different versions of one coordinate (e.g. one service 
-on netty 4.1, a newer one on 4.2). So each module is checked against what it 
-actually resolves, not against a flattened union: modules whose versions did 
-not move are skipped, and every violation names the modules that exhibit it
-(`modules:` in the report). Dumps carrying no per-module data fall back to the
-flat union check.
 
 ### Checking a JDK upgrade
 
@@ -214,24 +219,33 @@ reported like any other removal:
 dependency changes: none
 
 per-module check: 0 of 1 modules changed their resolved versions (1 unchanged)
-    JDK 11 -> 17  scanned 2 classes, ❌ 1 broken, 0 unverified
+
+JDK check: 1 of 1 modules moved to another release
+    :app  JDK 11 -> 17  scanned 2 classes, ❌ 1 broken, 0 unverified
 ...
 ❌ java.rmi.activation.ActivationGroup
     class removed, throws NoClassDefFoundError at first use
     used by 1 class:
-        UsesRemoved  (app.jar) [JDK 11 -> 17]
+        UsesRemoved  (app.jar) [:app (JDK 11 -> 17)]
 ```
+
+The JDK runs print in a section of their own rather than as more rows of the
+module table. A JDK run compares two releases of the JDK while a module row
+compares two versions of a jar, so side by side their broken counts would read
+as parts of one total that does not add up.
 
 Dumps written before the plugins recorded the release carry no value, and a
 missing value on either side is never read as a JDK move. A build whose runtime
 is not what it compiles for says so with the tool's `jdkRelease` setting, which
 is recorded as the release of every module.
 
-Releases below the installed JDK come from its `ct.sym`; the installed JDK's own
-release comes from its `jmods/`, which `ct.sym` never carries. Checking an upgrade
-*to* the JDK you now run therefore needs only that one JDK. Sealing changes are
-invisible here, because `ct.sym` stubs do not carry `PermittedSubclasses`, and
-reporting them from the `jmods` side alone would be a false positive.
+Both releases' APIs are read from the one JDK uika finds, which
+[How it works](#how-it-works) describes. Releases below that JDK come from its
+`ct.sym`, and its own release from its `jmods/`, which `ct.sym` never carries.
+Checking an upgrade *to* the JDK you now run therefore needs only that one JDK.
+Sealing changes are invisible here, because `ct.sym` stubs do not carry
+`PermittedSubclasses`, and reporting them from the `jmods` side alone would be a
+false positive.
 
 ### Excluding known false positives
 
@@ -332,16 +346,14 @@ producing false positives from missing stubs. It is what turns 16 unverified
 references into 0 on a guava 22 -> 23 check of selenium-remote-driver, with the
 broken count unchanged.
 
+That layer is not the same thing as
+[checking a JDK upgrade](#checking-a-jdk-upgrade). The layer sits under both
+sides of a library comparison, while a JDK upgrade check makes the two JDK
+releases the compared pair.
+
 Each tool derives the release from what its modules compile for, so nothing has
 to be configured. The `jdkRelease` setting overrides it, and 0 switches the
 layer off. Either way uika still needs no JVM to run.
-
-## Development
-
-`make check` runs fmt, clippy, and the Rust and plugin test suites.
-[CONTRIBUTING.md](CONTRIBUTING.md) covers the rest, including the vendored
-real-incident fixtures, the golden-bless workflow, and the JVM probe harness.
-Releases are described in [PUBLISHING.md](PUBLISHING.md).
 
 ## Known limitations
 
@@ -353,3 +365,10 @@ Releases are described in [PUBLISHING.md](PUBLISHING.md).
 - `InvokeDynamic` bootstrap synthetic names are excluded
 - A constant-pool reference does not guarantee the code path executes (optional
   integrations guarded by try/catch may be reported yet never run)
+
+## Development
+
+`make check` runs fmt, clippy, and the Rust and plugin test suites.
+[CONTRIBUTING.md](CONTRIBUTING.md) covers the rest, including the vendored
+real-incident fixtures, the golden-bless workflow, and the JVM probe harness.
+Releases are described in [PUBLISHING.md](PUBLISHING.md).
