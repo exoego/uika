@@ -139,12 +139,13 @@ threshold over exactly that split:
 So what fails CI is exactly what the report shows above the warning sections.
 An error always fails the run, whatever the threshold.
 
-**Reachability (💥 vs ⚠️).** When application roots are available (the build
-outputs a dump records for each module), uika walks the class-load
-graph from them and labels what it never reaches ⚠️. The walk is a deliberate
-over-approximation, so ⚠️ is a signal to deprioritize rather than a guarantee,
-and reflection driven purely by external configuration stays invisible.
-Anything not provably unreachable stays 💥.
+#### Reachability (💥 vs ⚠️)
+
+When application roots are available (the build outputs a dump records for each
+module), uika walks the class-load graph from them and labels what it never
+reaches ⚠️. The walk is a deliberate over-approximation, so ⚠️ is a signal to
+deprioritize rather than a guarantee, and reflection driven purely by external
+configuration stays invisible. Anything not provably unreachable stays 💥.
 
 Without usable roots nothing can be labelled ⚠️, so `reachable` behaves like
 `any` over everything except the 💤 tier below, which comes from the scanned
@@ -152,17 +153,38 @@ bytecode and survives. That is what a dump taken without building the outputs
 gives you, and what roots matching no scanned class give you (a warning names
 the cause).
 
-**Invocation evidence (💤).** `AbstractMethodError` is the one break that does
-not fire when the class loads. A concrete class inheriting an unimplemented
-abstract method loads, verifies, and instantiates without complaint, and throws
-only when the missing method is actually called. So for `method became
-abstract` uika looks for an invocation of the affected member in the scanned
-bytecode, and calls the violation latent when there is none. That evidence
-comes from bytecode rather than from application roots, so 💤 survives both
-degraded cases above. Like ⚠️ it is a confidence tier and not a proof, since a
-call through reflection or JNI, or from code outside the scan, stays invisible.
-An [exclude file](#excluding-known-false-positives) can drop the whole
-category with `kind = "method_became_abstract"`.
+#### Invocation evidence (💤)
+
+`AbstractMethodError` is the one break that does not fire when the class loads.
+A concrete class inheriting an unimplemented abstract method loads, verifies,
+and instantiates without complaint, and throws only when the missing method is
+actually called. So for `method became abstract` uika looks for an invocation
+of the affected member in the scanned bytecode, and calls the violation latent
+when there is none. That evidence comes from bytecode rather than from
+application roots, so 💤 survives both degraded cases above. Like ⚠️ it is a
+confidence tier and not a proof, since a call through reflection or JNI, or
+from code outside the scan, stays invisible. An
+[exclude file](#excluding-known-false-positives) can drop the whole category
+with `kind = "method_became_abstract"`.
+
+#### Runtime load evidence (JFR)
+
+The ⚠️ tier's blind spot is reflection, and a JVM closes it. Run the
+**current, not yet upgraded** build with JFR recording every class load, and a
+⚠️ violation whose referencing class appears in the recording is promoted out
+of the tier and marked with the reflective edge the static walk could not see:
+
+```console
+⚡ observed loading at runtime (via java.lang.Class.forName from com.example.PluginRegistry.discover(...))
+```
+
+Ingestion is promote-only, the same stance reachability takes: absence of a
+load entry proves nothing beyond the observed runs, so no violation is ever
+demoted or dropped because of it. The same evidence drafts an exclude file
+from the opposite signal, the symbols that stayed unproven.
+[Runtime load evidence](docs/runtime-load-evidence.md) covers the flag, the
+plugins' one option, the text-log formats read alongside recordings, the CI
+shape that collects on the base branch, and the JFR caveats.
 
 ### Per-module checking
 
@@ -278,27 +300,6 @@ so stale entries do not go unnoticed as the checked libraries change.
 This is for false positives you have actually investigated, not a shortcut
 around triaging `⚠️  not proven reachable` violations wholesale; use
 `failOn = reachable` for that instead.
-
-### Runtime load evidence (JFR)
-
-The ⚠️ tier means "no static path found", and its blind spot is reflection. A
-JVM closes that gap: run the **current, not yet upgraded** build with JFR
-recording every class load, and a ⚠️ violation whose referencing class appears
-in the recording is promoted out of the tier and marked with the reflective
-edge the static walk could not see:
-
-```console
-⚡ observed loading at runtime (via java.lang.Class.forName from com.example.PluginRegistry.discover(...))
-```
-
-Ingestion is promote-only, the same stance reachability takes: absence of a
-load entry proves nothing beyond the observed runs, so no violation is ever
-demoted or dropped because of it. The same evidence drafts an exclude file
-from the opposite signal, the symbols that stayed unproven.
-
-[Runtime load evidence](docs/runtime-load-evidence.md) covers the flag, the
-plugins' one option, the text-log formats read alongside recordings, the CI
-shape that collects on the base branch, and the JFR caveats.
 
 ## How it works
 
