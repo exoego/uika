@@ -370,8 +370,13 @@ fn is_structural(v: &Violation) -> bool {
 fn structural_lines(v: &Violation) -> (String, String) {
     use Reason::*;
     let owner = dotted(v.reference.owner.as_str());
+    // Which error fires depends on the JVM rather than on the violation, and the report
+    // cannot know which JVM will run the code, so it names both. IncompatibleClassChangeError
+    // from JDK 16 and VerifyError up to 15, confirmed on real JVMs from 11 to 25 for all
+    // three reasons that share this string (class became final, method became final, extends
+    // final class). The kind flips do not split this way and keep their own icce_on_load.
     let loads = format!(
-        "throws VerifyError when {} loads",
+        "throws IncompatibleClassChangeError (VerifyError up to JDK 15) when {} loads",
         simple(v.source_class.as_str())
     );
     let icce_on_load = || {
@@ -1564,7 +1569,9 @@ mod tests {
             "\n{out}"
         );
         assert!(
-            out.contains("        throws VerifyError when SLF4JLogger loads"),
+            out.contains(
+                "        throws IncompatibleClassChangeError (VerifyError up to JDK 15) when SLF4JLogger loads"
+            ),
             "\n{out}"
         );
     }

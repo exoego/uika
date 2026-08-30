@@ -31,7 +31,8 @@ reproduced from the third-party binaries:
 - pact-jvm junit5spring 4.2.3 subclasses `PactVerificationExtension`, which
   junit5 4.2.3 opened up but junit5 4.2.2 still declares final. When junit5
   lags behind on the runtime classpath the subclass fails to load
-  (`IncompatibleClassChangeError`/`VerifyError`; https://github.com/pact-foundation/pact-jvm/issues/1338).
+  (`IncompatibleClassChangeError`, `VerifyError` up to JDK 15;
+  https://github.com/pact-foundation/pact-jvm/issues/1338).
   The old side is junit5 4.2.3 (the compile-time binding) and the new side is
   4.2.2 (the lagging runtime resolution). junit5spring 4.2.2 covers the same
   incident in the upgrade direction: the subclass does not exist there yet, so
