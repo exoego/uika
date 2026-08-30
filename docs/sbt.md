@@ -174,11 +174,10 @@ degrading to a warning. The cache save and restore close that gap.
 - [`jdkRelease`](build-tools.md#jdkrelease) is derived from
   `javacOptions` and `scalacOptions`. Override with `uikaJdkRelease :=`, or
   set 0 to disable the API layer.
-- `uikaJfr` also carries
-  [text evidence](../README.md#runtime-load-evidence-jfr).
-  Anything in that directory that is not a recording is passed on unchanged, so
-  `-Xlog:class+load` output and a classlist mix with the recordings. There is no
-  separate key.
+- `uikaJfr` also carries [text evidence](runtime-load-evidence.md). Anything in
+  that directory that is not a recording is passed on unchanged, so
+  `-Xlog:class+load` output and a classlist mix with the recordings. There is
+  no separate key.
 - `UIKA_CLI_PATH` runs a binary you already have instead of resolving one, so a
   build can run air-gapped or against a locally built CLI. It wins over the CLI
   version, nothing is downloaded, and a value that is not an executable file
@@ -187,10 +186,9 @@ degrading to a warning. The cache save and restore close that gap.
 ## Runtime load evidence (JFR)
 
 `uikaJfr := Some(file("<dir>"))` in `build.sbt` (bare or `ThisBuild`-scoped)
-makes forked test JVMs record class loads into a
-[JFR recording](../README.md#runtime-load-evidence-jfr)
-there, and makes `uikaUpgradeCheck` convert and read the directory back. It
-needs `Test / fork := true`: an in-process test runs inside sbt's own JVM,
-which no flag can reach after startup.
-[`--draft-exclude-file`](../README.md#runtime-load-evidence-jfr)
-maps to `uikaDraftExcludeFile :=`.
+makes forked test JVMs record class loads into a [JFR
+recording](runtime-load-evidence.md) there, and makes `uikaUpgradeCheck`
+convert and read the directory back. It needs `Test / fork := true`: an
+in-process test runs inside sbt's own JVM, which no flag can reach after
+startup. [`--draft-exclude-file`](runtime-load-evidence.md) maps to
+`uikaDraftExcludeFile :=`.

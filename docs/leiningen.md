@@ -47,8 +47,7 @@ flag.
   `JAVA_CMD`, probed; a probe that fails warns and falls back to lein's own
   JVM). 0 disables the API layer.
 - `:jfr` takes a recording or a directory of recordings mixed with text logs,
-  and `:class-load-logs` takes text
-  [evidence](../README.md#runtime-load-evidence-jfr) on its
+  and `:class-load-logs` takes text [evidence](runtime-load-evidence.md) on its
   own. `:draft-exclude-file` drafts exclude rules from either, and needs one of
   them. The CLI answers a lone `:draft-exclude-file` by naming
   `--class-load-log`, whose keyword form this map rejects as unknown.
@@ -57,10 +56,9 @@ flag.
 
 ## Runtime load evidence (JFR)
 
-For [runtime load evidence](../README.md#runtime-load-evidence-jfr),
-collect by running the current build's tests with the JFR flag on the test
-JVM. The plugin injects nothing, so add it yourself; a profile keeps it out of
-everyday runs:
+For [runtime load evidence](runtime-load-evidence.md), collect by running the
+current build's tests with the JFR flag on the test JVM. The plugin injects
+nothing, so add it yourself; a profile keeps it out of everyday runs:
 
 ```clojure
 :profiles {:uika-jfr {:jvm-opts ["-XX:StartFlightRecording:jdk.ClassLoad#enabled=true,jdk.ClassLoad#stackTrace=true,filename=target/uika-jfr"]}}

@@ -28,10 +28,9 @@ air-gapped build needs.
 
 Every tool spells the same options its own way, listed per page:
 [`failOn`](../README.md#violation-tiers-and-the-failon-threshold),
-[`excludeFiles`](../README.md#excluding-known-false-positives),
-[runtime load evidence](../README.md#runtime-load-evidence-jfr) (one
-directory serving both phases, collect on the base branch and consume on the
-PR), and `jdkRelease`.
+[`excludeFiles`](../README.md#excluding-known-false-positives), [runtime load
+evidence](runtime-load-evidence.md) (one directory serving both phases, collect
+on the base branch and consume on the PR), and `jdkRelease`.
 
 ## `jdkRelease`
 

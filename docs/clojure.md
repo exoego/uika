@@ -69,9 +69,8 @@ entry says otherwise.
 ## Runtime load evidence (JFR)
 
 Collect by running the current, not yet upgraded build's test suite (or a
-staging soak) with
-[JFR recording class loads](../README.md#runtime-load-evidence-jfr).
-There is no test task to inject the flag into, so add it to your own test JVM
+staging soak) with [JFR recording class loads](runtime-load-evidence.md). There
+is no test task to inject the flag into, so add it to your own test JVM
 invocation, the way the Maven recipe does:
 
 ```console
@@ -92,12 +91,11 @@ $ clojure -T:uika upgrade-check :before '"/tmp/before.json"' :after '"/tmp/after
 ```
 
 Recordings are converted with the JDK's own JFR reader before the CLI runs,
-text logs in the same directory ride along unchanged, and a recording handed
-to `:class-load-log` is converted too. Conversion needs the tool itself on
-Java 17+, the same floor the recording test JVMs already have for the flag
-syntax.
-[`:draft-exclude-file`](../README.md#runtime-load-evidence-jfr)
-drafts exclude rules from the same evidence.
+text logs in the same directory ride along unchanged, and a recording handed to
+`:class-load-log` is converted too. Conversion needs the tool itself on Java
+17+, the same floor the recording test JVMs already have for the flag syntax.
+[`:draft-exclude-file`](runtime-load-evidence.md) drafts exclude rules from the
+same evidence.
 
 ## PR gate on GitHub Actions
 

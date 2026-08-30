@@ -115,10 +115,10 @@ $ uika dump some.jar
   code only. The report is printed the same way regardless.
 - [`--exclude-file`](../README.md#excluding-known-false-positives)
   is repeatable, and rules from every file given are merged.
-- [`--class-load-log`](../README.md#runtime-load-evidence-jfr) is repeatable and
-  takes text evidence, or a directory of it. The CLI reads no binary JFR, which
-  is why the plugins convert recordings before invoking it. Without one,
-  convert a recording by hand:
+- [`--class-load-log`](runtime-load-evidence.md) is repeatable and takes text
+  evidence, or a directory of it. The CLI reads no binary JFR, which is why the
+  plugins convert recordings before invoking it. Without one, convert a
+  recording by hand:
 
   ```console
   jfr print --json --events jdk.ClassLoad rec.jfr \
@@ -129,9 +129,8 @@ $ uika dump some.jar
   That yields tagged class-load lines the CLI reads (classes only, no triggers;
   the tag keeps default-package names accepted, and the filter drops array
   classes).
-- [`--draft-exclude-file`](../README.md#runtime-load-evidence-jfr)
-  writes draft exclude rules from that evidence. It requires
-  `--class-load-log`.
+- [`--draft-exclude-file`](runtime-load-evidence.md) writes draft exclude rules
+  from that evidence. It requires `--class-load-log`.
 - [`--jdk-release N`](../README.md#how-it-works) layers the JDK API of release
   N under the resolution scope, so hierarchy escapes into the JDK conclude
   instead of counting as unverified. It is opt-in here and defaults to on in
