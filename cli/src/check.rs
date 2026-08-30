@@ -1138,9 +1138,9 @@ fn add_final_violations(
 
 /// Version-lag breakage from the upgraded artifacts' own new classes: a scanned class
 /// from a new-version JAR extends a class that is final on the runtime classpath
-/// (IncompatibleClassChangeError/VerifyError at class load). This is invisible to the
-/// pair-diff checks because the final class lives in an artifact the upgrade did NOT
-/// change (https://github.com/pact-foundation/pact-jvm/issues/1338: junit5spring 4.2.3 introduced a subclass of
+/// (IncompatibleClassChangeError at class load, VerifyError up to JDK 15). This is
+/// invisible to the pair-diff checks because the final class lives in an artifact
+/// the upgrade did NOT change (https://github.com/pact-foundation/pact-jvm/issues/1338: junit5spring 4.2.3 introduced a subclass of
 /// PactVerificationExtension, which a lagging junit5 4.2.2 still declares final).
 /// Old-relative gate: the same super edge already present in the changed artifact's
 /// old version is pre-existing inconsistency, not breakage introduced by the upgrade.
@@ -1188,8 +1188,9 @@ fn add_extends_final_violations(
 
 /// A scanned class extends a class that became an interface, or implements an
 /// interface that became a class. Either flip makes the subclass fail to load
-/// (VerifyError / IncompatibleClassChangeError), so it is found by a graph walk
-/// like the newly-final walk, without needing a constant-pool reference. The flip
+/// (IncompatibleClassChangeError on every JDK, with none of the VerifyError era the
+/// final-class walks have below 16), so it is found by a graph walk like the
+/// newly-final walk, without needing a constant-pool reference. The flip
 /// is judged old-vs-new library kind, so an edge that was already cross-kind (never
 /// valid) is pre-existing, not this upgrade's breakage.
 fn add_kind_flip_violations(
