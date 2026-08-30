@@ -19,14 +19,20 @@ reference recorded in the referencing binary's constant pool. Detection covers:
 
 - Class removals `NoClassDefFoundError`
 - Method removals `NoSuchMethodError`
-- Visibility narrowing (public -> protected -> private)
-- Static <-> instance mismatches
-- Newly-final classes/members
-- Methods that became abstract
-- `new` on a class that became abstract or an interface
-- Class <-> interface flips
+- Field removals `NoSuchFieldError`
+- Visibility narrowing (public -> protected -> private) `IllegalAccessError`
+- Writes to a field that became final `IllegalAccessError`
+- Static <-> instance mismatches `IncompatibleClassChangeError`
+- Newly-final classes/members `IncompatibleClassChangeError`
+  (`VerifyError` on JDK 15 and older)
+- Methods that became abstract `AbstractMethodError`
+- `new` on a class that became abstract or an interface `InstantiationError`
+- Class <-> interface flips `IncompatibleClassChangeError`
 - Subclasses left out of a newly sealed type's `permits` clause
+  `IncompatibleClassChangeError`
 - Conflict of default methods from two unrelated interfaces at once
+  (`IncompatibleClassChangeError` at an `invokevirtual` call site,
+  `AbstractMethodError` at an `invokeinterface` one)
 - `META-INF/services` providers that ServiceLoader can no longer find or
   instantiate (`ServiceConfigurationError` rather than a `LinkageError`)
 
