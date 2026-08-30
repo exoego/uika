@@ -2,23 +2,23 @@
 
 [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-cli%2Fmaven-metadata.xml&label=Maven%20Central)](https://central.sonatype.com/namespace/net.exoego.uika)
 
-Ultra-fast and low-memory LinkageError checker for JVM.
-Catches `NoSuchMethodError` and friends statically, before you ship.
+Ultra-fast and low-memory LinkageError checker for JVM.<br>
+Catch `NoSuchMethodError` and such statically, before you ship.
 
 ## The problem to fix
 
 When dependency resolution picks conflicting versions, an API that a library
 was compiled against can vanish from the runtime classpath and fail at runtime
-with `NoSuchMethodError` / `NoClassDefFoundError`.
+with `LinkageError` (e.g. `NoSuchMethodError` / `NoClassDefFoundError`).
 
-With modern practice of using Dependabot, Renovate, or Scala Steward bumping
+With modern practice of using bots (Dependabot, Renovate, or Scala Steward) bumping
 versions constantly, auditing transitive dependencies by hand does not scale.
 
 Uika catches such `LinkageError`s at PR time by analyzing every class/method
-reference recorded in the referencing binary's constant pool.
+reference recorded in the referencing binary's constant pool. Detection covers:
 
-Detection covers:
-- Class/Method removals
+- Class removals `NoClassDefFoundError`
+- Method removals `NoSuchMethodError`
 - Visibility narrowing (public -> protected -> private)
 - Static <-> instance mismatches
 - Newly-final classes/members
@@ -53,9 +53,8 @@ tools on the same inputs (wall time, peak memory, and what each one reports).
 
 ## Usage
 
-Declare uika in your build, then run its dump and check tasks. Setup, the
-option spellings, the tool-specific caveats and a copy-pasteable GitHub Actions
-workflow that gates PRs (the main use case) live on one page per tool:
+Declare uika in your build, then run its dump and check tasks. Find the 
+common and tool-specific setup on one page per tool:
 
 - [Gradle](docs/gradle.md)
 - [sbt](docs/sbt.md)
@@ -65,9 +64,9 @@ workflow that gates PRs (the main use case) live on one page per tool:
 - [Leiningen](docs/leiningen.md)
 - [Bazel](docs/bazel.md)
 
-A build none of them covers drives [the CLI](docs/cli.md) by hand instead.
-[What every integration shares](docs/build-tools.md) covers the dump format, how
-the CLI is fetched, and where `jdkRelease` comes from.
+There's also [CLI](docs/cli.md) in case you want to run it by hand.
+[What every integration shares](docs/build-tools.md) covers the dump format, how the CLI
+is fetched, and where `jdkRelease` comes from.
 
 ## What a check reports
 
@@ -113,10 +112,6 @@ per-module check: 2 of 41 modules changed their resolved versions (39 unchanged)
 scanned 145213 classes: ❌ 42 broken (of which 💥 25 reachable, ⚠️ 17 not proven reachable), ❓ 205 unverified references (hierarchy escapes the analyzed scope)
 ```
 
-The plugins run a binary they fetch themselves, so the command line behind
-this is an implementation detail. [The CLI page](docs/cli.md) has it, for a
-build no plugin covers.
-
 ### Violation tiers and the `failOn` threshold
 
 A changed library drags in transitive JARs your application never touches, so
@@ -133,13 +128,13 @@ The report always prints in full. `failOn` only decides the exit code, as a
 threshold over exactly that split:
 
 - `any` (default, strictest): exit 1 on any violation.
-- `reachable`: exit 1 only on 💥.
+- `reachable`: exit 1 only on 💥breaks.
 - `never`: always exit 0, reporting violations as warnings only.
 
 So what fails CI is exactly what the report shows above the warning sections.
 An error always fails the run, whatever the threshold.
 
-#### Reachability (💥 vs ⚠️)
+#### Reachability (💥 breaks vs ⚠️ unproven)
 
 When application roots are available (the build outputs a dump records for each
 module), uika walks the class-load graph from them and labels what it never
@@ -153,17 +148,20 @@ bytecode and survives. That is what a dump taken without building the outputs
 gives you, and what roots matching no scanned class give you (a warning names
 the cause).
 
-#### Invocation evidence (💤)
+#### Invocation evidence (💤 latent)
 
 `AbstractMethodError` is the one break that does not fire when the class loads.
 A concrete class inheriting an unimplemented abstract method loads, verifies,
 and instantiates without complaint, and throws only when the missing method is
-actually called. So for `method became abstract` uika looks for an invocation
-of the affected member in the scanned bytecode, and calls the violation latent
-when there is none. That evidence comes from bytecode rather than from
-application roots, so 💤 survives both degraded cases above. Like ⚠️ it is a
-confidence tier and not a proof, since a call through reflection or JNI, or
-from code outside the scan, stays invisible. An
+actually called.
+
+So for `method became abstract`, uika looks for an invocation of the affected
+member in the scanned bytecode, and calls the violation latent when there is
+none. That evidence comes from bytecode rather than from application roots,
+so 💤 survives both degraded cases above.
+
+Like ⚠️, it is a confidence tier and not a proof, since a call through
+reflection or JNI, or from code outside the scan, stays invisible. An
 [exclude file](#excluding-known-false-positives) can drop the whole category
 with `kind = "method_became_abstract"`.
 
@@ -339,7 +337,7 @@ layer off. Either way uika still needs no JVM to run.
 real-incident fixtures, the golden-bless workflow, and the JVM probe harness.
 Releases are described in [PUBLISHING.md](PUBLISHING.md).
 
-## Known limitations (PoC)
+## Known limitations
 
 - References whose hierarchy escapes into unanalyzed classes are conservatively
   treated as OK (reported only as an "unverified" count, which a complete
