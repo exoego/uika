@@ -167,7 +167,7 @@ from code outside the scan, stays invisible. An
 [exclude file](#excluding-known-false-positives) can drop the whole category
 with `kind = "method_became_abstract"`.
 
-#### Runtime load evidence (⚡)
+#### Runtime load evidence (JFR)
 
 The ⚠️ tier's blind spot is reflection, and a JVM closes it. Run the
 **current, not yet upgraded** build with JFR recording every class load, and a
