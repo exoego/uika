@@ -182,6 +182,39 @@ not move are skipped, and every violation names the modules that exhibit it
 (`modules:` in the report). Dumps carrying no per-module data fall back to the
 flat union check.
 
+### Checking a JDK upgrade
+
+A JDK upgrade breaks an application the same way a library upgrade does, and it
+needs no configuration to catch. Each dump records the API release every module
+runs on, so bumping what your build compiles for and re-running the dump is
+enough. The check sees the two dumps disagree and covers that move alongside
+the dependency moves in one report, scoped to the modules that made it. A JDK
+API your classpath still references and the new release dropped is then
+reported like any other removal:
+
+```console
+dependency changes: none
+
+per-module check: 0 of 1 modules changed their resolved versions (1 unchanged)
+    JDK 11 -> 17  scanned 2 classes, ❌ 1 broken, 0 unverified
+...
+❌ java.rmi.activation.ActivationGroup
+    class removed, throws NoClassDefFoundError at first use
+    used by 1 class:
+        UsesRemoved  (app.jar) [JDK 11 -> 17]
+```
+
+Dumps written before the plugins recorded the release carry no value, and a
+missing value on either side is never read as a JDK move. A build whose runtime
+is not what it compiles for says so with the tool's `jdkRelease` setting, which
+is recorded as the release of every module.
+
+Releases below the installed JDK come from its `ct.sym`; the installed JDK's own
+release comes from its `jmods/`, which `ct.sym` never carries. Checking an upgrade
+*to* the JDK you now run therefore needs only that one JDK. Sealing changes are
+invisible here, because `ct.sym` stubs do not carry `PermittedSubclasses`, and
+reporting them from the `jmods` side alone would be a false positive.
+
 ### Excluding known false positives
 
 Some violations are real breaks in the referenced API but never actually
@@ -305,38 +338,6 @@ broken count unchanged.
 Each tool derives the release from what its modules compile for, so nothing has
 to be configured. The `jdkRelease` setting overrides it, and 0 switches the
 layer off. Either way uika still needs no JVM to run.
-
-### Checking a JDK upgrade
-
-A JDK upgrade breaks an application the same way a library upgrade does, and it
-needs no configuration to catch. Each dump records the API release every module
-runs on, so bumping what your build compiles for and re-running the dump is
-enough. The check sees the two dumps disagree and covers that move alongside
-the dependency moves in one report, scoped to the modules that made it. A JDK API your classpath still references and the new release dropped is
-then reported like any other removal:
-
-```console
-dependency changes: none
-
-per-module check: 0 of 1 modules changed their resolved versions (1 unchanged)
-    JDK 11 -> 17  scanned 2 classes, ❌ 1 broken, 0 unverified
-...
-❌ java.rmi.activation.ActivationGroup
-    class removed, throws NoClassDefFoundError at first use
-    used by 1 class:
-        UsesRemoved  (app.jar) [JDK 11 -> 17]
-```
-
-Dumps written before the plugins recorded the release carry no value, and a
-missing value on either side is never read as a JDK move. A build whose runtime
-is not what it compiles for says so with the tool's `jdkRelease` setting, which
-is recorded as the release of every module.
-
-Releases below the installed JDK come from its `ct.sym`; the installed JDK's own
-release comes from its `jmods/`, which `ct.sym` never carries. Checking an upgrade
-*to* the JDK you now run therefore needs only that one JDK. Sealing changes are
-invisible here, because `ct.sym` stubs do not carry `PermittedSubclasses`, and
-reporting them from the `jmods` side alone would be a false positive.
 
 ## Development
 
