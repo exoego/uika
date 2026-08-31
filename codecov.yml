@@ -19,7 +19,10 @@ flag_management:
 
 comment:
   layout: "condensed_header, flags, files"
-  require_changes: true
+  # Codecov's default. require_changes would drop the comment on any PR that moves no
+  # measured line, which is every build-config PR, and on the first one of all, since
+  # main has no base report to diff against yet.
+  require_changes: false
 
 ignore:
   # Committed symlinks into jvm-plugin-core. The Gradle and Maven reports name those
