@@ -32,7 +32,6 @@ LEIN_PLUGIN_DIR ?= lein-plugin
 BAZEL_RULES_DIR ?= bazel-rules
 BAZEL_STAGE_DIR ?= dist/bazel
 COVERAGE_DIR ?= target/coverage
-CLOJURE_COVERAGE ?= $(CLOJURE_TOOL_DIR)/target/coverage
 UIKA_VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' cli/Cargo.toml | head -1)
 TMPDIR ?= /tmp
 SBT_CACHE_DIR ?= $(TMPDIR)/uika-sbt
@@ -193,11 +192,13 @@ clojure-test: cargo-build
 
 # Cloverage writes SF: paths relative to this directory, so they need the prefix Codecov
 # resolves from. Rewritten in place, which is safe because the run above regenerates the file.
+# CLOJURE_LCOV is not a knob: cloverage is run without --output, so this is where it writes.
+CLOJURE_LCOV = $(CLOJURE_TOOL_DIR)/target/coverage/lcov.info
 clojure-coverage: cargo-build
 	cd $(CLOJURE_TOOL_DIR) && $(CLOJURE) -T:build javac
 	cd $(CLOJURE_TOOL_DIR) && UIKA_BIN=$(abspath target/debug/uika) $(CLOJURE) -M:coverage
-	sed 's|^SF:|SF:$(CLOJURE_TOOL_DIR)/|' $(CLOJURE_COVERAGE)/lcov.info > $(CLOJURE_COVERAGE)/lcov.tmp
-	mv $(CLOJURE_COVERAGE)/lcov.tmp $(CLOJURE_COVERAGE)/lcov.info
+	sed 's|^SF:|SF:$(CLOJURE_TOOL_DIR)/|' $(CLOJURE_LCOV) > $(CLOJURE_LCOV).tmp
+	mv $(CLOJURE_LCOV).tmp $(CLOJURE_LCOV)
 
 clojure-clean:
 	rm -rf $(CLOJURE_TOOL_DIR)/.cpcache $(CLOJURE_TOOL_DIR)/target
