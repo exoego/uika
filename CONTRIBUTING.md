@@ -25,21 +25,26 @@ enforces. `make rewrite` applies them on demand.
 $ make coverage   # writes the reports CI uploads to Codecov
 ```
 
-Four of the eight front ends are instrumented: the CLI (cargo-llvm-cov), the
-Gradle plugin and the Maven plugin (JaCoCo), and the Clojure tool (cloverage).
-The Gradle and Maven reports also cover the shared `jvm-plugin-core` sources.
-Both run their tests in a second JVM, so both pass an agent into it: the Gradle
-build writes a `gradle.properties` in the TestKit dir, which doubles as the
-daemon's Gradle user home, and the Maven build hands the invoker ITs a
-`mavenOpts`. Without those the plugin task classes and the mojos read as
-untested.
+Five of the eight front ends are instrumented: the CLI (cargo-llvm-cov), the
+Gradle plugin and the Maven plugin (JaCoCo), and the Clojure tool and the
+Leiningen plugin (cloverage). The Gradle and Maven reports also cover the shared
+`jvm-plugin-core` sources. Both run their tests in a second JVM, so both pass an
+agent into it: the Gradle build writes a `gradle.properties` in the TestKit dir,
+which doubles as the daemon's Gradle user home, and the Maven build hands the
+invoker ITs a `mavenOpts`. Without those the plugin task classes and the mojos
+read as untested.
 
 Coverage is opt-in on both (`-PuikaCoverage=true`, `-Pcoverage`), so `make
 check` keeps running uninstrumented.
 
-The remaining four are tested only through builds a coverage agent cannot
-follow: sbt is scripted-only, the Leiningen and Bazel integration tests are
-shell scripts driving their own toolchains, and Mill has no JaCoCo binding.
+The Leiningen number comes from `lein-plugin/test/` alone. Cloverage instruments
+namespaces in the JVM it reports from, and `it/run.sh` forks `lein uika` as a
+child process, so the integration leg is worth nothing to the report and the
+unit suite has to reach what matters on its own. `make lein-test` runs both.
+
+The remaining three are tested only through builds a coverage agent cannot
+follow: sbt is scripted-only, the Bazel integration tests are shell scripts
+driving their own toolchain, and Mill has no JaCoCo binding.
 
 ## Test fixtures and goldens
 
