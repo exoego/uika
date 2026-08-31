@@ -1,6 +1,7 @@
 plugins {
     `java-gradle-plugin`
     `maven-publish`
+    jacoco
 }
 
 dependencies {
@@ -69,8 +70,57 @@ tasks.jar {
     }
 }
 
+// Coverage is opt-in: instrumenting the TestKit builds costs a daemon JVM each.
+val coverageEnabled = providers.gradleProperty("uikaCoverage").map(String::toBoolean).getOrElse(false)
+
+// The :runtime classifier is the agent jar itself; the default artifact only embeds it.
+val jacocoTestKitAgent: Configuration by configurations.creating
+dependencies {
+    jacocoTestKitAgent("org.jacoco:org.jacoco.agent:${jacoco.toolVersion}:runtime")
+}
+
+val testKitDir = layout.buildDirectory.dir("test-kit")
+val testKitExec = layout.buildDirectory.file("jacoco/testKit.exec")
+
 tasks.test {
     useJUnitPlatform()
+    // The jacoco plugin instruments every Test task by default, so `make gradle-check` would
+    // pay for coverage it never reports.
+    extensions.getByType<JacocoTaskExtension>().isEnabled = coverageEnabled
+
+    if (coverageEnabled) {
+        // TestKit builds run in a daemon the test task's own agent never reaches, and the five
+        // task classes are tested only that way. The testkit dir doubles as that daemon's Gradle
+        // user home, so one gradle.properties here instruments every build, no test edits.
+        val agentJar = jacocoTestKitAgent.elements.map { it.single().asFile.absolutePath }
+        val kitDir = testKitDir.get().asFile
+        val exec = testKitExec.get().asFile
+        systemProperty("org.gradle.testkit.dir", kitDir.absolutePath)
+        doFirst {
+            // daemon=false is load-bearing: JaCoCo flushes at JVM exit, and a reusable daemon
+            // outlives the report task. A single-use daemon exits with each build.
+            kitDir.mkdirs()
+            exec.parentFile.mkdirs()
+            exec.delete()
+            kitDir.resolve("gradle.properties").writeText(
+                """
+                org.gradle.daemon=false
+                org.gradle.jvmargs=-javaagent:${agentJar.get()}=destfile=${exec.path},append=true,includes=net.exoego.uika.*
+                """.trimIndent()
+            )
+        }
+    }
+}
+
+tasks.jacocoTestReport {
+    dependsOn(tasks.test)
+    // filter, not a plain add: JacocoReport fails on an execution-data path that does not exist.
+    executionData(files(testKitExec).filter { it.exists() })
+    reports {
+        xml.required = true
+        html.required = false
+        csv.required = false
+    }
 }
 
 gradlePlugin {

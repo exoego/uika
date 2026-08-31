@@ -1,5 +1,6 @@
 [tools]
-rust = { version = "1.98.0", components = "rustfmt,clippy" }
+# llvm-tools-preview backs cargo-llvm-cov.
+rust = { version = "1.98.0", components = "rustfmt,clippy,llvm-tools-preview" }
 gradle = "9.7.1"
 # The default backends (conda, asdf plugin) lag behind sbt releases and have
 # no 1.12.13 or later, so install the launcher from the GitHub release.

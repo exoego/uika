@@ -19,4 +19,11 @@
   :test {:extra-paths ["test" "target/core-classes"]
          :extra-deps {io.github.cognitect-labs/test-runner
                       {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
-         :main-opts ["-m" "cognitect.test-runner"]}}}
+         :main-opts ["-m" "cognitect.test-runner"]}
+  ;; Cloverage drives clojure.test itself, so it replaces the test-runner rather than
+  ;; wrapping it, and needs the same javac'd JfrEvidence on the path that :test does.
+  :coverage {:extra-paths ["test" "target/core-classes"]
+             :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}}
+             :main-opts ["-m" "cloverage.coverage"
+                         "-p" "src" "-p" "src-core" "-s" "test"
+                         "--lcov" "--no-html"]}}}
