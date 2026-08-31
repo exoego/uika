@@ -1,6 +1,7 @@
 # Uika (Unseen Incompatibility, Kick Away)
 
 [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-cli%2Fmaven-metadata.xml&label=Maven%20Central)](https://central.sonatype.com/namespace/net.exoego.uika)
+[![codecov](https://codecov.io/gh/exoego/uika/branch/main/graph/badge.svg)](https://codecov.io/gh/exoego/uika)
 
 Ultra-fast and low-memory LinkageError checker for JVM.<br>
 Catch `NoSuchMethodError` and such statically, before you ship.

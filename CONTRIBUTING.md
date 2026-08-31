@@ -19,6 +19,28 @@ Java sources are kept in shape by the OpenRewrite recipes in
 running anything, and `make check` runs the verify-only variant that CI
 enforces. `make rewrite` applies them on demand.
 
+## Coverage
+
+```console
+$ make coverage   # writes the reports CI uploads to Codecov
+```
+
+Four of the eight front ends are instrumented: the CLI (cargo-llvm-cov), the
+Gradle plugin and the Maven plugin (JaCoCo), and the Clojure tool (cloverage).
+The Gradle and Maven reports also cover the shared `jvm-plugin-core` sources.
+Both run their tests in a second JVM, so both pass an agent into it: the Gradle
+build writes a `gradle.properties` in the TestKit dir, which doubles as the
+daemon's Gradle user home, and the Maven build hands the invoker ITs a
+`mavenOpts`. Without those the plugin task classes and the mojos read as
+untested.
+
+Coverage is opt-in on both (`-PuikaCoverage=true`, `-Pcoverage`), so `make
+check` keeps running uninstrumented.
+
+The remaining four are tested only through builds a coverage agent cannot
+follow: sbt is scripted-only, the Leiningen and Bazel integration tests are
+shell scripts driving their own toolchains, and Mill has no JaCoCo binding.
+
 ## Test fixtures and goldens
 
 The integration tests replay real incidents against unmodified JARs from Maven

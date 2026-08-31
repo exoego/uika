@@ -1,6 +1,7 @@
 .PHONY: help build check test fmt fmt-check clean probe placeholder-check \
-	rewrite rewrite-check \
+	rewrite rewrite-check coverage \
 	cargo-build cargo-release cargo-test cargo-clippy cargo-fmt cargo-fmt-check \
+	cargo-coverage gradle-coverage maven-coverage clojure-coverage \
 	gradle-build gradle-check gradle-test gradle-clean \
 	sbt-compile sbt-scripted sbt-clean \
 	maven-verify maven-clean \
@@ -30,6 +31,7 @@ CLOJURE_TOOL_DIR ?= clojure-tool
 LEIN_PLUGIN_DIR ?= lein-plugin
 BAZEL_RULES_DIR ?= bazel-rules
 BAZEL_STAGE_DIR ?= dist/bazel
+COVERAGE_DIR ?= target/coverage
 UIKA_VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' cli/Cargo.toml | head -1)
 TMPDIR ?= /tmp
 SBT_CACHE_DIR ?= $(TMPDIR)/uika-sbt
@@ -47,6 +49,7 @@ help:
 		'Targets:' \
 		'  make build        Build Rust CLI and JVM build-tool plugins' \
 		'  make test         Run Rust tests and JVM build-tool plugin tests' \
+		'  make coverage     Write the coverage reports ci.yml uploads to Codecov' \
 		'  make check        Run formatting and lint checks and all plugin checks' \
 		'  make fmt          Format Rust sources' \
 		'  make clean        Remove Rust and JVM plugin build outputs' \
@@ -84,6 +87,9 @@ check: placeholder-check rewrite-check cargo-fmt-check cargo-clippy cargo-test g
 
 test: rewrite cargo-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
+# The four front ends whose tests can be instrumented; ci.yml uploads one flag per target.
+coverage: cargo-coverage gradle-coverage maven-coverage clojure-coverage
+
 fmt: cargo-fmt
 
 fmt-check: cargo-fmt-check
@@ -108,6 +114,13 @@ cargo-fmt:
 
 cargo-fmt-check:
 	$(CARGO) fmt -- --check
+
+# --remap-path-prefix makes the lcov SF: paths repo-root relative, which is what Codecov
+# resolves against. Without it they are absolute and machine-specific.
+cargo-coverage:
+	mkdir -p $(COVERAGE_DIR)
+	$(CARGO) llvm-cov --workspace --locked --remap-path-prefix \
+		--lcov --output-path $(COVERAGE_DIR)/lcov.info
 
 # Debug binary on purpose: probe verdicts are optimization-independent, the
 # fixtures are tiny, and cargo test has already built target/debug in CI.
@@ -137,6 +150,9 @@ gradle-test:
 gradle-clean:
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) clean
 
+gradle-coverage:
+	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) jacocoTestReport -PuikaCoverage=true
+
 sbt-compile:
 	cd $(SBT_PLUGIN_DIR) && $(SBT) $(SBT_FLAGS) compile
 
@@ -155,6 +171,9 @@ maven-verify:
 maven-clean:
 	$(MAVEN) -f $(MAVEN_PLUGIN_DIR)/pom.xml -B clean
 
+maven-coverage:
+	$(MAVEN) -f $(MAVEN_PLUGIN_DIR)/pom.xml -B -Pcoverage clean verify
+
 mill-compile:
 	cd $(MILL_PLUGIN_DIR) && $(MILL) compile
 
@@ -170,6 +189,16 @@ mill-clean:
 clojure-test: cargo-build
 	cd $(CLOJURE_TOOL_DIR) && $(CLOJURE) -T:build javac
 	cd $(CLOJURE_TOOL_DIR) && UIKA_BIN=$(abspath target/debug/uika) $(CLOJURE) -M:test
+
+# Cloverage writes SF: paths relative to this directory, so they need the prefix Codecov
+# resolves from. Rewritten in place, which is safe because the run above regenerates the file.
+# CLOJURE_LCOV is not a knob: cloverage is run without --output, so this is where it writes.
+CLOJURE_LCOV = $(CLOJURE_TOOL_DIR)/target/coverage/lcov.info
+clojure-coverage: cargo-build
+	cd $(CLOJURE_TOOL_DIR) && $(CLOJURE) -T:build javac
+	cd $(CLOJURE_TOOL_DIR) && UIKA_BIN=$(abspath target/debug/uika) $(CLOJURE) -M:coverage
+	sed 's|^SF:|SF:$(CLOJURE_TOOL_DIR)/|' $(CLOJURE_LCOV) > $(CLOJURE_LCOV).tmp
+	mv $(CLOJURE_LCOV).tmp $(CLOJURE_LCOV)
 
 clojure-clean:
 	rm -rf $(CLOJURE_TOOL_DIR)/.cpcache $(CLOJURE_TOOL_DIR)/target

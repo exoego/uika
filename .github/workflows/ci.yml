@@ -145,3 +145,96 @@ jobs:
             ~/.cache/bazelisk
             ~/.cache/bazel/_bazel_runner/cache/repos/v1
           key: ${{ steps.cache-bazel.outputs.cache-primary-key }}
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The check job owns every cache these two share a key with, so this one only
+      # restores. Cargo is keyed by job name, so it gets its own entry and can save;
+      # sharing with check would thrash anyway, since these builds are instrumented.
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          cache_save: false
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Cache Gradle
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: 21
+          set-default: false
+          cache: gradle
+          cache-read-only: true
+
+      - name: Cache Maven
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: 21
+          set-default: false
+          cache: maven
+          cache-read-only: true
+          cache-path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            maven-plugin/target/it-repo
+          cache-dependency-path: |
+            maven-plugin/pom.xml
+            maven-plugin/src/it/**/*.xml
+            clojure-tool/deps.edn
+            lein-plugin/project.clj
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        with:
+          tool: cargo-llvm-cov
+
+      # Uploaded per target rather than in one batch, so a later target failing still
+      # publishes what the earlier ones measured.
+      - name: Rust coverage
+        run: make cargo-coverage
+      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: target/coverage/lcov.info
+          flags: rust
+          disable_search: true
+          fail_ci_if_error: true
+
+      - name: Gradle plugin coverage
+        run: make gradle-coverage
+      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: gradle-plugin/build/reports/jacoco/test/jacocoTestReport.xml
+          flags: gradle
+          disable_search: true
+          fail_ci_if_error: true
+
+      - name: Maven plugin coverage
+        run: make maven-coverage
+      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: maven-plugin/target/site/jacoco/jacoco.xml,maven-plugin/target/site/jacoco-it/jacoco.xml
+          flags: maven
+          disable_search: true
+          fail_ci_if_error: true
+
+      - name: Clojure tool coverage
+        run: make clojure-coverage
+      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: clojure-tool/target/coverage/lcov.info
+          flags: clojure
+          disable_search: true
+          fail_ci_if_error: true

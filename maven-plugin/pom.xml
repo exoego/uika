@@ -208,6 +208,70 @@
   </build>
 
   <profiles>
+    <!-- Opt-in, so a plain `mvn verify` stays uninstrumented. Two agents because the two
+         halves are tested in different JVMs: surefire covers jvm-plugin-core here, while the
+         mojos only ever run inside the Maven the invoker forks, which <mavenOpts> reaches. -->
+    <profile>
+      <id>coverage</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.jacoco</groupId>
+            <artifactId>jacoco-maven-plugin</artifactId>
+            <version>0.8.14</version>
+            <executions>
+              <execution>
+                <id>prepare-agent</id>
+                <goals>
+                  <goal>prepare-agent</goal>
+                </goals>
+                <configuration>
+                  <!-- Class-name patterns, and only on the agents: the report goals read
+                       <includes> as class-FILE patterns, so the same value empties them. -->
+                  <includes>
+                    <include>net.exoego.uika.*</include>
+                  </includes>
+                </configuration>
+              </execution>
+              <execution>
+                <id>prepare-agent-integration</id>
+                <goals>
+                  <goal>prepare-agent-integration</goal>
+                </goals>
+                <configuration>
+                  <propertyName>uikaItArgLine</propertyName>
+                  <includes>
+                    <include>net.exoego.uika.*</include>
+                  </includes>
+                </configuration>
+              </execution>
+              <execution>
+                <id>report</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>report</goal>
+                </goals>
+              </execution>
+              <execution>
+                <id>report-integration</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>report-integration</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <!-- Merges into the base declaration; the version comes from there. -->
+            <artifactId>maven-invoker-plugin</artifactId>
+            <configuration>
+              <mavenOpts>${uikaItArgLine}</mavenOpts>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
     <!-- Maven Central requires sources and javadoc jars; keep them out of
          regular builds (javadoc slows down invoker runs). -->
     <profile>

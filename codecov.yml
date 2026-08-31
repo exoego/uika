@@ -1,0 +1,30 @@
+# The front ends whose tests can be instrumented; ci.yml's coverage job is the list.
+# The other four are tested only by forked builds (sbt scripted, shell ITs, bazel).
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        # Informational while the flags settle. Flip to a target once the numbers are known.
+        informational: true
+
+flag_management:
+  default_rules:
+    # All four flags come from one job, so a step failing halfway would report the later
+    # ones as a drop to zero rather than as missing.
+    carryforward: true
+
+comment:
+  layout: "condensed_header, flags, files"
+  # Codecov's default. require_changes would drop the comment on any PR that moves no
+  # measured line, which is every build-config PR, and on the first one of all, since
+  # main has no base report to diff against yet.
+  require_changes: false
+
+ignore:
+  # Committed symlinks into jvm-plugin-core. The Gradle and Maven reports name those
+  # sources by package path alone, and a second candidate splits one file's coverage.
+  - "bazel-rules/java/net/exoego/uika/plugin/core"
