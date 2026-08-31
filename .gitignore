@@ -8,6 +8,8 @@
 mill-plugin/out/
 .cpcache/
 lein-plugin/pom.xml
+# `lein test` writes it for `lein retest`, so it names whatever failed last locally.
+lein-plugin/.lein-failures
 # run.sh writes these, so tracking them would just drift. uika-draft.toml is CLI
 # output, rewritten twice per run (placeholder first, then the drafted rules).
 lein-plugin/it/test-project/uika-exclude.toml

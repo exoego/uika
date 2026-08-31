@@ -238,3 +238,15 @@ jobs:
           flags: clojure
           disable_search: true
           fail_ci_if_error: true
+
+      # No cargo-build dependency, unlike clojure-coverage: the unit suite stubs the CLI
+      # with a shell script, and the real-binary round trip stays in it/run.sh.
+      - name: Leiningen plugin coverage
+        run: make lein-coverage
+      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lein-plugin/target/coverage/lcov.info
+          flags: lein
+          disable_search: true
+          fail_ci_if_error: true

@@ -10,7 +10,7 @@ coverage:
         informational: true
 
 # Flags stay, but only as the upload identity. Carryforward is a property of an upload,
-# so it has no component equivalent: all four uploads come from one job, and a step
+# so it has no component equivalent: every upload comes from one job, and a step
 # failing halfway would report the later ones as a drop to zero rather than as missing.
 flag_management:
   default_rules:
@@ -21,13 +21,18 @@ flag_management:
 # plugin, so its coverage arrives under two flags, and only a path rule scores it as one
 # unit.
 #
-# The last four front ends are instrumented by nothing. ci.yml's coverage job uploads
-# for the first five only, and the rest are exercised by forked builds (sbt scripted,
-# shell ITs, bazel) that produce no report. They are listed anyway because a component
-# needs no upload behind it, and an unmeasured one renders as the empty set rather than
-# as 0% -- the comment row states "not measured" instead of implying a failure. Listing
-# them now also fixes the component_id, so the coverage series is continuous from
-# whenever each one does get instrumented.
+# The last three front ends are instrumented by nothing. ci.yml's coverage job uploads
+# for the first six only, and the rest are exercised by builds that produce no report
+# (sbt scripted, the Bazel shell ITs, Mill's utest module). They are listed anyway
+# because a component needs no upload behind it, and an unmeasured one renders as the
+# empty set rather than as 0% -- the comment row states "not measured" instead of
+# implying a failure. Listing them fixes the component_id, so the coverage series is
+# continuous from whenever each one does get instrumented. The order below is measured
+# first, unmeasured last, which is what "the last three" is counting.
+#
+# The Leiningen plugin is measured by its UNIT suite alone. Its it/run.sh forks
+# `lein uika` as a child process, and cloverage only sees namespaces loaded in the JVM
+# it reports from, so the integration leg contributes nothing to the number.
 #
 # No component declares statuses, so none of them opens a check. That matches the flags
 # they replace, which had no per-flag status either.
@@ -53,6 +58,10 @@ component_management:
       name: Clojure tool
       paths:
         - clojure-tool/**
+    - component_id: lein_plugin
+      name: Leiningen plugin
+      paths:
+        - lein-plugin/**
     - component_id: sbt_plugin
       name: sbt plugin
       paths:
@@ -61,10 +70,6 @@ component_management:
       name: Mill plugin
       paths:
         - mill-plugin/**
-    - component_id: lein_plugin
-      name: Leiningen plugin
-      paths:
-        - lein-plugin/**
     - component_id: bazel_rules
       name: Bazel rules
       paths:

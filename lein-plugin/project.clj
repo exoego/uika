@@ -43,6 +43,9 @@
                           :omit-source true}}
   ;; eval-in-leiningen: this is a plugin, its code runs inside lein's own JVM.
   :eval-in-leiningen true
+  ;; A profile rather than a plain dependency, so the published plugin classpath never
+  ;; carries cloverage and its tools.cli/data.xml tail. `make lein-coverage` activates it.
+  :profiles {:coverage {:dependencies [[cloverage "1.2.4"]]}}
   ;; :no-auth, not just </dev/null in the Makefile: lein skips its credentials probe
   ;; only for a URL matching #"(file|scp|scpexe)://", and a single-slash relative
   ;; file: URL does not match, so `lein deploy staging` prompts for a username and

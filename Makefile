@@ -1,7 +1,7 @@
 .PHONY: help build check test fmt fmt-check clean probe placeholder-check \
 	rewrite rewrite-check coverage \
 	cargo-build cargo-release cargo-test cargo-clippy cargo-fmt cargo-fmt-check \
-	cargo-coverage gradle-coverage maven-coverage clojure-coverage \
+	cargo-coverage gradle-coverage maven-coverage clojure-coverage lein-coverage \
 	gradle-build gradle-check gradle-test gradle-clean \
 	sbt-compile sbt-scripted sbt-clean \
 	maven-verify maven-clean \
@@ -87,8 +87,8 @@ check: placeholder-check rewrite-check cargo-fmt-check cargo-clippy cargo-test g
 
 test: rewrite cargo-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
-# The four front ends whose tests can be instrumented; ci.yml uploads one flag per target.
-coverage: cargo-coverage gradle-coverage maven-coverage clojure-coverage
+# The front ends whose tests can be instrumented; ci.yml uploads one flag per target.
+coverage: cargo-coverage gradle-coverage maven-coverage clojure-coverage lein-coverage
 
 fmt: cargo-fmt
 
@@ -208,9 +208,27 @@ clojure-stage:
 
 # Real-CLI round trip, same reason as clojure-test: the dump JSON is hand-written.
 # mise exec puts lein itself on PATH for the script.
+# The unit suite runs here too, not only under lein-coverage: a test reached by nothing
+# but the coverage target is a test that rots without failing anything.
 lein-test: cargo-build
+	cd $(LEIN_PLUGIN_DIR) && $(LEIN) test
 	UIKA_BIN=$(abspath target/debug/uika) UIKA_IT_ALT_JAVA=$(UIKA_IT_ALT_JAVA) \
 		mise exec -- sh $(LEIN_PLUGIN_DIR)/it/run.sh
+
+# Cloverage instruments namespaces in the JVM it reports from, so it drives the unit
+# suite; it/run.sh forks `lein uika` as a child process and can be measured by nothing.
+# -p src only: ../clojure-tool/src-core is on :source-paths but belongs to the Clojure
+# tool's component, and clojure-coverage already measures it.
+# The SF: paths come out relative to lein-plugin, so they need the prefix Codecov
+# resolves from, exactly as clojure-coverage does it. Rewritten in place, which is safe
+# because the run above regenerates the file. LEIN_LCOV is not a knob: cloverage is run
+# without --output, so this is where it writes.
+LEIN_LCOV = $(LEIN_PLUGIN_DIR)/target/coverage/lcov.info
+lein-coverage:
+	cd $(LEIN_PLUGIN_DIR) && $(LEIN) with-profile +coverage run -m cloverage.coverage -- \
+		-p src -s test --lcov --no-html
+	sed 's|^SF:|SF:$(LEIN_PLUGIN_DIR)/|' $(LEIN_LCOV) > $(LEIN_LCOV).tmp
+	mv $(LEIN_LCOV).tmp $(LEIN_LCOV)
 
 lein-clean:
 	rm -rf $(LEIN_PLUGIN_DIR)/target $(LEIN_PLUGIN_DIR)/it/test-project/target $(LEIN_PLUGIN_DIR)/pom.xml
