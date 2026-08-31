@@ -34,12 +34,13 @@ on the base branch and consume on the PR), and `jdkRelease`.
 
 ## `jdkRelease`
 
-`jdkRelease` needs no setting at all. The build runs on a JVM, so each tool
-derives the release from what the modules compile for. A build with several
-modules contributes the LOWEST of them, because one value serves a run that
-checks all of them, and under-claiming only costs unverified references while
-over-claiming drops findings. The result is clamped to what the selected JDK's
-`ct.sym` serves. Override it with the setting, or set 0 to disable it.
+`jdkRelease` picks the release of [the JDK API layer](jdk.md), and it needs no
+setting at all. The build runs on a JVM, so each tool derives the release from
+what the modules compile for. A build with several modules contributes the
+LOWEST of them, because one value serves a run that checks all of them, and
+under-claiming only costs unverified references while over-claiming drops
+findings. The result is clamped to what the selected JDK can serve. Override it
+with the setting, or set 0 to disable it.
 
 Each dump also records the release next to every module it lists, read the same
 way. That is what lets a check notice the application's own JDK moved
