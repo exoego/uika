@@ -238,13 +238,10 @@ missing value on either side is never read as a JDK move. A build whose runtime
 is not what it compiles for says so with the tool's `jdkRelease` setting, which
 is recorded as the release of every module.
 
-Both releases' APIs are read from the one JDK uika finds, which
-[How it works](#how-it-works) describes. Releases below that JDK come from its
-`ct.sym`, and its own release from its `jmods/`, which `ct.sym` never carries.
-Checking an upgrade *to* the JDK you now run therefore needs only that one JDK.
-Sealing changes are invisible here, because `ct.sym` stubs do not carry
-`PermittedSubclasses`, and reporting them from the `jmods` side alone would be a
-false positive.
+Both releases' APIs are read from the one JDK uika finds, so checking an upgrade
+*to* the JDK you now run needs only that JDK. [The JDK API
+layer](docs/jdk.md#where-the-stubs-come-from) covers the two stub sources and
+the one change they cannot show, a class that became sealed.
 
 ### Excluding known false positives
 
@@ -334,25 +331,6 @@ classpath. Members moved to a superclass, classes relocated to another
 artifact, and copies bundled inside fat JARs are not false positives.
 References that escape into unanalyzed classes are counted as "unverified"
 rather than silently ignored.
-
-Most escapes lead into the JDK, so every tool layers the JDK API of one release
-under the resolution scope and lets those references conclude as OK or broken.
-The stubs come from the `ct.sym` file of the JDK named by `UIKA_JDK` (checked
-first, authoritative when set), else `JAVA_HOME`, and the release has to be
-older than that JDK, whose own release `ct.sym` does not carry. The layer sits
-under both the old and the new side, so gaps in `ct.sym` cancel out instead of
-producing false positives from missing stubs. It is what turns 16 unverified
-references into 0 on a guava 22 -> 23 check of selenium-remote-driver, with the
-broken count unchanged.
-
-That layer is not the same thing as
-[checking a JDK upgrade](#checking-a-jdk-upgrade). The layer sits under both
-sides of a library comparison, while a JDK upgrade check makes the two JDK
-releases the compared pair.
-
-Each tool derives the release from what its modules compile for, so nothing has
-to be configured. The `jdkRelease` setting overrides it, and 0 switches the
-layer off. Either way uika still needs no JVM to run.
 
 ## Known limitations
 

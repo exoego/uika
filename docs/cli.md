@@ -131,17 +131,13 @@ $ uika dump some.jar
   classes).
 - [`--draft-exclude-file`](runtime-load-evidence.md) writes draft exclude rules
   from that evidence. It requires `--class-load-log`.
-- [`--jdk-release N`](../README.md#how-it-works) layers the JDK API of release
-  N under the resolution scope, so hierarchy escapes into the JDK conclude
-  instead of counting as unverified. It is opt-in here and defaults to on in
-  every plugin, because a build already runs on a JVM and the CLI does not.
+- [`--jdk-release N`](jdk.md) layers the JDK API of release N under the
+  resolution scope, so hierarchy escapes into the JDK conclude instead of
+  counting as unverified. It is opt-in here and defaults to on in every plugin,
+  because a build already runs on a JVM and the CLI does not. The API is read
+  from `$UIKA_JDK` when set, else `$JAVA_HOME`.
 - `--json` prints the report as JSON instead of text. No plugin exposes it,
   since each one prints the CLI's output through its own logger.
-
-The JDK the API layer is read from is `$UIKA_JDK` when set, which may be a JDK
-home or a `ct.sym` file, else `$JAVA_HOME`. The plugins export `UIKA_JDK`
-themselves so that the release they pass and the `ct.sym` the CLI reads always
-come from one JVM.
 
 ## Checking a JDK upgrade
 
@@ -161,11 +157,10 @@ checked JDK 11 -> JDK 17 against 1 scan target
         UsesRemoved  (app.jar)
 ```
 
-Releases below the installed JDK come from its `ct.sym`. The installed JDK's
-own release comes from its `jmods/`, which `ct.sym` never carries, so checking
-an upgrade *to* the JDK you now run needs only that one JDK. Sealing changes
-are invisible here, because `ct.sym` stubs do not carry `PermittedSubclasses`
-and reporting them from the `jmods` side alone would be a false positive.
+Both releases are read from the one JDK uika finds, so checking an upgrade *to*
+the JDK you now run needs only that JDK. [The JDK API
+layer](jdk.md#where-the-stubs-come-from) covers the two stub sources and the one
+change they cannot show, a class that became sealed.
 
 From a build tool this needs no flag at all. Each dump records the API release
 the application runs on, per module, which is what lets `upgrade-check` see the
