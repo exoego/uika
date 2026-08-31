@@ -8,17 +8,46 @@ coverage:
         threshold: 1%
     patch:
       default:
-        # Informational while the flags settle. Flip to a target once the numbers are known.
+        # Informational while the numbers settle. Flip to a target once they are known.
         informational: true
 
+# Flags stay, but only as the upload identity. Carryforward is a property of an upload,
+# so it has no component equivalent: all four uploads come from one job, and a step
+# failing halfway would report the later ones as a drop to zero rather than as missing.
 flag_management:
   default_rules:
-    # All four flags come from one job, so a step failing halfway would report the later
-    # ones as a drop to zero rather than as missing.
     carryforward: true
 
+# The per-front-end split. Driven by paths rather than flag_regexes, so it can say what
+# the flags cannot: jvm-plugin-core is compiled into both the Gradle and the Maven
+# plugin, so its coverage arrives under two flags, and only a path rule scores it as one
+# unit. The four uninstrumented front ends get no component on purpose. With no upload
+# behind them they would read as 0% rather than as unmeasured.
+component_management:
+  individual_components:
+    - component_id: cli
+      name: CLI
+      paths:
+        - cli/**
+    - component_id: jvm_plugin_core
+      name: jvm-plugin-core
+      paths:
+        - jvm-plugin-core/**
+    - component_id: gradle_plugin
+      name: Gradle plugin
+      paths:
+        - gradle-plugin/**
+    - component_id: maven_plugin
+      name: Maven plugin
+      paths:
+        - maven-plugin/**
+    - component_id: clojure_tool
+      name: Clojure tool
+      paths:
+        - clojure-tool/**
+
 comment:
-  layout: "condensed_header, flags, files"
+  layout: "condensed_header, components, files"
   # Codecov's default. require_changes would drop the comment on any PR that moves no
   # measured line, which is every build-config PR, and on the first one of all, since
   # main has no base report to diff against yet.
@@ -26,5 +55,7 @@ comment:
 
 ignore:
   # Committed symlinks into jvm-plugin-core. The Gradle and Maven reports name those
-  # sources by package path alone, and a second candidate splits one file's coverage.
+  # sources by package path alone, so every symlink is a second candidate that would
+  # split one file's coverage, and now also charge it to the wrong component.
   - "bazel-rules/java/net/exoego/uika/plugin/core"
+  - "lein-plugin/java-src/net/exoego/uika/plugin/core"
