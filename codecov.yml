@@ -1,5 +1,3 @@
-# The front ends whose tests can be instrumented; ci.yml's coverage job is the list.
-# The other four are tested only by forked builds (sbt scripted, shell ITs, bazel).
 coverage:
   status:
     project:
@@ -21,8 +19,18 @@ flag_management:
 # The per-front-end split. Driven by paths rather than flag_regexes, so it can say what
 # the flags cannot: jvm-plugin-core is compiled into both the Gradle and the Maven
 # plugin, so its coverage arrives under two flags, and only a path rule scores it as one
-# unit. The four uninstrumented front ends get no component on purpose. With no upload
-# behind them they would read as 0% rather than as unmeasured.
+# unit.
+#
+# The last four front ends are instrumented by nothing. ci.yml's coverage job uploads
+# for the first five only, and the rest are exercised by forked builds (sbt scripted,
+# shell ITs, bazel) that produce no report. They are listed anyway because a component
+# needs no upload behind it, and an unmeasured one renders as the empty set rather than
+# as 0% -- the comment row states "not measured" instead of implying a failure. Listing
+# them now also fixes the component_id, so the coverage series is continuous from
+# whenever each one does get instrumented.
+#
+# No component declares statuses, so none of them opens a check. That matches the flags
+# they replace, which had no per-flag status either.
 component_management:
   individual_components:
     - component_id: cli
@@ -45,6 +53,22 @@ component_management:
       name: Clojure tool
       paths:
         - clojure-tool/**
+    - component_id: sbt_plugin
+      name: sbt plugin
+      paths:
+        - sbt-plugin/**
+    - component_id: mill_plugin
+      name: Mill plugin
+      paths:
+        - mill-plugin/**
+    - component_id: lein_plugin
+      name: Leiningen plugin
+      paths:
+        - lein-plugin/**
+    - component_id: bazel_rules
+      name: Bazel rules
+      paths:
+        - bazel-rules/**
 
 comment:
   layout: "condensed_header, components, files"
