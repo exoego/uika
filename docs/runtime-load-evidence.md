@@ -56,23 +56,55 @@ Evidence rides the same artifact flow as the
 [cached baseline](gradle.md#caching-the-baseline): the base branch runs its
 test suite with class-load recording on and uploads the recordings, and the
 [PR job](gradle.md#pr-gate-on-github-actions) downloads them by `base.sha` and
-adds one flag. For Gradle, next to the baseline dump:
+adds one flag.
+
+Collect from the test job the base branch already runs, not from the
+`dump-baseline` job next to it. No `dump-baseline` job runs tests, and the
+Gradle and Bazel ones resolve the classpath without building outputs at all, so
+hosting the recording there adds a full test run to the job whose whole point is
+to stay cheap. The recording also needs a test JVM that actually forks, which a
+build replaying cached test results never does. Watch for an `UP-TO-DATE` or
+`FROM-CACHE` Gradle task, `testCached` in Mill, a Bazel run without
+`--nocache_test_results`, and a surefire cache hit in Maven. For Gradle:
 
 ```yaml
+      # in the job that runs the base branch's tests, on push to develop
       - run: ./gradlew test -PuikaJfr=/tmp/uika-jfr
+
       - uses: actions/upload-artifact@v7
         with:
           name: uika-jfr-${{ github.sha }}
           path: /tmp/uika-jfr
+          retention-days: 30   # a PR's base.sha is always a recent tip
 ```
 
-and in the PR job, after downloading the artifact into `/tmp/uika-jfr`:
+The PR job fetches that artifact the way it fetches the baseline, under the same
+`actions: read` permission:
 
 ```yaml
+      - name: Fetch class-load evidence
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh api \
+            "repos/${{ github.repository }}/actions/artifacts?name=uika-jfr-${{ github.event.pull_request.base.sha }}&per_page=5" \
+            --jq '[.artifacts[] | select(.expired == false)][0].id // empty')
+          test -n "$id"
+          gh api "repos/${{ github.repository }}/actions/artifacts/$id/zip" > /tmp/uika-jfr.zip
+          unzip -o /tmp/uika-jfr.zip -d /tmp/uika-jfr
+
       - run: ./gradlew uikaUpgradeCheck -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json -PuikaJfr=/tmp/uika-jfr
 ```
 
-Each tool page carries the same two steps in its own spelling.
+Unlike the baseline steps it sits beside, the check step needs no `if:` guard on
+the fetch outcome. A fetch that found no artifact leaves the directory absent,
+which promotes nothing and fails nothing, so the flag can stay on the command
+line unconditionally.
+
+The CI shape is the same for every tool, and only the two commands inside it
+change. Each tool page's own "Runtime load evidence (JFR)" section spells the
+collect flag and the consume option for that build tool.
 
 ## JFR caveats
 

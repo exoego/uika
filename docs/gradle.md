@@ -208,3 +208,6 @@ or `FROM-CACHE` test task forks no JVM and would collect nothing), and makes
 `uikaUpgradeCheck` convert and read the directory back. A bare `-PuikaJfr` uses
 `build/uika/jfr`. [`--draft-exclude-file`](runtime-load-evidence.md) maps to
 `-PuikaDraftExcludeFile=`.
+
+The [base-branch-to-PR CI wiring](runtime-load-evidence.md#collecting-on-the-base-branch-consuming-on-the-pr)
+is the same for every tool, with this page's two commands inside it.

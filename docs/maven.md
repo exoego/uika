@@ -212,3 +212,6 @@ both skip surefire on a cache hit, so disable caching for the collect run,
 the same reason the Bazel recipe needs `--nocache_test_results`.
 [`--draft-exclude-file`](runtime-load-evidence.md) maps to
 `-Duika.draftExcludeFile=`.
+
+The [base-branch-to-PR CI wiring](runtime-load-evidence.md#collecting-on-the-base-branch-consuming-on-the-pr)
+is the same for every tool, with this page's two commands inside it.

@@ -209,3 +209,6 @@ injected flag. Append to `super.forkArgs()` instead. `./mill testLocal` does
 not fork, so it records nothing.
 [`--draft-exclude-file`](runtime-load-evidence.md) maps to
 `--draftExcludeFile`.
+
+The [base-branch-to-PR CI wiring](runtime-load-evidence.md#collecting-on-the-base-branch-consuming-on-the-pr)
+is the same for every tool, with this page's two commands inside it.
