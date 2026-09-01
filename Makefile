@@ -2,6 +2,7 @@
 	rewrite rewrite-check coverage \
 	cargo-build cargo-release cargo-test cargo-clippy cargo-fmt cargo-fmt-check \
 	cargo-coverage gradle-coverage maven-coverage clojure-coverage lein-coverage \
+	sbt-coverage mill-coverage bazel-coverage jacoco-tools \
 	gradle-build gradle-check gradle-test gradle-clean \
 	sbt-compile sbt-scripted sbt-clean \
 	maven-verify maven-clean \
@@ -32,6 +33,13 @@ LEIN_PLUGIN_DIR ?= lein-plugin
 BAZEL_RULES_DIR ?= bazel-rules
 BAZEL_STAGE_DIR ?= dist/bazel
 COVERAGE_DIR ?= target/coverage
+# Neither sbt nor Mill has a JaCoCo binding to resolve an agent and write a report the way
+# the Gradle and Maven builds do, so both jars are fetched here and the agent is handed to
+# them as a path. dependency:copy needs no pom, so it runs from the repository root.
+JACOCO_VERSION ?= 0.8.15
+JACOCO_DIR ?= $(CURDIR)/target/jacoco
+JACOCO_AGENT = $(JACOCO_DIR)/org.jacoco.agent-$(JACOCO_VERSION)-runtime.jar
+JACOCO_CLI = $(JACOCO_DIR)/org.jacoco.cli-$(JACOCO_VERSION)-nodeps.jar
 UIKA_VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' cli/Cargo.toml | head -1)
 TMPDIR ?= /tmp
 SBT_CACHE_DIR ?= $(TMPDIR)/uika-sbt
@@ -87,8 +95,16 @@ check: placeholder-check rewrite-check cargo-fmt-check cargo-clippy cargo-test g
 
 test: rewrite cargo-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
-# The front ends whose tests can be instrumented; ci.yml uploads one flag per target.
-coverage: cargo-coverage gradle-coverage maven-coverage clojure-coverage lein-coverage
+# Every front end; ci.yml uploads one flag per target.
+coverage: cargo-coverage gradle-coverage maven-coverage clojure-coverage lein-coverage \
+	sbt-coverage mill-coverage bazel-coverage
+
+jacoco-tools:
+	@mkdir -p $(JACOCO_DIR)
+	$(MAVEN) -q -B dependency:copy -DoutputDirectory=$(JACOCO_DIR) \
+		-Dartifact=org.jacoco:org.jacoco.agent:$(JACOCO_VERSION):jar:runtime
+	$(MAVEN) -q -B dependency:copy -DoutputDirectory=$(JACOCO_DIR) \
+		-Dartifact=org.jacoco:org.jacoco.cli:$(JACOCO_VERSION):jar:nodeps
 
 fmt: cargo-fmt
 
@@ -162,6 +178,22 @@ sbt-scripted:
 sbt-clean:
 	cd $(SBT_PLUGIN_DIR) && $(SBT) $(SBT_FLAGS) clean
 
+# The plugin classes only ever load in the sbt that `scripted` forks, which is why
+# scriptedLaunchOpts is the only place an agent can go. jvm-plugin-core rides along on
+# purpose: codecov.yml scores those paths as their own component, so this merges with the
+# Gradle and Maven measurements of the same lines rather than competing with them.
+SBT_JACOCO_DIR = $(SBT_PLUGIN_DIR)/target/jacoco
+sbt-coverage: jacoco-tools
+	rm -rf $(SBT_JACOCO_DIR)
+	mkdir -p $(SBT_JACOCO_DIR)
+	cd $(SBT_PLUGIN_DIR) && UIKA_JACOCO_AGENT=$(JACOCO_AGENT) \
+		UIKA_JACOCO_EXEC=$(CURDIR)/$(SBT_JACOCO_DIR)/scripted.exec $(SBT) $(SBT_FLAGS) scripted
+	$(JAVA) -jar $(JACOCO_CLI) report $(SBT_JACOCO_DIR)/scripted.exec \
+		--classfiles $(SBT_PLUGIN_DIR)/target/scala-2.12/sbt-1.0/classes \
+		--sourcefiles $(SBT_PLUGIN_DIR)/src/main/scala \
+		--sourcefiles jvm-plugin-core/src/main/java \
+		--xml $(SBT_JACOCO_DIR)/jacoco.xml
+
 # clean, because maven-compiler-plugin's incremental check does not treat a changed
 # maven.compiler.release as an input. Without it a local floor edit recompiles nothing and
 # the class-file guard green-lights the stale classes.
@@ -182,6 +214,20 @@ mill-test:
 
 mill-clean:
 	cd $(MILL_PLUGIN_DIR) && $(MILL) clean
+
+# `test`, never `testLocal`: the agent rides on forkArgs and testLocal forks nothing. `test`
+# is a command rather than a cached task, so it cannot replay and report an empty exec file.
+MILL_JACOCO_DIR = $(MILL_PLUGIN_DIR)/out/jacoco
+mill-coverage: jacoco-tools
+	rm -rf $(MILL_JACOCO_DIR)
+	mkdir -p $(MILL_JACOCO_DIR)
+	cd $(MILL_PLUGIN_DIR) && UIKA_JACOCO_AGENT=$(JACOCO_AGENT) \
+		UIKA_JACOCO_EXEC=$(CURDIR)/$(MILL_JACOCO_DIR)/test.exec $(MILL) test
+	$(JAVA) -jar $(JACOCO_CLI) report $(MILL_JACOCO_DIR)/test.exec \
+		--classfiles $(MILL_PLUGIN_DIR)/out/compile.dest/classes \
+		--sourcefiles $(MILL_PLUGIN_DIR)/src \
+		--sourcefiles jvm-plugin-core/src/main/java \
+		--xml $(MILL_JACOCO_DIR)/jacoco.xml
 
 # cargo-build supplies the real binary for the round-trip integration test:
 # the tool writes v2 JSON by hand instead of sharing DumpFormat, so only a run
@@ -253,6 +299,18 @@ lein-stage:
 # them here" is what this target would otherwise falsify.
 bazel-unit-test:
 	cd $(BAZEL_RULES_DIR) && $(BAZELISK) test --symlink_prefix=/ //java:manifest_test
+
+# Bazel's own JaCoCo, so nothing from jacoco-tools is involved. The report lands outside the
+# module because stage.sh cuts the release archive with `cp -RL` and would carry it along.
+# The shell ITs are not in this number: they drive `bazel run` in a temp workspace, so the
+# mains stay at zero and only the manifest test's reach is measured.
+bazel-coverage:
+	mkdir -p $(COVERAGE_DIR)
+	cd $(BAZEL_RULES_DIR) && $(BAZELISK) coverage --symlink_prefix=/ \
+		--combined_report=lcov //java:manifest_test
+	sed 's|^SF:|SF:$(BAZEL_RULES_DIR)/|' \
+		"`cd $(BAZEL_RULES_DIR) && $(BAZELISK) info --symlink_prefix=/ output_path`/_coverage/_coverage_report.dat" \
+		> $(COVERAGE_DIR)/bazel.lcov
 
 # Real-CLI round trip, same reason as clojure-test and lein-test: the dump is written by
 # a tool the Rust side never sees, so only a run against the real binary catches drift.

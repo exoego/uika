@@ -101,5 +101,19 @@ object `package` extends ScalaModule, PublishModule {
       mvn"com.lihaoyi::mill-testkit:$millVersion",
       mvn"com.lihaoyi::utest:0.9.1"
     )
+
+    // scoverage sees almost none of this module: Mill's task bodies are inline macros, and
+    // Scala 3 does not instrument inlined code. Measured on Uika.scala's 125 executable
+    // lines, scoverage reached 25 and JaCoCo 74.
+    def uikaJacocoArgs: T[Seq[String]] = Task.Input {
+      (Task.env.get("UIKA_JACOCO_AGENT").filter(_.nonEmpty),
+       Task.env.get("UIKA_JACOCO_EXEC").filter(_.nonEmpty)) match {
+        case (Some(agent), Some(exec)) =>
+          Seq(s"-javaagent:$agent=destfile=$exec,append=true,includes=net.exoego.uika.*")
+        case _ => Seq.empty[String]
+      }
+    }
+
+    override def forkArgs: T[Seq[String]] = Task { super.forkArgs() ++ uikaJacocoArgs() }
   }
 }
