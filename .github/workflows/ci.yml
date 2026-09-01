@@ -192,6 +192,40 @@ jobs:
             clojure-tool/deps.edn
             lein-plugin/project.clj
 
+      - name: Cache sbt and coursier
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: 21
+          set-default: false
+          cache: sbt
+          cache-read-only: true
+          cache-path: |
+            /tmp/uika-sbt
+            ~/.cache/coursier
+          cache-dependency-path: |
+            sbt-plugin/build.sbt
+            sbt-plugin/project/build.properties
+            mill-plugin/build.mill
+
+      - name: Restore Mill cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/mill
+          key: mill-${{ runner.os }}-${{ hashFiles('mill-plugin/build.mill', 'mill-plugin/mill') }}
+          restore-keys: |
+            mill-${{ runner.os }}-
+
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/bazelisk
+            ~/.cache/bazel/_bazel_runner/cache/repos/v1
+          key: bazel-${{ runner.os }}-${{ hashFiles('bazel-rules/MODULE.bazel', 'bazel-rules/it/**/MODULE.bazel.template', 'bazel-rules/it/maven-workspace/maven_install-*.json', 'bazel-rules/.bazelversion') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-
+
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
@@ -248,5 +282,35 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lein-plugin/target/coverage/lcov.info
           flags: lein
+          disable_search: true
+          fail_ci_if_error: true
+
+      - name: sbt plugin coverage
+        run: make sbt-coverage
+      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: sbt-plugin/target/jacoco/jacoco.xml
+          flags: sbt
+          disable_search: true
+          fail_ci_if_error: true
+
+      - name: Mill plugin coverage
+        run: make mill-coverage
+      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: mill-plugin/out/jacoco/jacoco.xml
+          flags: mill
+          disable_search: true
+          fail_ci_if_error: true
+
+      - name: Bazel rules coverage
+        run: make bazel-coverage
+      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: target/coverage/bazel.lcov
+          flags: bazel
           disable_search: true
           fail_ci_if_error: true

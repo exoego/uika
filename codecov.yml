@@ -21,18 +21,17 @@ flag_management:
 # plugin, so its coverage arrives under two flags, and only a path rule scores it as one
 # unit.
 #
-# The last three front ends are instrumented by nothing. ci.yml's coverage job uploads
-# for the first six only, and the rest are exercised by builds that produce no report
-# (sbt scripted, the Bazel shell ITs, Mill's utest module). They are listed anyway
-# because a component needs no upload behind it, and an unmeasured one renders as the
-# empty set rather than as 0% -- the comment row states "not measured" instead of
-# implying a failure. Listing them fixes the component_id, so the coverage series is
-# continuous from whenever each one does get instrumented. The order below is measured
-# first, unmeasured last, which is what "the last three" is counting.
+# Every component is measured, but three of the numbers are over less than the whole
+# component and cannot be read as "the rest is untested":
 #
-# The Leiningen plugin is measured by its UNIT suite alone. Its it/run.sh forks
-# `lein uika` as a child process, and cloverage only sees namespaces loaded in the JVM
-# it reports from, so the integration leg contributes nothing to the number.
+#   Leiningen plugin  its unit suite alone. it/run.sh forks `lein uika`, and cloverage
+#                     sees only namespaces loaded in the JVM it reports from.
+#   Bazel rules       //java:manifest_test alone. The shell ITs drive `bazel run` in a
+#                     temp workspace, so DumpMain, MergeMain and UpgradeCheckMain are at 0.
+#   Mill plugin       JaCoCo over Scala 3, which reaches 74 of Uika.scala's 125 executable
+#                     lines. The rest are in synthetic methods JaCoCo skips, and scoverage
+#                     reaches fewer still (Mill's task bodies are inline macros, which
+#                     Scala 3 does not instrument).
 #
 # No component declares statuses, so none of them opens a check. That matches the flags
 # they replace, which had no per-flag status either.

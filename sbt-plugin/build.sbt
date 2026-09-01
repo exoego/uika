@@ -54,7 +54,11 @@ lazy val root = (project in file("."))
       val inherited = Seq("sbt.ivy.home", "sbt.global.base", "sbt.boot.directory").flatMap { name =>
         sys.props.get(name).map(value => s"-D$name=$value")
       }
-      inherited :+ s"-Dplugin.version=${version.value}"
+      val jacoco = for {
+        agent <- sys.env.get("UIKA_JACOCO_AGENT").filter(_.nonEmpty)
+        exec <- sys.env.get("UIKA_JACOCO_EXEC").filter(_.nonEmpty)
+      } yield s"-javaagent:$agent=destfile=$exec,append=true,includes=net.exoego.uika.*"
+      inherited ++ jacoco :+ s"-Dplugin.version=${version.value}"
     },
     checkClassFileVersions := {
       val maxMajor = 61 // JDK 17

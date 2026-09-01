@@ -25,26 +25,31 @@ enforces. `make rewrite` applies them on demand.
 $ make coverage   # writes the reports CI uploads to Codecov
 ```
 
-Five of the eight front ends are instrumented: the CLI (cargo-llvm-cov), the
-Gradle plugin and the Maven plugin (JaCoCo), and the Clojure tool and the
-Leiningen plugin (cloverage). The Gradle and Maven reports also cover the shared
-`jvm-plugin-core` sources. Both run their tests in a second JVM, so both pass an
-agent into it: the Gradle build writes a `gradle.properties` in the TestKit dir,
-which doubles as the daemon's Gradle user home, and the Maven build hands the
-invoker ITs a `mavenOpts`. Without those the plugin task classes and the mojos
-read as untested.
+All eight front ends are instrumented. The CLI uses cargo-llvm-cov, the Clojure
+tool and the Leiningen plugin use cloverage, the Bazel rules use `bazel
+coverage`, and the rest use JaCoCo.
 
-Coverage is opt-in on both (`-PuikaCoverage=true`, `-Pcoverage`), so `make
-check` keeps running uninstrumented.
+Every JVM front end runs its tests in a second JVM, so every one of them has to
+pass an agent into it. The Gradle build writes a `gradle.properties` in the
+TestKit dir, which doubles as the daemon's Gradle user home. The Maven build
+hands the invoker ITs a `mavenOpts`. sbt and Mill take the agent path from
+`UIKA_JACOCO_AGENT`, which `make jacoco-tools` fetches, because neither has a
+JaCoCo binding of its own. Coverage stays opt-in everywhere, so `make check`
+runs uninstrumented.
 
-The Leiningen number comes from `lein-plugin/test/` alone. Cloverage instruments
-namespaces in the JVM it reports from, and `it/run.sh` forks `lein uika` as a
-child process, so the integration leg is worth nothing to the report and the
-unit suite has to reach what matters on its own. `make lein-test` runs both.
+Three numbers are over less than the whole component.
 
-The remaining three are tested only through builds a coverage agent cannot
-follow: sbt is scripted-only, the Bazel integration tests are shell scripts
-driving their own toolchain, and Mill has no JaCoCo binding.
+- The Leiningen plugin is measured by `lein-plugin/test/` alone. Cloverage
+  instruments namespaces in the JVM it reports from, and `it/run.sh` forks `lein
+  uika`. `make lein-test` runs both halves.
+- The Bazel rules are measured by `//java:manifest_test` alone. The shell ITs
+  drive `bazel run` in a temp workspace, so the three mains read as untested.
+- The Mill plugin is JaCoCo over Scala 3, which reaches 74 of `Uika.scala`'s 125
+  executable lines. The rest sit in synthetic methods JaCoCo skips. scoverage
+  reaches fewer still, 25, because Mill's task bodies are inline macros and Scala
+  3 does not instrument inlined code. sbt does not have this problem: Scala 2.12
+  puts its task bodies in ordinary methods and JaCoCo sees all 133 of
+  `UikaPlugin.scala`'s executable lines.
 
 ## Test fixtures and goldens
 
