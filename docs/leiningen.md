@@ -77,6 +77,9 @@ the event-settings syntax. Then point `:jfr` at the directory. Recordings are
 converted with the JDK's own JFR reader before the CLI runs, which needs lein
 itself on Java 17+; `:class-load-logs` still takes text logs alongside.
 
+The [base-branch-to-PR CI wiring](runtime-load-evidence.md#collecting-on-the-base-branch-consuming-on-the-pr)
+is the same for every tool, with this page's two commands inside it.
+
 ## PR gate on GitHub Actions
 
 The `linkage-check` job dumps a baseline from the PR's base branch and the

@@ -244,6 +244,9 @@ $ bazel run //:uika_upgrade_check -- --before /tmp/before.json \
 record nothing, with no symptom. `--sandbox_writable_path` is what lets the
 recording land outside the sandbox, where the check can read it afterwards.
 
+The [base-branch-to-PR CI wiring](runtime-load-evidence.md#collecting-on-the-base-branch-consuming-on-the-pr)
+is the same for every tool, with this page's two commands inside it.
+
 ## Whole-build dumps with the aspect
 
 A rule cannot expand a target pattern, so for a whole-build dump apply the aspect

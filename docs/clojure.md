@@ -97,6 +97,9 @@ text logs in the same directory ride along unchanged, and a recording handed to
 [`:draft-exclude-file`](runtime-load-evidence.md) drafts exclude rules from the
 same evidence.
 
+The [base-branch-to-PR CI wiring](runtime-load-evidence.md#collecting-on-the-base-branch-consuming-on-the-pr)
+is the same for every tool, with this page's two commands inside it.
+
 ## PR gate on GitHub Actions
 
 The `linkage-check` job dumps a baseline from the PR's base branch and the
