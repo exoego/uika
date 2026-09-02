@@ -61,6 +61,20 @@
   (let [value (System/getenv name)]
     (when-not (str/blank? value) value)))
 
+(defn unknown-options
+  "The keys of `opts` that `known` does not name, sorted, or nil when there are none.
+
+  Both front ends check, because a key neither recognises silently disables the flag it
+  was meant to set and the run continues on CLI defaults with nothing said. Shared so
+  \"unknown\" means one thing, while each front end still raises in its own idiom:
+  Leiningen aborts the task, the -T tool throws.
+
+  The likeliest typo is the SIBLING front end's spelling, since the two differ on
+  :exclude-file/:exclude-files and :class-load-log/:class-load-logs. Listing the known
+  keys is therefore the answer as well as the complaint."
+  [opts known]
+  (seq (sort (remove known (keys opts)))))
+
 (def cli-group
   "Port of UikaCli.GROUP; keep the two in sync (pinned by the sync test scraping the
   Java source). A coordinate rename updates the four JVM plugins through the constant

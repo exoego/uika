@@ -85,9 +85,11 @@
 
 (defn- check-options
   "Rejects a misspelled :uika key. Both subtasks run it, since both read the map and a
-  key neither recognises would otherwise silently disable the flag it was meant to set."
+  key neither recognises would otherwise silently disable the flag it was meant to set.
+  The membership test is core/unknown-options, shared with the Clojure tool so the two
+  front ends agree on what unknown means; only the way it is raised differs."
   [opts]
-  (when-let [unknown (seq (sort (remove option-keys (keys opts))))]
+  (when-let [unknown (core/unknown-options opts option-keys)]
     (main/abort (str "uika: unknown :uika option(s) " (pr-str (vec unknown))
                      "; known: " (pr-str (vec (sort option-keys)))))))
 

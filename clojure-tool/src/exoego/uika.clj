@@ -16,6 +16,30 @@
 
 (set! *warn-on-reflection* true)
 
+(def ^:private dump-option-keys
+  "Every key dump-classpath accepts."
+  #{:dir :output :class-dir :jdk-release :aliases})
+
+(def ^:private check-option-keys
+  "Every key upgrade-check accepts."
+  #{:before :after :fail-on :exclude-file :jdk-release :jfr :class-load-log
+    :draft-exclude-file :evidence-work-dir :cli-version :cli-path})
+
+(defn- check-options
+  "Rejects a misspelled key. Destructuring drops what it does not name, so without this a
+  typo silently disables the flag it was meant to set and the run continues on CLI
+  defaults with nothing said -- the same reason the Leiningen plugin checks, through the
+  same core/unknown-options.
+
+  The likeliest typo here is Leiningen's spelling: the two front ends share a core but
+  differ on :exclude-file/:exclude-files and :class-load-log/:class-load-logs, so the
+  message lists what this call does accept."
+  [args known]
+  (when-let [unknown (core/unknown-options args known)]
+    (throw (ex-info (str "uika: unknown option(s) " (pr-str (vec unknown))
+                         "; known: " (pr-str (vec (sort known))))
+                    {:unknown (vec unknown)}))))
+
 (defn- project-basis
   "The PROJECT's basis, not this tool's own. `create-basis` re-resolves exactly the
   way `clojure -M`/`-X` would; the user config is excluded because the application
@@ -43,6 +67,7 @@
              not the JVM that writes the dump. 0 leaves the recorded release derived,
              since it only switches the API layer off."
   [{:keys [dir output class-dir jdk-release] :as args}]
+  (check-options args dump-option-keys)
   (let [dir (str (or dir (System/getProperty "user.dir")))
         basis (project-basis dir args)
         ;; Source dirs go in as classesDirs: uika only parses .class files, so pure
@@ -105,6 +130,7 @@
   :cli-path          existing uika binary, skipping the download entirely
                      (UIKA_CLI_PATH does the same from the environment)"
   [{:keys [before after] :as args}]
+  (check-options args check-option-keys)
   (when-not (and before after)
     (throw (ex-info "usage: clojure -T:uika upgrade-check :before <a.json> :after <b.json>" {})))
   (core/run-upgrade-check

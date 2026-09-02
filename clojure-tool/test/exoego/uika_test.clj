@@ -263,6 +263,47 @@
                       {} (constantly nil) "usage hint"
                       {"UIKA_CLI_PATH" "/tmp/from-env"}))))))
 
+(deftest a-misspelled-option-is-an-error-not-a-silent-no-op
+  ;; Destructuring drops what it does not name, so a typo used to disable the flag it was
+  ;; meant to set and let the run continue on CLI defaults with nothing said. The
+  ;; Leiningen plugin has refused unknown keys all along; this front end did not, which
+  ;; made the two halves of one core disagree about the same mistake.
+  ;;
+  ;; The likeliest typo is the SIBLING's spelling. They differ on
+  ;; :exclude-file/:exclude-files and :class-load-log/:class-load-logs, so the two cases
+  ;; below are the ones a reader moving between the tools actually writes.
+  (let [dir (temp-dir)
+        stub (io/file dir "uika")
+        before (io/file dir "before.json")
+        after (io/file dir "after.json")]
+    (spit stub "#!/bin/sh\nexit 0\n")
+    (.setExecutable stub true false)
+    (spit before "{}")
+    (spit after "{}")
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #":exclude-files.*known.*:exclude-file"
+         (uika/upgrade-check {:before (str before) :after (str after)
+                              :cli-path (str stub)
+                              :exclude-files ["a.toml"]})))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #":class-load-logs"
+         (uika/upgrade-check {:before (str before) :after (str after)
+                              :cli-path (str stub)
+                              :class-load-logs ["a.log"]})))
+    ;; dump-classpath takes a different set and checks it too.
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #":outputt"
+         (uika/dump-classpath {:dir fixture :outputt "x.json"})))
+    ;; And every documented key still passes, so the guard cannot have swallowed one.
+    (is (nil? (#'uika/check-options
+               {:before "b" :after "a" :fail-on "any" :exclude-file [] :jdk-release 11
+                :jfr "d" :class-load-log [] :draft-exclude-file "d.toml"
+                :evidence-work-dir "w" :cli-version "1" :cli-path "p"}
+               @#'uika/check-option-keys)))
+    (is (nil? (#'uika/check-options
+               {:dir "." :output "o" :class-dir "c" :jdk-release 11 :aliases [:prod]}
+               @#'uika/dump-option-keys)))))
+
 (deftest jfr-recordings-are-converted-for-the-cli
   ;; A REAL recording, not a synthetic file: only the JDK's own writer produces the
   ;; chunk format the converter reads. `java -version` under StartFlightRecording
