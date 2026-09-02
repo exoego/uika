@@ -20,6 +20,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -30,6 +31,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 final class UpgradeCheckTaskIntegrationTest {
     private static final String CLEAN_VERSION = "9.9.9";
     private static final String VIOLATION_VERSION = "9.9.8";
+    /// A CLI that could not run at all. Exit 2 is a different failure from exit 1, and the
+    /// task has to say so: a bad flag or an unreadable dump is not a finding to act on.
+    private static final String CLI_ERROR_VERSION = "9.9.7";
 
     @TempDir
     Path projectDir;
@@ -62,6 +66,11 @@ final class UpgradeCheckTaskIntegrationTest {
                 #!/bin/sh
                 echo "VIOLATION in stub.jar"
                 exit 1
+                """);
+        publishStubCli(CLI_ERROR_VERSION, """
+                #!/bin/sh
+                echo "error: cannot open before.json"
+                exit 2
                 """);
 
         write(projectDir.resolve("settings.gradle.kts"), """
@@ -587,6 +596,23 @@ final class UpgradeCheckTaskIntegrationTest {
                 () -> "CLI violation report did not reach the build log:\n" + result.getOutput());
         assertTrue(result.getOutput().contains("broken references"),
                 () -> "unexpected failure output:\n" + result.getOutput());
+    }
+
+    /// Exit 2 is the CLI could not run, not a finding: a flag it rejected, a dump it could
+    /// not open. Both codes fail the build, so only the MESSAGE separates them, and
+    /// reporting "found broken references" for an unreadable dump sends the reader looking
+    /// for a break that was never found. Every integration maps the two apart the same way
+    /// and, until this, only Maven's had a test for the second one.
+    @Test
+    void cliErrorExitCodeFailsWithItsOwnMessage() {
+        var result = runner(CLI_ERROR_VERSION).buildAndFail();
+
+        assertTrue(result.getOutput().contains("error: cannot open before.json"),
+                () -> "the CLI's own error did not reach the build log:\n" + result.getOutput());
+        assertTrue(result.getOutput().contains("failed with exit code 2"),
+                () -> "exit 2 was not reported as a CLI error:\n" + result.getOutput());
+        assertFalse(result.getOutput().contains("found broken references"),
+                () -> "exit 2 was misreported as findings:\n" + result.getOutput());
     }
 
     /// UIKA_CLI_PATH short-circuits resolution entirely, so a build can run air-gapped or

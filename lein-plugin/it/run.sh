@@ -222,4 +222,20 @@ if err="$(UIKA_CLI_PATH="$stub" lein uika upgrade-check target/before.json targe
 fi
 case "$err" in *"found broken references"*) ;; *) echo "FAIL: wrong failure: $err" >&2; exit 1;; esac
 
+# Exit 2 is the CLI could not RUN -- a flag it rejected, a dump it could not open -- and
+# has to be reported as that rather than as findings. Both codes fail the task, so the
+# message is the only thing that separates them, and calling an unreadable dump "broken
+# references" sends the reader looking for a break that was never found.
+printf '#!/bin/sh\nexit 2\n' > "$stub"
+if err="$(UIKA_CLI_PATH="$stub" lein uika upgrade-check target/before.json target/after.json 2>&1)"; then
+  echo "FAIL: exit 2 from the CLI did not fail lein uika" >&2; exit 1
+fi
+case "$err" in
+  *"failed with exit code 2"*) ;;
+  *) echo "FAIL: exit 2 was not reported as a CLI error: $err" >&2; exit 1;;
+esac
+case "$err" in
+  *"found broken references"*) echo "FAIL: exit 2 was misreported as findings: $err" >&2; exit 1;;
+esac
+
 echo "lein-uika integration: OK"

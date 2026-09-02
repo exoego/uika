@@ -41,3 +41,9 @@ $ exists before.json.marker
 # the version read is pinned to LocalRootProject too (ThisBuild still says 9.9.9).
 > set uikaCliVersion := "9.9.8"
 -> uikaUpgradeCheck before.json after.json
+
+# Stub CLI exits 2 (it could not run at all): the task must fail for THAT reason. Both
+# codes fail the build, so the message is the only thing that separates a finding from a
+# rejected flag or an unreadable dump.
+> set uikaCliVersion := "9.9.7"
+> checkCliErrorIsNotAFinding

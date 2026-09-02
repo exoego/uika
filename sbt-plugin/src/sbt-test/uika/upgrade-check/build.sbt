@@ -1,7 +1,8 @@
 ThisBuild / scalaVersion := "2.12.21"
 
 // Normally uikaCliVersion defaults to the plugin's own version; pin it to the stub repo
-// below, which publishes 9.9.9 (exit 0) and 9.9.8 (exit 1, i.e. violations found).
+// below, which publishes 9.9.9 (exit 0), 9.9.8 (exit 1, i.e. violations found) and 9.9.7
+// (exit 2, i.e. the CLI could not run at all).
 ThisBuild / uikaCliVersion := "9.9.9"
 
 // Declarative config in build.sbt (not the default "any"): must reach the CLI as --fail-on.
@@ -33,6 +34,24 @@ checkJdkReleaseDerived := {
 
 resolvers += "uika-stub" at (baseDirectory.value / "repo").toURI.toString
 
+lazy val checkCliErrorIsNotAFinding = taskKey[Unit]("Asserts exit 2 fails as a CLI error")
+
+// `-> uikaUpgradeCheck` would only prove the task failed, and exit 1 already does that.
+// What has to hold is that the two failures do not read alike, so the task is run through
+// .result and the exception message inspected: an unreadable dump reported as "broken
+// references" sends the reader looking for a break that was never found.
+checkCliErrorIsNotAFinding := {
+  (uikaUpgradeCheck.toTask(" before.json after.json")).result.value match {
+    case Value(_) => sys.error("exit 2 from the CLI did not fail uikaUpgradeCheck")
+    case Inc(incomplete) =>
+      val messages = Incomplete.allExceptions(incomplete).map(_.getMessage).mkString("; ")
+      if (!messages.contains("failed with exit code 2"))
+        sys.error(s"exit 2 was not reported as a CLI error: $messages")
+      if (messages.contains("found broken references"))
+        sys.error(s"exit 2 was misreported as findings: $messages")
+  }
+}
+
 lazy val prepareStubRepo = taskKey[Unit]("Writes stub uika-cli ZIPs into the file-based test repository")
 
 prepareStubRepo := {
@@ -57,6 +76,10 @@ prepareStubRepo := {
   // line must surface through the task logger (checked by checkCliOutputLogged).
   publish("9.9.9", "#!/bin/sh\necho ran > \"$3.marker\"\necho \"$@\" > \"$3.args\"\necho \"uika-stub: dependency changes: 0\"\nexit 0\n")
   publish("9.9.8", "#!/bin/sh\nexit 1\n")
+  // Exit 2 is the CLI could not RUN, not a finding, and the two failures must not read
+  // alike: calling an unreadable dump "broken references" sends the reader looking for a
+  // break that was never found.
+  publish("9.9.7", "#!/bin/sh\necho \"error: cannot open before.json\"\nexit 2\n")
 }
 
 lazy val checkFailOnPassed = taskKey[Unit]("Asserts the uikaFailOn setting reached the CLI as --fail-on")

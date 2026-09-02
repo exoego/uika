@@ -212,7 +212,23 @@
         (.setExecutable failing-stub true false)
         (is (thrown-with-msg? Exception #"broken references"
               (uika/upgrade-check {:before (str before) :after (str after)
-                                   :cli-path (str failing-stub)})))))))
+                                   :cli-path (str failing-stub)})))))
+    (testing "a CLI that could not run fails for THAT reason"
+      ;; Exit 2 is a rejected flag or an unreadable dump, not a finding. Both codes throw,
+      ;; so the message is the only thing that separates them, and calling an unreadable
+      ;; dump "broken references" sends the reader looking for a break that was never
+      ;; found.
+      (let [erroring-stub (io/file dir "uika-error")]
+        (spit erroring-stub "#!/bin/sh\nexit 2\n")
+        (.setExecutable erroring-stub true false)
+        (let [thrown (try (uika/upgrade-check {:before (str before) :after (str after)
+                                               :cli-path (str erroring-stub)})
+                          nil
+                          (catch Exception e e))]
+          (is (some? thrown) "exit 2 from the CLI did not fail upgrade-check")
+          (is (str/includes? (ex-message thrown) "failed with exit code 2"))
+          (is (not (str/includes? (ex-message thrown) "broken references")))
+          (is (= 2 (:exit (ex-data thrown)))))))))
 
 (deftest usage-hint-names-the-documented-invocation
   ;; -Tuika only resolves for a development `-Ttools install` from a local or git
