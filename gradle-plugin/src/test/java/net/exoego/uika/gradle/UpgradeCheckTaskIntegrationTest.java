@@ -20,6 +20,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -148,11 +149,19 @@ final class UpgradeCheckTaskIntegrationTest {
                 () -> "build-script failOn was not forwarded to the CLI: " + args);
     }
 
+    /// Comma-separated, because suppressing a second finding for one CI run must not need a
+    /// build-script edit. Every other integration already takes more than one from the
+    /// command line, and Maven and Bazel already delimit theirs with a comma.
     @Test
     void passesExcludeFileToCli() throws Exception {
         Path excludeFile = write(projectDir.resolve("uika-exclude.toml"), """
                 [[exclude]]
                 owner = "lib/C"
+                reason = "test"
+                """);
+        Path second = write(projectDir.resolve("uika-exclude-2.toml"), """
+                [[exclude]]
+                owner = "lib/D"
                 reason = "test"
                 """);
 
@@ -163,13 +172,40 @@ final class UpgradeCheckTaskIntegrationTest {
                         "-PuikaBefore=" + before,
                         "-PuikaAfter=" + after,
                         "-PuikaCliVersion=" + CLEAN_VERSION,
-                        "-PuikaExcludeFile=" + excludeFile)
+                        // A space after the comma too: a CI script assembling the value by
+                        // hand writes one, and an untrimmed entry becomes a path that is not
+                        // there.
+                        "-PuikaExcludeFile=" + excludeFile + ", " + second)
                 .build();
 
         assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
         String args = Files.readString(Path.of(before + ".args"));
         assertTrue(args.contains("--exclude-file " + excludeFile),
                 () -> "-PuikaExcludeFile was not forwarded to the CLI: " + args);
+        assertTrue(args.contains("--exclude-file " + second),
+                () -> "-PuikaExcludeFile dropped everything after the first comma: " + args);
+    }
+
+    /// Gradle sets a bare `-PuikaExcludeFile` to the empty string, which used to resolve to
+    /// the project DIRECTORY and hand the CLI a directory where a TOML file belongs. The
+    /// same blank-is-unset rule the other knobs follow, for the same reason: a CI `env:`
+    /// interpolation of an unset input produces an empty string rather than nothing.
+    @Test
+    void aBlankExcludeFilePropertyAddsNothing() throws Exception {
+        var result = runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION,
+                        "-PuikaExcludeFile=")
+                .build();
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
+        String args = Files.readString(Path.of(before + ".args"));
+        assertFalse(args.contains("--exclude-file"),
+                () -> "a blank -PuikaExcludeFile should add no flag: " + args);
     }
 
     @Test
