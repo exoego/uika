@@ -33,7 +33,22 @@ Every tool spells the same options its own way, listed per page:
 [`failOn`](../README.md#violation-tiers-and-the-failon-threshold),
 [`excludeFiles`](../README.md#excluding-known-false-positives), [runtime load
 evidence](runtime-load-evidence.md) (one directory serving both phases, collect
-on the base branch and consume on the PR), and `jdkRelease`.
+on the base branch and consume on the PR), `jdkRelease`, and
+`mergedClasspath`.
+
+Each name is its CLI flag's, written the way the tool writes names, and the
+`uika` prefix appears exactly where the namespace is flat and shared with the
+whole build: `-PuikaFailOn` and `-Duika.failOn` carry it, while the Gradle task
+property, the Maven POM element, and every Mill, Leiningen, Clojure and Bazel
+spelling already sit inside something uika owns and do not.
+
+Two CLI flags are deliberately not exposed anywhere.
+[`--json`](cli.md) swaps the report for JSON on stdout, and every tool prints the
+CLI's output through its own logger, so it would arrive with `[INFO]` on every
+line from Maven and without it from Gradle — parseable from neither.
+[`--verdicts-json`](cli.md) streams raw per-reference verdicts for
+answer-checking against a real JVM, which is an evaluation aid rather than
+something a build acts on.
 
 ## `jdkRelease`
 

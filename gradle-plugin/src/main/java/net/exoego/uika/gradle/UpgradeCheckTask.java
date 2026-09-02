@@ -103,6 +103,19 @@ public abstract class UpgradeCheckTask extends DefaultTask {
     public abstract DirectoryProperty getJfrWorkDir();
 
     /**
+     * Check the union of every module's classpath once instead of each module against its
+     * own resolution, passed as {@code --merged-classpath}.
+     *
+     * <p>Per-module checking scans once per module, so a build with many of them can pay
+     * minutes for it. The trade is real in the other direction too: a break that only one
+     * module's resolution shows can hide behind another module's version of the same jar,
+     * which is why this is off by default.
+     */
+    @Input
+    @Optional
+    public abstract Property<Boolean> getMergedClasspath();
+
+    /**
      * A binary to run instead of resolving one, from {@code UIKA_CLI_PATH}.
      *
      * <p>Wired from a {@code providers.environmentVariable} rather than read with
@@ -150,6 +163,7 @@ public abstract class UpgradeCheckTask extends DefaultTask {
                 jdk,
                 classLoadLogs,
                 draftExcludeFile,
+                getMergedClasspath().getOrElse(false),
                 getLogger()::lifecycle);
         if (exit == 1) {
             throw new GradleException("uika upgrade-check found broken references (see output above)");

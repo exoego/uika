@@ -256,6 +256,14 @@ public class UikaPlugin implements Plugin<Project> {
                     if (jfrDir != null) {
                         task.getClassLoadLogs().from(jfrDir);
                     }
+                    // Bare -PuikaMergedClasspath means true, like every other flag-shaped
+                    // property Gradle exposes; "false" turns it back off so a CI script can
+                    // pass a computed value.
+                    var mergedClasspath = root.findProperty("uikaMergedClasspath");
+                    if (mergedClasspath != null) {
+                        task.getMergedClasspath().set(
+                                !"false".equals(String.valueOf(mergedClasspath)));
+                    }
                     var draftExcludeFile = root.findProperty("uikaDraftExcludeFile");
                     if (draftExcludeFile != null) {
                         task.getDraftExcludeFile().set(root.file(draftExcludeFile.toString()));

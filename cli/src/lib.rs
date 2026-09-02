@@ -76,7 +76,7 @@ pub fn run(cli: Cli) -> Result<i32> {
             fail_on,
             jdk_release,
             verdicts_json,
-            merged,
+            merged_classpath,
             class_load_log,
             draft_exclude_file,
         } => cmd_upgrade_check(
@@ -87,7 +87,7 @@ pub fn run(cli: Cli) -> Result<i32> {
             fail_on,
             jdk_release,
             verdicts_json.as_deref(),
-            merged,
+            merged_classpath,
             &class_load_log,
             draft_exclude_file.as_deref(),
         ),
@@ -527,7 +527,7 @@ fn print_upgrade(
 /// against the union of all modules. The union mixes several resolved versions of one
 /// coordinate, and judging one version's classes against another's produced false "broken"
 /// verdicts for self-consistent jars (and masked upgrades whose old version another module
-/// still resolves). `--merged` (or module-less dumps) keeps the old flat behavior.
+/// still resolves). `--merged-classpath` (or module-less dumps) keeps the old flat behavior.
 #[allow(clippy::too_many_arguments)]
 fn cmd_upgrade_check(
     before: &Path,
@@ -537,7 +537,7 @@ fn cmd_upgrade_check(
     fail_on: FailOn,
     jdk_release: Option<u32>,
     verdicts_json: Option<&Path>,
-    merged: bool,
+    merged_classpath: bool,
     class_load_log: &[PathBuf],
     draft_exclude_file: Option<&Path>,
 ) -> Result<i32> {
@@ -554,7 +554,7 @@ fn cmd_upgrade_check(
     let changes = gradle::diff_dumps(&before_universe, &after_universe);
 
     let per_module =
-        !merged && has_module_data(&before_universe) && has_module_data(&after_universe);
+        !merged_classpath && has_module_data(&before_universe) && has_module_data(&after_universe);
     if per_module {
         return upgrade_check_per_module(
             &before_universe,
@@ -569,7 +569,7 @@ fn cmd_upgrade_check(
             draft_exclude_file,
         );
     }
-    if !merged {
+    if !merged_classpath {
         eprintln!(
             "warning: the dump carries no per-module classpaths; checking the merged universe \
              (regenerate the dumps with a current uika plugin for per-module checking)"

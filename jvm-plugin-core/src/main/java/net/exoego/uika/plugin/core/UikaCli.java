@@ -388,10 +388,15 @@ public final class UikaCli {
      * @param draftExcludeFile where the CLI writes draft exclude rules for symbols never
      *     observed loading ({@code --draft-exclude-file}); null omits the flag. The CLI
      *     rejects it without at least one class-load log.
+     * @param mergedClasspath check the union of every module's classpath once
+     *     ({@code --merged-classpath}) instead of each module against its own resolution.
+     *     Per-module checking costs one scan per module, so a large build may want the
+     *     union; the trade is that a break only one module's resolution shows can hide
+     *     behind another module's version of the same jar.
      */
     public static int runUpgradeCheck(Path binary, Path before, Path after, String failOn,
             List<Path> excludeFiles, Integer jdkRelease, JdkSource jdk, List<Path> classLoadLogs,
-            Path draftExcludeFile, Consumer<String> output)
+            Path draftExcludeFile, boolean mergedClasspath, Consumer<String> output)
             throws IOException, InterruptedException {
         var command = new ArrayList<String>(List.of(
                 binary.toString(), "upgrade-check",
@@ -420,6 +425,9 @@ public final class UikaCli {
         if (draftExcludeFile != null) {
             command.add("--draft-exclude-file");
             command.add(draftExcludeFile.toString());
+        }
+        if (mergedClasspath) {
+            command.add("--merged-classpath");
         }
         var builder = new ProcessBuilder(command);
         if (jdkRelease != null) {

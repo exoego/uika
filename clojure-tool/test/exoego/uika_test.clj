@@ -161,6 +161,71 @@
             (is (= classifier (fake os arch))
                 (str classifier " did not dispatch from " os "/" arch))))))))
 
+(deftest the-command-port-carries-every-uikacli-flag
+  ;; core.clj hand-ports UikaCli.runUpgradeCheck's command building, and its docstring
+  ;; already says that a flag added there needs the key here and, for Leiningen, in
+  ;; option-keys. Nothing enforced it. Five integrations share the Java builder and pick a
+  ;; new flag up for free, so the two Clojure front ends are the only ones that can fall
+  ;; behind -- silently, with every suite still green. Scraping both sources is what turns
+  ;; that into a failure.
+  ;;
+  ;; Only QUOTED occurrences count, on both sides. Each file mentions flags in prose too
+  ;; (the CLI's error names --class-load-log; a blank :fail-on must not become
+  ;; `--fail-on ""`), and counting those would let a flag pass on a comment alone.
+  (let [flags-in (fn [text]
+                   (->> (re-seq #"\"(--[a-z-]+)\"" text) (map second) distinct vec))
+        from (fn [text marker]
+               (subs text (or (str/index-of text marker)
+                              (throw (ex-info (str "not found: " marker) {})))))
+        java-src (slurp (io/file ".." "jvm-plugin-core" "src" "main" "java"
+                                 "net" "exoego" "uika" "plugin" "core" "UikaCli.java"))
+        ;; From the signature, so the javadoc above it (which names most of the flags)
+        ;; cannot stand in for the builder that actually emits them.
+        java-flags (flags-in (from java-src "public static int runUpgradeCheck("))
+        core-src (slurp (io/file "src-core" "exoego" "uika" "core.clj"))
+        core-body (from core-src "(defn run-upgrade-check")
+        lein-src (slurp (io/file ".." "lein-plugin" "src" "leiningen" "uika.clj"))]
+    (is (seq java-flags) "could not scrape any flag from UikaCli.runUpgradeCheck")
+    ;; Sequences, not sets: the two builders emit the flags in the same order, which is
+    ;; what lets a recorded argv from one front end be read like any other's.
+    (is (= java-flags (flags-in core-body))
+        "UikaCli.runUpgradeCheck and core.clj's port disagree about the command line")
+
+    ;; The -T tool needs no translation table: every flag's key is the flag without its
+    ;; dashes, and they arrive through one destructuring form.
+    (let [destructured (set (str/split (second (re-find #"\{:keys \[([^\]]+)\]\}" core-body))
+                                       #"\s+"))]
+      (doseq [flag java-flags]
+        (is (contains? destructured (subs flag 2))
+            (str flag " has no " (subs flag 2) " key in run-upgrade-check's option map"))))
+
+    ;; Leiningen does need one: three of its keys are plural, and --before/--after are
+    ;; positional arguments of the subtask rather than :uika map keys. A flag added to
+    ;; UikaCli therefore has to gain an entry HERE too, which is the forcing function --
+    ;; option-keys REJECTS an unknown key, so a missing one is a hard error for users.
+    (let [positional #{"--before" "--after"}
+          lein-keys {"--fail-on" "fail-on"
+                     "--exclude-file" "exclude-files"
+                     "--jdk-release" "jdk-release"
+                     "--class-load-log" "class-load-logs"
+                     "--draft-exclude-file" "draft-exclude-file"
+                     "--merged-classpath" "merged-classpath"}
+          option-keys (set (str/split
+                            (second (re-find #"(?s)option-keys.*?#\{([^}]+)\}" lein-src))
+                            #"\s+"))
+          lein-body (from lein-src "(defn- upgrade-check")
+          lein-destructured (set (str/split
+                                  (second (re-find #"\{:keys \[([^\]]+)\]" lein-body))
+                                  #"\s+"))]
+      (is (= (set (remove positional java-flags)) (set (keys lein-keys)))
+          "a flag moved in UikaCli; name its Leiningen key in this table")
+      (doseq [[flag key-name] lein-keys]
+        (is (contains? option-keys (str ":" key-name))
+            (str flag " is not reachable from Leiningen: :" key-name
+                 " is missing from option-keys, which rejects unknown keys"))
+        (is (contains? lein-destructured key-name)
+            (str ":" key-name " is accepted but never read into run-upgrade-check"))))))
+
 (deftest dump-json-omits-an-unservable-release
   ;; The lein probe arm can face a below-floor project JVM (a JDK 7 :java-cmd), and a
   ;; dump naming a release ct.sym never carried hard-fails the CLI's JDK-pair run.
@@ -193,7 +258,19 @@
       (is (str/includes? args (str "--exclude-file " exclude)))
       (is (str/includes? args "--jdk-release 11"))
       (is (str/includes? args (str "--class-load-log " dir "/loads.log")))
-      (is (str/includes? args (str "--draft-exclude-file " dir "/draft.toml"))))
+      (is (str/includes? args (str "--draft-exclude-file " dir "/draft.toml")))
+      ;; Per-module checking is the default and the expensive one, so its absence matters
+      ;; as much as its presence: sending the flag unasked quietly changes what is checked.
+      (is (not (str/includes? args "--merged-classpath"))))
+    (testing ":merged-classpath is a bare switch"
+      (uika/upgrade-check {:before (str before) :after (str after)
+                           :merged-classpath true
+                           :cli-path (str stub)})
+      (is (str/includes? (slurp (str before ".args")) "--merged-classpath"))
+      (uika/upgrade-check {:before (str before) :after (str after)
+                           :merged-classpath false
+                           :cli-path (str stub)})
+      (is (not (str/includes? (slurp (str before ".args")) "--merged-classpath"))))
     (testing "a vector value is unwrapped, and blank is unset"
       ;; (str ["x"]) is a legal filename, so the draft would land in ["x"] with exit 0.
       ;; The lein keys next to this one are vectors, which is how it gets written.

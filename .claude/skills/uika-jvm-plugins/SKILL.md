@@ -166,6 +166,22 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   invocations and task-graph dependencies run in parallel against the one
   `uikaOutput` path (IO.write truncates in place, so racing writers interleave
   the JSON). Explicitly scoped invocations delegate to the one instance.
+- A knob's name is its CLI FLAG's name, written the way the tool writes names, and the
+  `uika` prefix appears exactly where the namespace is flat and shared with the whole
+  build. `-PuikaFailOn`, `uikaFailOn` and `-Duika.failOn` carry it (Gradle project
+  properties, sbt's `autoImport`, and system properties are one space every plugin shares);
+  the Gradle task property, the Maven POM element, Mill's command parameters, the two
+  Clojure maps and Bazel's rule attributes do not, since each already sits inside something
+  uika owns. Renaming a knob away from its flag would break the mechanical correspondence
+  the clojure-tool sync test checks, so do not do it for readability alone -- rename the
+  CLI flag instead, which is how `--merged` became `--merged-classpath`.
+- `--json` and `--verdicts-json` stay CLI-only ON PURPOSE, and the decision is recorded in
+  `docs/cli.md` and `docs/build-tools.md` rather than only here. `--json` writes the report
+  to stdout, which every plugin pipes through its own logger, so Maven would prefix every
+  line with `[INFO]` and Gradle would not: a report DESTINATION the plugins could point at
+  a file is the missing piece, and this flag is not it. `--verdicts-json` is an evaluation
+  stream for `tools/jvm-probe` -- written before exclude filtering, without graph-walk
+  violations, call-site duplicates not deduped -- so it is not a report a build acts on.
 - Runtime load evidence is ONE knob per tool pointed at one directory, serving
   both phases (collect on the base branch's test run, consume on the PR's
   check): Gradle `-PuikaJfr` (bare value defaults to `build/uika/jfr`; the
@@ -362,6 +378,13 @@ Same rule as the Mill section: point-of-use comments and the tests in
   likeliest typo is the sibling's spelling, since the two deliberately differ:
   `:exclude-file`/`:exclude-files` and `:class-load-log`/`:class-load-logs`. That is why
   the message lists the accepted keys rather than only naming the rejected one.
+- The port of `UikaCli.runUpgradeCheck`'s COMMAND BUILDING is pinned mechanically, by
+  `the-command-port-carries-every-uikacli-flag` in the clojure-tool suite. It scrapes the
+  quoted `"--flag"` literals out of both sources (quoted only, since each file also names
+  flags in prose) and compares them as SEQUENCES, then checks each flag reaches the `-T`
+  tool's destructuring form and, through the translation table its plural spellings force,
+  Leiningen's `option-keys`. Without it a flag added to `UikaCli` reached five
+  integrations for free and neither Clojure front end at all, with every suite green.
 - jvm-plugin-core is mostly NOT shared here: tools.deps does not compile Java sources
   in a git or :local/root install, so the small ports (classifier, ct.sym clamp,
   extract) live in the ns with "keep in sync" markers. The ONE compiled exception is

@@ -22,6 +22,7 @@ object UikaPlugin extends AutoPlugin {
     val uikaJdkRelease = settingKey[Int]("JDK API release for --jdk-release, and the release the dump records the application as running on (0 disables the layer but leaves the dump derived; a negative value, the default, derives the lowest release any subproject compiles for from its javacOptions and scalacOptions, else the build JVM's, clamped to what its ct.sym serves)")
     val uikaJfr = settingKey[Option[File]]("JFR class-load evidence location: a directory makes forked Test JVMs record jdk.ClassLoad there (pid-unique file names; needs Test/fork := true and a JDK 17+ test JVM) and uikaUpgradeCheck converts and reads it back; a .jfr file is consumed only. Set it bare in build.sbt or at ThisBuild; either reaches every project's forked tests and the check. A per-subproject value overrides where that project's tests record, and never reaches the check")
     val uikaDraftExcludeFile = settingKey[Option[File]]("File for uikaUpgradeCheck to write draft exclude rules to (--draft-exclude-file); only meaningful with uikaJfr. Set it bare in build.sbt or at ThisBuild")
+    val uikaMergedClasspath = settingKey[Boolean]("Check the union of every module's classpath once (--merged-classpath) instead of each module against its own resolution. Per-module checking scans once per module, so a large build may want the union; the trade is that a break only one module's resolution shows can hide behind another module's version of the same jar")
     val uikaUpgradeCheck = inputKey[Unit]("Runs uika upgrade-check: uikaUpgradeCheck <before.json> <after.json>")
   }
 
@@ -42,6 +43,7 @@ object UikaPlugin extends AutoPlugin {
     uikaJdkRelease := -1,
     uikaJfr := None,
     uikaDraftExcludeFile := None,
+    uikaMergedClasspath := false,
     // One check per BUILD, not per project. Every value the task reads is ThisBuild- or
     // root-scoped and the dumps already cover the whole build, so aggregating it just spawns
     // N identical CLI runs in parallel, racing on the shared retrieve directory and on the
@@ -128,7 +130,7 @@ object UikaPlugin extends AutoPlugin {
       )
       val draftExcludeFile =
         (LocalRootProject / uikaDraftExcludeFile).value.map(_.getAbsoluteFile.toPath).orNull
-      UikaCli.runUpgradeCheck(binary, file(args.head).toPath, file(args(1)).toPath, (LocalRootProject / uikaFailOn).value, excludeFiles, jdkRelease, jdk, classLoadLogs, draftExcludeFile, (line: String) => log.info(line)) match {
+      UikaCli.runUpgradeCheck(binary, file(args.head).toPath, file(args(1)).toPath, (LocalRootProject / uikaFailOn).value, excludeFiles, jdkRelease, jdk, classLoadLogs, draftExcludeFile, (LocalRootProject / uikaMergedClasspath).value, (line: String) => log.info(line)) match {
         case 0 => ()
         case 1 => sys.error("uika upgrade-check found broken references (see output above)")
         case n => sys.error(s"uika upgrade-check failed with exit code $n")

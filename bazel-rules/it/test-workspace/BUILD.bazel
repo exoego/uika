@@ -36,6 +36,15 @@ uika_upgrade_check(
     targets = UIKA_TARGETS,
 )
 
+# Per-module checking is the default and the expensive one. The attribute has to reach the
+# CLI, and --noMergedClasspath has to be able to take it back off: a boolean is the one
+# shape where "a run-time flag wins over the attribute" needs a pair.
+uika_upgrade_check(
+    name = "check_merged",
+    merged_classpath = True,
+    targets = UIKA_TARGETS,
+)
+
 # The baseline shape of the PR gate: no target is built, and only the external jars the
 # version diff needs are recorded.
 uika_dump(

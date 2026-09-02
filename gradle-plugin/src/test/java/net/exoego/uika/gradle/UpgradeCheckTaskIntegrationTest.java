@@ -149,6 +149,40 @@ final class UpgradeCheckTaskIntegrationTest {
                 () -> "build-script failOn was not forwarded to the CLI: " + args);
     }
 
+    /// Per-module checking scans once per module, so a large build may want the union
+    /// instead. Off by default in every integration, because a break that only one module's
+    /// resolution shows can hide behind another module's version of the same jar.
+    @Test
+    void passesMergedClasspathToCli() throws Exception {
+        var args = new String[] {
+            "uikaUpgradeCheck",
+            "--stacktrace",
+            "-PuikaBefore=" + before,
+            "-PuikaAfter=" + after,
+            "-PuikaCliVersion=" + CLEAN_VERSION,
+        };
+        runner(CLEAN_VERSION).withArguments(args).build();
+        assertFalse(Files.readString(Path.of(before + ".args")).contains("--merged-classpath"),
+                "per-module checking is the default; the flag must not be sent unasked");
+
+        // Bare, the everyday spelling: Gradle gives a valueless -P the empty string, and a
+        // flag-shaped property that then reads as false would be a silent no-op.
+        var merged = new String[args.length + 1];
+        System.arraycopy(args, 0, merged, 0, args.length);
+        merged[args.length] = "-PuikaMergedClasspath";
+        runner(CLEAN_VERSION).withArguments(merged).build();
+        String sent = Files.readString(Path.of(before + ".args"));
+        assertTrue(sent.contains("--merged-classpath"),
+                () -> "-PuikaMergedClasspath was not forwarded to the CLI: " + sent);
+
+        // ...and =false turns it back off, so a CI script can pass a computed value.
+        merged[args.length] = "-PuikaMergedClasspath=false";
+        runner(CLEAN_VERSION).withArguments(merged).build();
+        String off = Files.readString(Path.of(before + ".args"));
+        assertFalse(off.contains("--merged-classpath"),
+                () -> "-PuikaMergedClasspath=false still sent the flag: " + off);
+    }
+
     /// Comma-separated, because suppressing a second finding for one CI run must not need a
     /// build-script edit. Every other integration already takes more than one from the
     /// command line, and Maven and Bazel already delimit theirs with a comma.

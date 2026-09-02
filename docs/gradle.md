@@ -185,6 +185,12 @@ resolved local paths.
   `compileJava`'s `options.release`, else target compatibility. Override with
   `-PuikaJdkRelease=` on both the dump and the check, or set 0 to disable the
   API layer.
+- `-PuikaMergedClasspath` checks the union of every module's classpath once
+  instead of [each module against its own
+  resolution](../README.md#per-module-checking). Per-module checking scans once
+  per module, so a large build may want the union; the trade is that a break
+  only one module's resolution shows can hide behind another module's version of
+  the same jar. Bare means on, `=false` turns it back off.
 - `-PuikaConfiguration=` picks which configuration the dump resolves, default
   `runtimeClasspath`. A configuration that a project lacks or cannot resolve
   contributes no artifacts, which would leave that module in the dump with an

@@ -23,7 +23,7 @@
 (def ^:private check-option-keys
   "Every key upgrade-check accepts."
   #{:before :after :fail-on :exclude-file :jdk-release :jfr :class-load-log
-    :draft-exclude-file :evidence-work-dir :cli-version :cli-path})
+    :draft-exclude-file :merged-classpath :evidence-work-dir :cli-version :cli-path})
 
 (defn- check-options
   "Rejects a misspelled key. Destructuring drops what it does not name, so without this a
@@ -123,6 +123,10 @@
   :draft-exclude-file
                      where the CLI writes draft exclude rules for symbols never
                      observed loading, which needs :class-load-log too
+  :merged-classpath  check the union of every module's classpath once instead of
+                     each module against its own resolution. Both Clojure front
+                     ends dump a single module, so this only matters for a dump
+                     another tool wrote
   :cli-version       uika-cli version; defaults to this tool's own version, read
                      from its Maven coordinate in the runtime basis
                      (UIKA_CLI_VERSION is consulted in between, and a source

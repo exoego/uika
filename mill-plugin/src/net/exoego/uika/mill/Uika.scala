@@ -71,6 +71,11 @@ object Uika extends ExternalModule {
    *                   upgraded build, or a single `.jfr` recording; defaults to `UIKA_JFR`,
    *                   the variable that made the tests record, so one option serves both
    *                   phases
+   * @param mergedClasspath check the union of every module's classpath once instead of each
+   *                   module against its own resolution. Per-module checking scans once per
+   *                   module, so a large build may want the union; the trade is that a break
+   *                   only one module's resolution shows can hide behind another module's
+   *                   version of the same jar
    */
   def upgradeCheck(
       ev: Evaluator,
@@ -81,7 +86,11 @@ object Uika extends ExternalModule {
       jdkRelease: Int = -1,
       jfr: String = "",
       draftExcludeFile: String = "",
-      cliVersion: String = ""
+      cliVersion: String = "",
+      // mainargs.Flag, not Boolean: a Boolean parameter demands a value
+      // (`--mergedClasspath true`), while every sibling integration spells this knob as a
+      // bare switch.
+      mergedClasspath: mainargs.Flag = mainargs.Flag(false)
   // persistent so `Task.dest` survives: Mill wipes a non-persistent dest before every run,
   // which would defeat both UikaCli.extractBinary's skip-if-present and JfrEvidence.rewrite's
   // stale-conversion sweep. The other three plugins extract into their build directory.
@@ -158,6 +167,7 @@ object Uika extends ExternalModule {
       jdk,
       classLoadLogs,
       Option(draftExcludeFile).filter(_.nonEmpty).map(os.Path(_, workspace).toNIO).orNull,
+      mergedClasspath.value,
       log
     )
     exit match {

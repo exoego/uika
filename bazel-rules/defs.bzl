@@ -77,6 +77,7 @@ def uika_upgrade_check(
         fail_on = None,
         exclude_files = [],
         jdk_release = -1,
+        merged_classpath = False,
         **kwargs):
     """Declares a `bazel run`-able target that checks a before/after pair of dumps.
 
@@ -95,6 +96,12 @@ def uika_upgrade_check(
       jdk_release: the API release to resolve JDK escapes against. Negative, the default,
         derives it from `targets`; 0 switches the layer off. The dump rule's option folds 0
         into the derived default instead, so the two attrs default differently on purpose.
+      merged_classpath: check the union of every module's classpath once instead of each
+        module against its own resolution. Per-module checking scans once per module, so a
+        large workspace may want the union; the trade is that a break only one module's
+        resolution shows can hide behind another module's version of the same jar.
+        `--mergedClasspath` and `--noMergedClasspath` override it in either direction, since
+        a run-time flag winning over the attribute needs both for a boolean.
       **kwargs: passed through to the generated java_binary (visibility, tags, ...).
     """
     jdk_release = _release_value(name, "uika_upgrade_check", jdk_release)
@@ -128,6 +135,7 @@ def uika_upgrade_check(
             "-Duika.failOn={}".format(fail_on or ""),
             "-Duika.excludeFiles={}".format(",".join(exclude_files)),
             "-Duika.jdkRelease={}".format(jdk_release),
+            "-Duika.mergedClasspath={}".format("true" if merged_classpath else "false"),
         ],
         main_class = "net.exoego.uika.bazel.UpgradeCheckMain",
         runtime_deps = [Label("//java:check")],
