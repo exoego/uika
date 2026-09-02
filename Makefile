@@ -43,6 +43,7 @@ JACOCO_CLI = $(JACOCO_DIR)/org.jacoco.cli-$(JACOCO_VERSION)-nodeps.jar
 UIKA_VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' cli/Cargo.toml | head -1)
 TMPDIR ?= /tmp
 SBT_CACHE_DIR ?= $(TMPDIR)/uika-sbt
+SBT_CLI_STUB = $(CURDIR)/$(SBT_PLUGIN_DIR)/target/uika-cli-path-stub
 # run.sh copies the test workspace here; the path is stable so Bazel reuses one output base.
 BAZEL_IT_DIR ?= $(TMPDIR)/uika-bazel-it
 BAZEL_MAVEN_IT_DIR ?= $(TMPDIR)/uika-bazel-maven-it
@@ -169,11 +170,25 @@ gradle-clean:
 gradle-coverage:
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) jacocoTestReport -PuikaCoverage=true
 
+# The binary the uika-cli-path scripted group points UIKA_CLI_PATH at. It only has to be
+# an executable file that records its argv: the group asserts acquisition was skipped, not
+# what a real check reports.
+$(SBT_CLI_STUB):
+	@mkdir -p $(dir $@)
+	@printf '#!/bin/sh\nprintf "%%s " "$$@" > "$$3.args"\nexit 0\n' > $@
+	@chmod +x $@
+
 sbt-compile:
 	cd $(SBT_PLUGIN_DIR) && $(SBT) $(SBT_FLAGS) compile
 
-sbt-scripted:
-	cd $(SBT_PLUGIN_DIR) && $(SBT) $(SBT_FLAGS) checkClassFileVersions scripted
+# Two invocations, not one. The uika-cli-path group asserts that UIKA_CLI_PATH short-
+# circuits CLI acquisition, and sbt's scripted framework has no per-test environment hook:
+# scriptedLaunchOpts carries JVM options only, and the forked sbt inherits whatever ran it.
+# Setting the variable for the whole run would defeat the uika group, whose upgrade-check
+# test exists to exercise the resolver.
+sbt-scripted: $(SBT_CLI_STUB)
+	cd $(SBT_PLUGIN_DIR) && $(SBT) $(SBT_FLAGS) checkClassFileVersions 'scripted uika/*'
+	cd $(SBT_PLUGIN_DIR) && UIKA_CLI_PATH=$(SBT_CLI_STUB) $(SBT) $(SBT_FLAGS) 'scripted uika-cli-path/*'
 
 sbt-clean:
 	cd $(SBT_PLUGIN_DIR) && $(SBT) $(SBT_FLAGS) clean
@@ -183,11 +198,13 @@ sbt-clean:
 # purpose: codecov.yml scores those paths as their own component, so this merges with the
 # Gradle and Maven measurements of the same lines rather than competing with them.
 SBT_JACOCO_DIR = $(SBT_PLUGIN_DIR)/target/jacoco
-sbt-coverage: jacoco-tools
+sbt-coverage: jacoco-tools $(SBT_CLI_STUB)
 	rm -rf $(SBT_JACOCO_DIR)
 	mkdir -p $(SBT_JACOCO_DIR)
 	cd $(SBT_PLUGIN_DIR) && UIKA_JACOCO_AGENT=$(JACOCO_AGENT) \
-		UIKA_JACOCO_EXEC=$(CURDIR)/$(SBT_JACOCO_DIR)/scripted.exec $(SBT) $(SBT_FLAGS) scripted
+		UIKA_JACOCO_EXEC=$(CURDIR)/$(SBT_JACOCO_DIR)/scripted.exec $(SBT) $(SBT_FLAGS) 'scripted uika/*'
+	cd $(SBT_PLUGIN_DIR) && UIKA_JACOCO_AGENT=$(JACOCO_AGENT) UIKA_CLI_PATH=$(SBT_CLI_STUB) \
+		UIKA_JACOCO_EXEC=$(CURDIR)/$(SBT_JACOCO_DIR)/scripted.exec $(SBT) $(SBT_FLAGS) 'scripted uika-cli-path/*'
 	$(JAVA) -jar $(JACOCO_CLI) report $(SBT_JACOCO_DIR)/scripted.exec \
 		--classfiles $(SBT_PLUGIN_DIR)/target/scala-2.12/sbt-1.0/classes \
 		--sourcefiles $(SBT_PLUGIN_DIR)/src/main/scala \

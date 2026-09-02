@@ -50,7 +50,7 @@ $ bazel run //:uika_upgrade_check -- --before /tmp/before.json --after /tmp/afte
 The CLI binary comes from a repository rule, so Bazel's repository cache holds
 it, a second run needs no network, and the release archive pins its checksum
 for every platform. `UIKA_CLI_PATH` points it at a binary you already have
-instead. The check target repeats `targets` only to read the API release they
+instead, and a value that is not an executable file fails naming the variable. The check target repeats `targets` only to read the API release they
 compile for, so it builds nothing.
 
 The `uika.cli` module-extension tag overrides where the binary comes from.

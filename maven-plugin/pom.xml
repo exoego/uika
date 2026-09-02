@@ -50,6 +50,13 @@
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <mavenPluginTools.version>3.15.2</mavenPluginTools.version>
+    <!-- Where the invoker clones each IT. A property rather than a literal because
+         invoker.properties is interpolated against the POM's properties, and the
+         upgrade-check-cli-path IT needs the ABSOLUTE path of its own clone: it sets
+         UIKA_CLI_PATH, and ProcessBuilder resolves a bare name against PATH rather than
+         the working directory. Its ${basedir} interpolates to THIS project, not the
+         clone. -->
+    <uikaItCloneDir>${project.build.directory}/it</uikaItCloneDir>
   </properties>
 
   <dependencies>
@@ -189,7 +196,7 @@
         <artifactId>maven-invoker-plugin</artifactId>
         <version>3.10.1</version>
         <configuration>
-          <cloneProjectsTo>${project.build.directory}/it</cloneProjectsTo>
+          <cloneProjectsTo>${uikaItCloneDir}</cloneProjectsTo>
           <localRepositoryPath>${project.build.directory}/it-repo</localRepositoryPath>
           <postBuildHookScript>verify</postBuildHookScript>
           <streamLogs>true</streamLogs>

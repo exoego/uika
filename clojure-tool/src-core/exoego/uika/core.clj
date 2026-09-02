@@ -152,6 +152,26 @@
             (.delete ^java.io.File zip-file)))))
     binary))
 
+(defn- existing-binary
+  "The binary an explicit path names, checked before ProcessBuilder ever sees it. Port of
+  UikaCli.overrideFrom; keep the two in sync.
+
+  Executable, not merely present: an artifact round trip is the likeliest way a
+  hand-supplied binary loses the bit, since actions/upload-artifact does not preserve it.
+  Without the check the run dies inside ProcessBuilder with no cause in sight, which is
+  exactly what the four JVM plugins stopped doing.
+
+  The message names the source the value came from. :cli-path and UIKA_CLI_PATH are two
+  spellings of one knob, and blaming the variable for a project.clj value sends the reader
+  to look at an environment that was never consulted."
+  [source path]
+  (let [binary (io/file (str path))]
+    (when-not (.isFile binary)
+      (throw (ex-info (str source " does not name a file: " binary) {:path (str binary)})))
+    (when-not (.canExecute binary)
+      (throw (ex-info (str source " is not executable: " binary) {:path (str binary)})))
+    binary))
+
 (defn resolve-binary
   "The uika binary to run. An explicit path wins (:cli-path, else UIKA_CLI_PATH);
   otherwise the first known version of :cli-version, UIKA_CLI_VERSION, or
@@ -177,8 +197,9 @@
   ;; an empty version segment.
   (let [cli-path (when-not (str/blank? (some-> cli-path str)) cli-path)
         cli-version (when-not (str/blank? (some-> cli-version str)) cli-version)]
-    (if-let [path (or cli-path (env "UIKA_CLI_PATH"))]
-      (io/file (str path))
+    (if-let [[source path] (or (when cli-path [":cli-path" cli-path])
+                               (when-let [value (env "UIKA_CLI_PATH")] ["UIKA_CLI_PATH" value]))]
+      (existing-binary source path)
       (fetch-cli (str (or cli-version
                           (env "UIKA_CLI_VERSION")
                           (default-version-fn)

@@ -1,0 +1,7 @@
+# UIKA_CLI_PATH names an executable stub, so the check must run it and never look for a
+# uika-cli version or a repository to fetch one from -- this build offers neither.
+> requireCliPath
+$ touch before.json after.json
+> uikaUpgradeCheck before.json after.json
+$ exists before.json.args
+> checkStubRan

@@ -156,11 +156,16 @@ public final class UpgradeCheckMain {
      * The uika binary. UIKA_CLI_PATH wins over the downloaded one so a build can point at a
      * binary it already has, which is also how this repository tests against its own
      * freshly built CLI.
+     *
+     * <p>Through the shared {@link UikaCli#binaryOverride()} rather than a local getenv, so
+     * a value that is not a file, or a file that lost its executable bit on an artifact
+     * round trip, fails here naming the variable instead of inside ProcessBuilder with no
+     * cause in sight. The four JVM plugins already go through it.
      */
     private static Path cliBinary() {
-        String override = System.getenv("UIKA_CLI_PATH");
-        if (override != null && !override.isEmpty()) {
-            return Path.of(override);
+        Path override = UikaCli.binaryOverride();
+        if (override != null) {
+            return override;
         }
         String property = System.getProperty("uika.cli");
         if (property == null || property.isEmpty()) {

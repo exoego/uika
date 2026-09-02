@@ -57,7 +57,9 @@ entry says otherwise.
   [runtime load evidence](#runtime-load-evidence-jfr), below.
   `:draft-exclude-file` is where rules drafted from it are written.
 - `:cli-version` and `:cli-path` pick the binary, and `UIKA_CLI_VERSION`,
-  `UIKA_CLI_PATH` and `UIKA_CLI_URL` do the same from the environment.
+  `UIKA_CLI_PATH` and `UIKA_CLI_URL` do the same from the environment. A path that
+  is not an executable file fails naming the one you set, `:cli-path` or the
+  variable.
 - `dump-classpath` alone takes `:output` (default
   `target/uika/classpath.json`), `:dir` to point at another project's
   `deps.edn` (default: where the tool was invoked), `:aliases` to include in

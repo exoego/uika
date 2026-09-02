@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>net.exoego.uika.it</groupId>
+  <artifactId>dummy-upgrade-check-cli-path</artifactId>
+  <version>1.0.0</version>
+  <packaging>pom</packaging>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <!-- No <repositories> and no -Duika.cliVersion, unlike every sibling IT. That is the
+       assertion: nothing here can resolve a uika-cli distribution, so the build can only
+       pass if UIKA_CLI_PATH short-circuits acquisition before the resolver is reached. -->
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>net.exoego.uika</groupId>
+        <artifactId>uika-maven-plugin</artifactId>
+        <version>@project.version@</version>
+      </plugin>
+    </plugins>
+  </build>
+</project>

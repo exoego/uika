@@ -52,7 +52,9 @@ flag.
   them. The CLI answers a lone `:draft-exclude-file` by naming
   `--class-load-log`, whose keyword form this map rejects as unknown.
 - `:cli-version` and `:cli-path` pick the binary, as do `UIKA_CLI_VERSION` and
-  `UIKA_CLI_PATH` from the environment. There is no command-line override.
+  `UIKA_CLI_PATH` from the environment. There is no command-line override. A path
+  that is not an executable file fails naming the one you set, `:cli-path` or the
+  variable.
 
 ## Runtime load evidence (JFR)
 
