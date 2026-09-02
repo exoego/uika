@@ -72,3 +72,10 @@ The derivation only sees what the build declares, so a project that compiles
 moves. The same override says so by hand. A positive value is recorded as the
 release every module runs on, while `0` still only switches the API layer off
 and leaves the recorded release derived.
+
+Below 8 is neither. The layer cannot serve it — `ct.sym` carries no older stubs
+— and a dump naming it would send the next check to ask for a release that has
+never existed there, failing the run outright. So a value under 8 is dropped:
+the check says so on its output, the dump does not and keeps its derived value.
+The two differ because the check runs once and the dump writes a module at a
+time, so saying it there would repeat the same line once per module.

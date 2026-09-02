@@ -37,78 +37,6 @@ the Java dependencies on the classpath at full strength but only the
 type-hinted, AOT-compiled part of the Clojure code itself; point `:class-dir`
 at the tools.build `compile-clj` output to include it.
 
-## Options
-
-Every option is a keyword argument on the call, `upgrade-check` unless the
-entry says otherwise. A key neither call accepts is an error rather than a
-silent no-op, so a misspelling cannot quietly disable a flag. Watch for the
-Leiningen plugin's spellings: it says `:exclude-files` and `:class-load-logs`
-where this tool says `:exclude-file` and `:class-load-log`.
-
-- [`:fail-on`](../README.md#violation-tiers-and-the-failon-threshold) is `never`,
-  `reachable` or `any`.
-- [`:exclude-file`](../README.md#excluding-known-false-positives)
-  takes one path or a vector of paths.
-- There is no module model to read a compile target from, so
-  [`:jdk-release`](build-tools.md#jdkrelease) defaults to the project's
-  own JVM release. Set it to override that, or to 0 to disable the API layer.
-  `dump-classpath` takes it too, where it names the release the application is
-  recorded as running on. There 0 means "keep the derived value" instead,
-  because recording nothing would take JDK move detection down with the API
-  layer.
-- `:merged-classpath true` checks the union of every module's classpath once
-  instead of [each module against its own
-  resolution](../README.md#per-module-checking). A `deps.edn` project is one
-  module, so this only matters for a dump another tool wrote.
-- `:jfr` and `:class-load-log` supply
-  [runtime load evidence](#runtime-load-evidence-jfr), below.
-  `:draft-exclude-file` is where rules drafted from it are written.
-- `:cli-version` and `:cli-path` pick the binary, and `UIKA_CLI_VERSION`,
-  `UIKA_CLI_PATH` and `UIKA_CLI_URL` do the same from the environment. A path that
-  is not an executable file fails naming the one you set, `:cli-path` or the
-  variable.
-- `dump-classpath` alone takes `:output` (default
-  `target/uika/classpath.json`), `:dir` to point at another project's
-  `deps.edn` (default: where the tool was invoked), `:aliases` to include in
-  the resolution, and `:class-dir` for the AOT output of a tools.build
-  `compile-clj`. The project's own `:paths` are recorded either way.
-- `upgrade-check` alone takes `:evidence-work-dir`, where recordings are
-  converted, defaulting to `target/uika`.
-
-## Runtime load evidence (JFR)
-
-Collect by running the current, not yet upgraded build's test suite (or a
-staging soak) with [JFR recording class loads](runtime-load-evidence.md). There
-is no test task to inject the flag into, so add it to your own test JVM
-invocation, the way the Maven recipe does:
-
-```console
--XX:StartFlightRecording:jdk.ClassLoad#enabled=true,jdk.ClassLoad#stackTrace=true,filename=<dir>
-```
-
-Create `<dir>` first: given a missing parent JFR aborts JVM startup, but given
-an existing parent it silently records to a single clobbered file at that
-path. Quote the `filename` value when the path carries a comma — the comma is
-the option delimiter, and an unquoted one silently truncates `filename=` with
-exit 0, leaving the directory empty.
-
-Consume with `:jfr`, pointed at that directory or at a single recording:
-
-```console
-$ clojure -T:uika upgrade-check :before '"/tmp/before.json"' :after '"/tmp/after.json"' \
-      :jfr '"/tmp/uika-jfr"'
-```
-
-Recordings are converted with the JDK's own JFR reader before the CLI runs,
-text logs in the same directory ride along unchanged, and a recording handed to
-`:class-load-log` is converted too. Conversion needs the tool itself on Java
-17+, the same floor the recording test JVMs already have for the flag syntax.
-[`:draft-exclude-file`](runtime-load-evidence.md) drafts exclude rules from the
-same evidence.
-
-The [base-branch-to-PR CI wiring](runtime-load-evidence.md#collecting-on-the-base-branch-consuming-on-the-pr)
-is the same for every tool, with this page's two commands inside it.
-
 ## PR gate on GitHub Actions
 
 The `linkage-check` job dumps a baseline from the PR's base branch and the
@@ -251,3 +179,75 @@ up as long as the files exist. The old-version JARs are the gap, because
 the PR job resolves the new versions and nothing pulls the old ones in on
 its own, and a compared-pair JAR uika cannot open exits 2 rather than
 degrading to a warning. The cache save and restore close that gap.
+
+## Options
+
+Every option is a keyword argument on the call, `upgrade-check` unless the
+entry says otherwise. A key neither call accepts is an error rather than a
+silent no-op, so a misspelling cannot quietly disable a flag. Watch for the
+Leiningen plugin's spellings: it says `:exclude-files` and `:class-load-logs`
+where this tool says `:exclude-file` and `:class-load-log`.
+
+- [`:fail-on`](../README.md#violation-tiers-and-the-failon-threshold) is `never`,
+  `reachable` or `any`.
+- [`:exclude-file`](../README.md#excluding-known-false-positives)
+  takes one path or a vector of paths.
+- There is no module model to read a compile target from, so
+  [`:jdk-release`](build-tools.md#jdkrelease) defaults to the project's
+  own JVM release. Set it to override that, or to 0 to disable the API layer.
+  `dump-classpath` takes it too, where it names the release the application is
+  recorded as running on. There 0 means "keep the derived value" instead,
+  because recording nothing would take JDK move detection down with the API
+  layer.
+- `:merged-classpath true` checks the union of every module's classpath once
+  instead of [each module against its own
+  resolution](../README.md#per-module-checking). A `deps.edn` project is one
+  module, so this only matters for a dump another tool wrote.
+- `:jfr` and `:class-load-log` supply
+  [runtime load evidence](#runtime-load-evidence-jfr), below.
+  `:draft-exclude-file` is where rules drafted from it are written.
+- `:cli-version` and `:cli-path` pick the binary, and `UIKA_CLI_VERSION`,
+  `UIKA_CLI_PATH` and `UIKA_CLI_URL` do the same from the environment. A path that
+  is not an executable file fails naming the one you set, `:cli-path` or the
+  variable.
+- `dump-classpath` alone takes `:output` (default
+  `target/uika/classpath.json`), `:dir` to point at another project's
+  `deps.edn` (default: where the tool was invoked), `:aliases` to include in
+  the resolution, and `:class-dir` for the AOT output of a tools.build
+  `compile-clj`. The project's own `:paths` are recorded either way.
+- `upgrade-check` alone takes `:evidence-work-dir`, where recordings are
+  converted, defaulting to `target/uika`.
+
+## Runtime load evidence (JFR)
+
+Collect by running the current, not yet upgraded build's test suite (or a
+staging soak) with [JFR recording class loads](runtime-load-evidence.md). There
+is no test task to inject the flag into, so add it to your own test JVM
+invocation, the way the Maven recipe does:
+
+```console
+-XX:StartFlightRecording:jdk.ClassLoad#enabled=true,jdk.ClassLoad#stackTrace=true,filename=<dir>
+```
+
+Create `<dir>` first: given a missing parent JFR aborts JVM startup, but given
+an existing parent it silently records to a single clobbered file at that
+path. Quote the `filename` value when the path carries a comma — the comma is
+the option delimiter, and an unquoted one silently truncates `filename=` with
+exit 0, leaving the directory empty.
+
+Consume with `:jfr`, pointed at that directory or at a single recording:
+
+```console
+$ clojure -T:uika upgrade-check :before '"/tmp/before.json"' :after '"/tmp/after.json"' \
+      :jfr '"/tmp/uika-jfr"'
+```
+
+Recordings are converted with the JDK's own JFR reader before the CLI runs,
+text logs in the same directory ride along unchanged, and a recording handed to
+`:class-load-log` is converted too. Conversion needs the tool itself on Java
+17+, the same floor the recording test JVMs already have for the flag syntax.
+[`:draft-exclude-file`](runtime-load-evidence.md) drafts exclude rules from the
+same evidence.
+
+The [base-branch-to-PR CI wiring](runtime-load-evidence.md#collecting-on-the-base-branch-consuming-on-the-pr)
+is the same for every tool, with this page's two commands inside it.

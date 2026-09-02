@@ -19,7 +19,11 @@ $ sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"   # uikaCliVersion set
 ```
 
 The dump task compiles as a side effect, so the PR-side dump needs no extra
-step.
+step. It builds each subproject's entry with `uikaModuleClasspath`, which is a
+task of its own so that `show app/uikaModuleClasspath` can answer what one
+subproject contributes. Only `uikaDumpClasspath` writes a file, and it is
+defined for the build rather than per project, so every spelling of it runs the
+one whole-build merge.
 
 ## PR gate on GitHub Actions
 

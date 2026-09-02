@@ -31,62 +31,6 @@ are scanned. The [reflection caveat](clojure.md) of the Clojure code itself appl
 here too; `:class-dir` does not, because the dump takes its class directories
 from `:compile-path` and the project's own source and resource paths.
 
-## Options
-
-Every option is a key of the `:uika` map in `project.clj`. Any other key is an
-error rather than a silent no-op, so a misspelling cannot quietly disable a
-flag. Watch for the Clojure CLI tool's spellings: it says `:exclude-file` and
-`:class-load-log` where this map says `:exclude-files` and `:class-load-logs`.
-
-- [`:fail-on`](../README.md#violation-tiers-and-the-failon-threshold) is `"never"`,
-  `"reachable"` or `"any"`.
-- [`:exclude-files`](../README.md#excluding-known-false-positives)
-  takes a vector of paths.
-- [`:jdk-release`](build-tools.md#jdkrelease) defaults to the release
-  `:javac-options` pins (`--release`, or `-target`); a project declaring neither
-  falls back to the JVM the project's own code runs on (`:java-cmd`, else
-  `JAVA_CMD`, probed; a probe that fails warns and falls back to lein's own
-  JVM). 0 disables the API layer.
-- `:merged-classpath true` checks the union of every module's classpath once
-  instead of [each module against its own
-  resolution](../README.md#per-module-checking). A lein project is one module, so
-  this only matters for a dump another tool wrote.
-- `:jfr` takes a recording or a directory of recordings mixed with text logs,
-  and `:class-load-logs` takes text [evidence](runtime-load-evidence.md) on its
-  own. `:draft-exclude-file` drafts exclude rules from either, and needs one of
-  them. The CLI answers a lone `:draft-exclude-file` by naming
-  `--class-load-log`, whose keyword form this map rejects as unknown.
-- `:cli-version` and `:cli-path` pick the binary, as do `UIKA_CLI_VERSION` and
-  `UIKA_CLI_PATH` from the environment. There is no command-line override. A path
-  that is not an executable file fails naming the one you set, `:cli-path` or the
-  variable.
-
-## Runtime load evidence (JFR)
-
-For [runtime load evidence](runtime-load-evidence.md), collect by running the
-current build's tests with the JFR flag on the test JVM. The plugin injects
-nothing, so add it yourself; a profile keeps it out of everyday runs:
-
-```clojure
-:profiles {:uika-jfr {:jvm-opts ["-XX:StartFlightRecording:jdk.ClassLoad#enabled=true,jdk.ClassLoad#stackTrace=true,filename=target/uika-jfr"]}}
-```
-
-```console
-$ mkdir -p target/uika-jfr
-$ lein with-profile +uika-jfr test
-```
-
-Create the directory first (given a missing parent JFR aborts JVM startup, but
-given an existing parent it silently records to a single clobbered file), quote
-the `filename` value if the path carries a comma (the option delimiter;
-unquoted it silently truncates with exit 0), and the test JVM needs JDK 17+ for
-the event-settings syntax. Then point `:jfr` at the directory. Recordings are
-converted with the JDK's own JFR reader before the CLI runs, which needs lein
-itself on Java 17+; `:class-load-logs` still takes text logs alongside.
-
-The [base-branch-to-PR CI wiring](runtime-load-evidence.md#collecting-on-the-base-branch-consuming-on-the-pr)
-is the same for every tool, with this page's two commands inside it.
-
 ## PR gate on GitHub Actions
 
 The `linkage-check` job dumps a baseline from the PR's base branch and the
@@ -224,3 +168,59 @@ up as long as the files exist. The old-version JARs are the gap, because
 the PR job resolves the new versions and nothing pulls the old ones in on
 its own, and a compared-pair JAR uika cannot open exits 2 rather than
 degrading to a warning. The cache save and restore close that gap.
+
+## Options
+
+Every option is a key of the `:uika` map in `project.clj`. Any other key is an
+error rather than a silent no-op, so a misspelling cannot quietly disable a
+flag. Watch for the Clojure CLI tool's spellings: it says `:exclude-file` and
+`:class-load-log` where this map says `:exclude-files` and `:class-load-logs`.
+
+- [`:fail-on`](../README.md#violation-tiers-and-the-failon-threshold) is `"never"`,
+  `"reachable"` or `"any"`.
+- [`:exclude-files`](../README.md#excluding-known-false-positives)
+  takes a vector of paths.
+- [`:jdk-release`](build-tools.md#jdkrelease) defaults to the release
+  `:javac-options` pins (`--release`, or `-target`); a project declaring neither
+  falls back to the JVM the project's own code runs on (`:java-cmd`, else
+  `JAVA_CMD`, probed; a probe that fails warns and falls back to lein's own
+  JVM). 0 disables the API layer.
+- `:merged-classpath true` checks the union of every module's classpath once
+  instead of [each module against its own
+  resolution](../README.md#per-module-checking). A lein project is one module, so
+  this only matters for a dump another tool wrote.
+- `:jfr` takes a recording or a directory of recordings mixed with text logs,
+  and `:class-load-logs` takes text [evidence](runtime-load-evidence.md) on its
+  own. `:draft-exclude-file` drafts exclude rules from either, and needs one of
+  them. The CLI answers a lone `:draft-exclude-file` by naming
+  `--class-load-log`, whose keyword form this map rejects as unknown.
+- `:cli-version` and `:cli-path` pick the binary, as do `UIKA_CLI_VERSION` and
+  `UIKA_CLI_PATH` from the environment. There is no command-line override. A path
+  that is not an executable file fails naming the one you set, `:cli-path` or the
+  variable.
+
+## Runtime load evidence (JFR)
+
+For [runtime load evidence](runtime-load-evidence.md), collect by running the
+current build's tests with the JFR flag on the test JVM. The plugin injects
+nothing, so add it yourself; a profile keeps it out of everyday runs:
+
+```clojure
+:profiles {:uika-jfr {:jvm-opts ["-XX:StartFlightRecording:jdk.ClassLoad#enabled=true,jdk.ClassLoad#stackTrace=true,filename=target/uika-jfr"]}}
+```
+
+```console
+$ mkdir -p target/uika-jfr
+$ lein with-profile +uika-jfr test
+```
+
+Create the directory first (given a missing parent JFR aborts JVM startup, but
+given an existing parent it silently records to a single clobbered file), quote
+the `filename` value if the path carries a comma (the option delimiter;
+unquoted it silently truncates with exit 0), and the test JVM needs JDK 17+ for
+the event-settings syntax. Then point `:jfr` at the directory. Recordings are
+converted with the JDK's own JFR reader before the CLI runs, which needs lein
+itself on Java 17+; `:class-load-logs` still takes text logs alongside.
+
+The [base-branch-to-PR CI wiring](runtime-load-evidence.md#collecting-on-the-base-branch-consuming-on-the-pr)
+is the same for every tool, with this page's two commands inside it.

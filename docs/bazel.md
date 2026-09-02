@@ -72,37 +72,6 @@ use_repo(uika, "uika_cli")
 Each entry in `targets` becomes one module of the dump, named by its label, so
 `upgrade-check` checks each against its own resolution.
 
-## Options
-
-Every option is a rule attribute, a run-time flag, or both. A run-time flag
-wins over the attribute of the same name, except `--excludeFile`, which appends
-to `exclude_files`. A relative path in any of them resolves against the
-workspace root (`BUILD_WORKSPACE_DIRECTORY`), wherever you ran `bazel` from,
-and never against the runfiles tree.
-
-- [`fail_on`](../README.md#violation-tiers-and-the-failon-threshold) is `never`,
-  `reachable` or `any`, and `--failOn` overrides it.
-- [`exclude_files`](../README.md#excluding-known-false-positives)
-  is a label list, and the repeatable `--excludeFile` adds to it.
-- [`jdk_release`](#coordinates-and-jdk_release) is derived per target, and
-  `--jdkRelease` overrides it on both rules and on `@uika//:merge`.
-- [`merged_classpath`](../README.md#per-module-checking) checks the union of
-  every target's classpath once instead of each against its own resolution.
-  Per-module checking scans once per target, so a large workspace may want the
-  union; the trade is that a break only one target's resolution shows can hide
-  behind another target's version of the same jar. `--mergedClasspath` and
-  `--noMergedClasspath` override it in either direction, since a boolean needs
-  both for a run-time flag to win over the attribute.
-- `--classLoadLog` (repeatable) and `--jfr` supply
-  [runtime load evidence](#runtime-load-evidence-jfr). `--draftExcludeFile` is
-  where rules drafted from it are written. None of the three has an attribute,
-  so they are passed at run time only.
-- `--materialize <dir>` on a dump puts every JAR it names into one directory and
-  points the dump there, which is what makes a baseline portable to another
-  machine. It hard-links where the filesystem allows it, so the common case
-  costs no space, and copies where it does not, such as a destination on
-  another filesystem. See [What a dump names](#what-a-dump-names).
-
 ## PR gate on GitHub Actions
 
 The `linkage-check` job dumps a baseline from the PR's base branch and the
@@ -233,6 +202,37 @@ rather than degrading to a warning, which
 [What a dump names](#what-a-dump-names) explains and
 `bazel-rules/it/run-maven.sh` asserts.
 
+## Options
+
+Every option is a rule attribute, a run-time flag, or both. A run-time flag
+wins over the attribute of the same name, except `--excludeFile`, which appends
+to `exclude_files`. A relative path in any of them resolves against the
+workspace root (`BUILD_WORKSPACE_DIRECTORY`), wherever you ran `bazel` from,
+and never against the runfiles tree.
+
+- [`fail_on`](../README.md#violation-tiers-and-the-failon-threshold) is `never`,
+  `reachable` or `any`, and `--failOn` overrides it.
+- [`exclude_files`](../README.md#excluding-known-false-positives)
+  is a label list, and the repeatable `--excludeFile` adds to it.
+- [`jdk_release`](#coordinates-and-jdk_release) is derived per target, and
+  `--jdkRelease` overrides it on both rules and on `@uika//:merge`.
+- [`merged_classpath`](../README.md#per-module-checking) checks the union of
+  every target's classpath once instead of each against its own resolution.
+  Per-module checking scans once per target, so a large workspace may want the
+  union; the trade is that a break only one target's resolution shows can hide
+  behind another target's version of the same jar. `--mergedClasspath` and
+  `--noMergedClasspath` override it in either direction, since a boolean needs
+  both for a run-time flag to win over the attribute.
+- `--classLoadLog` (repeatable) and `--jfr` supply
+  [runtime load evidence](#runtime-load-evidence-jfr). `--draftExcludeFile` is
+  where rules drafted from it are written. None of the three has an attribute,
+  so they are passed at run time only.
+- `--materialize <dir>` on a dump puts every JAR it names into one directory and
+  points the dump there, which is what makes a baseline portable to another
+  machine. It hard-links where the filesystem allows it, so the common case
+  costs no space, and copies where it does not, such as a destination on
+  another filesystem. See [What a dump names](#what-a-dump-names).
+
 ## Runtime load evidence (JFR)
 
 Collect with `bazel test`, check with `--jfr <dir>`. `--jvmopt` already
@@ -304,6 +304,15 @@ merges an older configuration's fragments.
 sweep build because it needs the execution root, which the recipe reads with
 `bazel info` and passes in. `@uika//:merge` is itself an ordinary `bazel run`
 target.
+
+There is no `build_outputs = False` for a sweep, so a baseline taken this way
+builds everything the pattern matches. It cannot be an aspect parameter:
+`//...` matches the `uika_dump` targets too, and their `targets` attribute
+applies the same aspect with the default value, so a parameterized instance
+from the command line is a SECOND aspect over those same targets. Both declare
+`<name>.uika-manifest.tsv` and Bazel rejects the pair as conflicting actions
+(measured on 9.2). List the targets in a `uika_dump` when the baseline's build
+cost matters.
 
 ## Coordinates and `jdk_release`
 
