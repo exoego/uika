@@ -103,7 +103,7 @@ per-module check: 2 of 41 modules changed their resolved versions (39 unchanged)
 💥 reachable from the application (likely to break)
 --------------------------------------------------------------------------------
 
-💡 suggestion: align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade the sender or pin opentelemetry-sdk-common to 1.42.1
+💡 suggestion: align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1 to a release built against io.opentelemetry:opentelemetry-sdk-common 1.60.1, or pin io.opentelemetry:opentelemetry-sdk-common to 1.42.1
     affected modules: :app
     why: io.opentelemetry:opentelemetry-sdk-common changed 1.42.1 -> 1.60.1, which breaks io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1:
         io.opentelemetry.sdk.internal.DaemonThreadFactory was removed, but io.opentelemetry.exporter.sender.okhttp.internal.OkHttpGrpcSender still uses it

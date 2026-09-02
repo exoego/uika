@@ -11,6 +11,11 @@ milliseconds. Reproduction commands are at the bottom.
 ## Setup
 
 - Machine: 10-core Apple Silicon Mac.
+- The head-to-head run was measured on 2026-07-14. uika's library-diff and
+  class-shape counts were re-checked against the current binary on 2026-09-01.
+  Detections added since the original run moved the diff total from 218 to 230.
+  The third-party numbers and uika's two consumer-scale rows were not
+  re-measured, so read those as a snapshot of the original date.
 - Tool versions: uika (release build), japicmp 0.26.1, roseau 0.7.0 (built
   from source, requires JDK 25), Revapi standalone 0.12.1 (+ revapi-java 0.28.4
   and revapi-reporter-text 0.15.1), Linkage Checker 1.5.13.
@@ -41,7 +46,7 @@ resolves the reference, names the artifact on each end, and suggests a fix:
 dependency changes: 1
     CHANGED org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm 1.7.1 -> 1.11.0
 
-💡 suggestion: upgrade io.ktor:ktor-io-jvm:2.3.13 to a release built against kotlinx-coroutines-core-jvm 1.11.0, or pin it to 1.7.1
+💡 suggestion: upgrade io.ktor:ktor-io-jvm:2.3.13 to a release built against org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm 1.11.0, or pin org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm to 1.7.1
     why: org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm changed 1.7.1 -> 1.11.0, which breaks io.ktor:ktor-io-jvm:2.3.13:
         kotlinx.coroutines.EventLoopKt.processNextEventInCurrentThread() was removed, but io.ktor.utils.io.jvm.javaio.BlockingAdapter still calls it
 
@@ -60,7 +65,7 @@ among them:
 METHOD REMOVED         kotlinx/coroutines/AbstractTimeSourceKt.getTimeSource ()Lkotlinx/coroutines/AbstractTimeSource;
 METHOD REMOVED         kotlinx/coroutines/AwaitAll.access$getNotCompletedCount$FU$p ()Ljava/util/concurrent/atomic/AtomicIntegerFieldUpdater;
 METHOD REMOVED         kotlinx/coroutines/EventLoopKt.processNextEventInCurrentThread ()J
-... (218 entries)
+... (230 entries)
 ```
 
 japicmp groups removals under each modified class (bytecode level, finds it):
@@ -118,7 +123,7 @@ all diff tools.
 
 | Tool      | Time   | Peak RSS | Findings          | Flags the real break | Notes |
 |-----------|--------|----------|-------------------|----------------------|-------|
-| uika diff | 0.02s  | 23 MB    | 218 entries       | yes | native |
+| uika diff | 0.02s  | 23 MB    | 230 entries       | yes | native |
 | japicmp   | 0.38s  | 254 MB   | ~267 incompatible (484-line report) | yes | needs `--ignore-missing-classes`, warns the result may be incomplete |
 | roseau    | 0.42s  | 195 MB   | 3 breaking changes | **no** | Kotlin-aware API surface excludes the internal method |
 | Revapi    | ~15s\* | 1077 MB  | 18,051 report lines | yes | very noisy without supplementary jars (`missing-class ... POTENTIALLY_BREAKING`) |
