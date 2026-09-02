@@ -35,7 +35,8 @@ from `:compile-path` and the project's own source and resource paths.
 
 Every option is a key of the `:uika` map in `project.clj`. Any other key is an
 error rather than a silent no-op, so a misspelling cannot quietly disable a
-flag.
+flag. Watch for the Clojure CLI tool's spellings: it says `:exclude-file` and
+`:class-load-log` where this map says `:exclude-files` and `:class-load-logs`.
 
 - [`:fail-on`](../README.md#violation-tiers-and-the-failon-threshold) is `"never"`,
   `"reachable"` or `"any"`.

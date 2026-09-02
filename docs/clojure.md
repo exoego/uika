@@ -40,7 +40,10 @@ at the tools.build `compile-clj` output to include it.
 ## Options
 
 Every option is a keyword argument on the call, `upgrade-check` unless the
-entry says otherwise.
+entry says otherwise. A key neither call accepts is an error rather than a
+silent no-op, so a misspelling cannot quietly disable a flag. Watch for the
+Leiningen plugin's spellings: it says `:exclude-files` and `:class-load-logs`
+where this tool says `:exclude-file` and `:class-load-log`.
 
 - [`:fail-on`](../README.md#violation-tiers-and-the-failon-threshold) is `never`,
   `reachable` or `any`.

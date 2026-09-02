@@ -326,6 +326,13 @@ Same rule as the Mill section: point-of-use comments and the tests in
   regression dies in `make clojure-stage` instead of in the all-or-nothing Central
   validation. The strip runs before b/jar so the jar-embedded pom matches the staged
   .pom byte for byte.
+- Both front ends REJECT an unknown option key, through the one `core/unknown-options`,
+  and only the way they raise differs (lein aborts the task, the `-T` tool throws).
+  Destructuring drops what it does not name, so without the check a typo disables the
+  flag it was meant to set and the run continues on CLI defaults with nothing said. The
+  likeliest typo is the sibling's spelling, since the two deliberately differ:
+  `:exclude-file`/`:exclude-files` and `:class-load-log`/`:class-load-logs`. That is why
+  the message lists the accepted keys rather than only naming the rejected one.
 - jvm-plugin-core is mostly NOT shared here: tools.deps does not compile Java sources
   in a git or :local/root install, so the small ports (classifier, ct.sym clamp,
   extract) live in the ns with "keep in sync" markers. The ONE compiled exception is
