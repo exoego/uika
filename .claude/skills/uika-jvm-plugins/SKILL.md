@@ -333,6 +333,17 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   `JdkReleases.declaredRelease` already answers null for pom packaging.
 
 
+## Every Tool's Doc Page
+
+- One shape, in one order: setup, `## PR gate on GitHub Actions` (with
+  `### Caching the baseline`), `## Options`, `## Runtime load evidence (JFR)`. A page may
+  add sections after those (Bazel has three), but not reorder them. The gate comes before
+  the knobs because it is what a reader arrives for, and drift here is invisible to every
+  test, so it is only ever caught by reading all seven side by side.
+- Every user-facing knob of a tool appears on its page. That includes the ones a build
+  script reaches rather than the command line, which is how sbt's `uikaModuleClasspath` sat
+  in `autoImport` undocumented through two audits.
+
 ## Mill Plugin Notes
 
 Most Mill invariants live as comments at their point of use (`Uika.scala`,
