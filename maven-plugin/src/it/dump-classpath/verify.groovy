@@ -28,6 +28,12 @@ assert libArtifact.project == ":dummy-maven-lib"
 def libPath = json.roots[libArtifact.root] + libArtifact.path
 assert new File(libPath).exists()
 
+// The aggregator compiles nothing, so it is not a module. Left in, it becomes a check run
+// of its own with no application roots, and every violation that run finds fails
+// --fail-on reachable however unreachable the real modules proved it.
+assert json.modules.collect { it.module } == [":dummy-maven-lib", ":dummy-maven-app"] :
+        "the pom-packaged aggregator must not be dumped as a module: ${json.modules*.module}"
+
 def libModule = json.modules.find { it.module == ":dummy-maven-lib" }
 assert libModule != null
 assert libModule.classesDirs.any { dir ->

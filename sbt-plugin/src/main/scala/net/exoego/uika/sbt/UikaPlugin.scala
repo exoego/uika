@@ -142,15 +142,32 @@ object UikaPlugin extends AutoPlugin {
     // here, so every spelling runs this one instance with the root's preferredRoots.
     uikaDumpClasspath := {
       val modules = uikaModuleClasspath.all(ScopeFilter(inAnyProject)).value
+      // A project that compiles nothing ships nothing, so it is not a module. The build's
+      // aggregator root is one: `sbt uikaDumpClasspath` on this plugin's own dump test wrote
+      // it as classesDirs [] carrying scala-library, and a root that declares its own
+      // libraryDependencies carries all of them. upgrade-check turns such a module into a
+      // check RUN of its own, and that run has no application roots, so reachability never
+      // runs for it and --fail-on reachable degrades to any for every violation it finds --
+      // the breaks the real modules proved unreachable then fail the gate. It also rescans
+      // every jar a second time and doubles the reported scanned and unverified counts.
+      //
+      // Empty classesDirs is the right test HERE, unlike the Maven plugin's packaging check:
+      // uikaModuleClasspath evaluates Compile / products, which compiles, so a module that
+      // still has no class directory afterwards has nothing to compile.
+      val shipped = modules.filter(!_.classesDirs().isEmpty())
+      // The release is computed over ALL of them, dropped ones included. The filter must not
+      // be able to RAISE the dump-level release by removing the module that declared the
+      // lowest, which would report a JDK move the application never made.
+      val release = DumpFormat.dumpRelease(modules.asJava)
       // LocalRootProject for the reason the check task gives above.
       val out = (LocalRootProject / uikaOutput).value
       IO.createDirectory(out.getParentFile)
       IO.write(
         out,
         DumpFormat.writeV2(
-          modules.asJava,
+          shipped.asJava,
           List((LocalRootProject / baseDirectory).value.getAbsolutePath).asJava,
-          DumpFormat.dumpRelease(modules.asJava)
+          release
         )
       )
       streams.value.log.info(s"uika classpath dump: $out")
