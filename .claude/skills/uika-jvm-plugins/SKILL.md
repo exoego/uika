@@ -476,6 +476,17 @@ hold lives here.
   lands outside the sandbox on purpose. The `jfr-jvmopt` subcommand prints the flag AND
   creates the directory, so the `docs/bazel.md` recipe cannot drift from
   `UikaCli.jfrClassLoadJvmArg` the way Maven's hand-written argLine can.
+- Coverage takes TWO measurements. `bazel coverage` reaches `//java:manifest_test` and
+  nothing else: every other entry point runs under `bazel run` in `it/run.sh`'s throwaway
+  workspace, which that number has no view of, and leaving it out reported `Materialize` at
+  0/53 and `UpgradeCheckMain` at 13/69 while the ITs were exercising 46/53 and 59/69. So
+  the ITs carry a JaCoCo agent too, the way sbt and Mill do. Three things make it work:
+  the agent goes in through a `run --jvmopt=` line written into the workspace `.bazelrc`,
+  so a new invocation is instrumented by existing; `run` ONLY, because a test is SANDBOXED
+  and cannot read an agent jar outside it (the JVM dies before main with a native
+  "processing of -javaagent failed"); and the report skips every jar whose name carries a
+  dash, since `libcore-hjar.jar` and `-tjar.jar` are header jars with the method bodies
+  stripped and JaCoCo fails the whole report on the first one it meets.
 - The release archive is cut with `cp -RL` (`bazel-rules/stage.sh`, via `make
   bazel-stage`). The four jvm-plugin-core sources under `bazel-rules/java` are committed
   symlinks pointing OUT of the module root, which is fine in this repository and useless

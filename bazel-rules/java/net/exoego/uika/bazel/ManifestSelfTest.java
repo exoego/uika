@@ -1,6 +1,8 @@
 package net.exoego.uika.bazel;
 
 import net.exoego.uika.plugin.core.ClasspathDump.Module;
+import net.exoego.uika.plugin.core.DumpFormat;
+import net.exoego.uika.plugin.core.JfrEvidence;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -32,11 +34,14 @@ public final class ManifestSelfTest {
         flagValueRejectsMissingAndEmptyValues();
         flagReleaseNamesTheFlagOnGarbage();
         flagValueIsUsedByTheBinariesThatHaveIt();
+        excludeFilesAreSplitTrimmedAndBlankDropped();
+        conversionsLandInsideTheEvidenceLocation();
+        aNonNegativeReleaseSkipsTheDerivation();
 
         // A floor, not a total: `failures` counts only what FAILED, so a deleted call in
         // main or an early return inside a method would otherwise be a silent pass. The
         // class-file floor guard next door fails on an empty sweep for the same reason.
-        var expected = 25;
+        var expected = 39;
         if (checks < expected) {
             System.err.println("only " + checks + " checks ran, expected at least " + expected);
             System.exit(1);
@@ -150,6 +155,72 @@ public final class ManifestSelfTest {
         String[] args = {"--output", "dump.json", "--jdkRelease", "17"};
         check("dump.json".equals(Manifest.flagValue(args, 1)), "flagValue dropped a value");
         check(Integer.valueOf(17).equals(Manifest.flagRelease(args, 3)), "flagRelease misparsed");
+    }
+
+    /**
+     * {@code exclude_files} rides ONE comma-joined property, so this ruleset is the only one
+     * that has to take an exclude list apart -- everywhere else the build tool repeats a
+     * flag or binds a list natively. Absolute values throughout, so the assertions can be
+     * exact: {@code workspacePath} leaves those alone, while a relative one resolves against
+     * a workspace root the test does not have.
+     */
+    private static void excludeFilesAreSplitTrimmedAndBlankDropped() {
+        var two = UpgradeCheckMain.paths("/a/x.toml,/b/y.toml");
+        check(two.size() == 2, "a two-entry list did not split into two");
+        check(Path.of("/a/x.toml").equals(two.get(0)), "the first entry was mangled");
+        check(Path.of("/b/y.toml").equals(two.get(1)), "the second entry was mangled");
+
+        // A CI script assembling the value writes a space after the comma, and picks up a
+        // doubled or trailing one. Untrimmed, " /b/y.toml" is a path that is not there;
+        // undropped, "" is the workspace root handed to the CLI as an exclude file.
+        var messy = UpgradeCheckMain.paths(" /a/x.toml , ,, /b/y.toml ,");
+        check(messy.size() == 2, "trimming or blank-dropping changed the count: " + messy);
+        check(Path.of("/a/x.toml").equals(messy.get(0)), "leading space survived trimming");
+        check(Path.of("/b/y.toml").equals(messy.get(1)), "trailing space survived trimming");
+
+        // The rule always sets the property, so the empty attribute arrives as "" rather
+        // than absent, and property() maps that to null. Both mean no exclude file.
+        check(UpgradeCheckMain.paths(null).isEmpty(), "null should name no exclude file");
+        check(UpgradeCheckMain.paths("   ").isEmpty(), "a blank value should name none");
+    }
+
+    /**
+     * One path is enough for the evidence knob because the conversions land beside whatever
+     * it names -- inside a directory, next to a file. Getting the file case wrong writes the
+     * converted logs into the recording's parent's parent, where the CLI never looks.
+     */
+    private static void conversionsLandInsideTheEvidenceLocation() throws IOException {
+        Path dir = Files.createTempDirectory("uika-evidence");
+        Path recording = Files.createTempFile(dir, "probe", ".jfr");
+        try {
+            check(dir.resolve(JfrEvidence.WORK_DIR_NAME).equals(UpgradeCheckMain.workDirFor(dir)),
+                    "a directory entry should convert into itself");
+            check(dir.resolve(JfrEvidence.WORK_DIR_NAME)
+                            .equals(UpgradeCheckMain.workDirFor(recording)),
+                    "a file entry should convert beside itself");
+        } finally {
+            Files.deleteIfExists(recording);
+            Files.deleteIfExists(dir);
+        }
+    }
+
+    /**
+     * Only a NEGATIVE jdkRelease means "derive". Zero is the off switch, and folding the two
+     * together would make `jdk_release = 0` silently read the targets instead of switching
+     * the layer off.
+     */
+    private static void aNonNegativeReleaseSkipsTheDerivation() throws IOException {
+        check(Integer.valueOf(0).equals(UpgradeCheckMain.wantedRelease(0)),
+                "0 must reach effectiveJdkRelease as the off switch, not the derivation");
+        check(Integer.valueOf(11).equals(UpgradeCheckMain.wantedRelease(11)),
+                "an explicit release must skip the derivation");
+        // With no -Duika.releases there is no manifest to read, so it falls through to the
+        // JVM running the tool, which is Bazel's own Java runtime.
+        String releases = System.getProperty("uika.releases");
+        check(releases == null || releases.isEmpty(),
+                "this test needs uika.releases unset; the rule sets it, bazel test does not");
+        check(Integer.valueOf(DumpFormat.buildJvmRelease()).equals(UpgradeCheckMain.wantedRelease(-1)),
+                "with nothing to read from, the derivation is the build JVM");
     }
 
     private static List<Module> parse(String manifest, Integer override) throws IOException {

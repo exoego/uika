@@ -146,7 +146,7 @@ public final class UpgradeCheckMain {
      * entry), so one path is enough. Preferring --jfr keeps the pre-existing location when
      * both knobs are given.
      */
-    private static Path workDirFor(Path entry) {
+    static Path workDirFor(Path entry) {
         Path base = Files.isDirectory(entry) ? entry : entry.getParent();
         return base.resolve(JfrEvidence.WORK_DIR_NAME);
     }
@@ -164,7 +164,7 @@ public final class UpgradeCheckMain {
      * <p>A non-negative value skips the derivation entirely, 0 included: 0 switches the
      * layer off, and only a negative value means "derive".
      */
-    private static Integer wantedRelease(int wanted) throws IOException {
+    static Integer wantedRelease(int wanted) throws IOException {
         if (wanted >= 0) {
             return wanted;
         }
@@ -205,7 +205,17 @@ public final class UpgradeCheckMain {
         return value == null || value.isEmpty() ? null : value;
     }
 
-    private static List<Path> paths(String commaSeparated) {
+    /**
+     * The paths {@code -Duika.excludeFiles} names, trimmed, with blanks dropped.
+     *
+     * <p>Package-private for {@link ManifestSelfTest}. The integration test drives the whole
+     * rule and proves the values reach the CLI, but the Bazel coverage number measures the
+     * unit test alone -- the ITs run {@code bazel run} in a temp workspace, out of its
+     * reach -- so the splitting itself needs a test here to be measured at all. It earns
+     * one either way: no sibling integration joins its exclude list into a single property,
+     * so this is the only place that has to take one apart.
+     */
+    static List<Path> paths(String commaSeparated) {
         var paths = new ArrayList<Path>();
         if (commaSeparated != null) {
             for (String entry : commaSeparated.split(",")) {

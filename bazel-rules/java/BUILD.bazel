@@ -77,6 +77,10 @@ java_test(
     main_class = "net.exoego.uika.bazel.ManifestSelfTest",
     use_testrunner = False,
     deps = [
+        # :check for UpgradeCheckMain.paths, whose comma splitting no sibling integration
+        # has. The shell ITs drive `bazel run` in a temp workspace, which this number cannot
+        # see, so anything wanting to be measured has to be reachable from here.
+        ":check",
         ":core",
         ":manifest",
     ],
