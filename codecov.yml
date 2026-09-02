@@ -21,17 +21,20 @@ flag_management:
 # plugin, so its coverage arrives under two flags, and only a path rule scores it as one
 # unit.
 #
-# Every component is measured, but three of the numbers are over less than the whole
+# Every component is measured, but two of the numbers are over less than the whole
 # component and cannot be read as "the rest is untested":
 #
 #   Leiningen plugin  its unit suite alone. it/run.sh forks `lein uika`, and cloverage
 #                     sees only namespaces loaded in the JVM it reports from.
-#   Bazel rules       //java:manifest_test alone. The shell ITs drive `bazel run` in a
-#                     temp workspace, so DumpMain, MergeMain and UpgradeCheckMain are at 0.
 #   Mill plugin       JaCoCo over Scala 3, which reaches 74 of Uika.scala's 125 executable
 #                     lines. The rest are in synthetic methods JaCoCo skips, and scoverage
 #                     reaches fewer still (Mill's task bodies are inline macros, which
 #                     Scala 3 does not instrument).
+#
+# Bazel rules used to be a third: `bazel coverage` reaches //java:manifest_test alone, so
+# DumpMain, MergeMain and Materialize read 0 while the integration test was exercising
+# nearly all of them. Its ITs now carry a JaCoCo agent of their own, so the number covers
+# both halves; the Makefile's bazel-coverage target says how.
 #
 # No component declares statuses, so none of them opens a check. That matches the flags
 # they replace, which had no per-flag status either.

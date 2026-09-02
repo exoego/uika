@@ -45,6 +45,19 @@ uika_upgrade_check(
     targets = UIKA_TARGETS,
 )
 
+# exclude_files rides one comma-joined -D property, unlike every sibling integration's
+# repeated flag, so its split is code only this ruleset has. The run-time --excludeFile
+# APPENDS to the attribute rather than replacing it, which is the one place the two
+# disagree with the rest of the option surface.
+uika_upgrade_check(
+    name = "check_with_excludes",
+    exclude_files = [
+        "excludes-a.toml",
+        "excludes-b.toml",
+    ],
+    targets = UIKA_TARGETS,
+)
+
 # The baseline shape of the PR gate: no target is built, and only the external jars the
 # version diff needs are recorded.
 uika_dump(

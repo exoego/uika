@@ -34,6 +34,29 @@ for jar in guava-22.0.jar guava-23.0-rc1.jar selenium-remote-driver-3.4.0.jar; d
   cp "$REPO/cli/tests/fixtures/$jar" "$WS/vendor/$jar"
 done
 
+# Coverage, when the Makefile asks for it. Every `bazel run` here launches a java_binary,
+# and a javaagent reaches one through --jvmopt exactly as it reaches a test JVM -- verified
+# by the exec file appearing. Written into the workspace .bazelrc rather than onto twenty
+# call sites, so a new invocation is instrumented by existing rather than by remembering.
+#
+# This is the only way these mains get measured at all: `bazel coverage` covers
+# //java:manifest_test, and everything else in this ruleset runs under `bazel run` in this
+# throwaway workspace, which that number cannot see. One check invocation alone takes
+# UpgradeCheckMain from 13/69 to 37/69.
+if [ -n "${UIKA_JACOCO_AGENT:-}" ]; then
+  : "${UIKA_JACOCO_EXEC:?UIKA_JACOCO_AGENT needs UIKA_JACOCO_EXEC}"
+  rm -f "$UIKA_JACOCO_EXEC"
+  agent="-javaagent:$UIKA_JACOCO_AGENT=destfile=$UIKA_JACOCO_EXEC,append=true,includes=net.exoego.uika.*"
+  # append=true because every invocation writes to the one file, and the agent dumps on JVM
+  # exit; without it each run would overwrite the last and only the final one would count.
+  #
+  # `run` only. A test runs SANDBOXED, so the agent jar outside the sandbox cannot be read
+  # and the JVM dies before main with a native "processing of -javaagent failed". The one
+  # test here is the app's own JFR collection run, which executes no uika code, so the
+  # includes filter would match nothing in it anyway.
+  printf 'run --jvmopt=%s\n' "$agent" > "$WS/.bazelrc"
+fi
+
 cd "$WS"
 
 # Both the @uika_cli repository rule and UpgradeCheckMain read this, so the check runs
@@ -342,6 +365,33 @@ UIKA_STUB_ARGS=$OUT/stub-args-flag-merged.txt UIKA_CLI_PATH=$STUB "$BAZEL" run /
 if ! grep -qx -- "--merged-classpath" "$OUT/stub-args-flag-merged.txt"; then
   echo "--mergedClasspath did not reach the CLI:" >&2
   cat "$OUT/stub-args-flag-merged.txt" >&2
+  exit 1
+fi
+
+echo "--- exclude_files reaches the CLI"
+# The attribute rides ONE comma-joined -D property, so the split back into paths is code
+# no sibling integration has, and nothing exercised it: the comma guard below only runs at
+# load time. --excludeFile APPENDS rather than replacing, which is the one place this
+# ruleset's flag-beats-attribute rule does not hold.
+: > "$WS/excludes-a.toml"
+: > "$WS/excludes-b.toml"
+: > "$WS/excludes-c.toml"
+UIKA_STUB_ARGS=$OUT/stub-args-excludes.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check_with_excludes -- \
+  --before "$OUT/before.json" --after "$OUT/after.json" --excludeFile excludes-c.toml
+for toml in excludes-a excludes-b excludes-c; do
+  # Anchored on an ABSOLUTE path ending in the file name, which is the promise: a relative
+  # attribute value resolves against the workspace root, never against the runfiles tree.
+  # Not compared to "$WS/..." literally, because BUILD_WORKSPACE_DIRECTORY is the resolved
+  # path and macOS puts /private in front of a $TMPDIR one.
+  if ! grep -qE "^/.*/$toml\.toml$" "$OUT/stub-args-excludes.txt"; then
+    echo "$toml.toml did not reach the CLI as an --exclude-file value:" >&2
+    cat "$OUT/stub-args-excludes.txt" >&2
+    exit 1
+  fi
+done
+if [ "$(grep -c -x -- "--exclude-file" "$OUT/stub-args-excludes.txt")" -ne 3 ]; then
+  echo "expected exactly three --exclude-file flags:" >&2
+  cat "$OUT/stub-args-excludes.txt" >&2
   exit 1
 fi
 
