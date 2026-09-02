@@ -299,10 +299,22 @@ lein-clean:
 # update-in :repositories empty: lein emits <repositories> into the pom, which
 # PomChecker rejects ("The <repositories> block should not be present") and
 # jreleaser.yml's applyMavenCentralRules turns into a failed release. Emptying the
-# key on the project map instead of in project.clj keeps resolution working, because
-# :eval-in-leiningen has already put the plugin's own deps on the classpath by the
-# time update-in rewrites the map. Sources and javadoc jars come from :classifiers.
+# key on the project map instead of in project.clj keeps the plugin's own deps
+# resolvable, because :eval-in-leiningen loads them the way plugins are loaded, and
+# load-plugins merges :plugin-repositories into the key update-in just emptied.
+# Sources and javadoc jars come from :classifiers.
+#
+# The separate javac line is what update-in cannot cover: leiningen compiles Java in a
+# SUBPROCESS, whose profile carries ^:displace [org.clojure/clojure <lein's own version>]
+# and resolves it through :repositories, not :plugin-repositories. So it needs a remote
+# unless the artifact is already in ~/.m2 -- which it is on any machine that has built
+# this plugin once, and is not on a release runner. That is why v0.9.0 died here with
+# "Could not find artifact org.clojure:clojure:jar:1.12.2" after passing locally.
+# Compiling first, with the repositories still in place, puts the jar in the local repo;
+# the deploy's own javac then resolves it offline. Declaring clojure in :dependencies
+# instead does NOT displace lein's copy (tested), and would put clojure in the pom.
 lein-stage:
+	cd $(LEIN_PLUGIN_DIR) && UIKA_VERSION=$(UIKA_VERSION) $(LEIN) javac
 	cd $(LEIN_PLUGIN_DIR) && UIKA_VERSION=$(UIKA_VERSION) $(LEIN) \
 		update-in :repositories empty -- deploy staging
 
