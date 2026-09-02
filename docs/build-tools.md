@@ -22,7 +22,10 @@ there is no separate install step. The version defaults to the plugin's own, so
 one coordinate bump updates both. The Clojure CLI tool, Leiningen and Bazel
 resolve the binary differently, and their pages say how. Every tool takes
 `UIKA_CLI_PATH` to run a binary you already have instead, which is what an
-air-gapped build needs.
+air-gapped build needs. A value that is not an executable file fails naming the
+variable rather than deep inside process start-up: shipping the binary as a CI
+artifact is the usual way to get it onto the runner, and `upload-artifact` does
+not preserve the executable bit.
 
 ## Options
 

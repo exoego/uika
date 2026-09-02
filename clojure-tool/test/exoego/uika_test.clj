@@ -14,6 +14,15 @@
 (defn- temp-dir []
   (str (Files/createTempDirectory "uika-test" (make-array FileAttribute 0))))
 
+(defn- executable-stub
+  "A runnable no-op binary under `dir`. resolve-binary now refuses a path that is not an
+  executable file, so a test that only needs \"some binary\" has to create a real one."
+  [dir name]
+  (let [binary (io/file dir name)]
+    (spit binary "#!/bin/sh\nexit 0\n")
+    (.setExecutable binary true false)
+    binary))
+
 (deftest dump-records-coordinates-and-local-deps
   (let [out (str (io/file (temp-dir) "dump.json"))
         _ (uika/dump-classpath {:dir fixture :output out})
@@ -254,14 +263,50 @@
          clojure.lang.ExceptionInfo #"usage hint"
          (uika.core/resolve-binary {:cli-path "   "} (constantly nil) "usage hint" no-env)))
     ;; A real value still wins, so the guard cannot have swallowed the knob itself.
-    (is (= "/tmp/uika-bin"
-           (.getPath (uika.core/resolve-binary
-                      {:cli-path "/tmp/uika-bin"} (constantly nil) "usage hint" no-env))))
-    ;; And the environment fallback the guard argues from still works.
-    (is (= "/tmp/from-env"
-           (.getPath (uika.core/resolve-binary
-                      {} (constantly nil) "usage hint"
-                      {"UIKA_CLI_PATH" "/tmp/from-env"}))))))
+    (let [binary (executable-stub (temp-dir) "uika")]
+      (is (= (.getPath binary)
+             (.getPath (uika.core/resolve-binary
+                        {:cli-path (.getPath binary)} (constantly nil) "usage hint" no-env))))
+      ;; And the environment fallback the guard argues from still works.
+      (is (= (.getPath binary)
+             (.getPath (uika.core/resolve-binary
+                        {} (constantly nil) "usage hint"
+                        {"UIKA_CLI_PATH" (.getPath binary)})))))))
+
+(deftest an-explicit-binary-is-checked-before-processbuilder-sees-it
+  ;; Port of UikaCli.overrideFrom, which the four JVM plugins already run: a path that is
+  ;; not a file, or a file that lost its executable bit, must fail HERE. Handed on, it dies
+  ;; inside ProcessBuilder with a message naming neither uika nor the knob. Losing the bit
+  ;; is the everyday case: actions/upload-artifact does not preserve it, and shipping the
+  ;; binary as a CI artifact is what the docs recommend.
+  (let [dir (temp-dir)
+        no-env (constantly nil)
+        missing (io/file dir "nowhere" "uika")
+        plain (io/file dir "not-executable")]
+    (spit plain "#!/bin/sh\nexit 0\n")
+    (.setExecutable plain false false)
+    ;; The message names the SOURCE the value came from. :cli-path and UIKA_CLI_PATH are
+    ;; two spellings of one knob, and blaming the variable for a project.clj value sends
+    ;; the reader to inspect an environment that was never consulted.
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #":cli-path does not name a file"
+         (uika.core/resolve-binary {:cli-path (.getPath missing)}
+                                   (constantly nil) "usage hint" no-env)))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"UIKA_CLI_PATH does not name a file"
+         (uika.core/resolve-binary {} (constantly nil) "usage hint"
+                                   {"UIKA_CLI_PATH" (.getPath missing)})))
+    ;; A directory exists and still cannot be run; pointing the knob at the install
+    ;; directory instead of the binary inside it is the likely slip.
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #":cli-path does not name a file"
+         (uika.core/resolve-binary {:cli-path dir}
+                                   (constantly nil) "usage hint" no-env)))
+    (when-not (.canExecute plain)
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo #":cli-path is not executable"
+           (uika.core/resolve-binary {:cli-path (.getPath plain)}
+                                     (constantly nil) "usage hint" no-env))))))
 
 (deftest a-misspelled-option-is-an-error-not-a-silent-no-op
   ;; Destructuring drops what it does not name, so a typo used to disable the flag it was

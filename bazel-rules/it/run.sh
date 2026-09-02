@@ -266,6 +266,31 @@ if grep -qx -- "--fail-on" "$OUT/stub-args-blank-failon.txt"; then
   exit 1
 fi
 
+echo "--- UIKA_CLI_PATH is checked, not trusted"
+# The check binary used to hand the variable's value straight to ProcessBuilder, so a
+# binary that lost its executable bit died deep in process start-up naming neither uika
+# nor the variable. Losing the bit is the everyday case rather than a corner one:
+# actions/upload-artifact does not preserve it, and shipping the CLI as a CI artifact is
+# what the air-gapped recipe describes. The four JVM plugins already refuse it by name.
+NOT_EXECUTABLE=$WORK/stub-cli-no-x
+cp "$STUB" "$NOT_EXECUTABLE"
+chmod -x "$NOT_EXECUTABLE"
+set +e
+UIKA_CLI_PATH=$NOT_EXECUTABLE "$BAZEL" run //:check -- \
+  --before "$OUT/before.json" --after "$OUT/after.json" > "$OUT/cli-path-guard.txt" 2>&1
+cli_path_status=$?
+set -e
+if [ "$cli_path_status" -eq 0 ]; then
+  echo "a non-executable UIKA_CLI_PATH should fail the check" >&2
+  cat "$OUT/cli-path-guard.txt" >&2
+  exit 1
+fi
+if ! grep -q "UIKA_CLI_PATH is not executable" "$OUT/cli-path-guard.txt"; then
+  echo "expected the failure to name UIKA_CLI_PATH, got:" >&2
+  cat "$OUT/cli-path-guard.txt" >&2
+  exit 1
+fi
+
 echo "--- jdk_release type guard"
 # jdk_release is a macro parameter, so Bazel type-checks nothing. A string reached the JVM
 # as -Duika.jdkRelease=seventeen, and Integer.getInteger answers its default for anything

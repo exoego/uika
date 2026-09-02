@@ -239,6 +239,23 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   URLClassLoader (`JfrTestRecordings`): a nested test class cannot serve —
   JUnit discovery loads nested classes via getDeclaredClasses() before any
   test body runs, so its load never lands in the recording.
+- `UIKA_CLI_PATH` goes through `UikaCli.overrideFrom` in every integration, the Bazel
+  check binary and both Clojure front ends included, so a path that is not an
+  executable FILE fails naming the knob instead of inside ProcessBuilder. Losing the
+  executable bit is the everyday case, not a corner one: actions/upload-artifact does
+  not preserve it, and shipping the binary as an artifact is the documented air-gapped
+  route. The Clojure port names the SOURCE (`:cli-path` or the variable) rather than
+  always the variable, since blaming the environment for a project.clj value sends the
+  reader to inspect something that was never read. Testing the plumbing needs a
+  different seam per tool and two of them have none: `System.getenv` is unstubbable,
+  so Gradle wires the value through `providers.environmentVariable` and Mill through
+  `Task.env`, the Maven invoker sets it with `invoker.environmentVariables.*` (3.2.2+,
+  per project), the Bazel and lein ITs are shell scripts that just export it, and sbt
+  gets its OWN scripted group run by a second `make sbt-scripted` invocation, because
+  scripted has no per-test environment hook (`scriptedLaunchOpts` is JVM options only)
+  and exporting it for the whole run would defeat the resolver test in the `uika`
+  group. The contract itself is pinned once in `jvm-plugin-core`'s
+  `BinaryOverrideTest`, which the Gradle and Maven builds both run.
 - Their tests stub uika-cli with a shell-script ZIP in a file-based Maven repo
   (Gradle TestKit + sbt scripted + Maven invoker; invoker needs `-U` because
   target/it-repo caches resolution failures across runs, and its pre-build
