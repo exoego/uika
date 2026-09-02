@@ -146,6 +146,86 @@ jobs:
             ~/.cache/bazel/_bazel_runner/cache/repos/v1
           key: ${{ steps.cache-bazel.outputs.cache-primary-key }}
 
+  stage:
+    name: Stage release artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # No ~/.m2 restore on purpose. The cold local repo IS what this job tests:
+      # v0.9.0's publish died in lein-stage because leiningen's javac subprocess had to
+      # fetch lein's own clojure through the emptied :repositories, and every machine
+      # that has built the plugin once, the check job included, hides that. mise is
+      # still restored, since the release runner restores the same tool cache.
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          cache_save: false
+
+      # The two staging steps nothing else runs. The Gradle, sbt, Maven, Mill and Clojure
+      # ones go through commands their own tests already exercise, so a release-only break
+      # can hide in these two alone, which is exactly what happened at v0.9.0.
+      - name: Stage the Leiningen plugin
+        run: make lein-stage UIKA_VERSION=0.0.0-ci
+
+      - name: Check what lein staged
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir=lein-plugin/target/staging-deploy/net/exoego/uika/lein-uika/0.0.0-ci
+          for f in lein-uika-0.0.0-ci.jar lein-uika-0.0.0-ci-sources.jar \
+                   lein-uika-0.0.0-ci-javadoc.jar lein-uika-0.0.0-ci.pom; do
+            test -s "$dir/$f" && test -s "$dir/$f.sha1"
+          done
+          # PomChecker rejects a <repositories> block and jreleaser.yml's
+          # applyMavenCentralRules turns that into a failed release, which is the whole
+          # reason lein-stage deploys with the key emptied.
+          if grep -q "<repositories>" "$dir/lein-uika-0.0.0-ci.pom"; then
+            echo "the staged pom carries <repositories>, which Maven Central rejects" >&2
+            exit 1
+          fi
+
+      - name: Stage the Bazel module
+        shell: bash
+        run: |
+          set -euo pipefail
+          # stage.sh hashes whatever zips dist/native holds and splices them into
+          # checksums.bzl. A stand-in file exercises that splice; the real binaries come
+          # from the release workflow's build jobs and nothing here reads their content.
+          for classifier in linux-x86_64 macos-aarch64 macos-x86_64 windows-x86_64; do
+            mkdir -p "dist/native/$classifier"
+            echo "stand-in for the release binary" \
+              > "dist/native/$classifier/uika-0.0.0-ci-$classifier.zip"
+          done
+          make bazel-stage UIKA_VERSION=0.0.0-ci
+
+      - name: Check what stage.sh cut
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/bazel/uika-bazel-0.0.0-ci.tar.gz
+          grep -q '"0.0.0-ci"' dist/bazel/bazel-rules/MODULE.bazel
+          grep -q '"0.0.0-ci"' dist/bazel/bazel-rules/private/version.bzl
+          # The integration test carries a local_path_override back into this repository,
+          # so an archive that still had it would point consumers at a checkout they do
+          # not have.
+          test ! -e dist/bazel/bazel-rules/it
+          python3 - <<'PY'
+          import ast, pathlib, re
+
+          src = pathlib.Path("dist/bazel/bazel-rules/private/checksums.bzl").read_text()
+          spliced = re.search(r"UIKA_CLI_SHA256 = (\{.*\})", src, re.S)
+          assert spliced, "stage.sh left UIKA_CLI_SHA256 unspliced"
+          pins = ast.literal_eval(spliced.group(1))
+          assert set(pins) == {
+              "linux-x86_64",
+              "macos-aarch64",
+              "macos-x86_64",
+              "windows-x86_64",
+          }, pins
+          assert all(re.fullmatch("[0-9a-f]{64}", v) for v in pins.values()), pins
+          PY
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
