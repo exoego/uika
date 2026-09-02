@@ -9,7 +9,7 @@
 	mill-compile mill-test mill-clean \
 	clojure-test clojure-clean clojure-stage \
 	lein-test lein-clean lein-stage \
-	bazel-test bazel-maven-test bazel-clean bazel-stage \
+	bazel-unit-test bazel-test bazel-maven-test bazel-clean bazel-stage \
 	native-publish-local stage-all
 
 CARGO ?= cargo

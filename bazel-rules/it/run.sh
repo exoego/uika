@@ -204,6 +204,28 @@ if [ "$cll_status" -ne 1 ]; then
 fi
 python3 "$RULES/it/assert_jfr.py" "$OUT/cll-jfr-report.txt"
 
+# jfr-jvmopt only ever COLLECTS, so a value it cannot record into is an error rather than
+# the skip its Gradle, sbt and Mill counterparts make (those knobs serve both phases). The
+# raw failure is a FileAlreadyExistsException out of createDirectories naming neither uika
+# nor the subcommand, and both likely mistakes land there: passing the consume side's --jfr
+# value, or a text log.
+for bad in "$rec" "$OUT/jfr-report.txt"; do
+  set +e
+  "$BAZEL" run //:check -- jfr-jvmopt "$bad" > "$OUT/jvmopt-guard.txt" 2>&1
+  guard=$?
+  set -e
+  if [ "$guard" -eq 0 ]; then
+    echo "jfr-jvmopt should reject $bad" >&2
+    cat "$OUT/jvmopt-guard.txt" >&2
+    exit 1
+  fi
+  if ! grep -q "jfr-jvmopt wants a directory" "$OUT/jvmopt-guard.txt"; then
+    echo "jfr-jvmopt rejected $bad without naming itself:" >&2
+    cat "$OUT/jvmopt-guard.txt" >&2
+    exit 1
+  fi
+done
+
 echo "--- sweep over //... with the aspect"
 BIN=$("$BAZEL" info bazel-bin)
 # Fragments live in bazel-out and nothing prunes them, so a target deleted since the last

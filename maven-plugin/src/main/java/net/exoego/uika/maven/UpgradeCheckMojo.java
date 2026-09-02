@@ -145,8 +145,6 @@ public final class UpgradeCheckMojo extends AbstractMojo {
             }
         }
 
-        Path installDir = Path.of(session.getExecutionRootDirectory(),
-                "target", "uika", "cli-" + cliVersion + "-" + classifier);
         // Nulls, not blanks: plexus turns an empty CSV entry into a null element, and a
         // -D list assembled by a CI script picks up doubled or trailing commas.
         List<Path> excludeFilePaths = excludeFiles.stream()

@@ -117,9 +117,26 @@ public final class UpgradeCheckMain {
      * <p>Creating the directory is part of the job. Given a MISSING PARENT, JFR aborts JVM
      * startup and the mistake is loud; given an existing parent and a missing leaf it
      * silently records to a single file at that path instead, every fork clobbering the last.
+     *
+     * <p>Which is also why the value is checked first, through the same
+     * {@link JfrEvidence#valueNamesRecording} the Gradle, sbt and Mill injectors use.
+     * {@code createDirectories} on an existing regular file throws a raw
+     * FileAlreadyExistsException naming neither uika nor the subcommand, and the likely
+     * mistakes both land there: pointing this at the {@code --jfr} value from the consume
+     * side, or at a text log. Unlike its three siblings this one only ever COLLECTS, so a
+     * recording is an error here rather than a skip -- consumption has its own flag.
      */
     private static void printJfrJvmOpt(String directory) throws IOException {
         Path dir = Manifest.workspacePath(directory);
+        if (JfrEvidence.valueNamesRecording(dir)) {
+            throw new IllegalArgumentException("jfr-jvmopt wants a directory to record INTO,"
+                    + " and a test JVM cannot record into an existing recording: " + dir
+                    + " (pass it to --jfr on the check instead, which is the consuming side)");
+        }
+        if (Files.isRegularFile(dir)) {
+            throw new IllegalArgumentException(
+                    "jfr-jvmopt wants a directory to record into, but " + dir + " is a file");
+        }
         Files.createDirectories(dir);
         System.out.println("--jvmopt=" + UikaCli.jfrClassLoadJvmArg(dir));
     }
