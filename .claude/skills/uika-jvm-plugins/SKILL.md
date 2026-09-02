@@ -313,6 +313,24 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   directory. Keeping their coordinates is safe because project-attributed
   coordinates are excluded from the version DIFF (they stay in the version
   maps on purpose -- suggest's file->coordinate attribution reads them).
+- A project that compiles NOTHING is not a module, in every tool that can have
+  one. It is not a cosmetic filter: upgrade-check makes each module its own
+  check RUN, and a run whose module has no classesDirs has no application roots,
+  so `reachable_axis_valid` degrades and `--fail-on reachable` fails on breaks
+  the real modules proved unreachable. Measured on guava 22 -> 23 with
+  selenium-remote-driver as the consumer: adding one classesDirs-empty module
+  carrying the same two artifacts turned `⚠️ 2 not proven reachable` / exit 0
+  into `💥 2 reachable` / exit 1, and doubled the reported scanned and
+  unverified counts because the run rescans every jar. Each tool needs its OWN
+  predicate: Gradle `emptyDump` (`javaExt == null && conf == null`, written as
+  a blank fragment the merge skips), Mill by collecting only `JavaModule`, sbt
+  by empty classesDirs (`uikaModuleClasspath` evaluates `Compile / products`,
+  so nothing compiled means nothing to compile), Maven by `packaging == pom`
+  (the goal has no lifecycle phase, so an unbuilt tree has empty classesDirs
+  everywhere and that test would empty the whole dump). The sbt filter must not
+  move `DumpFormat.dumpRelease`, so the release is computed over ALL modules
+  and only the emitted list is filtered; Maven needs no such care because
+  `JdkReleases.declaredRelease` already answers null for pom packaging.
 
 
 ## Mill Plugin Notes

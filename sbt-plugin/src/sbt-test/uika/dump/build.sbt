@@ -109,6 +109,13 @@ checkDump := {
   assert(artifactRefs.distinct == artifactRefs,
     s"duplicate artifactRefs: ${artifactRefs.diff(artifactRefs.distinct).map(artifacts)}")
 
+  // The aggregator root compiles nothing, so it is not a module. Left in, it was dumped as
+  // classesDirs [] carrying scala-library, and upgrade-check makes such a module a check run
+  // of its own with no application roots -- one that fails --fail-on reachable on breaks the
+  // real modules proved unreachable.
+  val moduleNames = json("modules").asInstanceOf[List[Map[String, Any]]].map(_("module")).toSet
+  assert(moduleNames == Set(":core", ":app"), s"unexpected modules: $moduleNames")
+
   // Each module records the release IT compiles for, so upgrade-check can scope a JDK
   // move to the modules that made it; the dump-level value is the lowest of them.
   assert(module("jdkRelease") == 17.0, module)

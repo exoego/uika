@@ -60,6 +60,9 @@ public final class DumpClasspathMojo extends AbstractMojo {
         // under-reporting. Without -pl the two sets are the same reactor.
         var modules = new ArrayList<ClasspathDump.Module>();
         for (MavenProject reactorProject : session.getProjects()) {
+            if (compilesNothing(reactorProject)) {
+                continue;
+            }
             modules.add(moduleOf(reactorProject, reactorByGav, moduleNames));
         }
 
@@ -75,6 +78,26 @@ public final class DumpClasspathMojo extends AbstractMojo {
             throw new MojoExecutionException("failed to write uika classpath dump: " + outputFile, e);
         }
         getLog().info("uika classpath dump: " + outputFile);
+    }
+
+    /**
+     * Whether this project ships no bytecode of its own, in which case it is not a module.
+     *
+     * <p>An aggregator or BOM with its own {@code <dependencies>} used to land in the dump as a
+     * module with no classesDirs and a full artifact list, and upgrade-check turns that into a
+     * check RUN of its own. That run has no application roots, so reachability never runs for
+     * it and {@code --fail-on reachable} degrades to {@code any} for every violation it finds —
+     * the same breaks the real modules proved unreachable then fail the gate. It also rescans
+     * every jar a second time and doubles the reported scanned and unverified counts.
+     *
+     * <p>Packaging, not an empty output directory: this goal declares no lifecycle phase, so a
+     * run on an unbuilt tree has empty classesDirs everywhere and that test would empty the
+     * whole dump. Dropping pom-packaged projects cannot move {@code DumpFormat.dumpRelease}
+     * either, because {@link JdkReleases#declaredRelease} already answers null for them and an
+     * explicit {@code jdkRelease} override replaces every module's value with the same number.
+     */
+    private static boolean compilesNothing(MavenProject project) {
+        return "pom".equals(project.getPackaging());
     }
 
     /**
