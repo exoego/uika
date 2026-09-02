@@ -174,6 +174,9 @@ object UikaTests extends TestSuite {
         "#!/bin/sh\necho \"$@\" > \"$3.args\"\necho \"uika-stub: dependency changes: 0\"\nexit 0\n"
       )
       publishStubCli(repo, "9.9.8", "#!/bin/sh\nexit 1\n")
+      // Exit 2 is the CLI could not RUN -- a flag it rejected, a dump it could not open --
+      // and it must not read like a finding.
+      publishStubCli(repo, "9.9.7", "#!/bin/sh\nexit 2\n")
 
       Using.resource(UnitTester(
         stubCliBuild,
@@ -231,6 +234,21 @@ object UikaTests extends TestSuite {
         cliVersion = "9.9.8"
       ))
       assert(failed.isLeft)
+      assert(failed.fold(_.toString.contains("found broken references"), _ => false))
+
+      // And exit 2 must fail for its OWN reason. Both codes fail the command, so the
+      // message is all that separates a finding from a rejected flag or an unreadable
+      // dump, and calling the second one "broken references" sends the reader looking for
+      // a break that was never found.
+      val errored = tester(Uika.upgradeCheck(
+        tester.evaluator,
+        before.toString,
+        after.toString,
+        cliVersion = "9.9.7"
+      ))
+      assert(errored.isLeft)
+      assert(errored.fold(_.toString.contains("failed with exit code 2"), _ => false))
+      assert(errored.fold(!_.toString.contains("found broken references"), _ => false))
       }
     }
 
