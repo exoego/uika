@@ -246,6 +246,18 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   two caches, so the upgrade-check prebuild purges both: the clone's `target/`
   (extractBinary skips an already-extracted binary) and the it-repo `uika-cli`
   entry (Maven never re-fetches a cached release version).
+- Where each build's UNIT tests live, and why sbt has none. Gradle and Maven mount
+  `jvm-plugin-core/src/test/java` alongside the main sources, so one copy of the shared
+  logic's tests runs in both. Maven adds `maven-plugin/src/test/java` for `JdkReleases`,
+  which is Maven's alone: every other tool reads a flat option list through
+  `UikaCli.declaredRelease`, while Maven walks maven-compiler-plugin's configuration per
+  EXECUTION and skips pom packaging, none of it reachable from a list. Mill, the two
+  Clojure front ends and the Bazel rules each have their own suite. sbt deliberately does
+  NOT: every line of `UikaPlugin.scala` sits inside a `:=` body, driven by sbt values
+  (`UpdateReport`, `ScopeFilter`) that a unit test would have to fabricate, and the one
+  thing scripted genuinely cannot see is the compile output's class-file version, which
+  `checkClassFileVersions` reads directly. Do not add an empty test source set there to
+  even up a table.
 - Run builds via `make gradle-check` / `make sbt-scripted` / `make
   maven-verify` (mise-pinned). Without mise, any target project's Gradle
   wrapper works: `/path/to/project/gradlew -p gradle-plugin publishToMavenLocal`.
