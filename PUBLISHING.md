@@ -6,6 +6,12 @@ with classifiers `linux-x86_64`, `macos-aarch64`, `macos-x86_64`,
 `windows-x86_64`), the Gradle plugin, the sbt plugin, the Maven plugin, the Mill
 plugin, the Clojure CLI tool, and the Leiningen plugin.
 
+The Bazel rules do not go to Maven Central. They ship as
+`uika-bazel-<version>.tar.gz` attached to the same GitHub release, because a
+`bazel_dep` archive override points at a release URL rather than at a Maven
+coordinate. `jreleaser.yml` attaches it through the `files` globs, so it costs
+nothing against the Central Portal metrics below.
+
 ## Release procedure
 
 Create a GitHub release with tag `vX.Y.Z`. That is all.
@@ -13,7 +19,8 @@ Create a GitHub release with tag `vX.Y.Z`. That is all.
 `.github/workflows/publish-release.yml` builds each platform on its native
 runner, stages all Maven artifacts locally, then JReleaser signs everything
 in-memory and uploads a single deployment to the Central Portal
-(all-or-nothing validation) and attaches the ZIPs to the GitHub release.
+(all-or-nothing validation). It attaches the CLI ZIPs and the Bazel ruleset
+tarball to the GitHub release.
 
 Versions are derived from the tag alone. No source file is rewritten.
 `cli/Cargo.toml` stays at the `0.0.0-dev` placeholder: release builds embed
@@ -92,6 +99,6 @@ The public key must be published to `keyserver.ubuntu.com` so Central can verify
 
 ```console
 $ make native-publish-local UIKA_VERSION=0.1.0   # publish CLI ZIPs to ~/.m2 (expects ZIPs under dist/native/<classifier>/)
-$ make stage-all UIKA_VERSION=0.1.0              # stage all Maven artifacts locally
+$ make stage-all UIKA_VERSION=0.1.0              # stage all Maven artifacts locally, plus the Bazel tarball under dist/bazel/
 $ mise exec -- jreleaser deploy --dry-run        # needs JRELEASER_* env vars. Validates POMs and signs without uploading
 ```
