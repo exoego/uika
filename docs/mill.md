@@ -176,6 +176,12 @@ degrading to a warning. The cache save and restore close that gap.
   recorded as running on, for a build whose runtime is not what it compiles
   against. There 0 means "keep the derived value" instead, because recording
   nothing would take JDK move detection down with the API layer.
+- `--mergedClasspath` checks the union of every module's classpath once instead
+  of [each module against its own
+  resolution](../README.md#per-module-checking). Per-module checking scans once
+  per module, so a large build may want the union; the trade is that a break
+  only one module's resolution shows can hide behind another module's version of
+  the same jar. A bare switch, not a valued flag.
 - `--jfr` (or `UIKA_JFR`) also carries [text
   evidence](runtime-load-evidence.md). Anything in that directory that is not a
   recording is passed on unchanged, so `-Xlog:class+load` output and a

@@ -196,6 +196,10 @@ case "$args" in *"--class-load-log loads.log"*) ;; *) echo "FAIL: class-load-log
 case "$args" in *"--class-load-log jfr-evidence"*) ;; *) echo "FAIL: the :jfr directory was not forwarded: $args" >&2; exit 1;; esac
 case "$args" in *"jfr-class-load/jfr-1-probe.log"*) ;; *) echo "FAIL: the jfr conversion is missing from argv: $args" >&2; exit 1;; esac
 case "$args" in *"--draft-exclude-file uika-draft.toml"*) ;; *) echo "FAIL: draft-exclude-file not forwarded: $args" >&2; exit 1;; esac
+# Per-module checking is the default and the expensive one. project.clj asks for the union,
+# so the flag has to be there -- and the absence case is covered by the tools that default
+# it off in their own suites.
+case "$args" in *"--merged-classpath"*) ;; *) echo "FAIL: merged-classpath not forwarded: $args" >&2; exit 1;; esac
 # Presence, not the exact 11: effective-jdk-release clamps to the JVM's ct.sym
 # ceiling, so a pre-12 lein JVM would legitimately send a lower number and a JRE
 # none at all. .mise.toml pins temurin-21, which passes 11 through unclamped.

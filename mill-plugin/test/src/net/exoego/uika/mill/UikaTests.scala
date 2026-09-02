@@ -204,11 +204,24 @@ object UikaTests extends TestSuite {
 
       val args = os.read(os.Path(s"$before.args"))
       assert(args.contains("--fail-on reachable"))
+      // Per-module checking is the default and the expensive one, so its absence matters as
+      // much as its presence: sending --merged-classpath unasked quietly changes what is
+      // checked.
+      assert(!args.contains("--merged-classpath"))
       assert(args.contains(s"--exclude-file $exclude"))
       assert(args.contains("--jdk-release 11"))
       // A directory of evidence is forwarded as-is. Only recordings inside it are converted.
       assert(args.contains(s"--class-load-log $jfr"))
       assert(args.contains(s"--draft-exclude-file $draft"))
+
+      value(tester(Uika.upgradeCheck(
+        tester.evaluator,
+        before.toString,
+        after.toString,
+        cliVersion = "9.9.9",
+        mergedClasspath = mainargs.Flag(true)
+      )))
+      assert(os.read(os.Path(s"$before.args")).contains("--merged-classpath"))
 
       // A CLI that found violations must fail the command, not pass silently.
       val failed = tester(Uika.upgradeCheck(

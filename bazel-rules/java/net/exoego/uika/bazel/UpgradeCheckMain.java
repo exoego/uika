@@ -36,6 +36,7 @@ public final class UpgradeCheckMain {
         var classLoadLogs = new ArrayList<Path>();
         Path draftExcludeFile = null;
         Path jfr = null;
+        var mergedClasspath = Boolean.getBoolean("uika.mergedClasspath");
         // Raw, never through overrideRelease: that helper folds 0 into "unset", which is the
         // dump's meaning of 0. Here 0 has to stay distinguishable, because it is the off
         // switch (effectiveJdkRelease answers null for it and the flag is omitted).
@@ -65,6 +66,13 @@ public final class UpgradeCheckMain {
                 case "--draftExcludeFile" ->
                         draftExcludeFile = Manifest.workspacePath(Manifest.flagValue(args, ++i));
                 case "--jdkRelease" -> wanted = Manifest.flagRelease(args, ++i);
+                // A PAIR, unlike every other flag here, because this one is a boolean and
+                // the attribute it overrides can already be True. Bazel users read
+                // --noFoo as the off switch (--nocache_test_results is in this ruleset's
+                // own JFR recipe), so the rule that a run-time flag wins over the attribute
+                // of the same name holds in both directions.
+                case "--mergedClasspath" -> mergedClasspath = true;
+                case "--noMergedClasspath" -> mergedClasspath = false;
                 default -> throw new IllegalArgumentException("unknown argument: " + args[i]);
             }
         }
@@ -94,7 +102,7 @@ public final class UpgradeCheckMain {
         Integer release = UikaCli.effectiveJdkRelease(
                 wantedRelease(wanted), jdk, System.out::println);
         var status = UikaCli.runUpgradeCheck(cliBinary(), before, after, failOn, excludeFiles,
-                release, jdk, evidence, draftExcludeFile, System.out::println);
+                release, jdk, evidence, draftExcludeFile, mergedClasspath, System.out::println);
         System.exit(status);
     }
 

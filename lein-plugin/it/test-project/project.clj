@@ -21,4 +21,7 @@
          ;; run.sh records a real JFR recording here before the check runs.
          :jfr "jfr-evidence"
          :draft-exclude-file "uika-draft.toml"
+         ;; A single-module project has one classpath either way, so this only pins that the
+         ;; key reaches the CLI as the switch. It is off by default everywhere.
+         :merged-classpath true
          :jdk-release 11})

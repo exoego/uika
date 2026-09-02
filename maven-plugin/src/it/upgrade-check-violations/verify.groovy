@@ -13,6 +13,14 @@ assert log.text.contains("BUILD FAILURE") :
 assert log.text.contains("MojoFailureException") :
     "exit 1 was not a MojoFailureException:\n${log.text}"
 
+// This invocation asks for nothing beyond the dumps, so the knobs that default off must
+// send no flag at all. Per-module checking is the default and the expensive one; sending
+// --merged-classpath unasked would quietly change what is checked.
+def args = new File(basedir, "before.json.args")
+assert args.isFile() : "stub did not record its arguments: $args"
+assert !args.text.contains("--merged-classpath") :
+    "--merged-classpath was sent without being asked for: ${args.text}"
+
 // The report has to reach the user through the mojo logger even on the failing path,
 // otherwise the build fails without saying what broke.
 assert log.text.contains("[INFO] uika-stub: 1 broken reference") :

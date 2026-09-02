@@ -86,6 +86,13 @@ and never against the runfiles tree.
   is a label list, and the repeatable `--excludeFile` adds to it.
 - [`jdk_release`](#coordinates-and-jdk_release) is derived per target, and
   `--jdkRelease` overrides it on both rules and on `@uika//:merge`.
+- [`merged_classpath`](../README.md#per-module-checking) checks the union of
+  every target's classpath once instead of each against its own resolution.
+  Per-module checking scans once per target, so a large workspace may want the
+  union; the trade is that a break only one target's resolution shows can hide
+  behind another target's version of the same jar. `--mergedClasspath` and
+  `--noMergedClasspath` override it in either direction, since a boolean needs
+  both for a run-time flag to win over the attribute.
 - `--classLoadLog` (repeatable) and `--jfr` supply
   [runtime load evidence](#runtime-load-evidence-jfr). `--draftExcludeFile` is
   where rules drafted from it are written. None of the three has an attribute,

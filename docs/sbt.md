@@ -174,6 +174,12 @@ degrading to a warning. The cache save and restore close that gap.
 - [`jdkRelease`](build-tools.md#jdkrelease) is derived from
   `javacOptions` and `scalacOptions`. Override with `uikaJdkRelease :=`, or
   set 0 to disable the API layer.
+- `uikaMergedClasspath := true` checks the union of every module's classpath
+  once instead of [each module against its own
+  resolution](../README.md#per-module-checking). Per-module checking scans once
+  per module, so a large build may want the union; the trade is that a break
+  only one module's resolution shows can hide behind another module's version of
+  the same jar.
 - `uikaJfr` also carries [text evidence](runtime-load-evidence.md). Anything in
   that directory that is not a recording is passed on unchanged, so
   `-Xlog:class+load` output and a classlist mix with the recordings. There is

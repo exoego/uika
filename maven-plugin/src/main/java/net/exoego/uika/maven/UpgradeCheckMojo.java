@@ -102,6 +102,18 @@ public final class UpgradeCheckMojo extends AbstractMojo {
     @Parameter(property = "uika.draftExcludeFile")
     private File draftExcludeFile;
 
+    /**
+     * Check the union of every module's classpath once instead of each module against its
+     * own resolution, passed as {@code --merged-classpath}.
+     *
+     * <p>Per-module checking scans once per module, so a large reactor can pay minutes for
+     * it. The trade is real in the other direction too: a break that only one module's
+     * resolution shows can hide behind another module's version of the same jar, which is
+     * why this is off by default.
+     */
+    @Parameter(property = "uika.mergedClasspath", defaultValue = "false")
+    private boolean mergedClasspath;
+
     @Parameter(defaultValue = "${repositorySystemSession}", readonly = true, required = true)
     private RepositorySystemSession repositorySession;
 
@@ -164,6 +176,7 @@ public final class UpgradeCheckMojo extends AbstractMojo {
                     excludeFilePaths, effectiveJdkRelease, jdk,
                     classLoadLogs,
                     draftExcludeFile != null ? draftExcludeFile.toPath() : null,
+                    mergedClasspath,
                     line -> getLog().info(line));
         } catch (IOException e) {
             throw new MojoExecutionException("failed to run uika upgrade-check", e);
