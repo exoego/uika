@@ -177,7 +177,10 @@ resolved local paths.
 - [`failOn`](../README.md#violation-tiers-and-the-failon-threshold) and
   [`excludeFiles`](../README.md#excluding-known-false-positives)
   are shown in the build script above. The command-line forms are
-  `-PuikaFailOn=` and `-PuikaExcludeFile=` (single file).
+  `-PuikaFailOn=` and `-PuikaExcludeFile=`, the latter comma-separated, so
+  suppressing a finding for one CI run needs no build-script edit. A path
+  containing a comma has to go through the task's `excludeFiles` instead, since
+  the comma is the delimiter there.
 - [`jdkRelease`](build-tools.md#jdkrelease) is derived from
   `compileJava`'s `options.release`, else target compatibility. Override with
   `-PuikaJdkRelease=` on both the dump and the check, or set 0 to disable the

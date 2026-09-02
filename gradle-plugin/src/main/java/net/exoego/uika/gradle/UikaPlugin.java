@@ -12,6 +12,8 @@ import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.compile.JavaCompile;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * uika integration plugin.
@@ -247,7 +249,9 @@ public class UikaPlugin implements Plugin<Project> {
                     task.getFailOn().convention(failOn != null ? failOn.toString() : "any");
                     var excludeFile = root.findProperty("uikaExcludeFile");
                     if (excludeFile != null) {
-                        task.getExcludeFiles().from(root.file(excludeFile.toString()));
+                        for (String path : splitPaths(excludeFile.toString())) {
+                            task.getExcludeFiles().from(root.file(path));
+                        }
                     }
                     if (jfrDir != null) {
                         task.getClassLoadLogs().from(jfrDir);
@@ -435,6 +439,34 @@ public class UikaPlugin implements Plugin<Project> {
             }));
             merge.configure(m -> m.getFragments().from(moduleTask));
         });
+    }
+
+    /**
+     * The paths a comma-separated property names, trimmed, with blanks dropped.
+     *
+     * <p>Every other integration takes MORE than one exclude file from the command line:
+     * Maven binds a CSV property to its {@code List<File>}, Mill and Bazel repeat a flag,
+     * and the two Clojure front ends take a vector. Gradle took exactly one, so suppressing
+     * a second finding for one CI run meant editing the build script. The property keeps its
+     * singular name because it is released; a comma is the delimiter because Maven's plexus
+     * binding and Bazel's {@code -Duika.excludeFiles} already use one.
+     *
+     * <p>A path containing a comma has to go through the build script's
+     * {@code excludeFiles.from(...)} instead, the same escape hatch Maven's POM element is.
+     *
+     * <p>Dropping blanks also fixes the bare spelling: Gradle sets {@code -PuikaExcludeFile}
+     * with no value to the empty string, which used to resolve to the project DIRECTORY and
+     * hand the CLI a directory where a TOML file belongs.
+     */
+    static List<String> splitPaths(String value) {
+        var paths = new ArrayList<String>();
+        for (String entry : value.split(",")) {
+            var trimmed = entry.trim();
+            if (!trimmed.isEmpty()) {
+                paths.add(trimmed);
+            }
+        }
+        return paths;
     }
 
     private static boolean buildOutputs(Project root) {
