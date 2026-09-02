@@ -396,7 +396,11 @@
   reason the JVM plugins route through a logger.
 
   Port of UikaCli.runUpgradeCheck's command building. Keep the two in sync. A flag
-  added there also needs the key here and, for Leiningen, in `option-keys`."
+  added there also needs the key here and, for Leiningen, in `option-keys`, and
+  the-command-port-carries-every-uikacli-flag fails until all three are done. It has
+  to: five integrations share the Java builder and pick a new flag up for free, so
+  these two front ends are the only ones that can fall behind, and they would do it
+  with every suite still green."
   [binary {:keys [before after fail-on exclude-file jdk-release class-load-log
                   draft-exclude-file jvm jfr evidence-work-dir]}]
   (let [jvm (or jvm (this-jvm))

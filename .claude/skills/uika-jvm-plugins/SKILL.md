@@ -350,6 +350,13 @@ Same rule as the Mill section: point-of-use comments and the tests in
   likeliest typo is the sibling's spelling, since the two deliberately differ:
   `:exclude-file`/`:exclude-files` and `:class-load-log`/`:class-load-logs`. That is why
   the message lists the accepted keys rather than only naming the rejected one.
+- The port of `UikaCli.runUpgradeCheck`'s COMMAND BUILDING is pinned mechanically, by
+  `the-command-port-carries-every-uikacli-flag` in the clojure-tool suite. It scrapes the
+  quoted `"--flag"` literals out of both sources (quoted only, since each file also names
+  flags in prose) and compares them as SEQUENCES, then checks each flag reaches the `-T`
+  tool's destructuring form and, through the translation table its plural spellings force,
+  Leiningen's `option-keys`. Without it a flag added to `UikaCli` reached five
+  integrations for free and neither Clojure front end at all, with every suite green.
 - jvm-plugin-core is mostly NOT shared here: tools.deps does not compile Java sources
   in a git or :local/root install, so the small ports (classifier, ct.sym clamp,
   extract) live in the ns with "keep in sync" markers. The ONE compiled exception is
