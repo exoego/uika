@@ -31,8 +31,17 @@ assert new File(libPath).exists()
 // The aggregator compiles nothing, so it is not a module. Left in, it becomes a check run
 // of its own with no application roots, and every violation that run finds fails
 // --fail-on reachable however unreachable the real modules proved it.
-assert json.modules.collect { it.module } == [":dummy-maven-lib", ":dummy-maven-app"] :
+assert json.modules.collect { it.module } ==
+        [":dummy-maven-lib", ":dummy-maven-app", ":dummy-maven-nosources"] :
         "the pom-packaged aggregator must not be dumped as a module: ${json.modules*.module}"
+
+// ...but a JAR module with no sources IS one, with no classesDirs, and that is where the
+// line is drawn. The skip tests PACKAGING rather than a missing output directory because
+// this goal binds to no lifecycle phase: on an unbuilt tree every module looks like this
+// one, and an emptiness test would leave the dump with nothing in it.
+def noSources = json.modules.find { it.module == ":dummy-maven-nosources" }
+assert noSources.classesDirs.isEmpty() :
+        "a module that compiled nothing should carry no classesDirs: ${noSources}"
 
 def libModule = json.modules.find { it.module == ":dummy-maven-lib" }
 assert libModule != null

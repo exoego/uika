@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>net.exoego.uika.it</groupId>
+    <artifactId>dummy-maven-reactor</artifactId>
+    <version>1.0.0</version>
+  </parent>
+
+  <!-- A jar module with no sources, so nothing ever creates target/classes. It is still a
+       module: it can gain sources tomorrow, and this goal binds to no lifecycle phase, so
+       an unbuilt tree looks exactly like this for EVERY module. That is why the aggregator
+       is skipped on packaging rather than on a missing output directory, and this module is
+       what holds that line. -->
+  <artifactId>dummy-maven-nosources</artifactId>
+  <packaging>jar</packaging>
+</project>
