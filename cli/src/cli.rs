@@ -149,7 +149,7 @@ pub enum Command {
         /// checking each module against its own resolved classpath. Also the automatic
         /// fallback when the dumps carry no per-module artifact data
         #[arg(long)]
-        merged: bool,
+        merged_classpath: bool,
         /// Runtime class-load log(s) from the current (pre-upgrade) build, e.g. a test run
         /// with -Xlog:class+load=info:file=... stored as a CI artifact. Violations whose
         /// referencing class was observed loading leave the not-proven-reachable tier

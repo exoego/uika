@@ -94,11 +94,12 @@ $ uika upgrade-check --before /tmp/before.json --after /tmp/after.json
 The report is the same one the [README
 shows](../README.md#what-a-check-reports).
 
-- `--merged` checks the union of all modules' classpaths as one flat
+- `--merged-classpath` checks the union of all modules' classpaths as one flat
   classpath, instead of [checking each module against its own
-  resolution](../README.md#per-module-checking). It is also the
-  automatic fallback for dumps that carry no per-module artifact data. No
-  plugin exposes it.
+  resolution](../README.md#per-module-checking). It is also the automatic
+  fallback for dumps that carry no per-module artifact data. Every plugin
+  exposes it, since per-module checking costs one scan per module and a large
+  monorepo may want the union instead.
 
 ### `uika dump`
 
@@ -136,8 +137,17 @@ $ uika dump some.jar
   counting as unverified. It is opt-in here and defaults to on in every plugin,
   because a build already runs on a JVM and the CLI does not. The API is read
   from `$UIKA_JDK` when set, else `$JAVA_HOME`.
-- `--json` prints the report as JSON instead of text. No plugin exposes it,
-  since each one prints the CLI's output through its own logger.
+- `--json` prints the report as JSON instead of text. CLI-only, deliberately:
+  each plugin prints the CLI's output through its own logger, so the JSON would
+  come out of Maven with `[INFO]` on every line and out of Gradle without,
+  parseable from neither. A report destination the plugins could point at a file
+  would be the fix, and this flag is not it.
+- `--verdicts-json <path>` streams every reference verdict (ok, unknown, broken)
+  as JSON Lines to a file, for answer-checking against a real JVM
+  (`tools/jvm-probe`, `make probe`). CLI-only, deliberately: it is written
+  before `--exclude-file` filtering, carries neither graph-walk violations nor
+  the service-provider walk, and does not dedupe call sites, so it is an
+  evaluation stream rather than a report a build should act on.
 
 ## Checking a JDK upgrade
 

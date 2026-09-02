@@ -36,7 +36,7 @@ pass-2 classes are typically below 0.1% of the scan.
 - `upgrade-check` is per-module by default: each module in the dump whose OWN
   resolution lost a version is checked against its own classpath (own
   classesDirs first, then artifacts in resolution order). The merged-universe
-  check remains behind `--merged` and as the automatic fallback (with a
+  check remains behind `--merged-classpath` and as the automatic fallback (with a
   warning) when a dump has no module with artifacts. Rationale (README states
   the user-facing version): the union mixes several resolved versions of one
   coordinate, which produced false brokens (observed on a real multi-module

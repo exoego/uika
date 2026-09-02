@@ -47,6 +47,10 @@ flag. Watch for the Clojure CLI tool's spellings: it says `:exclude-file` and
   falls back to the JVM the project's own code runs on (`:java-cmd`, else
   `JAVA_CMD`, probed; a probe that fails warns and falls back to lein's own
   JVM). 0 disables the API layer.
+- `:merged-classpath true` checks the union of every module's classpath once
+  instead of [each module against its own
+  resolution](../README.md#per-module-checking). A lein project is one module, so
+  this only matters for a dump another tool wrote.
 - `:jfr` takes a recording or a directory of recordings mixed with text logs,
   and `:class-load-logs` takes text [evidence](runtime-load-evidence.md) on its
   own. `:draft-exclude-file` drafts exclude rules from either, and needs one of

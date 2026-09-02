@@ -20,6 +20,11 @@ for (name in ["cli-exclude.toml", "second-exclude.toml"]) {
 assert args.text.count("--exclude-file") == 2 :
     "expected exactly two --exclude-file flags, the empty entry dropped: ${args.text}"
 
+// Per-module checking is the default, so this one is only sent because the invocation asks
+// for it. A large reactor pays one scan per module, which is what the knob is for.
+assert args.text.contains("--merged-classpath") :
+    "-Duika.mergedClasspath was not forwarded to the CLI: ${args.text}"
+
 // The recording inside the log directory must reach the CLI as converted text, never raw.
 assert args.text.contains("jfr-class-load") :
     "the recording was not converted for the CLI: ${args.text}"

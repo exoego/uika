@@ -1833,10 +1833,14 @@ fn per_module_upgrade_check_gates_on_each_modules_own_resolution() {
     );
     assert!(stdout.contains("affected modules: :app"), "{stdout}");
 
-    // --merged keeps the flat behavior: 1.42.1 is still resolved by :pinned, so the flat
+    // --merged-classpath keeps the flat behavior: 1.42.1 is still resolved by :pinned, so the flat
     // diff has no removed version and the real break in :app goes unreported.
-    let (code, stdout, _) =
-        run_upgrade_check_with_dumps("permod-e2e", &before, &after, &["--merged", "--json"]);
+    let (code, stdout, _) = run_upgrade_check_with_dumps(
+        "permod-e2e",
+        &before,
+        &after,
+        &["--merged-classpath", "--json"],
+    );
     assert_eq!(code, 0, "{stdout}");
     let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert!(json["violations"].is_null(), "{stdout}");

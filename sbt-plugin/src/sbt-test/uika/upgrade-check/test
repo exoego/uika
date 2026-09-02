@@ -13,6 +13,13 @@ $ exists before.json.marker
 > checkClassLoadLogPassed
 > checkJfrConverted
 > checkTestJavaOptionsInjected
+> checkMergedClasspathAbsent
+
+# Root-project scope again, the documented `set` form.
+> set uikaMergedClasspath := true
+> uikaUpgradeCheck before.json after.json
+> checkMergedClasspathPassed
+> set uikaMergedClasspath := false
 
 # Root-project scope, where a bare uikaJfr := Some(...) in build.sbt lands. With the
 # ThisBuild value cleared, the subproject's injection can only see it through

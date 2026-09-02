@@ -8,7 +8,7 @@
   converted with the JDK's own JFR reader, which needs lein itself on Java 17+),
   :draft-exclude-file
   (needs :class-load-logs or :jfr, and the CLI's own error names the singular CLI flag
-  this map rejects), :cli-version, :cli-path. The CLI version defaults to this plugin's
+  this map rejects), :merged-classpath, :cli-version, :cli-path. The CLI version defaults to this plugin's
   own, read from the jar's pom.properties, so one version bump updates both."
   (:require [clojure.java.io :as io]
             [exoego.uika.core :as core]
@@ -81,7 +81,7 @@
   singular spelling, or :exclude-file -- would silently disable the flag instead of
   failing, and the check would run on CLI defaults with nothing said."
   #{:fail-on :exclude-files :jdk-release :class-load-logs :jfr :draft-exclude-file
-    :cli-version :cli-path})
+    :merged-classpath :cli-version :cli-path})
 
 (defn- check-options
   "Rejects a misspelled :uika key. Both subtasks run it, since both read the map and a
@@ -149,7 +149,7 @@
   (when-not (and before after)
     (main/abort "usage: lein uika upgrade-check <before.json> <after.json>"))
   (let [{:keys [fail-on exclude-files jdk-release class-load-logs jfr
-                draft-exclude-file]
+                draft-exclude-file merged-classpath]
          :as opts} (:uika project)]
     (check-options opts)
     ;; Binary resolution sits INSIDE the try: an unsupported platform, a zip missing
@@ -172,6 +172,7 @@
         ;; plugins' build/target workdirs.
         :evidence-work-dir (io/file (:target-path project) "uika")
         :draft-exclude-file draft-exclude-file
+        :merged-classpath merged-classpath
         :jvm (project-jvm project)})
       (catch clojure.lang.ExceptionInfo e
         (main/abort (ex-message e)))

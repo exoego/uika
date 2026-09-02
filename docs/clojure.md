@@ -56,6 +56,10 @@ where this tool says `:exclude-file` and `:class-load-log`.
   recorded as running on. There 0 means "keep the derived value" instead,
   because recording nothing would take JDK move detection down with the API
   layer.
+- `:merged-classpath true` checks the union of every module's classpath once
+  instead of [each module against its own
+  resolution](../README.md#per-module-checking). A `deps.edn` project is one
+  module, so this only matters for a dump another tool wrote.
 - `:jfr` and `:class-load-log` supply
   [runtime load evidence](#runtime-load-evidence-jfr), below.
   `:draft-exclude-file` is where rules drafted from it are written.

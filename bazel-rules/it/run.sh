@@ -291,6 +291,38 @@ if ! grep -q "UIKA_CLI_PATH is not executable" "$OUT/cli-path-guard.txt"; then
   exit 1
 fi
 
+echo "--- merged_classpath, and both directions of its flag"
+# Per-module checking is the default and the expensive one, so the absence case matters as
+# much as the presence one: sending --merged-classpath unasked quietly changes what is
+# checked. --noMergedClasspath exists because a boolean attribute cannot be turned off by a
+# flag of the same name, which is how every other knob here is overridden.
+if grep -qx -- "--merged-classpath" "$OUT/stub-args-default.txt"; then
+  echo "--merged-classpath was sent without being asked for:" >&2
+  cat "$OUT/stub-args-default.txt" >&2
+  exit 1
+fi
+UIKA_STUB_ARGS=$OUT/stub-args-merged.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check_merged -- \
+  --before "$OUT/before.json" --after "$OUT/after.json"
+if ! grep -qx -- "--merged-classpath" "$OUT/stub-args-merged.txt"; then
+  echo "merged_classpath = True did not reach the CLI:" >&2
+  cat "$OUT/stub-args-merged.txt" >&2
+  exit 1
+fi
+UIKA_STUB_ARGS=$OUT/stub-args-unmerged.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check_merged -- \
+  --before "$OUT/before.json" --after "$OUT/after.json" --noMergedClasspath
+if grep -qx -- "--merged-classpath" "$OUT/stub-args-unmerged.txt"; then
+  echo "--noMergedClasspath did not override the attribute:" >&2
+  cat "$OUT/stub-args-unmerged.txt" >&2
+  exit 1
+fi
+UIKA_STUB_ARGS=$OUT/stub-args-flag-merged.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check -- \
+  --before "$OUT/before.json" --after "$OUT/after.json" --mergedClasspath
+if ! grep -qx -- "--merged-classpath" "$OUT/stub-args-flag-merged.txt"; then
+  echo "--mergedClasspath did not reach the CLI:" >&2
+  cat "$OUT/stub-args-flag-merged.txt" >&2
+  exit 1
+fi
+
 echo "--- jdk_release type guard"
 # jdk_release is a macro parameter, so Bazel type-checks nothing. A string reached the JVM
 # as -Duika.jdkRelease=seventeen, and Integer.getInteger answers its default for anything

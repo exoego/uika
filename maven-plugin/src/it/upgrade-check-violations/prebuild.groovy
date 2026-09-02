@@ -33,7 +33,10 @@ new File(dir, "uika-cli-${version}.pom").text =
 def zip = new File(dir, "uika-cli-$version-${classifier}.zip")
 new ZipOutputStream(zip.newOutputStream()).withCloseable { out ->
     out.putNextEntry(new ZipEntry("uika-$version-$classifier/uika"))
-    out.write('#!/bin/sh\necho "uika-stub: 1 broken reference"\nexit 1\n'.getBytes("UTF-8"))
+    // The argv goes next to --before, as in the sibling ITs, so verify.groovy can also
+    // assert what an invocation asking for nothing does NOT send.
+    out.write(('#!/bin/sh\necho "$@" > "$3.args"\n'
+        + 'echo "uika-stub: 1 broken reference"\nexit 1\n').getBytes("UTF-8"))
     out.closeEntry()
 }
 

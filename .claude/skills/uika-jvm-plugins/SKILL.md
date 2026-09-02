@@ -166,6 +166,22 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   invocations and task-graph dependencies run in parallel against the one
   `uikaOutput` path (IO.write truncates in place, so racing writers interleave
   the JSON). Explicitly scoped invocations delegate to the one instance.
+- A knob's name is its CLI FLAG's name, written the way the tool writes names, and the
+  `uika` prefix appears exactly where the namespace is flat and shared with the whole
+  build. `-PuikaFailOn`, `uikaFailOn` and `-Duika.failOn` carry it (Gradle project
+  properties, sbt's `autoImport`, and system properties are one space every plugin shares);
+  the Gradle task property, the Maven POM element, Mill's command parameters, the two
+  Clojure maps and Bazel's rule attributes do not, since each already sits inside something
+  uika owns. Renaming a knob away from its flag would break the mechanical correspondence
+  the clojure-tool sync test checks, so do not do it for readability alone -- rename the
+  CLI flag instead, which is how `--merged` became `--merged-classpath`.
+- `--json` and `--verdicts-json` stay CLI-only ON PURPOSE, and the decision is recorded in
+  `docs/cli.md` and `docs/build-tools.md` rather than only here. `--json` writes the report
+  to stdout, which every plugin pipes through its own logger, so Maven would prefix every
+  line with `[INFO]` and Gradle would not: a report DESTINATION the plugins could point at
+  a file is the missing piece, and this flag is not it. `--verdicts-json` is an evaluation
+  stream for `tools/jvm-probe` -- written before exclude filtering, without graph-walk
+  violations, call-site duplicates not deduped -- so it is not a report a build acts on.
 - Runtime load evidence is ONE knob per tool pointed at one directory, serving
   both phases (collect on the base branch's test run, consume on the PR's
   check): Gradle `-PuikaJfr` (bare value defaults to `build/uika/jfr`; the

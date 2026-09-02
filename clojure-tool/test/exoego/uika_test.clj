@@ -208,7 +208,8 @@
                      "--exclude-file" "exclude-files"
                      "--jdk-release" "jdk-release"
                      "--class-load-log" "class-load-logs"
-                     "--draft-exclude-file" "draft-exclude-file"}
+                     "--draft-exclude-file" "draft-exclude-file"
+                     "--merged-classpath" "merged-classpath"}
           option-keys (set (str/split
                             (second (re-find #"(?s)option-keys.*?#\{([^}]+)\}" lein-src))
                             #"\s+"))
@@ -257,7 +258,19 @@
       (is (str/includes? args (str "--exclude-file " exclude)))
       (is (str/includes? args "--jdk-release 11"))
       (is (str/includes? args (str "--class-load-log " dir "/loads.log")))
-      (is (str/includes? args (str "--draft-exclude-file " dir "/draft.toml"))))
+      (is (str/includes? args (str "--draft-exclude-file " dir "/draft.toml")))
+      ;; Per-module checking is the default and the expensive one, so its absence matters
+      ;; as much as its presence: sending the flag unasked quietly changes what is checked.
+      (is (not (str/includes? args "--merged-classpath"))))
+    (testing ":merged-classpath is a bare switch"
+      (uika/upgrade-check {:before (str before) :after (str after)
+                           :merged-classpath true
+                           :cli-path (str stub)})
+      (is (str/includes? (slurp (str before ".args")) "--merged-classpath"))
+      (uika/upgrade-check {:before (str before) :after (str after)
+                           :merged-classpath false
+                           :cli-path (str stub)})
+      (is (not (str/includes? (slurp (str before ".args")) "--merged-classpath"))))
     (testing "a vector value is unwrapped, and blank is unset"
       ;; (str ["x"]) is a legal filename, so the draft would land in ["x"] with exit 0.
       ;; The lein keys next to this one are vectors, which is how it gets written.

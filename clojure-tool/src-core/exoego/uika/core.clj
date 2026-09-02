@@ -402,7 +402,7 @@
   these two front ends are the only ones that can fall behind, and they would do it
   with every suite still green."
   [binary {:keys [before after fail-on exclude-file jdk-release class-load-log
-                  draft-exclude-file jvm jfr evidence-work-dir]}]
+                  draft-exclude-file merged-classpath jvm jfr evidence-work-dir]}]
   (let [jvm (or jvm (this-jvm))
         release (effective-jdk-release (or jdk-release (:feature jvm)) jvm)
         ;; Blank drops out for the reason `env` gives above, since a CI-templated
@@ -442,7 +442,10 @@
                     ;; draft would land in `["x.toml"]` with the run still exiting 0.
                     ;; No pairing check needed. The CLI's error names --class-load-log.
                     (into (mapcat #(vector "--draft-exclude-file" %)
-                                  (->vec draft-exclude-file))))
+                                  (->vec draft-exclude-file)))
+                    ;; A bare switch, so only its truthiness matters. false and nil both
+                    ;; mean per-module, which is the default on the CLI side too.
+                    (into (when merged-classpath ["--merged-classpath"])))
         builder (doto (ProcessBuilder. ^java.util.List command)
                   (.redirectErrorStream true))]
     ;; UIKA_JDK, like the JVM plugins: the child reads the PROJECT JVM's ct.sym

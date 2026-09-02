@@ -102,6 +102,24 @@ checkRootScopedSettingsPassed := {
     sys.error(s"a root-project-scoped uikaExcludeFiles was not forwarded to the CLI: $args")
 }
 
+lazy val checkMergedClasspathPassed = taskKey[Unit]("Asserts uikaMergedClasspath reached the CLI")
+
+// Per-module checking is the default and the expensive one, so BOTH directions matter: the
+// flag must not appear unasked, and it must appear when the setting says so.
+checkMergedClasspathPassed := {
+  val args = IO.read(baseDirectory.value / "before.json.args")
+  if (!args.contains("--merged-classpath"))
+    sys.error(s"uikaMergedClasspath was not forwarded to the CLI: $args")
+}
+
+lazy val checkMergedClasspathAbsent = taskKey[Unit]("Asserts the default sends no --merged-classpath")
+
+checkMergedClasspathAbsent := {
+  val args = IO.read(baseDirectory.value / "before.json.args")
+  if (args.contains("--merged-classpath"))
+    sys.error(s"--merged-classpath was sent without being asked for: $args")
+}
+
 lazy val checkCliOutputLogged = taskKey[Unit]("Asserts the stub CLI's output went through the task logger")
 
 // log.info from uikaUpgradeCheck is persisted to the task's streams file. Inherited stdio
