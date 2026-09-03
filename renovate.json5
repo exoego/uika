@@ -22,6 +22,20 @@
   lockFileMaintenance: {
     enabled: true,
   },
+  // The mise manager skips a tool written as a full asdf plugin path
+  // (asdf:owner/plugin), which is how JReleaser has to be pinned. Nothing else
+  // in .mise.toml needs this, so the annotation is opt-in and the manager only
+  // sees the lines that carry one.
+  customManagers: [
+    {
+      customType: "regex",
+      description: "mise tools the mise manager drops, annotated in .mise.toml",
+      managerFilePatterns: ["/^\\.mise\\.toml$/"],
+      matchStrings: [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+\\S+ = \"(?<currentValue>[^\"]+)\"",
+      ],
+    },
+  ],
   packageRules: [
     {
       matchManagers: ["github-actions"],
@@ -32,9 +46,11 @@
       matchUpdateTypes: ["minor", "patch"],
       groupName: "rust crates (non-major)",
     },
-    // gradle, sbt, maven, java and other toolchain pins in .mise.toml.
+    // gradle, sbt, maven, java and other toolchain pins in .mise.toml. The
+    // custom manager reads that same file, so its updates belong in the same
+    // group rather than in a PR of their own.
     {
-      matchManagers: ["mise"],
+      matchManagers: ["mise", "custom.regex"],
       groupName: "build toolchain (mise)",
     },
     // sbt 1.x itself runs on Scala 2.12, so an sbt 1.x plugin can only be

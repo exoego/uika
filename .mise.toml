@@ -20,4 +20,10 @@ bazelisk = "1.29.0"
 # there with "exception creating new instance for pool", which is what killed the
 # v0.9.0 publish. The asdf plugin installs the plain JVM distribution, which runs on
 # the temurin pinned above and is what the first eight releases shipped with.
+#
+# Renovate's mise manager skips a full asdf plugin path, so 1.26.0 went unnoticed
+# while this was pinned to 1.25.0. The custom manager in renovate.json5 reads the
+# annotation below instead. The plugin lists JReleaser's GitHub releases with the
+# leading v stripped, which is what extractVersion undoes.
+# renovate: datasource=github-releases depName=jreleaser/jreleaser extractVersion=^v(?<version>.+)$
 "asdf:joschi/asdf-jreleaser" = "1.26.0"
