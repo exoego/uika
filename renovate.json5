@@ -23,16 +23,14 @@
     enabled: true,
   },
   // The mise manager skips a tool written as a full asdf plugin path
-  // (asdf:owner/plugin), which is how JReleaser has to be pinned. Nothing else
-  // in .mise.toml needs this, so the annotation is opt-in and the manager only
-  // sees the lines that carry one.
+  // (asdf:owner/plugin), so annotated lines in .mise.toml come through here.
   customManagers: [
     {
       customType: "regex",
       description: "mise tools the mise manager drops, annotated in .mise.toml",
       managerFilePatterns: ["/^\\.mise\\.toml$/"],
       matchStrings: [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+\\S+ = \"(?<currentValue>[^\"]+)\"",
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+\\S+ = (?:\\{ version = )?\"(?<currentValue>[^\"]+)\"",
       ],
     },
   ],
@@ -46,9 +44,8 @@
       matchUpdateTypes: ["minor", "patch"],
       groupName: "rust crates (non-major)",
     },
-    // gradle, sbt, maven, java and other toolchain pins in .mise.toml. The
-    // custom manager reads that same file, so its updates belong in the same
-    // group rather than in a PR of their own.
+    // gradle, sbt, maven, java and other toolchain pins in .mise.toml, plus the
+    // custom manager that reads the same file.
     {
       matchManagers: ["mise", "custom.regex"],
       groupName: "build toolchain (mise)",
