@@ -22,6 +22,18 @@
   lockFileMaintenance: {
     enabled: true,
   },
+  // The mise manager skips a tool written as a full asdf plugin path
+  // (asdf:owner/plugin), so annotated lines in .mise.toml come through here.
+  customManagers: [
+    {
+      customType: "regex",
+      description: "mise tools the mise manager drops, annotated in .mise.toml",
+      managerFilePatterns: ["/^\\.mise\\.toml$/"],
+      matchStrings: [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+\\S+ = (?:\\{ version = )?\"(?<currentValue>[^\"]+)\"",
+      ],
+    },
+  ],
   packageRules: [
     {
       matchManagers: ["github-actions"],
@@ -32,9 +44,10 @@
       matchUpdateTypes: ["minor", "patch"],
       groupName: "rust crates (non-major)",
     },
-    // gradle, sbt, maven, java and other toolchain pins in .mise.toml.
+    // gradle, sbt, maven, java and other toolchain pins in .mise.toml, plus the
+    // custom manager that reads the same file.
     {
-      matchManagers: ["mise"],
+      matchManagers: ["mise", "custom.regex"],
       groupName: "build toolchain (mise)",
     },
     // sbt 1.x itself runs on Scala 2.12, so an sbt 1.x plugin can only be
