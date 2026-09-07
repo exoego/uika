@@ -129,6 +129,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # To look up the artifact from another run (the develop push)
           id=$(gh api \
             "repos/${{ github.repository }}/actions/artifacts?name=uika-baseline-${{ github.event.pull_request.base.sha }}&per_page=5" \
             --jq '[.artifacts[] | select(.expired == false)][0].id // empty')
