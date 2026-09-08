@@ -126,7 +126,9 @@ jobs:
           mv /tmp/baseline/classpath.json /tmp/before.json
 
       - name: Dump PR classpath
-        # `compile` so the build outputs anchor the reachability ranking
+        # `compile` builds the outputs, so the modules' own classes are checked
+        # and anchor the reachability ranking. Cheap only on a warm build
+        # cache, see build-tools.md#building-the-outputs
         run: mvn -q compile uika:dump-classpath -Duika.output=/tmp/after.json
 
       - name: Dump baseline classpath (fallback)

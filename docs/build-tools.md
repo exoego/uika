@@ -13,6 +13,33 @@ classpath as coordinate-annotated JSON, kept per module so a check
 also refers to build outputs. Each tool page says how its dump command builds
 them, and the PR gate workflow there shows which baseline dumps can skip them.
 
+### Building the outputs
+
+The dump builds the module outputs by default, and that buys two things. The
+modules' own classes are scanned, so a call from your code into a changed
+library is checked like any other, and without them they are not checked at
+all. The outputs are also the roots the reachability walk starts from, which is
+what lets a violation be ranked ⚠️ instead of 💥.
+
+The cost is a compile of the whole PR tree on the PR runner. A fresh runner has
+nothing built, so the step is cheap only when the remote build cache is warm.
+Measured on a 68-module Gradle build, the dump step took 1m34s with every
+compile from cache and 5m34s when two large modules missed. Two things make
+the cache cold. The PR job can race the base branch's own CI, because a
+dependency bot rebases as soon as the base moves and the base build may not
+have pushed its outputs yet. And generated sources that differ from run to run,
+such as a random name in a KSP output or a file written in source enumeration
+order, give every downstream module a new cache key each time. The symptom is
+the same either way. The dump step compiles modules that the main build got
+from cache, and the build scan shows them as executed in the PR job with a
+cache key no other build produced.
+
+Two ways to keep it cheap. Run the PR-side dump after the project's own build
+job, with `needs:` in the workflow, so the dump reads the cache that job just
+filled. Or dump without building on the PR side too, the way the baseline
+fallback on each tool page does, and accept that the modules' own classes are
+not checked and nothing is ranked ⚠️.
+
 ## Getting the CLI
 
 The upgrade-check task fetches the CLI itself as

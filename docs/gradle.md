@@ -127,7 +127,9 @@ jobs:
           -PuikaInput=/tmp/before-remote.json -PuikaResolveOutput=/tmp/before.json
 
       - name: Dump PR classpath
-        # `classes` so the build outputs anchor the reachability ranking
+        # `classes` builds the outputs, so the modules' own classes are checked
+        # and anchor the reachability ranking. Cheap only on a warm build
+        # cache, see build-tools.md#building-the-outputs
         run: ./gradlew classes uikaDumpClasspath -PuikaOutput=/tmp/after.json
 
       - name: Dump baseline classpath (fallback)
