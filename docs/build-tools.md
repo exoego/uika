@@ -27,12 +27,13 @@ Measured on a 68-module Gradle build, the dump step took 1m34s with every
 compile from cache and 5m34s when two large modules missed. Two things make
 the cache cold. The PR job can race the base branch's own CI, because a
 dependency bot rebases as soon as the base moves and the base build may not
-have pushed its outputs yet. And generated sources that differ from run to run,
-such as a random name in a KSP output or a file written in source enumeration
-order, give every downstream module a new cache key each time. The symptom is
-the same either way. The dump step compiles modules that the main build got
-from cache, and the build scan shows them as executed in the PR job with a
-cache key no other build produced.
+have pushed its outputs yet. And a task whose output is not repeatable, a
+timestamp or commit id in a generated file, a random name, or a file written
+in source enumeration order, gives every downstream module a new cache key each
+time, which is the [repeatable task outputs](https://docs.gradle.org/current/userguide/build_cache_concepts.html#concepts_repeatable_task_outputs) rule of the build cache
+guide. The symptom is the same either way. The dump step compiles modules that
+the main build got from cache, and the build scan shows them as executed in
+the PR job with a cache key no other build produced.
 
 Two ways to keep it cheap. Run the PR-side dump after the project's own build
 job, with `needs:` in the workflow, so the dump reads the cache that job just
