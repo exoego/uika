@@ -6,7 +6,7 @@ gradle = "9.7.1"
 # no 1.12.13 or later, so install the launcher from the GitHub release.
 "github:sbt/sbt" = "1.13.0"
 maven = "3.9.16"
-clojure = "1.12.5.1664"
+clojure = "1.12.6.1673"
 # 2.13.0 is a broken package: its lein script points at a 2.12.1-SNAPSHOT
 # standalone jar that no GitHub release serves (404 on every install).
 leiningen = "2.12.0"
