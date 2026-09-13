@@ -49,7 +49,7 @@
     <revision>0.0.0-dev</revision>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <mavenPluginTools.version>3.15.2</mavenPluginTools.version>
+    <mavenPluginTools.version>3.16.0</mavenPluginTools.version>
     <!-- Where the invoker clones each IT. A property rather than a literal because
          invoker.properties is interpolated against the POM's properties, and the
          upgrade-check-cli-path IT needs the ABSOLUTE path of its own clone: it sets
