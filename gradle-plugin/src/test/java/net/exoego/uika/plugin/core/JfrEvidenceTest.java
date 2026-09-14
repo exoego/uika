@@ -147,9 +147,11 @@ final class JfrEvidenceTest {
             Files.write(truncated, java.util.Arrays.copyOf(whole, cut));
             found = uncheckedParseFailure(truncated);
         }
-        if (found == null) {
-            org.junit.jupiter.api.Assumptions.abort("no cut makes this JDK's parser fail unchecked");
-        }
+        // Every recording measured on JDK 17, 21 and 25 had at least 49 such cuts at this
+        // stride, so finding none means the JDK changed, not that the search was unlucky.
+        org.junit.jupiter.api.Assertions.assertNotNull(found,
+                "no cut made this JDK's parser fail unchecked, so this test no longer covers"
+                        + " the RuntimeException catch in rewrite");
         var failure = found.getClass().getName();
 
         var work = dir.resolve("work");
