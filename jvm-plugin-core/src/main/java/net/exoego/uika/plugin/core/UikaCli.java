@@ -27,8 +27,12 @@ public final class UikaCli {
 
     /** Maven classifier of the published binary for the current platform, e.g. "macos-aarch64". */
     public static String platformClassifier() {
-        var os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        var arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
+        return platformClassifier(System.getProperty("os.name", ""), System.getProperty("os.arch", ""));
+    }
+
+    static String platformClassifier(String osName, String osArch) {
+        var os = osName.toLowerCase(Locale.ROOT);
+        var arch = osArch.toLowerCase(Locale.ROOT);
         var x64 = "amd64".equals(arch) || "x86_64".equals(arch);
         var arm64 = "aarch64".equals(arch) || "arm64".equals(arch);
         if (os.contains("linux") && x64) {
