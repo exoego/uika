@@ -60,13 +60,9 @@ final class JfrEvidenceTest {
         // emit the probe's block exactly once: the CLI keeps only the first framed
         // block per class, and re-emitting it per fork recording is what made
         // conversions of large suites hundreds of MB of parsed-and-dropped text.
-        var withBlock = converted.stream().filter(p -> {
-            try {
-                return Files.readString(p).contains("Java stack when loading UikaJfrProbeRewrite:");
-            } catch (java.io.IOException e) {
-                throw new java.io.UncheckedIOException(e);
-            }
-        }).count();
+        var withBlock = converted.stream()
+                .filter(p -> read(p).contains("Java stack when loading UikaJfrProbeRewrite:"))
+                .count();
         assertEquals(1, withBlock,
                 () -> "expected the probe block once across the batch (first wins, "
                         + "duplicates deduped): " + rewritten);
@@ -113,14 +109,7 @@ final class JfrEvidenceTest {
 
         List<Path> converted = rewritten.stream()
                 .filter(p -> p.startsWith(work))
-                .filter(p -> {
-                    try {
-                        return Files.readString(p)
-                                .contains("Java stack when loading UikaJfrProbeIntact:");
-                    } catch (java.io.IOException e) {
-                        throw new java.io.UncheckedIOException(e);
-                    }
-                })
+                .filter(p -> read(p).contains("Java stack when loading UikaJfrProbeIntact:"))
                 .toList();
         assertEquals(1, converted.size(),
                 () -> "the intact recording must still convert: " + rewritten);
