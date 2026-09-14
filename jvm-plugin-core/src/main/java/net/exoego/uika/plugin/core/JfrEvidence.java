@@ -118,8 +118,7 @@ public final class JfrEvidence {
                     continue;
                 }
                 RecordedClass loaded = event.getValue("loadedClass");
-                if (loaded == null || loaded.getName().startsWith("[")) {
-                    // An array class never matches a violation's referencing class.
+                if (loaded == null) {
                     continue;
                 }
                 events++;

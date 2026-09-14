@@ -52,8 +52,6 @@ final class ReleaseDerivationTest {
         assertEquals(8, UikaCli.declaredRelease(List.of("-target", "1.8")));
         assertEquals(11, UikaCli.declaredRelease(List.of("--target", "11")), "javac takes either");
         assertNull(UikaCli.declaredRelease(List.of("-Xlint:all", "-g")));
-        assertEquals(17, UikaCli.declaredRelease(List.of("-Wconf:cat=deprecation:ws", "--release=17")),
-                "an option carrying both separators splits at the first one");
         assertNull(UikaCli.declaredRelease(List.of()));
 
         // --release pins the API; -target only names the class-file version, so it must

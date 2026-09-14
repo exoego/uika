@@ -140,7 +140,6 @@
             (io/copy in zip-file :buffer-size 65536))
           (with-open [zf (ZipFile. ^java.io.File zip-file)]
             (let [entry (or (->> (enumeration-seq (.entries zf))
-                                 (remove #(.isDirectory ^java.util.zip.ZipEntry %))
                                  (filter #(let [n (.getName ^java.util.zip.ZipEntry %)]
                                             (or (= n binary-name)
                                                 (str/ends-with? n (str "/" binary-name)))))

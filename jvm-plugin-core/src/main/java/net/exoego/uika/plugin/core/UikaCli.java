@@ -109,7 +109,6 @@ public final class UikaCli {
         Files.createDirectories(targetDir);
         try (var zipFile = new ZipFile(zip.toFile())) {
             var entry = zipFile.stream()
-                    .filter(e -> !e.isDirectory())
                     .filter(e -> e.getName().equals(binaryName)
                             || e.getName().endsWith("/" + binaryName))
                     .findFirst()
@@ -232,12 +231,11 @@ public final class UikaCli {
     public static Integer declaredRelease(List<String> options) {
         Integer target = null;
         for (var i = 0; i < options.size(); i++) {
-            var option = options.get(i);
-            var separator = firstSeparator(option);
-            String flag = separator < 0 ? option : option.substring(0, separator);
-            String value = separator < 0
-                    ? (i + 1 < options.size() ? options.get(i + 1) : null)
-                    : option.substring(separator + 1);
+            var parts = options.get(i).split("[=:]", 2);
+            var flag = parts[0];
+            String value = parts.length == 2
+                    ? parts[1]
+                    : (i + 1 < options.size() ? options.get(i + 1) : null);
             Integer release = parseRelease(value);
             if (release == null) {
                 continue;
@@ -251,15 +249,6 @@ public final class UikaCli {
             }
         }
         return target;
-    }
-
-    private static int firstSeparator(String option) {
-        var equals = option.indexOf('=');
-        var colon = option.indexOf(':');
-        if (equals < 0) {
-            return colon;
-        }
-        return colon < 0 ? equals : Math.min(equals, colon);
     }
 
     /**
