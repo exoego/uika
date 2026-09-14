@@ -228,10 +228,13 @@ public final class JfrEvidence {
                 events = convert(recording, output, emitted);
             } catch (IOException | RuntimeException e) {
                 // The JDK's parser throws IndexOutOfBoundsException, not IOException, at
-                // some truncation points.
-                var partial = Files.isRegularFile(output);
+                // some truncation points. The output opens before the first event is read,
+                // so a failure can leave it empty.
+                var partial = Files.isRegularFile(output) && Files.size(output) > 0;
                 if (partial) {
                     rewritten.add(output);
+                } else {
+                    Files.deleteIfExists(output);
                 }
                 log.accept("uika: " + recording
                         + " is truncated or not a readable JFR recording (" + e + "); "

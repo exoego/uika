@@ -295,6 +295,35 @@ final class JfrEvidenceTest {
                 () -> "the partial conversion must be reported: " + logged);
     }
 
+    /// A conversion can fail after its output file opened but before any line was written,
+    /// as here, where the intact chunk carries no jdk.ClassLoad events. Passing the empty
+    /// file on and saying events were kept would hide that nothing was converted.
+    @Test
+    void aFailedConversionThatWroteNothingIsSkipped() throws Exception {
+        var intact = dir.resolve("intact.jfr");
+        JfrTestRecordings.recordWithDefaultSettings(intact);
+        var last = dir.resolve("last.jfr");
+        JfrTestRecordings.recordFreshClassLoad(dir, last, "UikaJfrProbeCutOff");
+        byte[] lastChunk = Files.readAllBytes(last);
+        Path logsDir = Files.createDirectories(dir.resolve("load-logs"));
+        var rotated = Files.write(logsDir.resolve("rotated.jfr"), Files.readAllBytes(intact));
+        Files.write(rotated, java.util.Arrays.copyOf(lastChunk, lastChunk.length / 2),
+                java.nio.file.StandardOpenOption.APPEND);
+
+        var work = dir.resolve("work");
+        var logged = new java.util.ArrayList<String>();
+        var rewritten = JfrEvidence.rewrite(List.of(rotated), work, logged::add);
+
+        assertEquals(List.of(), rewritten, "an empty conversion must not reach the CLI");
+        assertTrue(logged.stream().anyMatch(l -> l.contains("rotated.jfr")
+                        && l.contains("skipping it")),
+                () -> "the empty conversion must be reported as skipped: " + logged);
+        try (var left = Files.list(work)) {
+            assertEquals(List.of(), left.toList(),
+                    "the empty conversion must not be left in the workdir");
+        }
+    }
+
     /// Callers declare IOException, so a directory that cannot be walked to the end must
     /// fail as one, not as the UncheckedIOException Files.walk throws.
     @Test
