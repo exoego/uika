@@ -131,6 +131,59 @@ final class JfrEvidenceTest {
                 () -> "the damaged recording must be reported by name: " + logged);
     }
 
+    /// Truncation does not always surface as an IOException. At some cut points the JDK's
+    /// parser throws IndexOutOfBoundsException instead (799 of 3,318 cuts of one recording
+    /// on JDK 21). The half-length cut above lands on either kind depending on the
+    /// recording's layout, so this searches for a cut that fails unchecked.
+    @Test
+    void aTruncationTheParserFailsUncheckedIsSkippedToo() throws Exception {
+        Path logsDir = Files.createDirectories(dir.resolve("load-logs"));
+        var good = logsDir.resolve("good.jfr");
+        JfrTestRecordings.recordFreshClassLoad(dir, good, "UikaJfrProbeIntactToo");
+        byte[] whole = Files.readAllBytes(good);
+        var truncated = logsDir.resolve("truncated.jfr");
+        RuntimeException found = null;
+        for (var cut = 4; cut < whole.length && found == null; cut += 97) {
+            Files.write(truncated, java.util.Arrays.copyOf(whole, cut));
+            found = uncheckedParseFailure(truncated);
+        }
+        if (found == null) {
+            org.junit.jupiter.api.Assumptions.abort("no cut makes this JDK's parser fail unchecked");
+        }
+        var failure = found.getClass().getName();
+
+        var work = dir.resolve("work");
+        var logged = new java.util.ArrayList<String>();
+        var rewritten = JfrEvidence.rewrite(List.of(logsDir), work, logged::add);
+
+        assertTrue(rewritten.stream().filter(p -> p.startsWith(work)).anyMatch(
+                        p -> read(p).contains("Java stack when loading UikaJfrProbeIntactToo:")),
+                () -> "the intact recording must still convert: " + rewritten);
+        assertTrue(logged.stream().anyMatch(l -> l.contains("truncated.jfr") && l.contains(failure)),
+                () -> "the " + failure + " must be reported by name: " + logged);
+    }
+
+    private static RuntimeException uncheckedParseFailure(Path recording) {
+        try (var file = new jdk.jfr.consumer.RecordingFile(recording)) {
+            while (file.hasMoreEvents()) {
+                file.readEvent();
+            }
+        } catch (java.io.IOException e) {
+            return null;
+        } catch (RuntimeException e) {
+            return e;
+        }
+        return null;
+    }
+
+    private static String read(Path path) {
+        try {
+            return Files.readString(path);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
     /// Recording names are pid-unique, so every collection run orphans the previous
     /// run's conversions; if the knob directory ever contains the workdir, the CLI
     /// would re-read those orphans as fresh evidence. rewrite deletes its own

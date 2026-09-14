@@ -227,7 +227,9 @@ public final class JfrEvidence {
             long events;
             try {
                 events = convert(recording, output, emitted);
-            } catch (IOException e) {
+            } catch (IOException | RuntimeException e) {
+                // The JDK's parser throws IndexOutOfBoundsException, not IOException, at
+                // some truncation points.
                 var partial = Files.isRegularFile(output);
                 if (partial) {
                     rewritten.add(output);
