@@ -131,6 +131,59 @@ final class JfrEvidenceTest {
                 () -> "the damaged recording must be reported by name: " + logged);
     }
 
+    /// Truncation does not always surface as an IOException. At some cut points the JDK's
+    /// parser throws IndexOutOfBoundsException instead (799 of 3,318 cuts of one recording
+    /// on JDK 21). The half-length cut above lands on either kind depending on the
+    /// recording's layout, so this searches for a cut that fails unchecked.
+    @Test
+    void aTruncationTheParserFailsUncheckedIsSkippedToo() throws Exception {
+        Path logsDir = Files.createDirectories(dir.resolve("load-logs"));
+        var good = logsDir.resolve("good.jfr");
+        JfrTestRecordings.recordFreshClassLoad(dir, good, "UikaJfrProbeIntactToo");
+        byte[] whole = Files.readAllBytes(good);
+        var truncated = logsDir.resolve("truncated.jfr");
+        RuntimeException found = null;
+        for (var cut = 4; cut < whole.length && found == null; cut += 97) {
+            Files.write(truncated, java.util.Arrays.copyOf(whole, cut));
+            found = uncheckedParseFailure(truncated);
+        }
+        if (found == null) {
+            org.junit.jupiter.api.Assumptions.abort("no cut makes this JDK's parser fail unchecked");
+        }
+        var failure = found.getClass().getName();
+
+        var work = dir.resolve("work");
+        var logged = new java.util.ArrayList<String>();
+        var rewritten = JfrEvidence.rewrite(List.of(logsDir), work, logged::add);
+
+        assertTrue(rewritten.stream().filter(p -> p.startsWith(work)).anyMatch(
+                        p -> read(p).contains("Java stack when loading UikaJfrProbeIntactToo:")),
+                () -> "the intact recording must still convert: " + rewritten);
+        assertTrue(logged.stream().anyMatch(l -> l.contains("truncated.jfr") && l.contains(failure)),
+                () -> "the " + failure + " must be reported by name: " + logged);
+    }
+
+    private static RuntimeException uncheckedParseFailure(Path recording) {
+        try (var file = new jdk.jfr.consumer.RecordingFile(recording)) {
+            while (file.hasMoreEvents()) {
+                file.readEvent();
+            }
+        } catch (java.io.IOException e) {
+            return null;
+        } catch (RuntimeException e) {
+            return e;
+        }
+        return null;
+    }
+
+    private static String read(Path path) {
+        try {
+            return Files.readString(path);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
     /// Recording names are pid-unique, so every collection run orphans the previous
     /// run's conversions; if the knob directory ever contains the workdir, the CLI
     /// would re-read those orphans as fresh evidence. rewrite deletes its own
@@ -141,12 +194,132 @@ final class JfrEvidenceTest {
         Path work = Files.createDirectories(dir.resolve("work"));
         Path stale = Files.writeString(work.resolve("jfr-9-gone.log"), "com.example.Stale\n");
         Path foreign = Files.writeString(work.resolve("notes.txt"), "keep me\n");
+        Path prefixed = Files.writeString(work.resolve("jfr-notes.txt"), "keep me\n");
 
         var rewritten = JfrEvidence.rewrite(List.of(), work, line -> {});
 
         assertTrue(rewritten.isEmpty(), () -> "nothing to rewrite, got: " + rewritten);
         assertFalse(Files.exists(stale), "the stale conversion must be deleted");
         assertTrue(Files.exists(foreign), "files rewrite did not write must survive");
+        assertTrue(Files.exists(prefixed), "the jfr- prefix alone must not mark a conversion");
+    }
+
+    /// A custom JFC can switch jdk.ClassLoad stack traces off. Such a recording still shows
+    /// which classes loaded.
+    @Test
+    void aStacklessRecordingConvertsIntoBareLoadLines() throws Exception {
+        var jfr = dir.resolve("stackless.jfr");
+        JfrTestRecordings.recordStacklessClassLoad(dir, jfr, "UikaJfrProbeStackless");
+        var out = dir.resolve("stackless.log");
+        JfrEvidence.convert(jfr, out);
+
+        String text = Files.readString(out);
+        assertTrue(text.lines().anyMatch("[class,load] UikaJfrProbeStackless"::equals),
+                () -> "bare load line missing:\n" + head(text));
+        assertFalse(text.contains("Java stack when loading "),
+                () -> "a stackless recording produced a stack block:\n" + head(text));
+    }
+
+    /// The CLI upgrades a bare record when a framed block for the same class comes later,
+    /// and drops a bare line once a framed block exists. Batch dedup must keep exactly
+    /// that, or a fork recorded without stacks would cost a later fork its trigger.
+    @Test
+    void aFramedBlockStillFollowsABareLineButNotTheReverse() throws Exception {
+        var bare = dir.resolve("bare.jfr");
+        JfrTestRecordings.recordStacklessClassLoad(dir, bare, "UikaJfrProbeUpgrade");
+        var framed = dir.resolve("framed.jfr");
+        JfrTestRecordings.recordFreshClassLoad(dir, framed, "UikaJfrProbeUpgrade");
+        var bareAgain = Files.copy(bare, dir.resolve("bare-again.jfr"));
+
+        var rewritten = JfrEvidence.rewrite(
+                List.of(bare, framed, bareAgain), dir.resolve("work"), line -> {});
+
+        assertEquals(3, rewritten.size(),
+                () -> "expected one conversion per recording: " + rewritten);
+        assertTrue(Files.readString(rewritten.get(0))
+                        .contains("[class,load] UikaJfrProbeUpgrade"),
+                "the first bare line must be written");
+        assertTrue(Files.readString(rewritten.get(1))
+                        .contains("Java stack when loading UikaJfrProbeUpgrade:"),
+                "a framed block must still follow the bare line");
+        assertFalse(Files.readString(rewritten.get(2)).contains("UikaJfrProbeUpgrade"),
+                "a bare line after the framed block must be deduped");
+    }
+
+    /// The JDK's default profile leaves jdk.ClassLoad off, so such a recording converts to
+    /// nothing, and the log line is the only symptom.
+    @Test
+    void aRecordingWithoutClassLoadEventsSaysHowToRecordThem() throws Exception {
+        var jfr = dir.resolve("default.jfr");
+        JfrTestRecordings.recordWithDefaultSettings(jfr);
+        var logged = new java.util.ArrayList<String>();
+
+        JfrEvidence.rewrite(List.of(jfr), dir.resolve("work"), logged::add);
+
+        assertEquals(1, logged.size(), () -> "expected one line: " + logged);
+        assertTrue(logged.get(0).contains("(0 jdk.ClassLoad events)")
+                        && logged.get(0).contains("jdk.ClassLoad#enabled=true"),
+                () -> "the empty conversion must say how to record the event: " + logged);
+    }
+
+    /// A long recording spans several chunks, so a dump or a download cut short loses only
+    /// the last one. Recordings concatenate into one multi-chunk recording, which is how
+    /// this builds that shape.
+    @Test
+    void aTruncatedLastChunkKeepsTheEventsOfTheIntactChunks() throws Exception {
+        var intact = dir.resolve("intact.jfr");
+        // RecordingFile reads one event ahead, so the event that ends the intact chunk is
+        // lost with the failing chunk. The tail load keeps the asserted one from being it.
+        JfrTestRecordings.recordFreshClassLoads(
+                dir, intact, "UikaJfrProbeKept", "UikaJfrProbeTail");
+        var last = dir.resolve("last.jfr");
+        JfrTestRecordings.recordFreshClassLoad(dir, last, "UikaJfrProbeCutOff");
+        byte[] lastChunk = Files.readAllBytes(last);
+        Path logsDir = Files.createDirectories(dir.resolve("load-logs"));
+        var rotated = Files.write(logsDir.resolve("rotated.jfr"), Files.readAllBytes(intact));
+        Files.write(rotated, java.util.Arrays.copyOf(lastChunk, lastChunk.length / 2),
+                java.nio.file.StandardOpenOption.APPEND);
+
+        var logged = new java.util.ArrayList<String>();
+        var rewritten = JfrEvidence.rewrite(List.of(rotated), dir.resolve("work"), logged::add);
+
+        assertEquals(1, rewritten.size(),
+                () -> "the partial conversion must reach the CLI: " + rewritten);
+        String text = Files.readString(rewritten.get(0));
+        assertTrue(text.contains("Java stack when loading UikaJfrProbeKept:"),
+                () -> "the intact chunk's events were lost:\n" + head(text));
+        assertFalse(text.contains("UikaJfrProbeCutOff"),
+                () -> "the truncated chunk cannot have converted:\n" + head(text));
+        assertTrue(logged.stream().anyMatch(l -> l.contains("rotated.jfr")
+                        && l.contains("keeping the events converted before the error")),
+                () -> "the partial conversion must be reported: " + logged);
+    }
+
+    /// Callers declare IOException, so a directory that cannot be walked to the end must
+    /// fail as one, not as the UncheckedIOException Files.walk throws.
+    @Test
+    void aSymlinkLoopFailsAsAnIOException() throws Exception {
+        Path logsDir = Files.createDirectories(dir.resolve("load-logs"));
+        try {
+            Files.createSymbolicLink(logsDir.resolve("self"), logsDir);
+        } catch (UnsupportedOperationException | java.io.IOException e) {
+            org.junit.jupiter.api.Assumptions.abort("symlinks unsupported: " + e);
+        }
+
+        org.junit.jupiter.api.Assertions.assertThrows(java.nio.file.FileSystemLoopException.class,
+                () -> JfrEvidence.rewrite(List.of(logsDir), dir.resolve("work"), line -> {}));
+    }
+
+    @Test
+    void aKnobValueNamesARecordingByItsSuffixUnlessItIsADirectory() throws Exception {
+        // The check may create or download the recording after the value is read.
+        assertTrue(JfrEvidence.valueNamesRecording(dir.resolve("baseline.jfr")));
+        assertFalse(JfrEvidence.valueNamesRecording(
+                Files.createDirectories(dir.resolve("recordings.jfr"))));
+        assertFalse(JfrEvidence.valueNamesRecording(dir.resolve("recordings")));
+        // A filesystem root has no file name.
+        assertFalse(JfrEvidence.valueNamesRecording(dir.getRoot()));
+        assertFalse(JfrEvidence.isRecording(dir.getRoot()));
     }
 
     /// The CLI follows symlinks when it reads the kept directory, so the conversion

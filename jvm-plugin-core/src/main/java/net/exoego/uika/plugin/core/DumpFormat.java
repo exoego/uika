@@ -265,16 +265,9 @@ public final class DumpFormat {
 
         RootTable(List<String> preferred) {
             for (String p : preferred) {
-                if (!p.endsWith("/")) {
-                    p = p + "/";
-                }
-                if (!roots.contains(p)) {
-                    roots.add(p);
-                }
+                roots.add(p.endsWith("/") ? p : p + "/");
             }
-            if (!roots.contains("")) {
-                roots.add("");
-            }
+            roots.add("");
         }
 
         int indexOf(String path) {

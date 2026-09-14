@@ -50,6 +50,7 @@ final class ReleaseDerivationTest {
         assertEquals(11, UikaCli.declaredRelease(List.of("-java-output-version:11")),
                 "scalac's colon form");
         assertEquals(8, UikaCli.declaredRelease(List.of("-target", "1.8")));
+        assertEquals(11, UikaCli.declaredRelease(List.of("--target", "11")), "javac takes either");
         assertNull(UikaCli.declaredRelease(List.of("-Xlint:all", "-g")));
         assertNull(UikaCli.declaredRelease(List.of()));
 

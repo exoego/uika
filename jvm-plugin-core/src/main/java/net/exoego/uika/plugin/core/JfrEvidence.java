@@ -118,8 +118,7 @@ public final class JfrEvidence {
                     continue;
                 }
                 RecordedClass loaded = event.getValue("loadedClass");
-                if (loaded == null || loaded.getName().startsWith("[")) {
-                    // An array class never matches a violation's referencing class.
+                if (loaded == null) {
                     continue;
                 }
                 events++;
@@ -227,7 +226,9 @@ public final class JfrEvidence {
             long events;
             try {
                 events = convert(recording, output, emitted);
-            } catch (IOException e) {
+            } catch (IOException | RuntimeException e) {
+                // The JDK's parser throws IndexOutOfBoundsException, not IOException, at
+                // some truncation points.
                 var partial = Files.isRegularFile(output);
                 if (partial) {
                     rewritten.add(output);

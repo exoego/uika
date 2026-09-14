@@ -27,10 +27,14 @@ final class UikaCliExtractBinaryTest {
     private static final String BINARY_NAME =
             UikaCli.platformClassifier().startsWith("windows") ? "uika.exe" : "uika";
 
+    /// The layout publish-release.yml's `zip -r` writes, directory entry included.
     private Path stubZip() throws IOException {
         var zip = dir.resolve("uika-cli.zip");
+        var top = "uika-1.0.0-" + UikaCli.platformClassifier() + "/";
         try (var out = new ZipOutputStream(Files.newOutputStream(zip))) {
-            out.putNextEntry(new ZipEntry("uika-1.0.0/" + BINARY_NAME));
+            out.putNextEntry(new ZipEntry(top));
+            out.closeEntry();
+            out.putNextEntry(new ZipEntry(top + BINARY_NAME));
             out.write("#!/bin/sh\n".getBytes(StandardCharsets.UTF_8));
             out.closeEntry();
         }

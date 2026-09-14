@@ -1,5 +1,6 @@
 package net.exoego.uika.plugin.core;
 
+import jdk.jfr.Configuration;
 import jdk.jfr.Recording;
 
 import java.net.URL;
@@ -31,30 +32,65 @@ public final class JfrTestRecordings {
      */
     public static void recordFreshClassLoadAtDepth(Path dir, Path jfr, String className,
             int depth) throws Exception {
-        var source = dir.resolve(className + ".java");
-        Files.writeString(source, "public class " + className + " {}");
-        var rc = javax.tools.ToolProvider.getSystemJavaCompiler()
-                .run(null, null, null, "-d", dir.toString(), source.toString());
-        if (rc != 0) {
-            throw new IllegalStateException("javac failed for " + source);
-        }
-        try (var recording = new Recording()) {
-            recording.enable("jdk.ClassLoad").withStackTrace().withoutThreshold();
+        record(dir, jfr, true, depth, className);
+    }
+
+    /** Like {@link #recordFreshClassLoad}, loading every class in order in one recording. */
+    public static void recordFreshClassLoads(Path dir, Path jfr, String... classNames)
+            throws Exception {
+        record(dir, jfr, true, 0, classNames);
+    }
+
+    /** Like {@link #recordFreshClassLoad}, with stack traces switched off. */
+    public static void recordStacklessClassLoad(Path dir, Path jfr, String className)
+            throws Exception {
+        record(dir, jfr, false, 0, className);
+    }
+
+    /** A recording made with the JDK's default settings, which leave jdk.ClassLoad off. */
+    public static void recordWithDefaultSettings(Path jfr) throws Exception {
+        try (var recording = new Recording(Configuration.getConfiguration("default"))) {
             recording.start();
-            descend(depth, dir, className);
             recording.stop();
             recording.dump(jfr);
         }
     }
 
-    private static void descend(int n, Path dir, String className) throws Exception {
+    private static void record(Path dir, Path jfr, boolean stackTrace, int depth,
+            String... classNames) throws Exception {
+        for (String className : classNames) {
+            var source = dir.resolve(className + ".java");
+            Files.writeString(source, "public class " + className + " {}");
+            var rc = javax.tools.ToolProvider.getSystemJavaCompiler()
+                    .run(null, null, null, "-d", dir.toString(), source.toString());
+            if (rc != 0) {
+                throw new IllegalStateException("javac failed for " + source);
+            }
+        }
+        try (var recording = new Recording()) {
+            var settings = recording.enable("jdk.ClassLoad").withoutThreshold();
+            if (stackTrace) {
+                settings.withStackTrace();
+            } else {
+                settings.withoutStackTrace();
+            }
+            recording.start();
+            descend(depth, dir, classNames);
+            recording.stop();
+            recording.dump(jfr);
+        }
+    }
+
+    private static void descend(int n, Path dir, String... classNames) throws Exception {
         if (n > 0) {
-            descend(n - 1, dir, className);
+            descend(n - 1, dir, classNames);
             return;
         }
         try (var loader =
                 new URLClassLoader(new URL[] {dir.toUri().toURL()}, null)) {
-            Class.forName(className, false, loader);
+            for (String className : classNames) {
+                Class.forName(className, false, loader);
+            }
         }
     }
 }
