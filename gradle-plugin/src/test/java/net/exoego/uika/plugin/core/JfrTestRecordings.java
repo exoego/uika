@@ -58,14 +58,18 @@ public final class JfrTestRecordings {
 
     private static void record(Path dir, Path jfr, boolean stackTrace, int depth,
             String... classNames) throws Exception {
-        for (String className : classNames) {
-            var source = dir.resolve(className + ".java");
-            Files.writeString(source, "public class " + className + " {}");
-            var rc = javax.tools.ToolProvider.getSystemJavaCompiler()
-                    .run(null, null, null, "-d", dir.toString(), source.toString());
-            if (rc != 0) {
-                throw new IllegalStateException("javac failed for " + source);
-            }
+        var javacArgs = new String[classNames.length + 2];
+        javacArgs[0] = "-d";
+        javacArgs[1] = dir.toString();
+        for (var i = 0; i < classNames.length; i++) {
+            var source = dir.resolve(classNames[i] + ".java");
+            Files.writeString(source, "public class " + classNames[i] + " {}");
+            javacArgs[i + 2] = source.toString();
+        }
+        var rc = javax.tools.ToolProvider.getSystemJavaCompiler()
+                .run(null, null, null, javacArgs);
+        if (rc != 0) {
+            throw new IllegalStateException("javac failed for " + String.join(", ", classNames));
         }
         try (var recording = new Recording()) {
             var settings = recording.enable("jdk.ClassLoad").withoutThreshold();
