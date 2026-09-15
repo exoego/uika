@@ -103,6 +103,114 @@ final class UikaPluginIntegrationTest {
                         + ", got " + firstClassesDir);
     }
 
+    /// The version diff runs on these coordinates. An external dependency must keep them and
+    /// must not be attributed to a project.
+    @Test
+    void writesExternalDependencyCoordinates() throws Exception {
+        var output = projectDir.resolve("classpath.json");
+        var repo = projectDir.resolve("repo");
+        var jar = repo.resolve("example/stub-lib/1.0.0/stub-lib-1.0.0.jar");
+        Files.createDirectories(jar.getParent());
+        Files.write(jar, new byte[0]);
+        write(projectDir.resolve("settings.gradle.kts"), """
+                rootProject.name = "dummy-uika-consumer"
+                include("app")
+                """);
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    id("net.exoego.uika")
+                }
+                """);
+        write(projectDir.resolve("app/build.gradle.kts"), """
+                plugins {
+                    java
+                }
+
+                repositories {
+                    maven {
+                        url = uri("%s")
+                        metadataSources { artifact() }
+                    }
+                }
+
+                dependencies {
+                    implementation("example:stub-lib:1.0.0")
+                }
+                """.formatted(repo.toUri()));
+
+        runDump(output);
+
+        @SuppressWarnings("unchecked")
+        var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        @SuppressWarnings("unchecked")
+        var artifacts = (List<Map<String, Object>>) doc.get("artifacts");
+        var stub = artifacts.stream()
+                .filter(a -> Objects.equals("stub-lib", a.get("name")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("stub-lib is missing from " + artifacts));
+        assertEquals("example", stub.get("group"));
+        assertEquals("1.0.0", stub.get("version"));
+        assertFalse(stub.containsKey("project"), () -> "attributed to a project: " + stub);
+        assertTrue(rootedPath(doc, stub).endsWith("stub-lib-1.0.0.jar"), stub::toString);
+    }
+
+    /// A module built by two compilers has one classes dir for each, and the CLI must scan
+    /// both. Groovy stands in for Kotlin because it compiles without the network.
+    @Test
+    void listsEveryBuiltClassesDir() throws Exception {
+        var output = projectDir.resolve("classpath.json");
+        write(projectDir.resolve("settings.gradle.kts"), """
+                rootProject.name = "dummy-uika-consumer"
+                include("app")
+                """);
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    id("net.exoego.uika")
+                }
+                """);
+        write(projectDir.resolve("app/build.gradle.kts"), """
+                plugins {
+                    groovy
+                }
+
+                dependencies {
+                    implementation(localGroovy())
+                }
+                """);
+        write(projectDir.resolve("app/src/main/java/example/App.java"), """
+                package example;
+
+                public final class App {
+                }
+                """);
+        write(projectDir.resolve("app/src/main/groovy/example/Greeter.groovy"), """
+                package example
+
+                class Greeter {
+                }
+                """);
+
+        runDump(output);
+
+        @SuppressWarnings("unchecked")
+        var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        @SuppressWarnings("unchecked")
+        var modules = (List<Map<String, Object>>) doc.get("modules");
+        var appModule = modules.stream()
+                .filter(module -> Objects.equals(":app", module.get("module")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(":app module is missing from " + modules));
+        @SuppressWarnings("unchecked")
+        var classesDirs = ((List<Map<String, Object>>) appModule.get("classesDirs")).stream()
+                .map(dir -> rootedPath(doc, dir))
+                .toList();
+        assertEquals(2, classesDirs.size(), classesDirs::toString);
+        assertTrue(classesDirs.stream().anyMatch(d -> d.endsWith("app/build/classes/java/main")),
+                classesDirs::toString);
+        assertTrue(classesDirs.stream().anyMatch(d -> d.endsWith("app/build/classes/groovy/main")),
+                classesDirs::toString);
+    }
+
     /// The dump records the release each module compiles for, not one value for the build:
     /// upgrade-check pairs them module by module, so a build that mixes releases gets its
     /// JDK move scoped to the modules that made it. The dump-level value is the lowest of
