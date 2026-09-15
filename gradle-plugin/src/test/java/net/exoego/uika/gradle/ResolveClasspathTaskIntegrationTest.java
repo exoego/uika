@@ -165,6 +165,67 @@ final class ResolveClasspathTaskIntegrationTest {
                 "no output must be written for a partially rehydrated dump");
     }
 
+    /// Native transports such as netty-transport-native-epoll publish one jar per platform
+    /// under a classifier, next to the main jar of the same coordinates. Only the file name
+    /// tells the two dump entries apart. Fetched as plain g:n:v, both would get the main jar
+    /// and the classifier entry would stay unresolved.
+    @Test
+    void rehydratesClassifierVariantsToTheirOwnJars() throws Exception {
+        publishStubJar("stub-native");
+        publishStubJar("stub-native", "-linux-x86_64");
+        writeProject();
+        Path input = write(projectDir.resolve("before.json"), """
+                {"modules":[{"module":":","classesDirs":[],"artifacts":[
+                  {"group":"example","name":"stub-native","version":"1.0.0",
+                   "file":"/nonexistent/stub-native-1.0.0.jar"},
+                  {"group":"example","name":"stub-native","version":"1.0.0",
+                   "file":"/nonexistent/stub-native-1.0.0-linux-x86_64.jar"}]}]}
+                """);
+        var output = projectDir.resolve("before-local.json");
+
+        var result = run(input, output).build();
+        assertTaskSuccess(result);
+        assertRewrittenToLocalJars(output,
+                "stub-native-1.0.0.jar", "stub-native-1.0.0-linux-x86_64.jar");
+    }
+
+    /// A file dependency (`files("libs/vendored.jar")`) or an included build's project
+    /// dependency is dumped with no coordinates and no project key. When its file is absent
+    /// here there is nothing to fetch it by. It must not reach the repositories as
+    /// `null:null:null`, and it passes through as it is.
+    @Test
+    void leavesCoordinateLessArtifactsAlone() throws Exception {
+        publishStubJar("stub-lib");
+        writeProject();
+        Path input = write(projectDir.resolve("before.json"), """
+                {"modules":[{"module":":","classesDirs":[],"artifacts":[
+                  {"group":"example","name":"stub-lib","version":"1.0.0",
+                   "file":"/nonexistent/stub-lib-1.0.0.jar"},
+                  {"file":"/nonexistent/libs/vendored.jar"}]}]}
+                """);
+        var output = projectDir.resolve("before-local.json");
+
+        var result = run(input, output).build();
+        assertTaskSuccess(result);
+        assertTrue(result.getOutput().contains("resolving 1 missing artifact(s)"),
+                () -> "only the external entry must be resolved:\n" + result.getOutput());
+        assertTrue(result.getOutput().contains("(1 rewritten, 0 unresolved)"),
+                () -> "expected exactly the external entry rewritten:\n" + result.getOutput());
+
+        @SuppressWarnings("unchecked")
+        var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        @SuppressWarnings("unchecked")
+        var artifacts = (List<Map<String, Object>>) doc.get("artifacts");
+        var vendored = artifacts.stream()
+                .filter(artifact -> artifact.get("group") == null)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("vendored.jar missing from " + artifacts));
+        @SuppressWarnings("unchecked")
+        var roots = (List<String>) doc.get("roots");
+        assertEquals("/nonexistent/libs/vendored.jar",
+                roots.get(((Number) vendored.get("root")).intValue()) + vendored.get("path"));
+    }
+
     private void writeProject() throws IOException {
         write(projectDir.resolve("settings.gradle.kts"), """
                 rootProject.name = "dummy-uika-consumer"
@@ -184,7 +245,13 @@ final class ResolveClasspathTaskIntegrationTest {
     }
 
     private void publishStubJar(String name) throws IOException {
-        var jar = repoDir.resolve("example/" + name + "/1.0.0/" + name + "-1.0.0.jar");
+        publishStubJar(name, "");
+    }
+
+    /** {@code classifierSuffix} is "-classifier", or empty for the main jar. */
+    private void publishStubJar(String name, String classifierSuffix) throws IOException {
+        var jar = repoDir.resolve(
+                "example/" + name + "/1.0.0/" + name + "-1.0.0" + classifierSuffix + ".jar");
         Files.createDirectories(jar.getParent());
         // A real empty zip, not just the 4-byte EOCD signature: anything that ever opens
         // the jar (an artifact transform, dependency verification) rejects a truncated one.
