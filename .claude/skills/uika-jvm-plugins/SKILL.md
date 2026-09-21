@@ -383,10 +383,17 @@ Same rule as the Mill section: point-of-use comments and the tests in
   relative path resolves against `*the-dir*` -- a dir-joined `:project` resolves twice
   and silently falls back to the root deps (org.clojure/clojure alone in the dump is
   the symptom). Relative `:local/root` entries need the same binding.
-- tools.deps resolves jar artifacts only; a zip-packaged classifier artifact like the
-  uika-cli distribution cannot go through it. The tool downloads from Maven Central
-  directly (`UIKA_CLI_URL` overrides), unlike the JVM plugins which reuse the build's
-  resolver.
+- The tool and the lein plugin download the CLI jar from Maven Central directly
+  (`UIKA_CLI_URL` overrides), unlike the JVM plugins, which reuse the build's resolver.
+  That started because tools.deps and lein resolve jars only and the CLI was a
+  zip-packaged classifier artifact. It is a jar now, so either resolver could take it,
+  but `core.clj` is shared by both front ends and stays free of both resolvers' APIs.
+  Moving the fetch into each front end is open work, not a decision against it.
+- Both front ends are Clojure source and load on any JVM, so nothing stops them on a
+  JVM older than the 17 the CLI jar needs. `launch-command` checks the feature version
+  itself, because the JVM's own answer is an UnsupportedClassVersionError at exit 1,
+  which is also the CLI's code for broken references. The four JVM plugins need no such
+  check: their own classes have the same floor and would not have loaded.
 - The tool is published to Central as `net.exoego.uika/clojure-uika` (build.clj's
   `stage`, wired into stage-all and jreleaser.yml like the other plugins; it rides the
   shared deployment, so it costs files but no extra release against the Central
