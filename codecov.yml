@@ -44,6 +44,10 @@ component_management:
       name: CLI
       paths:
         - cli/**
+    - component_id: cli_java
+      name: Java CLI
+      paths:
+        - cli-java/**
     - component_id: jvm_plugin_core
       name: jvm-plugin-core
       paths:

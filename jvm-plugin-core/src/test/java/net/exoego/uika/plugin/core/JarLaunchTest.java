@@ -57,6 +57,16 @@ final class JarLaunchTest {
         assertTrue(command.containsAll(UikaCli.JVM_FLAGS), command.toString());
     }
 
+    /// A dump that is not there is the CLI's error to report, with its own message and exit
+    /// code. Sizing the run must not fail first and hide that.
+    @Test
+    void aMissingDumpCountsAsEmpty() {
+        var command = UikaCli.launchCommand(Path.of("uika-cli.jar"),
+                dir.resolve("no-before.json"), dir.resolve("no-after.json"));
+
+        assertTrue(command.contains(UikaCli.SMALL_RUN_FLAG), command.toString());
+    }
+
     @Test
     void aNativeBinaryStartsItself() {
         var binary = dir.resolve("uika");
