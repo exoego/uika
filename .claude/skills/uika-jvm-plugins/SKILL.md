@@ -508,24 +508,30 @@ hold lives here.
   symlinks pointing OUT of the module root, which is fine in this repository and useless
   to a consumer. `it/` is dropped from the archive because its `local_path_override`
   points back here.
-- `bazel-stage` must run AFTER the native binaries are in `dist/native`. That is where the
-  checksums it stamps into `private/checksums.bzl` come from, so a released archive pins
-  every platform's uika-cli download. Consuming the rules at a git revision leaves the map
-  empty and the download unpinned, which the `uika.cli` tag's `sha256` closes.
-- Bazel says NOTHING about an unpinned `download_and_extract`. The familiar "canonical
+- `bazel-stage` stamps the sha256 of the CLI jar into `private/checksums.bzl`, so a
+  released archive pins the uika-cli download. The hash must be of the very file that goes
+  to Central. In a release the uika-cli staging step builds `cli-java/build/libs` first,
+  and `bazel-stage`'s own `java-cli-build` then finds it up to date and leaves it alone.
+  `stage.sh` fails without the jar instead of cutting an unpinned archive. Consuming the
+  rules at a git revision leaves the value empty and the download unpinned, which the
+  `uika.cli` tag's `sha256` closes.
+- The pin is ONE string, not a classifier map: one jar serves every host. `UIKA_CLI_PATH`
+  at fetch time is symlinked under a name that keeps a `.jar` suffix, because the suffix
+  is how `UikaCli` tells the jar from a native binary.
+- Bazel says NOTHING about an unpinned `download`. The familiar "canonical
   reproducible form" note comes from `http_archive`, which reports it by hand, so a bare
   repository rule that stays quiet leaves the download silently unverified. That is why
   `cli_repository.bzl` prints its own message, carrying the hash it just downloaded so the
   pin is paste-ready. Verified on a cold fetch with an empty `--repository_cache`; do not
   assume Bazel covers this.
-- `private/checksums.bzl` describes UIKA_VERSION's archives and NOTHING else, so
-  `extensions.bzl` drops the map whenever a `uika.cli(version = ...)` tag names a
+- `private/checksums.bzl` describes UIKA_VERSION's jar and NOTHING else, so
+  `extensions.bzl` drops the pin whenever a `uika.cli(version = ...)` tag names a
   different one. Carrying it over verified the requested version against another
   version's hash and failed the fetch outright, which made a released archive plus any
   version override unusable. The repository rule's `sha256` attr deliberately has no
   default, so that decision lives in the one place that knows both the version and the
-  map. No test reaches this: the integration test consumes the rules at a git revision,
-  where the map is empty by construction, so the trap only exists in a released archive.
+  pin. No test reaches this: the integration test consumes the rules at a git revision,
+  where the pin is empty by construction, so the trap only exists in a released archive.
 - No duplicate-target guard is needed on `uika_dump`. Bazel rejects a repeated label in a
   `label_list` itself ("Label '//app:app' is duplicated in the 'targets' attribute"), before
   the rule implementation runs, and two distinct labels cannot produce one module name. A

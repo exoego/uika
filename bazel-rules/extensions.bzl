@@ -16,10 +16,10 @@ _cli = tag_class(
             doc = "uika-cli version. Defaults to the release this ruleset belongs to, so one" +
                   " coordinate bump moves both.",
         ),
-        "sha256": attr.string_dict(
-            doc = "Maven classifier ('linux-x86_64', ...) to the sha256 of its zip. A" +
-                  " released archive already pins every platform, so this is only needed" +
-                  " when consuming the rules at a git revision or from another repository.",
+        "sha256": attr.string(
+            doc = "sha256 of the CLI jar. A released archive already pins it, so this is" +
+                  " only needed when consuming the rules at a git revision, from another" +
+                  " repository, or with a version override.",
         ),
         "repository": attr.string(doc = "Maven repository base URL to download from."),
     },
@@ -27,7 +27,7 @@ _cli = tag_class(
 
 def _uika_impl(module_ctx):
     version = UIKA_VERSION
-    sha256 = None
+    sha256 = ""
     repository = None
     for module in module_ctx.modules:
         for tag in module.tags.cli:
@@ -42,12 +42,12 @@ def _uika_impl(module_ctx):
         if module.tags.cli:
             break
 
-    if sha256 == None:
-        # The stamped checksums describe UIKA_VERSION's archives and nothing else, so a
-        # version override has to drop them. Carrying them over verified the requested
-        # version against another version's hash and failed the fetch outright, which made
-        # a released archive plus any version override unusable.
-        sha256 = UIKA_CLI_SHA256 if version == UIKA_VERSION else {}
+    if not sha256:
+        # The stamped checksum describes UIKA_VERSION's jar and nothing else, so a version
+        # override has to drop it. Carrying it over verified the requested version against
+        # another version's hash and failed the fetch outright, which made a released
+        # archive plus any version override unusable.
+        sha256 = UIKA_CLI_SHA256 if version == UIKA_VERSION else ""
 
     uika_cli_repository(
         name = "uika_cli",

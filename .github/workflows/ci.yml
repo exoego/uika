@@ -232,16 +232,10 @@ jobs:
           import ast, pathlib, re
 
           src = pathlib.Path("dist/bazel/bazel-rules/private/checksums.bzl").read_text()
-          spliced = re.search(r"UIKA_CLI_SHA256 = (\{.*\})", src, re.S)
-          assert spliced, "stage.sh left UIKA_CLI_SHA256 unspliced"
-          pins = ast.literal_eval(spliced.group(1))
-          assert set(pins) == {
-              "linux-x86_64",
-              "macos-aarch64",
-              "macos-x86_64",
-              "windows-x86_64",
-          }, pins
-          assert all(re.fullmatch("[0-9a-f]{64}", v) for v in pins.values()), pins
+          spliced = re.search(r"^UIKA_CLI_SHA256 = (.*)$", src, re.M)
+          assert spliced, "checksums.bzl lost its UIKA_CLI_SHA256 line"
+          pin = ast.literal_eval(spliced.group(1))
+          assert re.fullmatch("[0-9a-f]{64}", pin), "stage.sh left the CLI jar unpinned: %r" % pin
           PY
 
   coverage:

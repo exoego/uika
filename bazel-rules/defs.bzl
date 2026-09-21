@@ -127,10 +127,10 @@ def uika_upgrade_check(
         name = name,
         data = [
             ":" + releases,
-            Label("@uika_cli//:binary"),
+            Label("@uika_cli//:cli"),
         ],
         jvm_flags = [
-            "-Duika.cli=$(rlocationpath {})".format(Label("@uika_cli//:binary")),
+            "-Duika.cli=$(rlocationpath {})".format(Label("@uika_cli//:cli")),
             "-Duika.releases=$(rlocationpath :{})".format(releases),
             "-Duika.failOn={}".format(fail_on or ""),
             "-Duika.excludeFiles={}".format(",".join(exclude_files)),

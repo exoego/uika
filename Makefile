@@ -364,14 +364,14 @@ bazel-unit-test:
 # `cp -RL` and would carry them along. ci.yml uploads the pair under one flag and Codecov
 # takes the union, the same shape the Maven plugin's surefire and invoker reports use.
 BAZEL_IT_JACOCO = $(CURDIR)/$(COVERAGE_DIR)/bazel-it.exec
-bazel-coverage: jacoco-tools cargo-build
+bazel-coverage: jacoco-tools java-cli-build
 	mkdir -p $(COVERAGE_DIR)
 	cd $(BAZEL_RULES_DIR) && $(BAZELISK) coverage --symlink_prefix=/ \
 		--combined_report=lcov //java:manifest_test
 	sed 's|^SF:|SF:$(BAZEL_RULES_DIR)/|' \
 		"`cd $(BAZEL_RULES_DIR) && $(BAZELISK) info --symlink_prefix=/ output_path`/_coverage/_coverage_report.dat" \
 		> $(COVERAGE_DIR)/bazel.lcov
-	UIKA_BIN=$(abspath target/debug/uika) UIKA_JACOCO_AGENT=$(JACOCO_AGENT) \
+	UIKA_BIN=$(JAVA_CLI_JAR) UIKA_JACOCO_AGENT=$(JACOCO_AGENT) \
 		UIKA_JACOCO_EXEC=$(BAZEL_IT_JACOCO) mise exec -- sh $(BAZEL_RULES_DIR)/it/run.sh
 	mise exec -- sh $(BAZEL_RULES_DIR)/it/jacoco-report.sh $(JACOCO_CLI) \
 		$(BAZEL_IT_JACOCO) $(BAZEL_IT_DIR)/ws $(CURDIR)/$(BAZEL_RULES_DIR)/java \
@@ -379,14 +379,14 @@ bazel-coverage: jacoco-tools cargo-build
 
 # Real-CLI round trip, same reason as clojure-test and lein-test: the dump is written by
 # a tool the Rust side never sees, so only a run against the real binary catches drift.
-bazel-test: cargo-build bazel-unit-test
-	UIKA_BIN=$(abspath target/debug/uika) mise exec -- sh $(BAZEL_RULES_DIR)/it/run.sh
+bazel-test: java-cli-build bazel-unit-test
+	UIKA_BIN=$(JAVA_CLI_JAR) mise exec -- sh $(BAZEL_RULES_DIR)/it/run.sh
 
 # The pairing the Bazel issue is named after. Split from bazel-test because this one needs
 # the network: the two lock files are pinned so nothing is resolved, but the artifacts
 # themselves come from Maven Central.
-bazel-maven-test: cargo-build
-	UIKA_BIN=$(abspath target/debug/uika) mise exec -- sh $(BAZEL_RULES_DIR)/it/run-maven.sh
+bazel-maven-test: java-cli-build
+	UIKA_BIN=$(JAVA_CLI_JAR) mise exec -- sh $(BAZEL_RULES_DIR)/it/run-maven.sh
 
 # The workspace copies are disposable, but their output bases are not: expunge through each
 # copy while it still exists, or Bazel keeps a multi-gigabyte tree for a directory that is
@@ -405,11 +405,12 @@ bazel-clean:
 	rm -rf $(BAZEL_IT_DIR) $(BAZEL_MAVEN_IT_DIR)
 
 # The Bazel module is distributed as a release archive rather than through a registry, so
-# staging it is a tarball rather than a deploy. It must run AFTER the native binaries are
-# in dist/native, because that is where the CLI checksums the archive pins come from.
-bazel-stage:
+# staging it is a tarball rather than a deploy. The archive pins the checksum of the CLI
+# jar. In a release the jar is already there, built by the uika-cli staging step, and Gradle
+# leaves an up-to-date jar alone, so the hash is of the very file that goes to Central.
+bazel-stage: java-cli-build
 	sh $(BAZEL_RULES_DIR)/stage.sh $(UIKA_VERSION) $(BAZEL_RULES_DIR) \
-		$(BAZEL_STAGE_DIR) dist/native
+		$(BAZEL_STAGE_DIR) $(JAVA_CLI_JAR)
 
 cli-publish-local:
 	$(GRADLE) -p $(JAVA_CLI_DIR) publishToMavenLocal -PuikaVersion=$(UIKA_VERSION)
