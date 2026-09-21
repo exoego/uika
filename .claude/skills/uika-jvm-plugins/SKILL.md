@@ -80,11 +80,16 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
 - `DumpFormat` changes propagate to all four plugins via source inclusion from
   `jvm-plugin-core/` — no core artifact to publish.
 - The upgrade-check tasks (`uikaUpgradeCheck`, Maven `uika:upgrade-check`)
-  resolve the pure-Java CLI jar `net.exoego.uika:uika-cli:<version>` through the build's
-  own repositories and run it from the tool's cache (`UikaCli` in core). Nothing is
-  extracted and no platform is selected. The coordinate still carries the native ZIPs as
-  classifiers, but no integration reads them: they serve `UIKA_CLI_PATH` users and the
-  standalone CLI. The CLI version must keep
+  resolve the pure-Java CLI jar `net.exoego.uika:uika-cli:<version>:jvm@jar` through the
+  build's own repositories and run it from the tool's cache (`UikaCli` in core). Nothing
+  is extracted and no platform is selected. The jar is a CLASSIFIED artifact
+  (`UikaCli.JAR_CLASSIFIER`) and the POM keeps `pom` packaging, on purpose: Central
+  demands a sources and a javadoc jar for any other packaging, so a main jar would cost
+  twelve files per release against four. Do not "tidy" it into the main artifact. The
+  stub repositories write `<packaging>pom</packaging>` too, so the suites resolve the
+  shape a release really has. The coordinate also carries the native ZIPs as classifiers,
+  but no integration reads them: they serve `UIKA_CLI_PATH` users and the standalone CLI.
+  The CLI version must keep
   defaulting to the plugin's own version — Implementation-Version manifest
   attribute in the Gradle/sbt jars, `${plugin.version}` in Maven — so one
   coordinate bump updates both; never hardcode a CLI version or URL.

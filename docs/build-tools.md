@@ -15,10 +15,11 @@ them, and the PR gate workflow there shows which baseline dumps can skip them.
 
 ## Getting the CLI
 
-The upgrade-check task fetches the CLI itself, the pure-Java jar
-`net.exoego.uika:uika-cli:<version>`, through the build's own dependency
-resolution, reusing its repositories, credentials, and cache, so there is no
-separate install step. It runs the jar on the JVM that runs the build, so an
+The upgrade-check task fetches the CLI itself, the pure-Java jar published as
+the `jvm` classifier of `net.exoego.uika:uika-cli:<version>`, through the
+build's own dependency resolution, reusing its repositories, credentials, and
+cache, so there is no separate install step. It runs the jar on the JVM that
+runs the build, so an
 integration works wherever its build tool does, with no per-platform binary to
 be missing. The version defaults to the plugin's own, so one coordinate bump
 updates both. The Clojure CLI tool, Leiningen and Bazel fetch the jar
