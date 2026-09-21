@@ -19,10 +19,13 @@ $ lein uika dump-classpath /tmp/after.json
 $ lein uika upgrade-check /tmp/before.json /tmp/after.json
 ```
 
-Leiningen's resolver does not handle a zip-packaged artifact, so the plugin
-downloads the CLI binary straight from Maven Central (`UIKA_CLI_URL` to
-override the URL, `:cli-path` or `UIKA_CLI_PATH` to point at a binary you
-already have and skip the download).
+The plugin downloads the CLI jar straight from Maven Central into
+`~/.cache/uika` (`UIKA_CLI_URL` to override the URL, `:cli-path` or
+`UIKA_CLI_PATH` to point at a CLI you already have and skip the download). The
+jar runs on the JVM that runs lein, which therefore has to be Java 17 or newer.
+On an older one, point `:cli-path` at a native uika binary instead.
+`UIKA_CLI_URL` has to name the jar. A platform ZIP, which it named before the
+CLI became a jar, fails naming the variable.
 
 The dump excludes what only development pulls in (the `:base`/`:system`/`:user`/`:dev`
 profiles, so no nREPL, and `:provided`, which an uberjar leaves out) and runs the
@@ -195,10 +198,11 @@ flag. Watch for the Clojure CLI tool's spellings: it says `:exclude-file` and
   own. `:draft-exclude-file` drafts exclude rules from either, and needs one of
   them. The CLI answers a lone `:draft-exclude-file` by naming
   `--class-load-log`, whose keyword form this map rejects as unknown.
-- `:cli-version` and `:cli-path` pick the binary, as do `UIKA_CLI_VERSION` and
-  `UIKA_CLI_PATH` from the environment. There is no command-line override. A path
-  that is not an executable file fails naming the one you set, `:cli-path` or the
-  variable.
+- `:cli-version` and `:cli-path` pick the CLI, as do `UIKA_CLI_VERSION` and
+  `UIKA_CLI_PATH` from the environment. There is no command-line override. The
+  path takes the jar or a native binary. A path that is not a file, or a native
+  binary that is not executable, fails naming the one you set, `:cli-path` or
+  the variable.
 
 ## Runtime load evidence (JFR)
 

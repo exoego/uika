@@ -6,8 +6,8 @@
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str])
-  (:import (java.nio.file Files Path StandardCopyOption)
-           (java.util.zip ZipFile)))
+  (:import (java.nio.file Files StandardCopyOption)
+           (java.util.jar JarFile)))
 
 (set! *warn-on-reflection* true)
 
@@ -91,79 +91,54 @@
   layer can serve, since ct.sym carries no older stubs."
   8)
 
-(defn- platform-classifier
-  "Port of UikaCli.platformClassifier; keep the two in sync."
-  []
-  ;; Locale.ROOT like the Java original: the default locale turns an uppercase I
-  ;; into a dotless one on Turkish-locale machines, which would split the two ports.
-  (let [os (.toLowerCase ^String (System/getProperty "os.name" "") java.util.Locale/ROOT)
-        arch (.toLowerCase ^String (System/getProperty "os.arch" "") java.util.Locale/ROOT)
-        x64 (contains? #{"amd64" "x86_64"} arch)
-        arm64 (contains? #{"aarch64" "arm64"} arch)]
-    (cond
-      (and (str/includes? os "linux") x64) "linux-x86_64"
-      (and (str/includes? os "mac") arm64) "macos-aarch64"
-      (and (str/includes? os "mac") x64) "macos-x86_64"
-      (and (str/includes? os "windows") x64) "windows-x86_64"
-      :else (throw (ex-info (str "no uika-cli binary is published for " os "/" arch
-                                 " (available: linux-x86_64, macos-aarch64,"
-                                 " macos-x86_64, windows-x86_64)")
-                            {:os os :arch arch})))))
+(defn- runnable-jar?
+  [^java.io.File file]
+  (try
+    (with-open [jar (JarFile. file)]
+      (some? (some-> (.getManifest jar) .getMainAttributes (.getValue "Main-Class"))))
+    (catch java.io.IOException _ false)))
 
 (defn fetch-cli
-  "Downloads and extracts the platform binary, mirroring UikaCli.extractBinary's
-  layout and its skip-if-already-extracted behaviour. tools.deps and Leiningen both
-  resolve jar artifacts only, so the zip-packaged distribution is a plain download
-  from Maven Central; override the URL with UIKA_CLI_URL for mirrors and air-gapped
-  setups."
+  "Downloads the CLI jar into the user cache, once per version. A plain download from
+  Maven Central and not either front end's resolver, because this namespace is shared
+  and stays free of both. Override the URL with UIKA_CLI_URL for mirrors and
+  air-gapped setups."
   [version]
-  (let [classifier (platform-classifier)
-        binary-name (if (str/starts-with? classifier "windows") "uika.exe" "uika")
-        cache-dir (io/file (System/getProperty "user.home")
-                           ".cache" "uika" (str "cli-" version "-" classifier))
-        binary (io/file cache-dir binary-name)]
-    (when-not (.isFile binary)
+  (let [cache-dir (io/file (System/getProperty "user.home") ".cache" "uika" (str "cli-" version))
+        jar (io/file cache-dir (str cli-artifact "-" version ".jar"))]
+    (when-not (.isFile jar)
       (.mkdirs cache-dir)
       (let [url (or (env "UIKA_CLI_URL")
                     (str "https://repo1.maven.org/maven2/"
                          (str/replace cli-group "." "/") "/" cli-artifact "/"
-                         version "/" cli-artifact "-" version "-" classifier ".zip"))
-            ;; Invocation-unique, deleted below: a fixed name in the shared cache
-            ;; would let two cold-cache invocations read each other's half-written
-            ;; download. The binary itself is already temp-file + atomic move.
-            zip-file (.toFile (Files/createTempFile (.toPath cache-dir) "cli" ".zip"
-                                                    (make-array java.nio.file.attribute.FileAttribute 0)))]
+                         version "/" cli-artifact "-" version ".jar"))
+            ;; temp + move, so a concurrent invocation never sees a partial jar, and
+            ;; invocation-unique, so two cold-cache invocations never share a download.
+            tmp (Files/createTempFile (.toPath cache-dir) "cli" ".tmp"
+                                      (make-array java.nio.file.attribute.FileAttribute 0))]
         (println "uika: fetching" url)
         (try
           (with-open [in (io/input-stream url)]
-            ;; 64 KiB, not io/copy's 1 KiB default: the zip is multi-MB.
-            (io/copy in zip-file :buffer-size 65536))
-          (with-open [zf (ZipFile. ^java.io.File zip-file)]
-            (let [entry (or (->> (enumeration-seq (.entries zf))
-                                 (filter #(let [n (.getName ^java.util.zip.ZipEntry %)]
-                                            (or (= n binary-name)
-                                                (str/ends-with? n (str "/" binary-name)))))
-                                 first)
-                            (throw (ex-info (str binary-name " not found in " zip-file) {})))
-                  ;; temp + move, so a concurrent invocation never sees a partial binary
-                  tmp (Files/createTempFile (.toPath cache-dir) "uika" ".tmp"
-                                            (make-array java.nio.file.attribute.FileAttribute 0))]
-              (try
-                (with-open [in (.getInputStream zf entry)]
-                  (Files/copy ^java.io.InputStream in ^Path tmp
-                              ^"[Ljava.nio.file.CopyOption;"
-                              (into-array java.nio.file.CopyOption [StandardCopyOption/REPLACE_EXISTING])))
-                (.setExecutable (.toFile ^Path tmp) true false)
-                (Files/move tmp (.toPath binary)
-                            (into-array java.nio.file.CopyOption [StandardCopyOption/REPLACE_EXISTING]))
-                (finally
-                  ;; A truncated entry or a full disk between createTempFile and the
-                  ;; move would otherwise orphan a binary-sized .tmp in the shared
-                  ;; cache on every retry, and nothing ever reaps it.
-                  (Files/deleteIfExists tmp)))))
+            (io/copy in (.toFile tmp) :buffer-size 65536))
+          ;; UIKA_CLI_URL named the platform ZIP before the CLI became a jar. Handed on,
+          ;; that dies in the child JVM as "no main manifest attribute" with no knob in
+          ;; sight.
+          (when-not (runnable-jar? (.toFile tmp))
+            (throw (ex-info (str url " is not a runnable jar. UIKA_CLI_URL must name the"
+                                 " uika-cli jar, not a platform ZIP")
+                            {:url (str url)})))
+          (Files/move tmp (.toPath jar)
+                      (into-array java.nio.file.CopyOption [StandardCopyOption/REPLACE_EXISTING]))
           (finally
-            (.delete ^java.io.File zip-file)))))
-    binary))
+            ;; A failed download would otherwise orphan a .tmp in the shared cache on
+            ;; every retry, and nothing ever reaps it.
+            (Files/deleteIfExists tmp)))))
+    jar))
+
+(defn- jar?
+  "Port of UikaCli.isJar; keep the two in sync."
+  [binary]
+  (str/ends-with? (.toLowerCase (.getName (io/file (str binary))) java.util.Locale/ROOT) ".jar"))
 
 (defn- existing-binary
   "The binary an explicit path names, checked before ProcessBuilder ever sees it. Port of
@@ -181,7 +156,8 @@
   (let [binary (io/file (str path))]
     (when-not (.isFile binary)
       (throw (ex-info (str source " does not name a file: " binary) {:path (str binary)})))
-    (when-not (.canExecute binary)
+    ;; A jar is run by a JVM, so it never carries the bit and must not be asked for it.
+    (when-not (or (jar? binary) (.canExecute binary))
       (throw (ex-info (str source " is not executable: " binary) {:path (str binary)})))
     binary))
 
@@ -389,6 +365,49 @@
                             (accept [_ line] (println line)))]))]
     (mapv str result)))
 
+(def ^:private jvm-flags
+  "Port of UikaCli.JVM_FLAGS, itself a copy of the CLI jar's Launcher.flags, where the
+  measurements behind each flag live. Keep the two in sync (pinned by the sync test)."
+  ["-XX:+UseSerialGC" "-Xmn32m" "-XX:-UsePerfData" "-Xshare:auto"])
+
+(def ^:private small-run-flag "Port of UikaCli.SMALL_RUN_FLAG." "-XX:TieredStopAtLevel=1")
+(def ^:private large "Port of UikaCli.LARGE." 800)
+(def ^:private dump-bytes-per-artifact "Port of UikaCli.DUMP_BYTES_PER_ARTIFACT." 150)
+
+(def ^:private min-cli-java
+  "The class-file floor of the CLI jar. The four JVM plugins need no such check, because
+  their own classes have the same floor and would not have loaded. These two front ends
+  are Clojure source and run on anything."
+  17)
+
+(defn- launch-command
+  "What starts `binary`. Port of UikaCli.launchCommand; keep the two in sync. The jar
+  runs on THIS JVM, never the project's: that one is the API the application is checked
+  against and may be older than the jar needs.
+
+  The Java floor is checked here because the JVM's own answer is an
+  UnsupportedClassVersionError at exit 1, which is also the CLI's code for broken
+  references."
+  [binary before after]
+  (if-not (jar? binary)
+    [(str binary)]
+    (let [feature (.feature (Runtime/version))
+          windows (str/includes? (.toLowerCase ^String (System/getProperty "os.name" "")
+                                               java.util.Locale/ROOT)
+                                 "windows")
+          java (io/file (System/getProperty "java.home") "bin" (if windows "java.exe" "java"))
+          artifacts #(quot (.length (io/file (str %))) (long dump-bytes-per-artifact))]
+      (when (< feature (long min-cli-java))
+        (throw (ex-info (str "uika: the CLI jar needs Java " min-cli-java " or newer and this"
+                             " JVM is Java " feature ". Run on a newer JVM, or point"
+                             " :cli-path or UIKA_CLI_PATH at a native uika binary")
+                        {:feature feature})))
+      (-> [(str java)]
+          (into jvm-flags)
+          (into (when (< (+ (long (artifacts before)) (long (artifacts after))) (long large))
+                  [small-run-flag]))
+          (into ["-Duika.child=true" "-jar" (str binary)])))))
+
 (defn run-upgrade-check
   "Runs the binary and throws on a non-zero exit. Output is streamed line by line,
   not inherited: the caller may sit under a wrapper that captures stdout, the same
@@ -427,7 +446,8 @@
                                               missing)
                                          {:jfr jfr}))
                          :else entries))))
-        command (-> [(str binary) "upgrade-check" "--before" (str before) "--after" (str after)]
+        command (-> (launch-command binary before after)
+                    (into ["upgrade-check" "--before" (str before) "--after" (str after)])
                     ;; Blank drops out like the Java side's isBlank guard: a CI-templated
                     ;; :fail-on "" must run on the CLI default, not hand clap --fail-on ""
                     ;; and die with a usage error at exit 2.
