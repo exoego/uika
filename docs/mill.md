@@ -24,8 +24,9 @@ $ ./mill net.exoego.uika.mill.Uika/upgradeCheck \
 The dump command compiles as a side effect, so the PR-side dump needs no extra
 step.
 
-`upgradeCheck` fetches the CLI as the jar `net.exoego.uika:uika-cli:<version>`
-and runs it on the JVM that runs Mill. So it works wherever that JVM does,
+`upgradeCheck` fetches the CLI as the `jvm` jar of
+`net.exoego.uika:uika-cli:<version>` and runs it on the JVM that runs Mill. So it
+works wherever that JVM does,
 including platforms uika ships no native binary for.
 
 ## PR gate on GitHub Actions
