@@ -38,6 +38,10 @@ The dump task builds the module outputs by default. Pass
 `-PuikaBuildOutputs=false` for a resolution-only dump, which is what the
 [PR gate](#pr-gate-on-github-actions) uses on the base branch.
 
+`uikaUpgradeCheck` fetches the CLI as the jar `net.exoego.uika:uika-cli:<version>`
+and runs it on the JVM that runs Gradle. So it works wherever that JVM does,
+including platforms uika ships no native binary for.
+
 ## PR gate on GitHub Actions
 
 The `linkage-check` job dumps a baseline from the PR's base branch and the
@@ -205,10 +209,11 @@ resolved local paths.
   the same property, so recordings and text logs mix freely there. Only the
   property itself takes a bare text file: `-PuikaJfr` rejects one, because a
   test JVM told to record into it aborts at startup.
-- `UIKA_CLI_PATH` runs a binary you already have instead of resolving one, so a
-  build can run air-gapped or against a locally built CLI. It wins over the CLI
-  version, nothing is downloaded, and a value that is not an executable file
-  fails naming the variable.
+- `UIKA_CLI_PATH` runs a CLI you already have instead of resolving one, so a
+  build can run air-gapped or against a locally built CLI. It takes the jar or a
+  native binary. It wins over the CLI version, nothing is downloaded, and a value
+  that is not a file, or a native binary that is not executable, fails naming
+  the variable.
 
 ## Runtime load evidence (JFR)
 

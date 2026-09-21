@@ -18,18 +18,17 @@ import org.gradle.api.tasks.TaskAction;
 import org.gradle.work.DisableCachingByDefault;
 
 import java.io.File;
-import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 
 /**
- * Runs {@code uika upgrade-check} between two classpath dumps. The CLI binary is resolved as
- * {@code net.exoego.uika:uika-cli:<version>:<platform>@zip} through this build's repositories
+ * Runs {@code uika upgrade-check} between two classpath dumps. The CLI is the pure-Java jar,
+ * resolved as {@code net.exoego.uika:uika-cli:<version>@jar} through this build's repositories
  * (same philosophy as {@link ResolveClasspathTask}: uika needs no repository knowledge of its
  * own), so downloads land in the Gradle cache and the version lives in the build, where bots
- * bump it. {@link UikaPlugin} wires the detached configuration for the ZIP into
- * {@link #getCliZip()} lazily from {@link #getCliVersion()}, so the action never touches
+ * bump it. {@link UikaPlugin} wires the detached configuration for the jar into
+ * {@link #getCliJar()} lazily from {@link #getCliVersion()}, so the action never touches
  * {@code getProject()} and the task is configuration-cache compatible.
  */
 @DisableCachingByDefault(because = "Resolves the CLI through environment-specific Gradle repositories")
@@ -48,11 +47,11 @@ public abstract class UpgradeCheckTask extends DefaultTask {
     @Optional
     public abstract Property<String> getCliVersion();
 
-    /** The resolved CLI distribution ZIP (one file), wired from {@link #getCliVersion()}.
+    /** The resolved CLI jar (one file), wired from {@link #getCliVersion()}.
      * Internal, not InputFiles: with no CLI version the friendly error below must win, not
      * a fingerprinting failure on an absent provider. */
     @Internal
-    public abstract ConfigurableFileCollection getCliZip();
+    public abstract ConfigurableFileCollection getCliJar();
 
     /** When to fail the build: {@code never}, {@code reachable}, or {@code any} (default). */
     @Input
@@ -127,10 +126,6 @@ public abstract class UpgradeCheckTask extends DefaultTask {
     @Optional
     public abstract Property<String> getCliPath();
 
-    /** Where the binary is extracted, scoped by version and classifier below this directory. */
-    @Internal
-    public abstract DirectoryProperty getInstallDir();
-
     @TaskAction
     public void run() throws Exception {
         var binary = resolveBinary();
@@ -173,10 +168,9 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         }
     }
 
-    /// UIKA_CLI_PATH wins outright, so a build can point at a binary it already has without
-    /// the repositories, the version, or the platform classifier mattering at all. The
-    /// resolver path below is unchanged.
-    private Path resolveBinary() throws IOException {
+    /// UIKA_CLI_PATH wins outright, so a build can point at a jar or a native binary it
+    /// already has without the repositories or the version mattering at all.
+    private Path resolveBinary() {
         // The shared check, not a local copy: it also rejects a path that exists and is not
         // executable, which is how an artifact round trip usually breaks a hand-supplied
         // binary. Through the property rather than System.getenv, so the configuration
@@ -189,18 +183,11 @@ public abstract class UpgradeCheckTask extends DefaultTask {
             throw new GradleException(
                     "uika-cli version is unknown; pass -PuikaCliVersion=<version>");
         }
-        var version = getCliVersion().get();
-        String classifier = UikaCli.platformClassifier();
-
-        Set<File> files = getCliZip().getFiles();
+        Set<File> files = getCliJar().getFiles();
         if (files.isEmpty()) {
-            throw new GradleException("uika-cli " + version + " (" + classifier
-                    + ") did not resolve to a distribution ZIP");
+            throw new GradleException("uika-cli " + getCliVersion().get() + " did not resolve to a jar");
         }
-        var zip = files.iterator().next();
-
-        var installDir = getInstallDir().get().getAsFile().toPath()
-                .resolve(version + "-" + classifier);
-        return UikaCli.extractBinary(zip.toPath(), installDir);
+        // Run from where Gradle cached it: a jar needs no extraction and no executable bit.
+        return files.iterator().next().toPath();
     }
 }

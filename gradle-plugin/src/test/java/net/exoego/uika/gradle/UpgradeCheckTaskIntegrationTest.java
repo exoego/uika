@@ -1,5 +1,6 @@
 package net.exoego.uika.gradle;
 
+import net.exoego.uika.plugin.core.StubCli;
 import net.exoego.uika.plugin.core.UikaCli;
 import org.gradle.testkit.runner.BuildTask;
 import org.gradle.testkit.runner.GradleRunner;
@@ -16,8 +17,6 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -25,8 +24,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Exercises uikaUpgradeCheck against a fake Maven repository containing stub uika-cli ZIPs
- * whose "binary" is a shell script (skipped on Windows for that reason).
+ * Exercises uikaUpgradeCheck against a fake Maven repository containing stub uika-cli jars
+ * ({@link StubCli}).
  */
 final class UpgradeCheckTaskIntegrationTest {
     private static final String CLEAN_VERSION = "9.9.9";
@@ -46,32 +45,11 @@ final class UpgradeCheckTaskIntegrationTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        Assumptions.assumeFalse(
-                System.getProperty("os.name", "").toLowerCase().contains("windows"),
-                "stub binary is a shell script");
-
-        // The marker proves the stub ran; the echoed lines must reach the build output
-        // through the task's logger (inherited stdio dies with the daemon). The args file
-        // captures the full invocation so tests can assert the flags passed to the CLI
-        // ($3 is the --before path).
-        publishStubCli(CLEAN_VERSION, """
-                #!/bin/sh
-                echo ran > "$3.marker"
-                echo "$@" > "$3.args"
-                echo "${UIKA_JDK:-}" > "$3.env"
-                echo "uika-stub: dependency changes: 0"
-                exit 0
-                """);
-        publishStubCli(VIOLATION_VERSION, """
-                #!/bin/sh
-                echo "VIOLATION in stub.jar"
-                exit 1
-                """);
-        publishStubCli(CLI_ERROR_VERSION, """
-                #!/bin/sh
-                echo "error: cannot open before.json"
-                exit 2
-                """);
+        // The printed lines must reach the build output through the task's logger
+        // (inherited stdio dies with the daemon).
+        publishStubCli(CLEAN_VERSION, "uika-stub: dependency changes: 0", 0);
+        publishStubCli(VIOLATION_VERSION, "VIOLATION in stub.jar", 1);
+        publishStubCli(CLI_ERROR_VERSION, "error: cannot open before.json", 2);
 
         write(projectDir.resolve("settings.gradle.kts"), """
                 rootProject.name = "dummy-uika-consumer"
@@ -93,7 +71,7 @@ final class UpgradeCheckTaskIntegrationTest {
     }
 
     @Test
-    void resolvesExtractsAndRunsCli() throws Exception {
+    void resolvesAndRunsCli() throws Exception {
         var result = runner(CLEAN_VERSION).build();
 
         var task = result.task(":uikaUpgradeCheck");
@@ -107,6 +85,9 @@ final class UpgradeCheckTaskIntegrationTest {
         String args = Files.readString(Path.of(before + ".args"));
         assertTrue(args.contains("--fail-on any"),
                 () -> "expected default --fail-on any in CLI invocation: " + args);
+        // The jar must be told it is the child, or it starts a second JVM for its flags
+        // and the one Gradle started idles for the whole check.
+        assertEquals("true", Files.readString(Path.of(before + ".child")).strip());
     }
 
     @Test
@@ -618,7 +599,7 @@ final class UpgradeCheckTaskIntegrationTest {
                 () -> "the check ran before the dump: " + order);
     }
 
-    /// The check invocation is configuration-cache compatible: the CLI ZIP's detached
+    /// The check invocation is configuration-cache compatible: the CLI jar's detached
     /// configuration is wired at configuration time, and a reused entry still runs the CLI.
     @Test
     void configurationCacheReusesUpgradeCheck() throws Exception {
@@ -690,6 +671,9 @@ final class UpgradeCheckTaskIntegrationTest {
     /// which is why this asserts against a version that was never published.
     @Test
     void cliPathEnvironmentVariableSkipsResolution() throws Exception {
+        Assumptions.assumeFalse(
+                System.getProperty("os.name", "").toLowerCase().contains("windows"),
+                "this stub is a shell script, standing in for a native binary");
         var binary = projectDir.resolve("uika-stub.sh");
         Files.writeString(binary, """
                 #!/bin/sh
@@ -737,17 +721,10 @@ final class UpgradeCheckTaskIntegrationTest {
                 .forwardOutput();
     }
 
-    /** Lays out repoDir like a Maven repository: net/exoego/uika/uika-cli/<v>/uika-cli-<v>-<classifier>.zip. */
-    private void publishStubCli(String version, String script) throws IOException {
-        String classifier = UikaCli.platformClassifier();
-        var dir = repoDir.resolve("net/exoego/uika/uika-cli/" + version);
-        Files.createDirectories(dir);
-        var zip = dir.resolve("uika-cli-" + version + "-" + classifier + ".zip");
-        try (var out = new ZipOutputStream(Files.newOutputStream(zip))) {
-            out.putNextEntry(new ZipEntry("uika-" + version + "-" + classifier + "/uika"));
-            out.write(script.getBytes(StandardCharsets.UTF_8));
-            out.closeEntry();
-        }
+    /** Lays out repoDir like a Maven repository: net/exoego/uika/uika-cli/<v>/uika-cli-<v>.jar. */
+    private void publishStubCli(String version, String line, int exit) throws IOException {
+        StubCli.writeJar(repoDir.resolve("net/exoego/uika/uika-cli/" + version
+                + "/uika-cli-" + version + ".jar"), line, exit);
     }
 
     private static Path write(Path path, String text) throws IOException {
