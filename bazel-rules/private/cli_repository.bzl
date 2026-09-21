@@ -14,6 +14,10 @@ _CENTRAL = "https://repo1.maven.org/maven2"
 
 _JAR = "uika-cli.jar"
 
+# Kept in step with UikaCli.JAR_CLASSIFIER by hand. The jar is a classified artifact, not
+# the coordinate's main one, so the published file name carries this.
+_CLASSIFIER = "jvm"
+
 _BUILD = """\
 exports_files(["{file}"])
 
@@ -37,10 +41,11 @@ def _uika_cli_impl(repository_ctx):
         return
 
     version = repository_ctx.attr.version
-    url = "{}/net/exoego/uika/uika-cli/{}/uika-cli-{}.jar".format(
+    url = "{}/net/exoego/uika/uika-cli/{}/uika-cli-{}-{}.jar".format(
         repository_ctx.attr.repository,
         version,
         version,
+        _CLASSIFIER,
     )
 
     # A released archive carries the jar's checksum (private/checksums.bzl, stamped by
