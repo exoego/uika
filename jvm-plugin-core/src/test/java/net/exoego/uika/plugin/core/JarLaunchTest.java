@@ -3,21 +3,16 @@ package net.exoego.uika.plugin.core;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.jar.Attributes;
-import java.util.jar.JarEntry;
-import java.util.jar.JarOutputStream;
-import java.util.jar.Manifest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/// What `runUpgradeCheck` does with the CLI jar, read back from a stub jar that reports the
+/// What `runUpgradeCheck` does with the CLI jar, read back from a stub jar that records the
 /// JVM it was started in. A real child JVM, because the point is what reaches it: a flag
 /// this JVM rejects, or a relaunch the property failed to switch off, shows only there.
 final class JarLaunchTest {
@@ -28,21 +23,24 @@ final class JarLaunchTest {
     void theJarRunsOnThisJvmWithTheLauncherFlags() throws Exception {
         var before = Files.writeString(dir.resolve("before.json"), "{}");
         var after = Files.writeString(dir.resolve("after.json"), "{}");
+        var jar = dir.resolve("uika-cli-stub.jar");
+        StubCli.writeJar(jar, "stub line", 3);
         var output = new ArrayList<String>();
 
-        var exit = UikaCli.runUpgradeCheck(stubJar(), before, after, "any", null, null,
+        var exit = UikaCli.runUpgradeCheck(jar, before, after, "any", null, null,
                 UikaCli.JdkSource.current(), null, null, false, output::add);
 
         assertEquals(3, exit, String.join("\n", output));
-        assertEquals(List.of("upgrade-check", "--before", before.toString(), "--after", after.toString(),
-                "--fail-on", "any"), tagged(output, "arg:"));
-        var jvm = tagged(output, "jvm:");
+        assertEquals(List.of("stub line"), output);
+        assertEquals(String.join(" ", "upgrade-check", "--before", before.toString(),
+                "--after", after.toString(), "--fail-on", "any"), recorded(before, ".args"));
+        var jvm = Files.readAllLines(Path.of(before + ".jvm"));
         assertTrue(jvm.containsAll(UikaCli.JVM_FLAGS), jvm.toString());
         assertTrue(jvm.contains(UikaCli.SMALL_RUN_FLAG), jvm.toString());
         // Without it the jar starts a second JVM and this one idles for the whole run.
-        assertEquals(List.of("true"), tagged(output, "child:"));
-        assertEquals(List.of(Path.of(System.getProperty("java.home")).toRealPath().toString()),
-                tagged(output, "home:"));
+        assertEquals("true", recorded(before, ".child"));
+        assertEquals(Path.of(System.getProperty("java.home")).toRealPath().toString(),
+                recorded(before, ".home"));
     }
 
     /// C1 alone loses to C2 on a large scan, and the dumps' size is the only measure of the
@@ -66,42 +64,7 @@ final class JarLaunchTest {
                 UikaCli.launchCommand(binary, dir.resolve("before.json"), dir.resolve("after.json")));
     }
 
-    private static List<String> tagged(List<String> output, String tag) {
-        return output.stream().filter(line -> line.startsWith(tag))
-                .map(line -> line.substring(tag.length())).toList();
-    }
-
-    private Path stubJar() throws IOException {
-        var source = Files.writeString(dir.resolve("Stub.java"), """
-                import java.lang.management.ManagementFactory;
-                import java.nio.file.Path;
-
-                public class Stub {
-                    public static void main(String[] args) throws Exception {
-                        for (String flag : ManagementFactory.getRuntimeMXBean().getInputArguments()) {
-                            System.out.println("jvm:" + flag);
-                        }
-                        System.out.println("child:" + System.getProperty("uika.child"));
-                        System.out.println("home:" + Path.of(System.getProperty("java.home")).toRealPath());
-                        for (String arg : args) {
-                            System.out.println("arg:" + arg);
-                        }
-                        System.exit(3);
-                    }
-                }
-                """);
-        var rc = javax.tools.ToolProvider.getSystemJavaCompiler()
-                .run(null, null, null, "-d", dir.toString(), source.toString());
-        assertEquals(0, rc, "could not compile the stub");
-        var manifest = new Manifest();
-        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
-        manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "Stub");
-        var jar = dir.resolve("uika-cli-stub.jar");
-        try (var out = new JarOutputStream(Files.newOutputStream(jar), manifest)) {
-            out.putNextEntry(new JarEntry("Stub.class"));
-            out.write(Files.readAllBytes(dir.resolve("Stub.class")));
-            out.closeEntry();
-        }
-        return jar;
+    private static String recorded(Path before, String suffix) throws Exception {
+        return Files.readString(Path.of(before + suffix)).strip();
     }
 }
