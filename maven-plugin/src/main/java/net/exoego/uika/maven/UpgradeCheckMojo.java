@@ -24,7 +24,7 @@ import java.util.List;
 
 /**
  * Runs {@code uika upgrade-check} between two classpath dumps. The CLI is the pure-Java jar,
- * resolved as {@code net.exoego.uika:uika-cli:<version>} through this build's repositories, so
+ * resolved as {@code net.exoego.uika:uika-cli:jar:jvm:<version>} through this build's repositories, so
  * downloads land in the local repository and the version is bumped together with the plugin.
  * It runs from the local repository on the JVM that runs Maven.
  */
@@ -131,7 +131,8 @@ public final class UpgradeCheckMojo extends AbstractMojo {
         Path binary = UikaCli.binaryOverride();
         if (binary == null) {
             var request = new ArtifactRequest(
-                    new DefaultArtifact(UikaCli.GROUP, UikaCli.ARTIFACT, "jar", cliVersion),
+                    new DefaultArtifact(
+                            UikaCli.GROUP, UikaCli.ARTIFACT, UikaCli.JAR_CLASSIFIER, "jar", cliVersion),
                     remoteRepositories,
                     "uika");
             try {

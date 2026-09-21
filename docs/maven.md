@@ -30,8 +30,9 @@ $ mvn uika:upgrade-check \
 A dump also refers to build outputs, and this plugin cannot build them itself.
 Run a `compile` phase in the same invocation when they should be scanned.
 
-`uika:upgrade-check` fetches the CLI as the jar `net.exoego.uika:uika-cli:<version>`
-and runs it on the JVM that runs Maven. So it works wherever that JVM does,
+`uika:upgrade-check` fetches the CLI as the `jvm` jar of
+`net.exoego.uika:uika-cli:<version>` and runs it on the JVM that runs Maven. So
+it works wherever that JVM does,
 including platforms uika ships no native binary for.
 
 ## PR gate on GitHub Actions
