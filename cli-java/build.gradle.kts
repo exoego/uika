@@ -1,6 +1,7 @@
 plugins {
     java
     application
+    jacoco
 }
 
 repositories {
@@ -36,11 +37,24 @@ tasks.jar {
     }
 }
 
+// Coverage is opt-in, like the Gradle plugin's: `make java-cli-test` should not pay for it.
+val coverageEnabled = providers.gradleProperty("uikaCoverage").map(String::toBoolean).getOrElse(false)
+
 tasks.test {
     useJUnitPlatform()
+    extensions.getByType<JacocoTaskExtension>().isEnabled = coverageEnabled
     // Fixtures, goldens and scenarios.tsv are shared with the Rust crate. Tests address them
     // as tests/fixtures/x.jar: that string is interned as a violation's source, and the
     // goldens pin it byte for byte.
     workingDir = rootDir.resolve("../cli")
     maxHeapSize = "1g"
+}
+
+tasks.jacocoTestReport {
+    dependsOn(tasks.test)
+    reports {
+        xml.required = true
+        html.required = false
+        csv.required = false
+    }
 }
