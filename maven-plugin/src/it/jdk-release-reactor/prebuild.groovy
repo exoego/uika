@@ -16,12 +16,12 @@ def dir = new File(basedir, "repo/net/exoego/uika/uika-cli/$version")
 dir.mkdirs()
 new File(dir, "uika-cli-${version}.pom").text =
     "<project><modelVersion>4.0.0</modelVersion><groupId>net.exoego.uika</groupId>" +
-    "<artifactId>uika-cli</artifactId><version>$version</version></project>"
+    "<artifactId>uika-cli</artifactId><version>$version</version><packaging>pom</packaging></project>"
 
 // The stub leaves a marker next to the --before argument ($3) to prove it ran and records its
 // full argument list ($3.args) so verify.groovy can assert the flags passed to the CLI; the
 // echoed line must surface in the build log through the mojo's logger.
-StubCli.writeJar(new File(dir, "uika-cli-${version}.jar").toPath(), "uika-stub: dependency changes: 0", 0)
+StubCli.writeJar(new File(dir, "uika-cli-${version}-jvm.jar").toPath(), "uika-stub: dependency changes: 0", 0)
 
 new File(basedir, "before.json").text = "{}"
 new File(basedir, "after.json").text = "{}"
