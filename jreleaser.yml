@@ -42,7 +42,7 @@ release:
 
 files:
   artifacts:
-    # A path and not a glob: build/libs also holds the sources and javadoc jars.
+    # A path and not a glob: build/libs keeps the jars of other versions built earlier.
     - path: cli-java/build/libs/uika-cli-{{projectVersion}}.jar
   globs:
     - pattern: dist/native/*/uika-*.zip
