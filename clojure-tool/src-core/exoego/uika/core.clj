@@ -86,6 +86,11 @@
   "Port of UikaCli.ARTIFACT; keep the two in sync."
   "uika-cli")
 
+(def cli-jar-classifier
+  "Port of UikaCli.JAR_CLASSIFIER; keep the two in sync. The jar is a classified artifact,
+  not the coordinate's main one, so its file name carries this."
+  "jvm")
+
 (def min-release
   "Port of UikaCli.MIN_RELEASE; keep the two in sync. The lowest release the JDK API
   layer can serve, since ct.sym carries no older stubs."
@@ -98,6 +103,12 @@
       (some? (some-> (.getManifest jar) .getMainAttributes (.getValue "Main-Class"))))
     (catch java.io.IOException _ false)))
 
+(defn- central-url
+  [version]
+  (str "https://repo1.maven.org/maven2/"
+       (str/replace cli-group "." "/") "/" cli-artifact "/"
+       version "/" cli-artifact "-" version "-" cli-jar-classifier ".jar"))
+
 (defn fetch-cli
   "Downloads the CLI jar into the user cache, once per version. A plain download from
   Maven Central and not either front end's resolver, because this namespace is shared
@@ -108,10 +119,7 @@
         jar (io/file cache-dir (str cli-artifact "-" version ".jar"))]
     (when-not (.isFile jar)
       (.mkdirs cache-dir)
-      (let [url (or (env "UIKA_CLI_URL")
-                    (str "https://repo1.maven.org/maven2/"
-                         (str/replace cli-group "." "/") "/" cli-artifact "/"
-                         version "/" cli-artifact "-" version ".jar"))
+      (let [url (or (env "UIKA_CLI_URL") (central-url version))
             ;; temp + move, so a concurrent invocation never sees a partial jar, and
             ;; invocation-unique, so two cold-cache invocations never share a download.
             tmp (Files/createTempFile (.toPath cache-dir) "cli" ".tmp"
