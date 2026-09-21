@@ -130,6 +130,7 @@
            (some-> (scrape #"int MIN_RELEASE = (\d+);") parse-long)))
     (is (= @#'uika.core/cli-group (scrape #"String GROUP = \"([^\"]+)\";")))
     (is (= @#'uika.core/cli-artifact (scrape #"String ARTIFACT = \"([^\"]+)\";")))
+    (is (= @#'uika.core/cli-jar-classifier (scrape #"String JAR_CLASSIFIER = \"([^\"]+)\";")))
     ;; The JVM flags for the CLI jar. UikaCli's own copy is pinned to the jar's launcher
     ;; by LauncherFlagsSyncTest, so holding this port to UikaCli holds it to the launcher.
     (is (= @#'uika.core/jvm-flags
@@ -181,6 +182,12 @@
       (.put (.getMainAttributes manifest) java.util.jar.Attributes$Name/MAIN_CLASS main-class))
     (with-open [_ (java.util.jar.JarOutputStream. (io/output-stream file) manifest)])
     file))
+
+(deftest the-default-download-names-the-classified-jar
+  ;; No test downloads from Central, so the URL is the one thing between the ports being
+  ;; in sync and the fetch actually finding the file the release publishes.
+  (is (= "https://repo1.maven.org/maven2/net/exoego/uika/uika-cli/1.2.3/uika-cli-1.2.3-jvm.jar"
+         (#'uika.core/central-url "1.2.3"))))
 
 (deftest the-cli-jar-is-downloaded-once-and-a-zip-is-refused
   ;; user.home is redirected because the cache lives under it, and the URL knob is read
