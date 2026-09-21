@@ -74,16 +74,17 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   `providers.fileContents` so it is a tracked configuration input (a cached
   entry is never reused for a changed dump). If the file appears mid-build, the
   task fails with an explicit message (`getWiredAtConfiguration()`), never
-  silently skips fetching. The CLI-zip detached configuration is wired in
+  silently skips fetching. The CLI jar's detached configuration is wired in
   `afterEvaluate` from the final `cliVersion` (register action would miss
-  `configureEach` overrides); `platformClassifier()` is guarded there because
-  wiring runs on any task realization (IDE sync, `gradle tasks`) and an
-  unsupported platform must only fail the task action.
+  `configureEach` overrides).
 - `DumpFormat` changes propagate to all four plugins via source inclusion from
   `jvm-plugin-core/` — no core artifact to publish.
 - The upgrade-check tasks (`uikaUpgradeCheck`, Maven `uika:upgrade-check`)
-  resolve `net.exoego.uika:uika-cli:<version>:<platform>@zip` through the build's own
-  repositories and run it (`UikaCli` in core). The CLI version must keep
+  resolve the pure-Java CLI jar `net.exoego.uika:uika-cli:<version>` through the build's
+  own repositories and run it from the tool's cache (`UikaCli` in core). Nothing is
+  extracted and no platform is selected. The coordinate still carries the native ZIPs as
+  classifiers, but no integration reads them: they serve `UIKA_CLI_PATH` users and the
+  standalone CLI. The CLI version must keep
   defaulting to the plugin's own version — Implementation-Version manifest
   attribute in the Gradle/sbt jars, `${plugin.version}` in Maven — so one
   coordinate bump updates both; never hardcode a CLI version or URL.
@@ -281,13 +282,20 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   and exporting it for the whole run would defeat the resolver test in the `uika`
   group. The contract itself is pinned once in `jvm-plugin-core`'s
   `BinaryOverrideTest`, which the Gradle and Maven builds both run.
-- Their tests stub uika-cli with a shell-script ZIP in a file-based Maven repo
-  (Gradle TestKit + sbt scripted + Maven invoker; invoker needs `-U` because
-  target/it-repo caches resolution failures across runs, and its pre-build
-  hook script must be named `prebuild.groovy`). An edited stub is shadowed by
-  two caches, so the upgrade-check prebuild purges both: the clone's `target/`
-  (extractBinary skips an already-extracted binary) and the it-repo `uika-cli`
-  entry (Maven never re-fetches a cached release version).
+- Their tests stub uika-cli with a jar in a file-based Maven repo (Gradle TestKit + sbt
+  scripted + Maven invoker + Mill; invoker needs `-U` because target/it-repo caches
+  resolution failures across runs, and its pre-build hook script must be named
+  `prebuild.groovy`). The stub is ONE class, `StubCli` in `jvm-plugin-core/src/test/java`.
+  It packs its own class file into a runnable jar, so it must stay a single class file
+  that needs nothing but the JDK: no lambda, no nested class, no record. Each build
+  reaches it its own way. Gradle mounts the directory. The Maven invoker scripts get it
+  through `addTestClassPath`. Mill's test module mounts that one FILE, since the rest of
+  the directory is JUnit. An sbt scripted build's meta-build compiles the file named by
+  the `uika.stub.source` property from `scriptedLaunchOpts`. It records argv, `UIKA_JDK`
+  and the `uika.child` property next to the `--before` file. An edited stub is shadowed
+  by the it-repo `uika-cli` entry (Maven never re-fetches a cached release version),
+  which the upgrade-check prebuild purges. The `UIKA_CLI_PATH` tests keep shell stubs on
+  purpose: they stand in for a native binary.
 - Where each build's UNIT tests live, and why sbt has none. Gradle and Maven mount
   `jvm-plugin-core/src/test/java` alongside the main sources, so one copy of the shared
   logic's tests runs in both. Maven adds `maven-plugin/src/test/java` for `JdkReleases`,

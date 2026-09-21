@@ -6,18 +6,15 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
-import java.util.zip.ZipFile;
 
 /**
- * Locates and runs the uika CLI distributed as {@code net.exoego.uika:uika-cli:<version>} ZIPs
- * with per-platform classifiers. The build tool resolves the ZIP through its own dependency
- * machinery (repositories, mirrors, credentials, cache); this class only maps the platform to
- * a classifier, extracts the binary, and runs it.
+ * Runs the uika CLI, the pure-Java jar published as {@code net.exoego.uika:uika-cli:<version>}.
+ * The build tool resolves the jar through its own dependency machinery (repositories,
+ * mirrors, credentials, cache); this class starts it on the JVM running the build.
  */
 public final class UikaCli {
     private UikaCli() {}
@@ -25,43 +22,15 @@ public final class UikaCli {
     public static final String GROUP = "net.exoego.uika";
     public static final String ARTIFACT = "uika-cli";
 
-    /** Maven classifier of the published binary for the current platform, e.g. "macos-aarch64". */
-    public static String platformClassifier() {
-        return platformClassifier(System.getProperty("os.name", ""), System.getProperty("os.arch", ""));
-    }
-
-    static String platformClassifier(String osName, String osArch) {
-        var os = osName.toLowerCase(Locale.ROOT);
-        var arch = osArch.toLowerCase(Locale.ROOT);
-        var x64 = "amd64".equals(arch) || "x86_64".equals(arch);
-        var arm64 = "aarch64".equals(arch) || "arm64".equals(arch);
-        if (os.contains("linux") && x64) {
-            return "linux-x86_64";
-        }
-        if (os.contains("mac") && arm64) {
-            return "macos-aarch64";
-        }
-        if (os.contains("mac") && x64) {
-            return "macos-x86_64";
-        }
-        if (os.contains("windows") && x64) {
-            return "windows-x86_64";
-        }
-        throw new IllegalStateException("no uika-cli binary is published for " + os + "/" + arch
-                + " (available: linux-x86_64, macos-aarch64, macos-x86_64, windows-x86_64)");
-    }
-
-    /** The environment variable that points a build at a binary it already has. */
+    /** The environment variable that points a build at a CLI it already has. */
     public static final String CLI_PATH_ENV = "UIKA_CLI_PATH";
 
     /**
-     * The binary {@code UIKA_CLI_PATH} names, or null when it is unset or blank.
+     * The CLI {@code UIKA_CLI_PATH} names, the jar or a native binary, or null when it is
+     * unset or blank.
      *
      * <p>Short-circuits acquisition entirely, so a build can run air-gapped, against a
-     * locally built binary, or with a stub, none of which the resolver path allows. The
-     * Bazel rules and both Clojure front ends already honour it; without it the four
-     * resolver-based plugins had no way to name a binary at all, which is also why each of
-     * their test suites has to publish a stub ZIP into a file repository.
+     * locally built CLI, or with a stub, none of which the resolver path allows.
      *
      * <p>Blank counts as unset, because a CI {@code env:} interpolation of a variable that
      * is not set produces an empty string rather than nothing.
@@ -75,11 +44,10 @@ public final class UikaCli {
      * call {@link #binaryOverride()}: Mill's daemon environment is stale by the time a task
      * runs, and Gradle needs the variable to be a declared configuration input.
      *
-     * <p>Executable, not merely present. {@link #extractBinary} refuses to install a binary
-     * it could not mark executable, with a comment about dying "far away in ProcessBuilder
-     * with no cause in sight" -- and an artifact round trip is the likeliest way a
-     * hand-supplied binary loses the bit, since actions/upload-artifact does not preserve
-     * it.
+     * <p>A native binary has to be executable, not merely present. Handed on without the
+     * bit it dies far away in ProcessBuilder with no cause in sight, and an artifact round
+     * trip is the likeliest way a hand-supplied binary loses it, since
+     * actions/upload-artifact does not preserve it.
      */
     public static Path overrideFrom(String value) {
         if (value == null || value.isBlank()) {
@@ -94,81 +62,6 @@ public final class UikaCli {
             throw new IllegalStateException(CLI_PATH_ENV + " is not executable: " + binary);
         }
         return binary;
-    }
-
-    /**
-     * Extracts the uika binary from the distribution ZIP into {@code targetDir} and returns its
-     * path. Skips extraction when the binary is already there, so callers should scope
-     * {@code targetDir} by version and classifier.
-     */
-    public static Path extractBinary(Path zip, Path targetDir) throws IOException {
-        String binaryName = platformClassifier().startsWith("windows") ? "uika.exe" : "uika";
-        var binary = targetDir.resolve(binaryName);
-        if (Files.isRegularFile(binary)) {
-            return binary;
-        }
-        Files.createDirectories(targetDir);
-        try (var zipFile = new ZipFile(zip.toFile())) {
-            var entry = zipFile.stream()
-                    .filter(e -> e.getName().equals(binaryName)
-                            || e.getName().endsWith("/" + binaryName))
-                    .findFirst()
-                    .orElseThrow(() -> new IOException(binaryName + " not found in " + zip));
-            // Extract to a temp file and rename so a concurrent build never sees a partial binary.
-            Path tmp = Files.createTempFile(targetDir, "uika", ".tmp");
-            try {
-                try (var in = zipFile.getInputStream(entry)) {
-                    Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
-                }
-                // setExecutable reports failure by returning false (a CIFS or FUSE mount
-                // rejecting chmod). Installing a 0600 binary would pin the failure, since
-                // the fast path above then skips extraction forever and every later run
-                // dies far away in ProcessBuilder with no cause in sight.
-                if (!tmp.toFile().setExecutable(true, false) && !tmp.toFile().canExecute()) {
-                    throw new IOException("could not mark " + tmp + " executable");
-                }
-                moveIntoPlace(tmp, binary);
-            } catch (IOException | RuntimeException primary) {
-                // A truncated entry or a full disk would otherwise orphan a binary-sized
-                // .tmp on every retry, and nothing ever reaps the install directory. The
-                // cleanup must not replace the root cause, so its own failure rides along
-                // as a suppressed exception instead of propagating.
-                try {
-                    Files.deleteIfExists(tmp);
-                } catch (IOException cleanup) {
-                    primary.addSuppressed(cleanup);
-                }
-                throw primary;
-            }
-        }
-        return binary;
-    }
-
-    /**
-     * Installs the fully written temp file at the binary's path. Package-private for the
-     * collision test only: the losing side of the rename race cannot be staged through
-     * {@link #extractBinary}, whose fast path returns as soon as the winner's binary exists.
-     */
-    static void moveIntoPlace(Path tmp, Path binary) throws IOException {
-        // ATOMIC_MOVE, because a plain REPLACE_EXISTING move unlinks the installed
-        // binary before renaming over it: a concurrent build in that gap sees
-        // ENOENT, or a sharing violation on Windows while the binary runs. The
-        // temp file lives next to the binary, so the rename cannot cross a file
-        // store.
-        try {
-            Files.move(tmp, binary,
-                    StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        } catch (IOException lostRace) {
-            // Whether ATOMIC_MOVE replaces an existing target is implementation-specific
-            // (Files.move's javadoc), so two builds racing past the fast path can land
-            // the loser here just after the winner installed the binary. The winner's
-            // binary came from the same zip entry, so reuse it and drop the loser's
-            // copy; with no binary in place the failure is real.
-            if (!Files.isRegularFile(binary)) {
-                throw lostRace;
-            }
-            Files.deleteIfExists(tmp);
-        }
     }
 
     /**
