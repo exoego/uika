@@ -305,7 +305,7 @@ public class UikaPlugin implements Plugin<Project> {
                 return;
             }
             var notation = UikaCli.GROUP + ":" + UikaCli.ARTIFACT + ":"
-                    + task.getCliVersion().get() + "@jar";
+                    + task.getCliVersion().get() + ":" + UikaCli.JAR_CLASSIFIER + "@jar";
             task.getCliJar().from(detachedFor(root, notation));
         }));
 

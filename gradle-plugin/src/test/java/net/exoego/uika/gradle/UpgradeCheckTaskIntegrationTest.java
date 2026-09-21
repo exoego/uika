@@ -721,10 +721,10 @@ final class UpgradeCheckTaskIntegrationTest {
                 .forwardOutput();
     }
 
-    /** Lays out repoDir like a Maven repository: net/exoego/uika/uika-cli/<v>/uika-cli-<v>.jar. */
+    /** Lays out repoDir like a Maven repository: net/exoego/uika/uika-cli/<v>/uika-cli-<v>-jvm.jar. */
     private void publishStubCli(String version, String line, int exit) throws IOException {
         StubCli.writeJar(repoDir.resolve("net/exoego/uika/uika-cli/" + version
-                + "/uika-cli-" + version + ".jar"), line, exit);
+                + "/uika-cli-" + version + "-" + UikaCli.JAR_CLASSIFIER + ".jar"), line, exit);
     }
 
     private static Path write(Path path, String text) throws IOException {

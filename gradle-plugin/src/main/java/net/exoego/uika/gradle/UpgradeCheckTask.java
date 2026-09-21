@@ -24,7 +24,7 @@ import java.util.Set;
 
 /**
  * Runs {@code uika upgrade-check} between two classpath dumps. The CLI is the pure-Java jar,
- * resolved as {@code net.exoego.uika:uika-cli:<version>@jar} through this build's repositories
+ * resolved as {@code net.exoego.uika:uika-cli:<version>:jvm@jar} through this build's repositories
  * (same philosophy as {@link ResolveClasspathTask}: uika needs no repository knowledge of its
  * own), so downloads land in the Gradle cache and the version lives in the build, where bots
  * bump it. {@link UikaPlugin} wires the detached configuration for the jar into
