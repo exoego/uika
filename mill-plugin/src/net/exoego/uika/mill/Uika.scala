@@ -60,7 +60,7 @@ object Uika extends ExternalModule {
 
   /**
    * Runs `uika upgrade-check` over a before/after pair of dumps, fetching the CLI itself as
-   * `net.exoego.uika:uika-cli:<version>:<platform>@zip` through Mill's own resolution.
+   * the jar `net.exoego.uika:uika-cli:<version>` through Mill's own resolution.
    *
    * @param jdkRelease resolve JDK hierarchy escapes against this API release; 0 disables the
    *                   layer and a negative value, the default, derives the lowest release any
@@ -92,8 +92,7 @@ object Uika extends ExternalModule {
       // bare switch.
       mergedClasspath: mainargs.Flag = mainargs.Flag(false)
   // persistent so `Task.dest` survives: Mill wipes a non-persistent dest before every run,
-  // which would defeat both UikaCli.extractBinary's skip-if-present and JfrEvidence.rewrite's
-  // stale-conversion sweep. The other three plugins extract into their build directory.
+  // which would defeat JfrEvidence.rewrite's stale-conversion sweep.
   ) = Task.Command(exclusive = true, persistent = true) {
     // Task.env, never System.getenv: the latter is the DAEMON's environment, captured when
     // the server started, so `UIKA_CLI_PATH=... ./mill` would be ignored against a warm
@@ -110,7 +109,7 @@ object Uika extends ExternalModule {
     }
     val workspace = Task.ctx().workspace
     val log: java.util.function.Consumer[String] = line => Task.log.info(line)
-    // The CLI ZIP goes through a build module's own resolver, so custom `repositories`,
+    // The CLI jar goes through a build module's own resolver, so custom `repositories`,
     // mirrors and credentials are the build's. Any module will do: repositories are declared
     // on a shared trait in practice. Failing rather than falling back to this ExternalModule's
     // own resolver keeps that promise -- a `defaultResolver()` call here would be lifted into
@@ -121,7 +120,7 @@ object Uika extends ExternalModule {
         case Some(m) => ev.execute(Seq(m.defaultResolver)).values.get.head
         case None => Task.fail("uika: no JavaModule found in this build")
       }
-      extractCli(resolver, version, Task.dest)
+      resolveCli(resolver, version)
     }
     // Recordings are converted here, never handed to the CLI: the CLI is JVM-free and must
     // not read binary JFR. --jfr falls back to UIKA_JFR, the variable that made the tests
@@ -178,27 +177,21 @@ object Uika extends ExternalModule {
   }
 
   /**
-   * Extracts the platform's uika binary, resolving the ZIP through Mill's coursier setup so
-   * mirrors, credentials and the cache are the build's own. `artifactTypes` has to name zip:
-   * coursier's default set is jar-shaped and would drop the distribution entirely.
+   * The pure-Java CLI jar, resolved through Mill's coursier setup so mirrors, credentials and
+   * the cache are the build's own. It runs from that cache on the JVM running Mill.
    */
-  private def extractCli(
+  private def resolveCli(
       resolver: CoursierModule.Resolver,
-      version: String,
-      dest: os.Path
+      version: String
   )(using mill.api.TaskCtx): java.nio.file.Path = {
-    val classifier = UikaCli.platformClassifier()
-    // Intransitive, as in all three sibling plugins: the distribution is a native binary,
-    // and anything the POM ever gains would be downloaded and could win the zip pick below.
-    val dep = Dep.parse(
-      s"${UikaCli.GROUP}:${UikaCli.ARTIFACT}:$version;classifier=$classifier;type=zip"
-    ).exclude("*" -> "*")
-    val resolved =
-      resolver.classpath(Seq(dep), artifactTypes = Some(Set(coursier.Type("zip")))).map(_.path)
-    val zip = resolved.find(_.last.endsWith(".zip")).getOrElse(
-      Task.fail(s"uika-cli zip not found among ${resolved.mkString(", ")}")
-    )
-    UikaCli.extractBinary(zip.toNIO, (dest / s"cli-$version-$classifier").toNIO)
+    // Intransitive, as in all three sibling plugins: the jar has no dependencies, and
+    // anything the POM ever gains would be downloaded and could win the pick below.
+    val dep = Dep.parse(s"${UikaCli.GROUP}:${UikaCli.ARTIFACT}:$version").exclude("*" -> "*")
+    val resolved = resolver.classpath(Seq(dep)).map(_.path)
+    resolved
+      .find(p => p.last.startsWith(UikaCli.ARTIFACT) && p.last.endsWith(".jar"))
+      .getOrElse(Task.fail(s"uika-cli jar not found among ${resolved.mkString(", ")}"))
+      .toNIO
   }
 
   /**

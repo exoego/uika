@@ -5,10 +5,9 @@ import mill.api.{Discover, Evaluator, ExecResult}
 import mill.javalib.*
 import mill.scalalib.ScalaModule
 import mill.testkit.{TestRootModule, UnitTester}
-import net.exoego.uika.plugin.core.UikaCli
+import net.exoego.uika.plugin.core.{StubCli, UikaCli}
 import utest.*
 
-import java.util.zip.{ZipEntry, ZipOutputStream}
 import scala.util.Using
 import scala.jdk.CollectionConverters.*
 
@@ -87,25 +86,16 @@ object UikaTests extends TestSuite {
   private def writeJava(dir: os.Path, name: String, body: String): Unit =
     os.write.over(dir / "src" / "example" / s"$name.java", body, createFolders = true)
 
-  /** Publishes a stub uika-cli distribution: a shell script the plugin extracts and runs. */
-  private def publishStubCli(repo: os.Path, version: String, script: String): Unit = {
+  /** Publishes a stub uika-cli jar (the core suite's StubCli) that exits with `exit`. */
+  private def publishStubCli(repo: os.Path, version: String, exit: Int): Unit = {
     val dir = repo / "net" / "exoego" / "uika" / "uika-cli" / version
     os.makeDir.all(dir)
     os.write.over(
       dir / s"uika-cli-$version.pom",
       s"""<project><modelVersion>4.0.0</modelVersion><groupId>net.exoego.uika</groupId>""" +
-        s"""<artifactId>uika-cli</artifactId><version>$version</version>""" +
-        s"""<packaging>pom</packaging></project>"""
+        s"""<artifactId>uika-cli</artifactId><version>$version</version></project>"""
     )
-    val classifier = UikaCli.platformClassifier()
-    val out = new ZipOutputStream(
-      java.nio.file.Files.newOutputStream((dir / s"uika-cli-$version-$classifier.zip").toNIO)
-    )
-    try {
-      out.putNextEntry(new ZipEntry(s"uika-$version-$classifier/uika"))
-      out.write(script.getBytes("UTF-8"))
-      out.closeEntry()
-    } finally out.close()
+    StubCli.writeJar((dir / s"uika-cli-$version.jar").toNIO, "uika-stub: dependency changes: 0", exit)
   }
 
   def tests: Tests = Tests {
@@ -167,16 +157,12 @@ object UikaTests extends TestSuite {
     test("upgrade-check forwards every flag to the CLI and reports its exit code") {
       val repo = os.temp.dir(prefix = "uika-stub-repo")
       // The stub records its full argument list next to the --before argument so the flags can
-      // be asserted, and echoes a line that must surface through Mill's logger.
-      publishStubCli(
-        repo,
-        "9.9.9",
-        "#!/bin/sh\necho \"$@\" > \"$3.args\"\necho \"uika-stub: dependency changes: 0\"\nexit 0\n"
-      )
-      publishStubCli(repo, "9.9.8", "#!/bin/sh\nexit 1\n")
+      // be asserted, and prints a line that must surface through Mill's logger.
+      publishStubCli(repo, "9.9.9", 0)
+      publishStubCli(repo, "9.9.8", 1)
       // Exit 2 is the CLI could not RUN -- a flag it rejected, a dump it could not open --
       // and it must not read like a finding.
-      publishStubCli(repo, "9.9.7", "#!/bin/sh\nexit 2\n")
+      publishStubCli(repo, "9.9.7", 2)
 
       Using.resource(UnitTester(
         stubCliBuild,
@@ -204,6 +190,10 @@ object UikaTests extends TestSuite {
         draftExcludeFile = draft.toString,
         cliVersion = "9.9.9"
       )))
+
+      // Without the property the real jar starts a second JVM for its flags, and the one
+      // this command started idles for the whole check.
+      assert(os.read(os.Path(s"$before.child")).trim == "true")
 
       val args = os.read(os.Path(s"$before.args"))
       assert(args.contains("--fail-on reachable"))
@@ -267,7 +257,7 @@ object UikaTests extends TestSuite {
 
     test("jdk-release is derived from the lowest module target, not the build JVM") {
       val repo = os.temp.dir(prefix = "uika-stub-repo")
-      publishStubCli(repo, "9.9.9", "#!/bin/sh\necho \"$@\" > \"$3.args\"\nexit 0\n")
+      publishStubCli(repo, "9.9.9", 0)
       Using.resource(UnitTester(
         stubCliBuild,
         null,
@@ -365,7 +355,7 @@ object UikaTests extends TestSuite {
       // module pinning `-release` must reach the flag. Over-claiming is the silent direction:
       // without this the minimum came from the Java siblings or the build JVM.
       val repo = os.temp.dir(prefix = "uika-stub-repo")
-      publishStubCli(repo, "9.9.9", "#!/bin/sh\necho \"$@\" > \"$3.args\"\nexit 0\n")
+      publishStubCli(repo, "9.9.9", 0)
       Using.resource(UnitTester(
         mixedLangBuild,
         null,
@@ -449,7 +439,7 @@ object UikaTests extends TestSuite {
       // variable that made the tests record is read back by the check, so a CI recipe
       // sets UIKA_JFR once. --jfr stays the explicit override.
       val repo = os.temp.dir(prefix = "uika-stub-repo")
-      publishStubCli(repo, "9.9.9", "#!/bin/sh\necho \"$@\" > \"$3.args\"\nexit 0\n")
+      publishStubCli(repo, "9.9.9", 0)
       val jfrDir = os.temp.dir(prefix = "uika-jfr-consume")
       Using.resource(UnitTester(
         stubCliBuild,
