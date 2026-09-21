@@ -14,9 +14,9 @@ import java.util.List;
 /**
  * Runs {@code uika upgrade-check} over a before/after pair of dumps.
  *
- * <p>The binary itself comes from the {@code @uika_cli} repository, so Bazel's repository
- * cache holds it and a second run needs no network. {@code UIKA_CLI_PATH} still overrides
- * it, which is what the integration test uses to run the freshly built debug binary.
+ * <p>The CLI jar comes from the {@code @uika_cli} repository, so Bazel's repository cache
+ * holds it and a second run needs no network. {@code UIKA_CLI_PATH} still overrides it,
+ * which is what the integration test uses to run the freshly built jar.
  */
 public final class UpgradeCheckMain {
     private UpgradeCheckMain() {}
@@ -178,9 +178,9 @@ public final class UpgradeCheckMain {
     }
 
     /**
-     * The uika binary. UIKA_CLI_PATH wins over the downloaded one so a build can point at a
-     * binary it already has, which is also how this repository tests against its own
-     * freshly built CLI.
+     * The uika CLI, a jar unless UIKA_CLI_PATH names a native binary. UIKA_CLI_PATH wins over
+     * the downloaded one so a build can point at a CLI it already has, which is also how
+     * this repository tests against its own freshly built jar.
      *
      * <p>Through the shared {@link UikaCli#binaryOverride()} rather than a local getenv, so
      * a value that is not a file, or a file that lost its executable bit on an artifact
