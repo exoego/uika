@@ -25,8 +25,9 @@ subproject contributes. Only `uikaDumpClasspath` writes a file, and it is
 defined for the build rather than per project, so every spelling of it runs the
 one whole-build merge.
 
-`uikaUpgradeCheck` fetches the CLI as the jar `net.exoego.uika:uika-cli:<version>`
-and runs it on the JVM that runs sbt. So it works wherever that JVM does,
+`uikaUpgradeCheck` fetches the CLI as the `jvm` jar of
+`net.exoego.uika:uika-cli:<version>` and runs it on the JVM that runs sbt. So it
+works wherever that JVM does,
 including platforms uika ships no native binary for.
 
 ## PR gate on GitHub Actions
