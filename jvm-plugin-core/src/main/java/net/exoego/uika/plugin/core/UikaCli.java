@@ -12,7 +12,8 @@ import java.util.Locale;
 import java.util.function.Consumer;
 
 /**
- * Runs the uika CLI, the pure-Java jar published as {@code net.exoego.uika:uika-cli:<version>}.
+ * Runs the uika CLI, the pure-Java jar published as the {@code jvm} classifier of
+ * {@code net.exoego.uika:uika-cli:<version>}.
  * The build tool resolves the jar through its own dependency machinery (repositories,
  * mirrors, credentials, cache); this class starts it on the JVM running the build.
  */
@@ -21,6 +22,13 @@ public final class UikaCli {
 
     public static final String GROUP = "net.exoego.uika";
     public static final String ARTIFACT = "uika-cli";
+
+    /**
+     * Maven classifier of the pure-Java CLI jar. The jar is not the coordinate's main
+     * artifact: the POM keeps {@code pom} packaging so Maven Central demands no sources or
+     * javadoc jar for it, which would be eight more files on every release.
+     */
+    public static final String JAR_CLASSIFIER = "jvm";
 
     /** The environment variable that points a build at a CLI it already has. */
     public static final String CLI_PATH_ENV = "UIKA_CLI_PATH";
