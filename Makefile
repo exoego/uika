@@ -1,8 +1,8 @@
 .PHONY: help build check test fmt fmt-check clean probe placeholder-check \
 	rewrite rewrite-check coverage \
 	cargo-build cargo-release cargo-test cargo-clippy cargo-fmt cargo-fmt-check \
-	cargo-coverage gradle-coverage maven-coverage clojure-coverage lein-coverage \
-	sbt-coverage mill-coverage bazel-coverage jacoco-tools \
+	cargo-coverage java-cli-coverage gradle-coverage maven-coverage clojure-coverage \
+	lein-coverage sbt-coverage mill-coverage bazel-coverage jacoco-tools \
 	gradle-build gradle-check gradle-test gradle-clean \
 	java-cli-build java-cli-test java-cli-clean java-cli-difftest \
 	sbt-compile sbt-scripted sbt-clean \
@@ -101,7 +101,7 @@ check: placeholder-check rewrite-check cargo-fmt-check cargo-clippy cargo-test j
 test: rewrite cargo-test java-cli-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
 # Every front end; ci.yml uploads one flag per target.
-coverage: cargo-coverage gradle-coverage maven-coverage clojure-coverage lein-coverage \
+coverage: cargo-coverage java-cli-coverage gradle-coverage maven-coverage clojure-coverage lein-coverage \
 	sbt-coverage mill-coverage bazel-coverage
 
 jacoco-tools:
@@ -171,6 +171,9 @@ java-cli-test:
 
 java-cli-clean:
 	$(GRADLE) -p $(JAVA_CLI_DIR) clean
+
+java-cli-coverage:
+	$(GRADLE) -p $(JAVA_CLI_DIR) jacocoTestReport -PuikaCoverage=true
 
 # Runs both CLIs over every jar in the local Gradle cache and compares stdout and exit
 # codes. Not hermetic, so not part of check. MODE is dump, diff or check.
