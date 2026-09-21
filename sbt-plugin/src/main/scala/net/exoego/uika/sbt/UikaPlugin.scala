@@ -61,8 +61,8 @@ object UikaPlugin extends AutoPlugin {
       val lm = (LocalRootProject / dependencyResolution).value
       val uikaDir = (LocalRootProject / target).value / "uika"
       // UIKA_CLI_PATH wins outright, so an air-gapped build or one pointed at a locally
-      // built binary never reaches the resolver, the version, or the classifier. Read above
-      // the version check on purpose: with an override there is no version to want.
+      // built CLI never reaches the resolver or the version. Read above the version check
+      // on purpose: with an override there is no version to want.
       val binary = Option(UikaCli.binaryOverride()) match {
         case Some(path) => path
         case None =>
@@ -70,17 +70,15 @@ object UikaPlugin extends AutoPlugin {
             case "" => sys.error("""uika-cli version is unknown; set uikaCliVersion := "<version>"""")
             case v  => v
           }
-          val classifier = UikaCli.platformClassifier()
-          val module = ModuleID(UikaCli.GROUP, UikaCli.ARTIFACT, version)
-            .intransitive()
-            .artifacts(Artifact(UikaCli.ARTIFACT, "zip", "zip", classifier))
+          // The pure-Java CLI jar, which UikaCli starts on the JVM running sbt.
+          val module = ModuleID(UikaCli.GROUP, UikaCli.ARTIFACT, version).intransitive()
           val files = lm
             .retrieve(lm.wrapDependencyInModule(module), uikaDir / "cli-retrieve", log)
             .fold(warning => throw warning.resolveException, identity)
-          val zip = files
-            .find(_.getName.endsWith(".zip"))
-            .getOrElse(sys.error(s"uika-cli zip not found among ${files.mkString(", ")}"))
-          UikaCli.extractBinary(zip.toPath, (uikaDir / s"cli-$version-$classifier").toPath)
+          files
+            .find(f => f.getName.startsWith(UikaCli.ARTIFACT) && f.getName.endsWith(".jar"))
+            .getOrElse(sys.error(s"uika-cli jar not found among ${files.mkString(", ")}"))
+            .toPath
       }
       val excludeFiles = (LocalRootProject / uikaExcludeFiles).value.map(_.toPath).asJava
       val jdk = UikaCli.JdkSource.current()
