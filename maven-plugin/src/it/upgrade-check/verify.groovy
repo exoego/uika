@@ -1,5 +1,10 @@
 def marker = new File(basedir, "before.json.marker")
-assert marker.isFile() : "stub uika binary did not run: $marker"
+assert marker.isFile() : "stub uika-cli jar did not run: $marker"
+
+// The jar must be told it is the child, or it starts a second JVM for its flags and the one
+// the mojo started idles for the whole check.
+assert new File(basedir, "before.json.child").text.trim() == "true" :
+    "the CLI jar was not started with -Duika.child=true"
 
 // The <failOn>reachable</failOn> in the POM must reach the CLI as --fail-on reachable.
 def args = new File(basedir, "before.json.args")
