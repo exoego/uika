@@ -1,8 +1,8 @@
 # Publishing
 
 Everything under the `net.exoego.uika` group is published to Maven Central in
-one shot when a GitHub release is published: the CLI (`uika-cli`, whose main
-artifact is the pure-Java jar and whose classifiers `linux-x86_64`,
+one shot when a GitHub release is published: the CLI (`uika-cli`, whose
+classifier `jvm` is the pure-Java jar and whose classifiers `linux-x86_64`,
 `macos-aarch64`, `macos-x86_64`, `windows-x86_64` are the native ZIPs), the
 Gradle plugin, the sbt plugin, the Maven plugin, the Mill plugin, the Clojure CLI
 tool, and the Leiningen plugin.
@@ -12,6 +12,13 @@ publication. That is `cli-java/`, which attaches the ZIPs it finds under
 `dist/native/<classifier>/`. It takes all four or none, and fails on a partial
 set, because a Central deployment cannot be amended once one platform turns out
 to be missing.
+
+The jar is a classified artifact and the POM keeps `pom` packaging, on purpose.
+Central [requires](https://central.sonatype.org/publish/requirements/) a sources
+and a javadoc jar for every packaging other than `pom`, and each artifact is
+four files. A main jar would cost twelve files per release, and this one costs
+four. Nothing in the jar is public API, so nobody needs it as a plain
+dependency. If it ever gains one, that is the time to pay for jar packaging.
 
 The Bazel rules do not go to Maven Central. They ship as
 `uika-bazel-<version>.tar.gz` attached to the same GitHub release, because a
@@ -53,9 +60,7 @@ One `vX.Y.Z` tag is one deployment carrying eight components (`uika-cli`,
 `lein-uika`).
 That was 124 files and about 3 MB per tag before the `uika-cli` jar
 (`clojure-uika` added 16: four artifacts, each with md5, sha1, and asc). The jar
-adds 12 files and about 0.6 MB: the jar, its sources, and an empty javadoc jar.
-It publishes no Gradle module metadata, which would be four more files for a jar
-with no dependencies. So for uika alone Release Count is
+adds 4 files and about 0.4 MB. So for uika alone Release Count is
 the binding metric, not file count or size. Riding the shared deployment is
 also why publishing the Clojure CLI tool costs no extra release against that
 metric. July 2026 shipped eight tags and tripped the release-count limit.
@@ -108,7 +113,7 @@ The public key must be published to `keyserver.ubuntu.com` so Central can verify
 ## Local verification
 
 ```console
-$ make cli-publish-local UIKA_VERSION=0.1.0      # publish the CLI jar to ~/.m2, with the ZIPs under dist/native/<classifier>/ when all four are there
+$ make cli-publish-local UIKA_VERSION=0.1.0      # publish the CLI jar (classifier jvm) to ~/.m2, with the ZIPs under dist/native/<classifier>/ when all four are there
 $ make stage-all UIKA_VERSION=0.1.0              # stage all Maven artifacts locally, plus the Bazel tarball under dist/bazel/
 $ mise exec -- jreleaser deploy --dry-run        # needs JRELEASER_* env vars. Validates POMs and signs without uploading
 ```

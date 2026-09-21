@@ -28,22 +28,6 @@ application {
     mainClass = "net.exoego.uika.cli.Main"
 }
 
-// Maven Central requires sources and javadoc jars alongside every jar artifact.
-java {
-    withSourcesJar()
-    withJavadocJar()
-}
-
-// The javadoc jar ships empty, like the Gradle plugin's. Nothing here is public API, and
-// the Maven Central quota is shared across the whole net.exoego namespace. See PUBLISHING.md.
-tasks.withType<Javadoc>().configureEach {
-    setSource(files())
-}
-
-tasks.named<Jar>("javadocJar") {
-    exclude("**")
-}
-
 tasks.jar {
     manifest {
         attributes(
@@ -88,17 +72,18 @@ tasks.withType<AbstractPublishToMaven>().configureEach {
     }
 }
 
-// The jar has no dependencies, so module metadata would say nothing the POM does not, and
-// it would cost four more files per release against the Central Portal limits.
-tasks.withType<GenerateModuleMetadata>().configureEach {
-    enabled = false
-}
-
 publishing {
     publications {
         create<MavenPublication>("uikaCli") {
             artifactId = "uika-cli"
-            from(components["java"])
+            // The jar is a classified artifact like the ZIPs, not the main one, so the POM
+            // can keep "pom" packaging. Central demands a sources and a javadoc jar for any
+            // other packaging, and each would be four more files per release: twelve for a
+            // main jar against four for this one. Nothing in the jar is public API, so
+            // nobody needs it as a plain dependency. See PUBLISHING.md.
+            artifact(tasks.jar) {
+                classifier = "jvm"
+            }
             stagedNativeZips.forEach { (classifier, file) ->
                 artifact(file) {
                     extension = "zip"
@@ -106,8 +91,9 @@ publishing {
                 }
             }
             pom {
+                packaging = "pom"
                 name.set("uika-cli")
-                description.set("uika command-line interface: a runnable jar, plus native binaries as classified ZIPs")
+                description.set("uika command-line interface: a runnable jar (classifier jvm), plus native binaries as classified ZIPs")
                 url.set("https://github.com/exoego/uika")
                 licenses {
                     license {

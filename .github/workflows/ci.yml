@@ -204,15 +204,18 @@ jobs:
         run: |
           set -euo pipefail
           dir=cli-java/build/staging-deploy/net/exoego/uika/uika-cli/0.0.0-ci
-          for f in uika-cli-0.0.0-ci.jar uika-cli-0.0.0-ci-sources.jar \
-                   uika-cli-0.0.0-ci-javadoc.jar uika-cli-0.0.0-ci.pom \
+          for f in uika-cli-0.0.0-ci-jvm.jar uika-cli-0.0.0-ci.pom \
                    uika-cli-0.0.0-ci-linux-x86_64.zip uika-cli-0.0.0-ci-macos-aarch64.zip \
                    uika-cli-0.0.0-ci-macos-x86_64.zip uika-cli-0.0.0-ci-windows-x86_64.zip; do
             test -s "$dir/$f" && test -s "$dir/$f.sha1"
           done
-          # Four files per release that say nothing the POM does not. See PUBLISHING.md.
+          # "pom" packaging is what keeps Central from demanding a sources and a javadoc jar,
+          # eight more files per release. A main jar or module metadata appearing here means
+          # the publication changed shape. See PUBLISHING.md.
+          grep -q "<packaging>pom</packaging>" "$dir/uika-cli-0.0.0-ci.pom"
+          test ! -e "$dir/uika-cli-0.0.0-ci.jar"
           test ! -e "$dir/uika-cli-0.0.0-ci.module"
-          test "$(mise exec -- java -jar "$dir/uika-cli-0.0.0-ci.jar" --version)" = "uika 0.0.0-ci"
+          test "$(mise exec -- java -jar "$dir/uika-cli-0.0.0-ci-jvm.jar" --version)" = "uika 0.0.0-ci"
 
       - name: Stage the Bazel module
         run: make bazel-stage UIKA_VERSION=0.0.0-ci
