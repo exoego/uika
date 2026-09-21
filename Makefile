@@ -4,6 +4,7 @@
 	cargo-coverage gradle-coverage maven-coverage clojure-coverage lein-coverage \
 	sbt-coverage mill-coverage bazel-coverage jacoco-tools \
 	gradle-build gradle-check gradle-test gradle-clean \
+	java-cli-build java-cli-test java-cli-clean java-cli-difftest \
 	sbt-compile sbt-scripted sbt-clean \
 	maven-verify maven-clean \
 	mill-compile mill-test mill-clean \
@@ -25,6 +26,7 @@ LEIN ?= mise exec -- lein
 # Bazelisk, not bazel: bazel-rules/it/test-workspace/.bazelversion pins the release.
 BAZELISK ?= mise exec -- bazelisk
 GRADLE_PLUGIN_DIR ?= gradle-plugin
+JAVA_CLI_DIR ?= cli-java
 SBT_PLUGIN_DIR ?= sbt-plugin
 MAVEN_PLUGIN_DIR ?= maven-plugin
 MILL_PLUGIN_DIR ?= mill-plugin
@@ -67,6 +69,8 @@ help:
 		'  make cargo-release' \
 		'  make probe        Answer-check fixture verdicts against a real JVM' \
 		'  make rewrite      Apply OpenRewrite recipes to Java sources (rewrite-check verifies only)' \
+		'  make java-cli-test' \
+		'  make java-cli-difftest MODE=check   Compare the Java CLI with the Rust CLI on local jars' \
 		'  make gradle-check' \
 		'  make sbt-scripted' \
 		'  make maven-verify' \
@@ -92,9 +96,9 @@ placeholder-check:
 	done
 	@echo "version placeholders: all 0.0.0-dev"
 
-check: placeholder-check rewrite-check cargo-fmt-check cargo-clippy cargo-test gradle-check sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
+check: placeholder-check rewrite-check cargo-fmt-check cargo-clippy cargo-test java-cli-test gradle-check sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
-test: rewrite cargo-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
+test: rewrite cargo-test java-cli-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
 # Every front end; ci.yml uploads one flag per target.
 coverage: cargo-coverage gradle-coverage maven-coverage clojure-coverage lein-coverage \
@@ -111,7 +115,7 @@ fmt: cargo-fmt
 
 fmt-check: cargo-fmt-check
 
-clean: gradle-clean sbt-clean maven-clean mill-clean clojure-clean lein-clean bazel-clean
+clean: java-cli-clean gradle-clean sbt-clean maven-clean mill-clean clojure-clean lein-clean bazel-clean
 	$(CARGO) clean
 
 cargo-build:
@@ -154,6 +158,22 @@ rewrite:
 
 rewrite-check:
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) --init-script $(CURDIR)/tools/openrewrite/rewrite.gradle rewriteDryRun
+
+java-cli-build:
+	$(GRADLE) -p $(JAVA_CLI_DIR) jar
+
+# Shares cli/tests/fixtures, cli/tests/golden and scenarios.tsv with the Rust crate.
+java-cli-test:
+	$(GRADLE) -p $(JAVA_CLI_DIR) test
+
+java-cli-clean:
+	$(GRADLE) -p $(JAVA_CLI_DIR) clean
+
+# Runs both CLIs over every jar in the local Gradle cache and compares stdout and exit
+# codes. Not hermetic, so not part of check. MODE is dump, diff or check.
+java-cli-difftest: cargo-release java-cli-build
+	UIKA_JAVA="$(JAVA) -jar $(JAVA_CLI_DIR)/build/libs/uika-cli-$(UIKA_VERSION).jar" \
+		python3 $(JAVA_CLI_DIR)/tools/difftest.py $(or $(MODE),diff)
 
 gradle-build:
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) build

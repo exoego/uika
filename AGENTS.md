@@ -182,6 +182,8 @@ an agent whose harness does not auto-load it can just read the path.
 - `cli/AGENTS.md` (symlinked as `cli/CLAUDE.md`) — check pipeline, per-module
   upgrade-check, linkage semantics, reachability, suggestions. Claude Code
   loads it automatically when working under `cli/`.
+- `cli-java/AGENTS.md` (symlinked as `cli-java/CLAUDE.md`) — the pure-Java twin of the CLI:
+  parity rules, the off-heap and zero-allocation rules, and measured numbers against Rust.
 - `.claude/skills/uika-performance/SKILL.md` — benchmark workloads and expected
   numbers, optimization history, rejected approaches; before profiling or
   touching the hot path.
