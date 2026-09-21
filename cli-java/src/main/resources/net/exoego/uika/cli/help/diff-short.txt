@@ -1,0 +1,11 @@
+List breaking changes between old and new library JARs (removals, access narrowing, static/instance changes, newly-final/abstract classes/members, class<->interface flips)
+
+Usage: uika diff [OPTIONS] <OLD> <NEW>
+
+Arguments:
+  <OLD>  Old-version JAR
+  <NEW>  New-version JAR
+
+Options:
+      --json  
+  -h, --help  Print help

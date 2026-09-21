@@ -1,0 +1,9 @@
+Debugging: dump the API surface extracted from a JAR or directory
+
+Usage: uika dump <PATH>
+
+Arguments:
+  <PATH>  
+
+Options:
+  -h, --help  Print help

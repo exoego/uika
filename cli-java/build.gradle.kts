@@ -1,0 +1,46 @@
+plugins {
+    java
+    application
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testImplementation("org.junit.jupiter:junit-jupiter:6.1.3")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.1.3")
+}
+
+group = "net.exoego.uika"
+version = providers.gradleProperty("uikaVersion")
+    .orElse(providers.environmentVariable("UIKA_VERSION"))
+    .getOrElse("0.0.0-dev")
+
+// Same floor as the build-tool plugins, so the one jar runs on whatever JVM runs the build.
+tasks.withType<JavaCompile>().configureEach {
+    options.release = 17
+    options.encoding = "UTF-8"
+}
+
+application {
+    mainClass = "net.exoego.uika.cli.Main"
+}
+
+tasks.jar {
+    manifest {
+        attributes(
+            "Main-Class" to "net.exoego.uika.cli.Main",
+            "Implementation-Version" to version,
+        )
+    }
+}
+
+tasks.test {
+    useJUnitPlatform()
+    // Fixtures, goldens and scenarios.tsv are shared with the Rust crate. Tests address them
+    // as tests/fixtures/x.jar: that string is interned as a violation's source, and the
+    // goldens pin it byte for byte.
+    workingDir = rootDir.resolve("../cli")
+    maxHeapSize = "1g"
+}
