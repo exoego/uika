@@ -60,7 +60,7 @@ object Uika extends ExternalModule {
 
   /**
    * Runs `uika upgrade-check` over a before/after pair of dumps, fetching the CLI itself as
-   * the jar `net.exoego.uika:uika-cli:<version>` through Mill's own resolution.
+   * the `jvm` jar of `net.exoego.uika:uika-cli:<version>` through Mill's own resolution.
    *
    * @param jdkRelease resolve JDK hierarchy escapes against this API release; 0 disables the
    *                   layer and a negative value, the default, derives the lowest release any
@@ -186,7 +186,9 @@ object Uika extends ExternalModule {
   )(using mill.api.TaskCtx): java.nio.file.Path = {
     // Intransitive, as in all three sibling plugins: the jar has no dependencies, and
     // anything the POM ever gains would be downloaded and could win the pick below.
-    val dep = Dep.parse(s"${UikaCli.GROUP}:${UikaCli.ARTIFACT}:$version").exclude("*" -> "*")
+    val dep = Dep.parse(
+      s"${UikaCli.GROUP}:${UikaCli.ARTIFACT}:$version;classifier=${UikaCli.JAR_CLASSIFIER}"
+    ).exclude("*" -> "*")
     val resolved = resolver.classpath(Seq(dep)).map(_.path)
     resolved
       .find(p => p.last.startsWith(UikaCli.ARTIFACT) && p.last.endsWith(".jar"))

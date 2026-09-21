@@ -93,9 +93,14 @@ object UikaTests extends TestSuite {
     os.write.over(
       dir / s"uika-cli-$version.pom",
       s"""<project><modelVersion>4.0.0</modelVersion><groupId>net.exoego.uika</groupId>""" +
-        s"""<artifactId>uika-cli</artifactId><version>$version</version></project>"""
+        s"""<artifactId>uika-cli</artifactId><version>$version</version>""" +
+        s"""<packaging>pom</packaging></project>"""
     )
-    StubCli.writeJar((dir / s"uika-cli-$version.jar").toNIO, "uika-stub: dependency changes: 0", exit)
+    StubCli.writeJar(
+      (dir / s"uika-cli-$version-${UikaCli.JAR_CLASSIFIER}.jar").toNIO,
+      "uika-stub: dependency changes: 0",
+      exit
+    )
   }
 
   def tests: Tests = Tests {
