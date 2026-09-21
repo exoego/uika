@@ -127,9 +127,6 @@ jobs:
       - name: Probe fixture verdicts against a real JVM
         run: make probe
 
-      - name: Validate binary publishing build
-        run: mise exec -- gradle -p binary-publishing help -PuikaVersion=0.0.0-ci
-
       - name: Save Mill cache
         if: github.ref == 'refs/heads/main' && steps.cache-mill.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -162,9 +159,9 @@ jobs:
         with:
           cache_save: false
 
-      # The two staging steps nothing else runs. The Gradle, sbt, Maven, Mill and Clojure
+      # The three staging steps nothing else runs. The Gradle, sbt, Maven, Mill and Clojure
       # ones go through commands their own tests already exercise, so a release-only break
-      # can hide in these two alone, which is exactly what happened at v0.9.0.
+      # can hide in these three alone, which is exactly what happened at v0.9.0.
       - name: Stage the Leiningen plugin
         run: make lein-stage UIKA_VERSION=0.0.0-ci
 
@@ -185,19 +182,40 @@ jobs:
             exit 1
           fi
 
-      - name: Stage the Bazel module
+      # stage.sh hashes whatever zips dist/native holds and splices them into
+      # checksums.bzl, and the uika-cli publication attaches them. Stand-in files exercise
+      # both; the real binaries come from the release workflow's build jobs and nothing
+      # here reads their content.
+      - name: Plant stand-in native ZIPs
         shell: bash
         run: |
           set -euo pipefail
-          # stage.sh hashes whatever zips dist/native holds and splices them into
-          # checksums.bzl. A stand-in file exercises that splice; the real binaries come
-          # from the release workflow's build jobs and nothing here reads their content.
           for classifier in linux-x86_64 macos-aarch64 macos-x86_64 windows-x86_64; do
             mkdir -p "dist/native/$classifier"
             echo "stand-in for the release binary" \
               > "dist/native/$classifier/uika-0.0.0-ci-$classifier.zip"
           done
-          make bazel-stage UIKA_VERSION=0.0.0-ci
+
+      - name: Stage the CLI
+        run: mise exec -- gradle -p cli-java publishAllPublicationsToStagingRepository -PuikaVersion=0.0.0-ci
+
+      - name: Check what the CLI build staged
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir=cli-java/build/staging-deploy/net/exoego/uika/uika-cli/0.0.0-ci
+          for f in uika-cli-0.0.0-ci.jar uika-cli-0.0.0-ci-sources.jar \
+                   uika-cli-0.0.0-ci-javadoc.jar uika-cli-0.0.0-ci.pom \
+                   uika-cli-0.0.0-ci-linux-x86_64.zip uika-cli-0.0.0-ci-macos-aarch64.zip \
+                   uika-cli-0.0.0-ci-macos-x86_64.zip uika-cli-0.0.0-ci-windows-x86_64.zip; do
+            test -s "$dir/$f" && test -s "$dir/$f.sha1"
+          done
+          # Four files per release that say nothing the POM does not. See PUBLISHING.md.
+          test ! -e "$dir/uika-cli-0.0.0-ci.module"
+          test "$(mise exec -- java -jar "$dir/uika-cli-0.0.0-ci.jar" --version)" = "uika 0.0.0-ci"
+
+      - name: Stage the Bazel module
+        run: make bazel-stage UIKA_VERSION=0.0.0-ci
 
       - name: Check what stage.sh cut
         shell: bash

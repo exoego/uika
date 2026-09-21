@@ -126,7 +126,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mise exec -- gradle -p binary-publishing publishAllPublicationsToStagingRepository -PuikaVersion="$UIKA_VERSION"
+          mise exec -- gradle -p cli-java publishAllPublicationsToStagingRepository -PuikaVersion="$UIKA_VERSION"
           mise exec -- gradle -p gradle-plugin publishAllPublicationsToStagingRepository -PuikaVersion="$UIKA_VERSION"
           (cd sbt-plugin && mise exec -- sbt -Dsbt.supershell=false -batch \
             "set ThisBuild / version := \"$UIKA_VERSION\"" publish)

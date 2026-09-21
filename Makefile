@@ -11,7 +11,7 @@
 	clojure-test clojure-clean clojure-stage \
 	lein-test lein-clean lein-stage \
 	bazel-unit-test bazel-test bazel-maven-test bazel-clean bazel-stage \
-	native-publish-local stage-all
+	cli-publish-local stage-all
 
 CARGO ?= cargo
 JAVA ?= mise exec -- java
@@ -79,7 +79,7 @@ help:
 		'  make lein-test' \
 		'  make bazel-test' \
 		'  make bazel-maven-test' \
-		'  make native-publish-local UIKA_VERSION=0.1.0' \
+		'  make cli-publish-local UIKA_VERSION=0.1.0' \
 		'  make stage-all UIKA_VERSION=0.1.0'
 
 build: cargo-build gradle-build sbt-compile maven-verify mill-compile
@@ -408,13 +408,14 @@ bazel-stage:
 	sh $(BAZEL_RULES_DIR)/stage.sh $(UIKA_VERSION) $(BAZEL_RULES_DIR) \
 		$(BAZEL_STAGE_DIR) dist/native
 
-native-publish-local:
-	$(GRADLE) -p binary-publishing publishToMavenLocal -PuikaVersion=$(UIKA_VERSION)
+cli-publish-local:
+	$(GRADLE) -p $(JAVA_CLI_DIR) publishToMavenLocal -PuikaVersion=$(UIKA_VERSION)
 
 # Stage every Maven artifact locally; JReleaser signs and uploads the result
-# (see jreleaser.yml). binary-publishing expects ZIPs under dist/native/<classifier>/.
+# (see jreleaser.yml). The uika-cli publication attaches the ZIPs under
+# dist/native/<classifier>/ when they are there, all four or none.
 stage-all:
-	$(GRADLE) -p binary-publishing publishAllPublicationsToStagingRepository -PuikaVersion=$(UIKA_VERSION)
+	$(GRADLE) -p $(JAVA_CLI_DIR) publishAllPublicationsToStagingRepository -PuikaVersion=$(UIKA_VERSION)
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) publishAllPublicationsToStagingRepository -PuikaVersion=$(UIKA_VERSION)
 	cd $(SBT_PLUGIN_DIR) && $(SBT) $(SBT_FLAGS) 'set ThisBuild / version := "$(UIKA_VERSION)"' publish
 	$(MAVEN) -f $(MAVEN_PLUGIN_DIR)/pom.xml -B -Prelease -Drevision=$(UIKA_VERSION) -DskipTests -Dinvoker.skip=true deploy
