@@ -1,0 +1,35 @@
+Detect uses of breaking changes from classpath or application classes (exit codes: 0=clean, 1=violations found per --fail-on, 2=error)
+
+Usage: uika check [OPTIONS]
+
+Options:
+      --old <OLD>
+          Old-version JARs (the ones bound at compile time). May be specified multiple times. Mutually exclusive with a JDK-upgrade pair, which supplies both sides itself
+      --new <NEW>
+          New-version JARs (the ones resolved on the runtime classpath). May be specified multiple times. Mutually exclusive with a JDK-upgrade pair
+      --classpath <CLASSPATH>
+          Transitive dependency JARs (':'-separated, may be specified multiple times)
+      --app <APP>
+          Build outputs for the current project (class directories or JARs, may be specified multiple times)
+      --classpath-file <CLASSPATH_FILE>
+          Resolved classpath JSON emitted by the uika build-tool plugins (Gradle/sbt uikaDumpClasspath, Maven uika:dump-classpath). Included artifacts and build outputs are added to the scan targets
+      --exclude-file <EXCLUDE_FILE>
+          TOML file(s) of known false positives to suppress (e.g. reflection-only member access). May be specified multiple times; rules from all files are merged
+      --json
+          
+      --fail-on <FAIL_ON>
+          When to exit non-zero: never, reachable (only reachable violations), or any (any violation, default) [default: any] [possible values: never, reachable, any]
+      --jdk-release <JDK_RELEASE>
+          Resolve hierarchy escapes into the JDK API of this release (8-35, older than the installed JDK) instead of counting them unverified. Reads ct.sym from $UIKA_JDK if set (a JDK home or a ct.sym file), else $JAVA_HOME
+      --jdk-release-old <JDK_RELEASE_OLD>
+          Check a JDK upgrade itself: resolve against this release as the old side. Requires --jdk-release-new. The JDK API becomes the compared pair, so --old and --new must be omitted. Reads ct.sym for releases below the running JDK and jmods for its own release
+      --jdk-release-new <JDK_RELEASE_NEW>
+          The new side of a JDK upgrade check. Requires --jdk-release-old
+      --verdicts-json <VERDICTS_JSON>
+          Evaluation: stream every reference verdict (ok/unknown/broken) as JSON Lines to this file, for answer-checking against a real JVM (tools/jvm-probe)
+      --class-load-log <CLASS_LOAD_LOG>
+          Runtime class-load log(s) from the current (pre-upgrade) build, e.g. a test run with -Xlog:class+load=info:file=... stored as a CI artifact. Violations whose referencing class was observed loading leave the not-proven-reachable tier (promote-only; absence of a load entry never demotes anything). May be specified multiple times; a directory reads every file under it, and class+load+cause stacks and plain class lists are also accepted
+      --draft-exclude-file <DRAFT_EXCLUDE_FILE>
+          Write draft --exclude-file rules for symbols referenced only by classes that no static path reaches AND that were not observed loading in the supplied logs. Every drafted reason opens with REVIEW; commit only what you can justify
+  -h, --help
+          Print help (see more with '--help')

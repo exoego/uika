@@ -1,0 +1,44 @@
+Compare resolved classpath JSON files before and after a dependency update, then detect breaking references from all artifacts whose versions changed (exit codes: 0=clean, 1=violations found per --fail-on, 2=error)
+
+Usage: uika upgrade-check [OPTIONS] --before <BEFORE> --after <AFTER>
+
+Options:
+      --before <BEFORE>
+          Resolved classpath JSON before the update (uikaDumpClasspath output)
+
+      --after <AFTER>
+          Resolved classpath JSON after the update
+
+      --exclude-file <EXCLUDE_FILE>
+          TOML file(s) of known false positives to suppress (e.g. reflection-only member access). May be specified multiple times; rules from all files are merged
+
+      --json
+          
+
+      --fail-on <FAIL_ON>
+          When to exit non-zero: never, reachable (only reachable violations), or any (any violation, default)
+
+          Possible values:
+          - never:     Always exit 0; just print the violations as warnings
+          - reachable: Exit 1 only when a violation is in the 💥 tier (likely to break). A violation that is not proven reachable (⚠️) or latent (💤: the class is reachable but no scanned bytecode invokes the newly-abstract member, so it cannot throw yet) does not fail the run. The reachable axis falls back to `any` when reachability was not computed (no application roots) or no application root matched a scanned class; the latent axis is scan-derived and never falls back
+          - any:       Exit 1 when any violation is found, regardless of reachability (default, strictest)
+          
+          [default: any]
+
+      --jdk-release <JDK_RELEASE>
+          Resolve hierarchy escapes into the JDK API of this release (8-35, older than the installed JDK) instead of counting them unverified. Reads ct.sym from $UIKA_JDK if set (a JDK home or a ct.sym file), else $JAVA_HOME
+
+      --verdicts-json <VERDICTS_JSON>
+          Evaluation: stream every reference verdict (ok/unknown/broken) as JSON Lines to this file, for answer-checking against a real JVM (tools/jvm-probe)
+
+      --merged-classpath
+          Check the union of all modules' classpaths as one flat classpath instead of checking each module against its own resolved classpath. Also the automatic fallback when the dumps carry no per-module artifact data
+
+      --class-load-log <CLASS_LOAD_LOG>
+          Runtime class-load log(s) from the current (pre-upgrade) build, e.g. a test run with -Xlog:class+load=info:file=... stored as a CI artifact. Violations whose referencing class was observed loading leave the not-proven-reachable tier (promote-only; absence of a load entry never demotes anything). May be specified multiple times; a directory reads every file under it, and class+load+cause stacks and plain class lists are also accepted
+
+      --draft-exclude-file <DRAFT_EXCLUDE_FILE>
+          Write draft --exclude-file rules for symbols referenced only by classes that no static path reaches AND that were not observed loading in the supplied logs. Every drafted reason opens with REVIEW; commit only what you can justify
+
+  -h, --help
+          Print help (see a summary with '-h')
