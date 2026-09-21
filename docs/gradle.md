@@ -38,8 +38,9 @@ The dump task builds the module outputs by default. Pass
 `-PuikaBuildOutputs=false` for a resolution-only dump, which is what the
 [PR gate](#pr-gate-on-github-actions) uses on the base branch.
 
-`uikaUpgradeCheck` fetches the CLI as the jar `net.exoego.uika:uika-cli:<version>`
-and runs it on the JVM that runs Gradle. So it works wherever that JVM does,
+`uikaUpgradeCheck` fetches the CLI as the `jvm` jar of
+`net.exoego.uika:uika-cli:<version>` and runs it on the JVM that runs Gradle. So
+it works wherever that JVM does,
 including platforms uika ships no native binary for.
 
 ## PR gate on GitHub Actions
