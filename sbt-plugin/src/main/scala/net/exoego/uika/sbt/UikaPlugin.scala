@@ -70,8 +70,11 @@ object UikaPlugin extends AutoPlugin {
             case "" => sys.error("""uika-cli version is unknown; set uikaCliVersion := "<version>"""")
             case v  => v
           }
-          // The pure-Java CLI jar, which UikaCli starts on the JVM running sbt.
-          val module = ModuleID(UikaCli.GROUP, UikaCli.ARTIFACT, version).intransitive()
+          // The pure-Java CLI jar, which UikaCli starts on the JVM running sbt. Named as an
+          // explicit artifact because it is a classified one: the POM has pom packaging.
+          val module = ModuleID(UikaCli.GROUP, UikaCli.ARTIFACT, version)
+            .intransitive()
+            .artifacts(Artifact(UikaCli.ARTIFACT, "jar", "jar", UikaCli.JAR_CLASSIFIER))
           val files = lm
             .retrieve(lm.wrapDependencyInModule(module), uikaDir / "cli-retrieve", log)
             .fold(warning => throw warning.resolveException, identity)

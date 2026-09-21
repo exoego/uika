@@ -63,9 +63,9 @@ prepareStubRepo := {
     IO.createDirectory(dir)
     IO.write(
       dir / s"uika-cli-$version.pom",
-      s"""<project><modelVersion>4.0.0</modelVersion><groupId>net.exoego.uika</groupId><artifactId>uika-cli</artifactId><version>$version</version></project>"""
+      s"""<project><modelVersion>4.0.0</modelVersion><groupId>net.exoego.uika</groupId><artifactId>uika-cli</artifactId><version>$version</version><packaging>pom</packaging></project>"""
     )
-    StubCli.writeJar((dir / s"uika-cli-$version.jar").toPath, line, exit)
+    StubCli.writeJar((dir / s"uika-cli-$version-jvm.jar").toPath, line, exit)
   }
   // The stub leaves a marker next to the --before argument to prove it ran and records its
   // full argument list (.args) so checkFailOnPassed can assert the flags; the printed line
