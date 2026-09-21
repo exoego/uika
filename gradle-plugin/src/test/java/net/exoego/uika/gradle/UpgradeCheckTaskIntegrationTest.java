@@ -1,5 +1,6 @@
 package net.exoego.uika.gradle;
 
+import net.exoego.uika.plugin.core.StubCli;
 import net.exoego.uika.plugin.core.UikaCli;
 import org.gradle.testkit.runner.BuildTask;
 import org.gradle.testkit.runner.GradleRunner;
@@ -24,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Exercises uikaUpgradeCheck against a fake Maven repository containing stub uika-cli jars
- * ({@link StubCliJar}).
+ * ({@link StubCli}).
  */
 final class UpgradeCheckTaskIntegrationTest {
     private static final String CLEAN_VERSION = "9.9.9";
@@ -722,7 +723,7 @@ final class UpgradeCheckTaskIntegrationTest {
 
     /** Lays out repoDir like a Maven repository: net/exoego/uika/uika-cli/<v>/uika-cli-<v>.jar. */
     private void publishStubCli(String version, String line, int exit) throws IOException {
-        StubCliJar.write(repoDir.resolve("net/exoego/uika/uika-cli/" + version
+        StubCli.writeJar(repoDir.resolve("net/exoego/uika/uika-cli/" + version
                 + "/uika-cli-" + version + ".jar"), line, exit);
     }
 
