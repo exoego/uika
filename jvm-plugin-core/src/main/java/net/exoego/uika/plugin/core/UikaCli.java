@@ -25,6 +25,13 @@ public final class UikaCli {
     public static final String GROUP = "net.exoego.uika";
     public static final String ARTIFACT = "uika-cli";
 
+    /**
+     * Maven classifier of the pure-Java CLI jar. The jar is not the coordinate's main
+     * artifact: the POM keeps {@code pom} packaging so Maven Central demands no sources or
+     * javadoc jar for it, which would be eight more files on every release.
+     */
+    public static final String JAR_CLASSIFIER = "jvm";
+
     /** Maven classifier of the published binary for the current platform, e.g. "macos-aarch64". */
     public static String platformClassifier() {
         return platformClassifier(System.getProperty("os.name", ""), System.getProperty("os.arch", ""));
