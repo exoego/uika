@@ -807,4 +807,83 @@ class UpgradeCheckIntegrationTest {
         assertTrue(run.stdout().contains("❌ java.rmi.activation.ActivationGroup\n    class removed, throws NoClassDefFoundError at first use\n"),
                 run.stdout());
     }
+
+    /** A merged universe with one break from the JDK move and one from the coroutines upgrade. */
+    private String[] mergedDumpsWithJdkAndDependencyBreaks() throws IOException {
+        String before = "{\"jdkRelease\":11,"
+                + dump(module(":app", List.of(activationGroupUser()), coroutines("1.7.1", OLD_COROUTINES), ktorIo())).substring(1);
+        String after = before.replace("\"jdkRelease\":11", "\"jdkRelease\":17")
+                .replace(coroutines("1.7.1", OLD_COROUTINES), coroutines("1.11.0", NEW_COROUTINES));
+        return new String[] {before, after};
+    }
+
+    /**
+     * The JDK run's breaks join the dependency run's before exclusion, so a rule that matches
+     * only one run's break is not reported unused by the other.
+     */
+    @Test
+    void mergedExcludeRulesApplyOnceAcrossTheJdkRun() throws Exception {
+        useRunningJdk();
+        String[] dumps = mergedDumpsWithJdkAndDependencyBreaks();
+        Path rules = Files.writeString(tempDir.resolve("exclude.toml"), """
+                [[exclude]]
+                owner = "java/rmi/activation/ActivationGroup"
+                reason = "the JDK move is tracked separately"
+
+                [[exclude]]
+                owner = "kotlinx/coroutines/EventLoopKt"
+                reason = "ktor-io is upgraded in the same release"
+
+                [[exclude]]
+                owner = "com/example/Gone"
+                reason = "left over from an older upgrade"
+                """);
+
+        Run run = runUpgradeCheckWithDumps(
+                "jdk-merged-exclude-e2e", dumps[0], dumps[1], "--merged-classpath", "--json", "--exclude-file", rules.toString());
+        assertEquals(0, run.code(), "stdout:\n" + run.stdout() + "\nstderr:\n" + run.stderr());
+        assertEquals("warning: exclude rule matched nothing: com/example/Gone (left over from an older upgrade)\n", run.stderr());
+        Map<String, Object> json = parse(run.stdout());
+        assertEquals(2L, json.get("suppressed"), run.stdout());
+        assertEquals(List.of(), json.get("violations"), run.stdout());
+    }
+
+    /** The JDK run's breaks are sorted in with the dependency run's, not appended after them. */
+    @Test
+    void mergedJdkBreaksAreSortedWithTheDependencyBreaks() throws Exception {
+        useRunningJdk();
+        String[] dumps = mergedDumpsWithJdkAndDependencyBreaks();
+
+        Run run = runUpgradeCheckWithDumps("jdk-merged-order-e2e", dumps[0], dumps[1], "--merged-classpath", "--json");
+        assertEquals(1, run.code(), "stdout:\n" + run.stdout() + "\nstderr:\n" + run.stderr());
+        List<Object> sourceClasses = new ArrayList<>();
+        for (Object v : array(parse(run.stdout()).get("violations"))) {
+            sourceClasses.add(object(v).get("source_class"));
+        }
+        // The class directory is an absolute path and the fixtures are relative, so the
+        // JDK break sorts first although its run comes second.
+        assertEquals(List.of("UsesRemoved", BLOCKING_ADAPTER), sourceClasses, run.stdout());
+    }
+
+    /** The JDK run streams its verdicts, unlabeled like the rest of the merged stream. */
+    @Test
+    void mergedJdkRunStreamsItsVerdicts() throws Exception {
+        useRunningJdk();
+        String[] dumps = mergedDumpsWithJdkAndDependencyBreaks();
+        Path verdicts = tempDir.resolve("verdicts.jsonl");
+
+        Run run = runUpgradeCheckWithDumps(
+                "jdk-merged-verdicts-e2e", dumps[0], dumps[1], "--merged-classpath", "--json", "--verdicts-json", verdicts.toString());
+        assertEquals(1, run.code(), "stdout:\n" + run.stdout() + "\nstderr:\n" + run.stderr());
+        List<Object> broken = new ArrayList<>();
+        for (String line : Files.readAllLines(verdicts)) {
+            Map<String, Object> record = object(Json.parse(line));
+            assertNull(record.get("module"), line);
+            if ("broken".equals(record.get("verdict"))) {
+                broken.add(object(record.get("reference")).get("owner"));
+            }
+        }
+        assertTrue(broken.contains("java/rmi/activation/ActivationGroup"), broken.toString());
+        assertTrue(broken.contains("kotlinx/coroutines/EventLoopKt"), broken.toString());
+    }
 }
