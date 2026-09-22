@@ -339,6 +339,7 @@ class ClassParserTest {
                 0xb9, 0x00, 0x08, 0x01, 0x00, // invokeinterface #8
                 0xc4, 0x84, 0x00, 0x01, 0x00, 0xb8, // wide iinc whose operand looks like invokestatic
                 0xb5, 0x00, 0x09, // putfield #9
+                0xba, 0xb2, 0x34, 0x00, 0x00, // invokedynamic #0xb234, whose index byte looks like getstatic
                 0xb6, 0x00 // invokevirtual cut off by the end of the code
                 ));
 

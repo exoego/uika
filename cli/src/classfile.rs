@@ -436,7 +436,8 @@ fn fixed_instruction_len(op: u8) -> usize {
         0x10 | 0x12 | 0x15..=0x19 | 0x36..=0x3a | 0xa9 | 0xbc => 2,
         0x11 | 0x13 | 0x14 | 0x84 | 0x99..=0xa8 | 0xbb | 0xbd | 0xc0 | 0xc1 | 0xc6 | 0xc7 => 3,
         0xc5 => 4,
-        0xc8 | 0xc9 => 5,
+        // invokedynamic names a bootstrap call site, not a member, so it is skipped whole.
+        0xba | 0xc8 | 0xc9 => 5,
         _ => 1,
     }
 }
@@ -707,5 +708,18 @@ mod tests {
         ];
 
         assert_eq!(scan_instructions(&code)[0].cp_index, 0xabcd);
+    }
+
+    /// A pool past 0xB200 entries puts an invoke opcode byte into an invokedynamic's index.
+    #[test]
+    fn invokedynamic_operands_are_not_read_as_opcodes() {
+        let code = [
+            0xba, 0xb2, 0x34, 0x00, 0x00, // invokedynamic #0xb234
+            0xb8, 0xab, 0xcd, // invokestatic #0xabcd
+        ];
+
+        let refs = scan_instructions(&code);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].cp_index, 0xabcd);
     }
 }
