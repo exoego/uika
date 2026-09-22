@@ -4,12 +4,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -315,5 +320,110 @@ class SuggestTest {
         assertNull(spi.suggestion);
         assertNotNull(fromConsumer.suggestion);
         assertEquals("fixture:consumer:1.0", fromConsumer.suggestion.referencedBy());
+    }
+
+    @Test
+    void aProviderRemovedFromTheUpgradedJarIsNotAdvisedAgainstItself() {
+        String oldJar = "tests/fixtures/synthetic-spi-1.0.jar";
+        String newJar = "tests/fixtures/synthetic-spi-2.0.jar";
+        Dump.Universe before = universe("fixture", "spi", "1.0", oldJar);
+        Dump.Universe after = universe("fixture", "spi", "2.0", newJar);
+        List<Dump.DependencyChange> changes = Dump.diffDumps(before, after).changes();
+        SymbolRef spi = SymbolRef.ofClass(Intern.intern("fixture/lib/Spi"));
+
+        Violation removed = new Violation(Intern.intern(newJar), Intern.intern("fixture/lib/Impl"), spi, Reason.SERVICE_PROVIDER_REMOVED);
+        // A registering jar the dump does not name has no coordinate to compare against.
+        Violation unnamed =
+                new Violation(Intern.intern("build/classes"), Intern.intern("fixture/app/Plugin"), spi, Reason.SERVICE_PROVIDER_REMOVED);
+        Suggest.annotate(List.of(removed, unnamed), before, after, changes);
+
+        assertNull(removed.suggestion);
+        assertNull(unnamed.suggestion.referencedBy());
+        assertEquals(
+                "upgrade the referencing artifact to a release built against fixture:spi 2.0, or pin fixture:spi to 1.0",
+                unnamed.suggestion.advice());
+    }
+
+    /** Without a referencing coordinate there is no POM to read, so the original wording stays. */
+    @Test
+    void aRemovedCoordinateReferencedFromOutsideTheDumpKeepsTheOriginalWording() {
+        Dump.Universe before = universe(
+                "io.opentelemetry", "opentelemetry-sdk-common", "1.42.1", SDK_COMMON_OLD,
+                "io.opentelemetry", "opentelemetry-exporter-sender-okhttp", "1.42.1", SENDER);
+        Dump.Universe after = universe("io.opentelemetry", "opentelemetry-exporter-sender-okhttp", "1.42.1", SENDER);
+        Violation v = daemonThreadFactoryRemoved("build/classes/java/main");
+        Suggest.annotate(List.of(v), before, after, Dump.diffDumps(before, after).changes());
+        assertNull(v.suggestion.referencedBy());
+        assertTrue(v.suggestion.advice().contains("the referencing artifact still needs it"), v.suggestion.advice());
+    }
+
+    /** Attribution reads the before-side jars, so a coordinate with none there is never blamed. */
+    @Test
+    void onlyCoordinatesTheBeforeDumpShipsAreBlamed() {
+        Dump.Universe before = universe("io.opentelemetry", "opentelemetry-exporter-sender-okhttp", "1.42.1", SENDER);
+        Dump.Universe after = universe(
+                "io.opentelemetry", "opentelemetry-sdk-common", "1.60.1", SDK_COMMON_NEW,
+                "io.opentelemetry", "opentelemetry-exporter-sender-okhttp", "1.42.1", SENDER);
+        List<Dump.DependencyChange> changes = new ArrayList<>(Dump.diffDumps(before, after).changes());
+        assertEquals(Dump.ChangeKind.ADDED, changes.get(0).kind());
+        changes.add(change("io.opentelemetry:opentelemetry-api", Dump.ChangeKind.CHANGED, List.of("1.42.1"), List.of("1.60.1")));
+        Violation v = daemonThreadFactoryRemoved(SENDER);
+        Suggest.annotate(List.of(v), before, after, changes);
+        assertNull(v.suggestion);
+    }
+
+    /** Suggestions are best effort, so a before-side path that cannot even be opened attributes nothing. */
+    @Test
+    void anUnopenableBeforeSideJarAttributesNothing() {
+        Dump.Universe before = universe("io.opentelemetry", "opentelemetry-sdk-common", "1.42.1", "bad\0path.jar");
+        Dump.Universe after = universe("io.opentelemetry", "opentelemetry-sdk-common", "1.60.1", SDK_COMMON_NEW);
+        Violation v = daemonThreadFactoryRemoved(SENDER);
+        Suggest.annotate(List.of(v), before, after, Dump.diffDumps(before, after).changes());
+        assertNull(v.suggestion);
+    }
+
+    @Test
+    void anUnreadablePomKeepsTheOriginalWording(@TempDir Path dir) throws IOException {
+        Path cache = dir.resolve("io/opentelemetry/opentelemetry-exporter-sender-okhttp/1.42.1");
+        Files.createDirectories(cache);
+        String sender = cache.resolve("opentelemetry-exporter-sender-okhttp-1.42.1.jar").toString();
+        Files.copy(Path.of(SENDER), Path.of(sender));
+        Path pomPath = cache.resolve("opentelemetry-exporter-sender-okhttp-1.42.1.pom");
+        Files.writeString(pomPath, """
+                <project><dependencies><dependency>
+                  <groupId>io.opentelemetry</groupId><artifactId>opentelemetry-sdk-common</artifactId>
+                  <version>1.42.1</version><optional>true</optional>
+                </dependency></dependencies></project>""", StandardCharsets.UTF_8);
+        assumeTrue(pomPath.getFileSystem().supportedFileAttributeViews().contains("posix"), "no POSIX permissions here");
+        Set<PosixFilePermission> original = Files.getPosixFilePermissions(pomPath);
+        Files.setPosixFilePermissions(pomPath, Set.of());
+        try {
+            assumeFalse(Files.isReadable(pomPath), "this user reads files without permission bits");
+            Dump.Universe before = universe(
+                    "io.opentelemetry", "opentelemetry-sdk-common", "1.42.1", SDK_COMMON_OLD,
+                    "io.opentelemetry", "opentelemetry-exporter-sender-okhttp", "1.42.1", sender);
+            Dump.Universe after = universe("io.opentelemetry", "opentelemetry-exporter-sender-okhttp", "1.42.1", sender);
+            Violation v = daemonThreadFactoryRemoved(sender);
+            Suggest.annotate(List.of(v), before, after, Dump.diffDumps(before, after).changes());
+            assertTrue(v.suggestion.advice().contains("still needs it"), v.suggestion.advice());
+        } finally {
+            Files.setPosixFilePermissions(pomPath, original);
+        }
+    }
+
+    /** One side's list may hold the other whole, when a second version joins or leaves. */
+    @Test
+    void adviceWhenOnlyOneSideOfAMultiVersionListMoved() {
+        Suggestion joined = Suggest.build(
+                change("g:n", Dump.ChangeKind.CHANGED, List.of("1.0"), List.of("1.0", "2.0")), "h:m:1", false);
+        assertEquals("upgrade h:m:1 to a release built against g:n 2.0, or pin g:n to 1.0", joined.advice());
+        Suggestion left = Suggest.build(
+                change("g:n", Dump.ChangeKind.CHANGED, List.of("1.0", "2.0"), List.of("2.0")), "h:m:1", false);
+        assertEquals("upgrade h:m:1 to a release built against g:n 2.0, or pin g:n to 1.0", left.advice());
+    }
+
+    @Test
+    void groupOfABareNameIsTheNameItself() {
+        assertEquals("standalone", Suggest.groupOf("standalone"));
     }
 }
