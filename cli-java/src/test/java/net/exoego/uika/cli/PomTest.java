@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -394,6 +395,151 @@ class PomTest {
         Files.write(root.resolve("libs/thing-1.0.jar"), new byte[0]);
         Files.writeString(root.resolve("other/thing-1.0.pom"), "<project/>", StandardCharsets.UTF_8);
         assertNull(Pom.locate(root.resolve("libs/thing-1.0.jar").toString(), "thing", "1.0"));
+    }
+
+    @Test
+    void anEmptyClassifierIsNoClassifier() {
+        String pom = """
+                <project><dependencies>
+                  <dependency>
+                    <groupId>g</groupId><artifactId>a</artifactId>
+                    <classifier> </classifier><optional>true</optional>
+                  </dependency>
+                </dependencies></project>
+                """;
+        assertTrue(Pom.declaresOptional(pom, "g", "a"));
+    }
+
+    @Test
+    void aDeclarationMissingPartOfItsCoordinateIsSkipped() {
+        String pom = """
+                <project><dependencies>
+                  <dependency><artifactId>no-group</artifactId><optional>true</optional></dependency>
+                  <dependency><groupId>no.artifact</groupId><optional>true</optional></dependency>
+                  <dependency><groupId>g</groupId><artifactId>a</artifactId><optional>true</optional></dependency>
+                </dependencies></project>
+                """;
+        assertEquals(Set.of("g:a"), Pom.optionalDependencies(pom));
+    }
+
+    @Test
+    void anUnclosedOptionalIsNotOptional() {
+        String pom = """
+                <project><dependencies>
+                  <dependency>
+                    <groupId>g</groupId><artifactId>a</artifactId><optional>true
+                  </dependency>
+                </dependencies></project>
+                """;
+        assertFalse(Pom.declaresOptional(pom, "g", "a"));
+    }
+
+    /**
+     * A plugin's configuration is free-form XML, so it can hold a {@code <plugins>} of its own.
+     * The outer element must still end at its own close tag, or the plugin's dependencies after
+     * the inner one would read as the artifact's.
+     */
+    @Test
+    void aPluginsElementNestedInConfigurationDoesNotEndTheOuterOne() {
+        String pom = """
+                <project>
+                  <build><plugins><plugin>
+                    <configuration><plugins><plugin><artifactId>inner</artifactId></plugin></plugins></configuration>
+                    <dependencies><dependency>
+                      <groupId>g</groupId><artifactId>build-plugin-only</artifactId><optional>true</optional>
+                    </dependency></dependencies>
+                  </plugin></plugins></build>
+                  <reporting><plugins><plugin><dependencies><dependency>
+                    <groupId>g</groupId><artifactId>report-plugin-only</artifactId><optional>true</optional>
+                  </dependency></dependencies></plugin></plugins></reporting>
+                  <dependencies><dependency>
+                    <groupId>g</groupId><artifactId>real</artifactId><optional>true</optional>
+                  </dependency></dependencies>
+                </project>
+                """;
+        assertEquals(Set.of("g:real"), Pom.optionalDependencies(pom));
+    }
+
+    /**
+     * Regions are blanked in the order they open. An opener quoted inside another region is
+     * text, and taking it for a real one would blank the declarations after it.
+     */
+    @Test
+    void aRegionOpenerInsideAnotherRegionIsText() {
+        String pom = """
+                <?xml version="1.0"?>
+                <project>
+                  <!-- write <![CDATA[ for raw text -->
+                  <description><![CDATA[ comments start with <!-- ]]></description>
+                  <dependencies><dependency>
+                    <groupId>g</groupId><artifactId>a</artifactId><optional>true</optional>
+                  </dependency></dependencies>
+                </project>
+                """;
+        assertTrue(Pom.declaresOptional(pom, "g", "a"));
+    }
+
+    @Test
+    void anOpenTagMustBeClosedToCount() {
+        assertEquals(-1, Pom.findElement("<dependency", 0, "dependency"));
+        assertEquals(-1, Pom.findElement("<dependency scope=\"test\"", 0, "dependency"));
+        // ASCII whitespace starts an attribute list, and that set leaves out the vertical tab.
+        for (String gap : List.of(" ", "\t", "\n", "\f", "\r")) {
+            assertEquals(3, Pom.findElement("<a><dependency" + gap + "a=\"b\">", 0, "dependency"), gap);
+        }
+        assertEquals(-1, Pom.findElement("<dependency\u000Ba=\"b\">", 0, "dependency"));
+    }
+
+    /** Two checksum directories can both hold the POM, and the lowest name answers whatever order the listing has. */
+    @Test
+    void locatePicksTheLowestChecksumDirectory(@TempDir Path root) throws IOException {
+        Path version = root.resolve("com.example/thing/1.0");
+        Path jarDir = Files.createDirectories(version.resolve("7d20"));
+        Files.write(jarDir.resolve("thing-1.0.jar"), new byte[0]);
+        for (String checksum : List.of("e1b2", "5f3a", "0c9d", "31c8", "a47e")) {
+            Path pomDir = Files.createDirectories(version.resolve(checksum));
+            Files.writeString(pomDir.resolve("thing-1.0.pom"), "<project/>", StandardCharsets.UTF_8);
+        }
+        Files.createDirectories(version.resolve("0000"));
+        assertEquals(
+                version.resolve("0c9d/thing-1.0.pom").toString(),
+                Pom.locate(jarDir.resolve("thing-1.0.jar").toString(), "thing", "1.0"));
+    }
+
+    @Test
+    void locateAnswersNullWhenThereIsNothingToFind(@TempDir Path root) throws IOException {
+        Path version = root.resolve("com.example/thing/1.0");
+        Path jarDir = Files.createDirectories(version.resolve("aaaa"));
+        Files.createDirectories(version.resolve("bbbb"));
+        assertNull(Pom.locate(jarDir.resolve("thing-1.0.jar").toString(), "thing", "1.0"));
+        // A cache layout that is not on disk cannot be listed, which is not an error.
+        assertNull(Pom.locate(root.resolve("gone/thing/1.0/cccc/thing-1.0.jar").toString(), "thing", "1.0"));
+        // Nor is a path the platform cannot represent.
+        assertNull(Pom.locate(root + "/nul\0/thing-1.0.jar", "thing", "1.0"));
+        // The name and version directories must exist as names, which the root and a relative top are not.
+        assertNull(Pom.locate("/thing-1.0.jar", "thing", "1.0"));
+        assertNull(Pom.locate("/1.0/aaaa/thing-1.0.jar", "thing", "1.0"));
+        assertNull(Pom.locate("1.0/aaaa/thing-1.0.jar", "thing", "1.0"));
+    }
+
+    /** A "." component would otherwise shift the name/version check up by one directory. */
+    @Test
+    void locateIgnoresInnerDotComponents(@TempDir Path root) throws IOException {
+        Path version = root.resolve("com.example/thing/1.0");
+        Files.createDirectories(version.resolve("aaaa"));
+        Path pomDir = Files.createDirectories(version.resolve("bbbb"));
+        Files.writeString(pomDir.resolve("thing-1.0.pom"), "<project/>", StandardCharsets.UTF_8);
+        assertEquals(
+                pomDir.resolve("thing-1.0.pom").toString(), Pom.locate(version + "/./aaaa/thing-1.0.jar", "thing", "1.0"));
+    }
+
+    /** A ".." component names no directory, so it never matches, not even a version spelled "..". */
+    @Test
+    void locateDoesNotReadParentComponentsAsNames(@TempDir Path root) throws IOException {
+        Files.createDirectories(root.resolve("n"));
+        Path other = Files.createDirectories(root.resolve("other"));
+        Files.writeString(other.resolve("n-...pom"), "<project/>", StandardCharsets.UTF_8);
+        assertNull(Pom.locate(root.resolve("n/../ck/n-...jar").toString(), "n", ".."));
     }
 
     @Test

@@ -202,7 +202,7 @@ final class Pom {
             }
             out = out == null ? part : out.resolve(part);
         }
-        return out == null ? path : out;
+        return out;
     }
 
     /** Rust's {@code file_name()} is None for a path ending in {@code ..}, so that never matches. */
@@ -345,9 +345,6 @@ final class Pom {
             return null;
         }
         int tagEnd = block.indexOf('>', open);
-        if (tagEnd < 0) {
-            return null;
-        }
         int close = block.indexOf("</" + tag + ">", tagEnd + 1);
         if (close < 0) {
             return null;
