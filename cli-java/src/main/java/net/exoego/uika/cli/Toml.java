@@ -1127,14 +1127,12 @@ final class Toml {
                     case E_KEY -> {
                         List<Key> path = new ArrayList<>();
                         Key key = onKey(e, path);
-                        if (ep < ek.n && ek.a[ep] == E_WS) {
+                        if (ek.a[ep] == E_WS) {
                             ep++;
                         }
-                        if (ep >= ek.n || ek.a[ep++] != E_KEY_VAL_SEP) {
-                            finishTable();
-                            return root;
-                        }
-                        if (ep < ek.n && ek.a[ep] == E_WS) {
+                        // The first pass always put the `=` here.
+                        ep++;
+                        if (ek.a[ep] == E_WS) {
                             ep++;
                         }
                         captureKeyValue(path, key, buildValue());
@@ -1205,25 +1203,12 @@ final class Toml {
         }
 
         private Value buildValue() {
-            if (ep < ek.n) {
-                int e = ep++;
-                switch (ek.a[e]) {
-                    case E_INLINE_TABLE_OPEN -> {
-                        return inlineTable(e);
-                    }
-                    case E_ARRAY_OPEN -> {
-                        return array(e);
-                    }
-                    case E_SCALAR -> {
-                        return decodeScalar(e);
-                    }
-                    default -> {}
-                }
-            }
-            Value zero = new Value(source, Kind.INTEGER, 0, 0);
-            zero.text = "0";
-            zero.radix = 10;
-            return zero;
+            int e = ep++;
+            return switch (ek.a[e]) {
+                case E_INLINE_TABLE_OPEN -> inlineTable(e);
+                case E_ARRAY_OPEN -> array(e);
+                default -> decodeScalar(e);
+            };
         }
 
         private Value array(int open) {
