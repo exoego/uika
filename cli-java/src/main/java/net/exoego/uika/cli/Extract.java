@@ -364,11 +364,7 @@ final class Extract {
         int countAt = out.n;
         out.add(0);
         int cpLen = p.cpLen;
-        if (scratch.cpFlags.length < cpLen) {
-            scratch.cpFlags = new byte[Math.max(cpLen, scratch.cpFlags.length * 2)];
-            scratch.cpOwner = new int[scratch.cpFlags.length];
-        }
-        // The owner cache was primed by referencesLibrary for this same pool.
+        // The owner cache was primed by referencesLibrary for this same pool, which also sized it.
         byte[] flags = scratch.cpFlags;
         Arrays.fill(flags, 0, cpLen, (byte) 0);
         int[] codeRefs = p.codeRefs;
