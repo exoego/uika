@@ -245,11 +245,6 @@ final class Jar {
                 return null;
             }
             long unsignedOffset = offset & 0xffffffffL;
-            // A local header at or past the directory cannot bound any span. The fallback
-            // reader gets to say what is wrong with the archive.
-            if (unsignedOffset >= cdOffset) {
-                return null;
-            }
             if (general) {
                 c.allKeys[i] = unsignedOffset << 31 | i;
             } else {

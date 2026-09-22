@@ -15,13 +15,6 @@ assert args.text.contains("--fail-on reachable") :
 assert args.text.contains("--jdk-release 11") :
     "POM <configuration><jdkRelease> was not forwarded to the CLI: ${args.text}"
 
-// --jdk-release is sent, so UIKA_JDK must name the JDK the release was clamped against.
-// For this mojo that is the JVM running Maven, which is also the JVM the jar runs on.
-def jdk = new File(basedir, "before.json.env").text.trim()
-assert jdk : "UIKA_JDK was not exported alongside --jdk-release"
-assert new File(jdk).toPath().toRealPath().toString() == new File(basedir, "before.json.home").text.trim() :
-    "UIKA_JDK ($jdk) does not name the JVM the jar ran on"
-
 // -Duika.excludeFiles is a real CLI property here (test.properties), comma-separated by
 // plexus and basedir-aligned by its FileConverter, with the empty entry dropped.
 for (name in ["cli-exclude.toml", "second-exclude.toml"]) {

@@ -348,8 +348,6 @@ final class ClassParser {
             FIXED_LENGTH[op] = 3;
         }
         FIXED_LENGTH[0xc5] = 4;
-        // invokedynamic names a bootstrap call site, not a member, so it is skipped whole.
-        FIXED_LENGTH[0xba] = 5;
         FIXED_LENGTH[0xc8] = 5;
         FIXED_LENGTH[0xc9] = 5;
     }

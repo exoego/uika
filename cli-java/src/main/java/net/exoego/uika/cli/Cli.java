@@ -102,10 +102,6 @@ final class Cli {
             default:
                 break;
         }
-        if (Options.looksLikeFlag(first)) {
-            throw new UsageException("error: unexpected argument '" + first + "' found\n\nUsage: uika <COMMAND>\n\n"
-                    + "For more information, try '--help'.\n");
-        }
         String command = subcommand(first);
         Options options = new Options(command, args);
         return switch (command) {
@@ -162,7 +158,7 @@ final class Cli {
                     String name = eq < 0 ? arg : arg.substring(0, eq);
                     Kind kind = kind(name);
                     if (kind == null) {
-                        throw unexpected(name);
+                        throw usage("unexpected argument '" + name + "' found");
                     }
                     if (kind == Kind.FLAG) {
                         if (eq >= 0) {
@@ -174,27 +170,10 @@ final class Cli {
                     String value;
                     if (eq >= 0) {
                         value = arg.substring(eq + 1);
-                    } else if (i + 1 < args.length && !looksLikeFlag(args[i + 1])) {
+                    } else if (i + 1 < args.length) {
                         value = args[++i];
-                    } else if (i + 1 < args.length && !isKnownFlag(args[i + 1])) {
-                        // clap reads a dash-led token as the next argument, never as this
-                        // option's value, and an unknown one is the error it reports.
-                        throw unexpected(args[i + 1]);
                     } else {
-                        throw missingValue(name + " <" + placeholder(name) + ">");
-                    }
-                    // A path or a choice rejects an empty value up front. A number reaches
-                    // its parser, which words the failure itself.
-                    if (value.isEmpty() && !isRelease(name)) {
-                        throw missingValue(name + " <" + placeholder(name) + ">");
-                    }
-                    if (name.equals("--classpath")) {
-                        // clap splits on the delimiter first, so an empty part is a missing value.
-                        for (String part : value.split(":", -1)) {
-                            if (part.isEmpty()) {
-                                throw missingValue(name + " <" + placeholder(name) + ">");
-                            }
-                        }
+                        throw usage("a value is required for '" + name + " <" + placeholder(name) + ">' but none was supplied");
                     }
                     List<String> list = values.computeIfAbsent(name, k -> new ArrayList<>());
                     if (kind == Kind.SINGLE && !list.isEmpty()) {
@@ -202,48 +181,9 @@ final class Cli {
                     }
                     list.add(value);
                 } else {
-                    throw unexpected(arg);
+                    throw usage("unexpected argument '" + arg + "' found");
                 }
             }
-        }
-
-        private static boolean looksLikeFlag(String arg) {
-            return arg.startsWith("-") && !arg.equals("-");
-        }
-
-        private static boolean isRelease(String name) {
-            return name.equals("--jdk-release") || name.equals("--jdk-release-old") || name.equals("--jdk-release-new");
-        }
-
-        private boolean isKnownFlag(String arg) {
-            if (arg.equals("--") || arg.equals("-h") || arg.equals("--help")) {
-                return true;
-            }
-            int eq = arg.indexOf('=');
-            return arg.startsWith("--") && kind(eq < 0 ? arg : arg.substring(0, eq)) != null;
-        }
-
-        /** The positional the command declares, spelled the way clap prints its usage line. */
-        private String usageLine() {
-            return switch (command) {
-                case "diff" -> "diff [OPTIONS] <OLD> <NEW>";
-                case "dump" -> "dump <PATH>";
-                default -> command + " [OPTIONS]";
-            };
-        }
-
-        private UsageException unexpected(String arg) {
-            String message = "unexpected argument '" + arg + "' found";
-            if (looksLikeFlag(arg) && (command.equals("diff") || command.equals("dump"))) {
-                message += "\n\n  tip: to pass '" + arg + "' as a value, use '-- " + arg + "'";
-            }
-            return usage(message);
-        }
-
-        private UsageException missingValue(String shown) {
-            String hint = shown.startsWith("--fail-on ") ? "\n  [possible values: never, reachable, any]" : "";
-            return new UsageException("error: a value is required for '" + shown + "' but none was supplied" + hint
-                    + "\n\nFor more information, try '--help'.\n");
         }
 
         private enum Kind {
@@ -272,7 +212,7 @@ final class Cli {
         }
 
         private UsageException usage(String message) {
-            return new UsageException("error: " + message + "\n\nUsage: uika " + usageLine() + "\n\n"
+            return new UsageException("error: " + message + "\n\nUsage: uika " + command + " [OPTIONS]\n\n"
                     + "For more information, try '--help'.\n");
         }
 
@@ -308,8 +248,7 @@ final class Cli {
             try {
                 n = Long.parseLong(value);
             } catch (NumberFormatException e) {
-                String why = value.isEmpty() ? "cannot parse integer from empty string" : "invalid digit found in string";
-                throw new UsageException("error: invalid value '" + value + "' for " + shown + ": " + why + "\n\n"
+                throw new UsageException("error: invalid value '" + value + "' for " + shown + ": invalid digit found in string\n\n"
                         + "For more information, try '--help'.\n");
             }
             if (n < Jdk.MIN_RELEASE || n > Jdk.MAX_RELEASE) {
@@ -321,7 +260,7 @@ final class Cli {
 
         private void noPositional() throws UsageException {
             if (!positional.isEmpty()) {
-                throw unexpected(positional.get(0));
+                throw usage("unexpected argument '" + positional.get(0) + "' found");
             }
         }
 
@@ -363,9 +302,9 @@ final class Cli {
                         + "For more information, try '--help'.\n");
             }
             if (positional.size() > 2) {
-                throw unexpected(positional.get(2));
+                throw usage("unexpected argument '" + positional.get(2) + "' found");
             }
-            return new Diff(positionalValue(0, "<OLD>"), positionalValue(1, "<NEW>"), flags.contains("--json"));
+            return new Diff(positional.get(0), positional.get(1), flags.contains("--json"));
         }
 
         Command check() throws UsageException {
@@ -435,17 +374,9 @@ final class Cli {
                         + "Usage: uika dump <PATH>\n\nFor more information, try '--help'.\n");
             }
             if (positional.size() > 1) {
-                throw unexpected(positional.get(1));
+                throw usage("unexpected argument '" + positional.get(1) + "' found");
             }
-            return new DumpApi(positionalValue(0, "<PATH>"));
-        }
-
-        private String positionalValue(int index, String placeholder) throws UsageException {
-            String value = positional.get(index);
-            if (value.isEmpty()) {
-                throw missingValue(placeholder);
-            }
-            return value;
+            return new DumpApi(positional.get(0));
         }
     }
 }

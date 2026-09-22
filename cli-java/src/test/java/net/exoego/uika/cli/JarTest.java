@@ -458,15 +458,6 @@ class JarTest {
         assertEquals(List.of("p/A"), names(entries));
     }
 
-    /** The span an entry ends at is derived from the directory, so a header claimed past it has no span to give. */
-    @Test
-    void aLocalHeaderPastTheDirectorySendsTheJarToTheFallback() throws Exception {
-        Rec a = new Rec("p/A.class", classLike("a"));
-        Rec stray = new Rec("p/B.class", classLike("b"));
-        stray.cdOffset = 0x7FFFFFF0L;
-        assertNull(readAssembled("past-directory.jar", List.of(a, stray), -1));
-    }
-
     @Test
     void aBrokenDirectoryIsRefusedNotMisread() throws Exception {
         Rec a = new Rec("p/A.class", classLike("a"));

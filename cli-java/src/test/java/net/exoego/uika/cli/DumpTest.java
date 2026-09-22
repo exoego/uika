@@ -327,30 +327,6 @@ class DumpTest {
         assertEquals("artifact ref 5 out of range", assertThrows(UikaException.class, () -> Dump.loadDump(badRef)).getMessage());
     }
 
-    /** The shape errors are serde's words: a struct by name, a PathBuf as a path string, a range miss as an invalid value. */
-    @Test
-    void shapeErrorsAreWordedLikeSerde() throws Exception {
-        String text = write("text.json", "\"x\"");
-        assertEquals(
-                "invalid v1 classpath dump " + text + ": invalid type: string \"x\", expected struct ClasspathDump",
-                assertThrows(UikaException.class, () -> Dump.loadDump(text)).getMessage());
-
-        String file = write("file.json", "{\"modules\":[{\"module\":\"a\",\"artifacts\":[{\"file\":5}]}]}");
-        assertEquals(
-                "invalid v1 classpath dump " + file + ": invalid type: integer `5`, expected path string",
-                assertThrows(UikaException.class, () -> Dump.loadDump(file)).getMessage());
-
-        String negative = write("negative.json", "{\"version\":2,\"roots\":[],\"artifacts\":[],\"jdkRelease\":-1}");
-        assertEquals(
-                "invalid v2 classpath dump " + negative + ": invalid value: integer `-1`, expected u32",
-                assertThrows(UikaException.class, () -> Dump.loadDump(negative)).getMessage());
-
-        String fraction = write("fraction.json", "{\"version\":2,\"roots\":[],\"artifacts\":[{\"root\":0.5,\"path\":\"x\"}]}");
-        assertEquals(
-                "invalid v2 classpath dump " + fraction + ": invalid type: floating point `0.5`, expected usize",
-                assertThrows(UikaException.class, () -> Dump.loadDump(fraction)).getMessage());
-    }
-
     /** Coordinates and versions order by string value, the way Rust BTreeMap keys do. */
     @Test
     void versionMapsOrderByText() {

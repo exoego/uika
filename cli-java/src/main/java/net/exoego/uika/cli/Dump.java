@@ -160,7 +160,7 @@ final class Dump {
         }
         boolean v2 = value instanceof Map<?, ?> map && Long.valueOf(2).equals(map.get("version"));
         try {
-            return v2 ? fromV2(object(value, "struct DumpV2")) : fromV1(object(value, "struct ClasspathDump"));
+            return v2 ? fromV2(object(value, "a map")) : fromV1(object(value, "a map"));
         } catch (Shape e) {
             throw new UikaException("invalid " + (v2 ? "v2" : "v1") + " classpath dump " + path + ": " + e.getMessage());
         }
@@ -184,7 +184,7 @@ final class Dump {
             List<Artifact> artifacts = new ArrayList<>();
             for (Object a : optionalList(module, "artifacts")) {
                 Map<String, Object> artifact = object(a, "struct ArtifactDump");
-                String file = path(required(artifact, "file"));
+                String file = string(required(artifact, "file"), "file");
                 universe.addTarget(file);
                 artifacts.add(universe.artifactEntry(
                         optionalString(artifact, "group"),
@@ -195,7 +195,7 @@ final class Dump {
             }
             List<String> classesDirs = new ArrayList<>();
             for (Object dir : optionalList(module, "classesDirs")) {
-                String d = path(dir);
+                String d = string(dir, "classesDirs");
                 classesDirs.add(d);
                 universe.appRoots.add(d);
                 universe.addTarget(d);
@@ -307,14 +307,6 @@ final class Dump {
         throw new Shape("invalid type: " + describe(value) + ", expected a string");
     }
 
-    /** A v1 file or directory, which serde reads as a PathBuf and names as such. */
-    private static String path(Object value) throws Shape {
-        if (value instanceof String s) {
-            return s;
-        }
-        throw new Shape("invalid type: " + describe(value) + ", expected path string");
-    }
-
     private static String optionalString(Map<String, Object> map, String field) throws Shape {
         Object value = map.get(field);
         return value == null ? null : string(value, field);
@@ -324,7 +316,7 @@ final class Dump {
         if (value instanceof Long n && n >= 0 && n <= Integer.MAX_VALUE) {
             return n.intValue();
         }
-        throw outOfShape(value, "usize");
+        throw new Shape("invalid type: " + describe(value) + ", expected usize");
     }
 
     private static Integer release(Map<String, Object> map) throws Shape {
@@ -335,13 +327,7 @@ final class Dump {
         if (value instanceof Long n && n >= 0 && n <= 0xffffffffL) {
             return (int) Math.min(n, Integer.MAX_VALUE);
         }
-        throw outOfShape(value, "u32");
-    }
-
-    /** serde calls an integer outside the target's range an invalid value, and anything else an invalid type. */
-    private static Shape outOfShape(Object value, String expected) {
-        String kind = value instanceof Long ? "invalid value" : "invalid type";
-        return new Shape(kind + ": " + describe(value) + ", expected " + expected);
+        throw new Shape("invalid type: " + describe(value) + ", expected u32");
     }
 
     private static String describe(Object value) {

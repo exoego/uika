@@ -307,11 +307,8 @@ final class Jdk {
             if (code == 0) {
                 throw new UikaException("unsupported --jdk-release " + release + " (expected 8..=35)");
             }
-            if (!Files.exists(ctSym)) {
-                throw new UikaException("cannot open ct.sym: " + ctSym, new java.nio.file.NoSuchFileException(ctSym.toString()));
-            }
             if (!Files.isReadable(ctSym)) {
-                throw new UikaException("cannot open ct.sym: " + ctSym, new java.nio.file.AccessDeniedException(ctSym.toString()));
+                throw new UikaException("cannot open ct.sym: " + ctSym, new java.nio.file.NoSuchFileException(ctSym.toString()));
             }
             ZipFile archive;
             try {
