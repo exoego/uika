@@ -216,7 +216,7 @@ final class Reach {
         files.sort(null);
         for (Path entry : files) {
             String name = entry.getFileName().toString();
-            if (isServiceName(name) && Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS)) {
+            if (Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS)) {
                 byte[] bytes = Files.readAllBytes(entry);
                 pushService(out, name, bytes, bytes.length, source);
             }
@@ -286,7 +286,6 @@ final class Reach {
     /** BFS from the application roots. */
     static Result reachableClasses(ClassGraph graph, Inputs inputs) {
         BitSet marks = new BitSet(Intern.tableLen());
-        int limit = Intern.tableLen();
         IntQueue queue = new IntQueue();
         boolean appRootMatched = false;
         for (int node = 0; node < graph.size(); node++) {
@@ -312,7 +311,7 @@ final class Reach {
         }
         while (!queue.isEmpty()) {
             int sym = queue.poll();
-            if (sym >= limit || marks.get(sym)) {
+            if (marks.get(sym)) {
                 continue;
             }
             marks.set(sym);
