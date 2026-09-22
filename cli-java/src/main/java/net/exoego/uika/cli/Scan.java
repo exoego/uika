@@ -237,7 +237,7 @@ final class Scan {
                     });
                 }
                 if (!directories.isEmpty()) {
-                    tasks.addAll(directories.laneTasks());
+                    tasks.add(directories.laneTask());
                 }
                 ForkJoinTask.invokeAll(tasks);
                 directories.finish();
