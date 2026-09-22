@@ -345,9 +345,6 @@ final class Pom {
             return null;
         }
         int tagEnd = block.indexOf('>', open);
-        if (tagEnd < 0) {
-            return null;
-        }
         int close = block.indexOf("</" + tag + ">", tagEnd + 1);
         if (close < 0) {
             return null;
