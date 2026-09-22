@@ -202,7 +202,7 @@ final class Pom {
             }
             out = out == null ? part : out.resolve(part);
         }
-        return out == null ? path : out;
+        return out;
     }
 
     /** Rust's {@code file_name()} is None for a path ending in {@code ..}, so that never matches. */
