@@ -6,8 +6,13 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
+import java.net.StandardProtocolFamily;
+import java.net.UnixDomainSocketAddress;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -478,6 +483,249 @@ class EvidenceTest {
         Evidence.LoadEvidence e = Evidence.load(List.of(dir.toString()));
         assertNotNull(e.observed("com/example/Edge"));
         assertNotNull(e.observed("com/example/Next"));
+    }
+
+    /** First stack WITH frames wins, so a header that got no frames leaves the slot open. */
+    @Test
+    void aStackWithoutFramesLeavesTheSlotToTheNextOne() {
+        Evidence.LoadEvidence e = parse("""
+                Java stack when loading a.b.C:
+                Java stack when loading a.b.C:
+                \tat com.example.Later.run(Later.java:9)
+                """);
+        assertEquals("com.example.Later.run(Later.java:9)", e.observed("a/b/C").trigger());
+    }
+
+    @Test
+    void aStackOfOnlyLoaderFramesClaimsTheSlotWithoutATrigger() {
+        Evidence.LoadEvidence e = parse("""
+                Java stack when loading a.b.D:
+                \tat java.lang.ClassLoader.loadClass(ClassLoader.java:1)
+                Java stack when loading a.b.D:
+                \tat com.example.Late.run(Late.java:1)
+                """);
+        assertNotNull(e.observed("a/b/D"));
+        assertNull(e.observed("a/b/D").trigger());
+    }
+
+    @Test
+    void aReflectiveTriggerWithoutACallerIsKeptWhole() {
+        Evidence.LoadEvidence e = parse("""
+                Java stack when loading a.b.E:
+                \tat java.lang.Class.forName(Class.java:100)
+                Java stack when loading a.b.F:
+                \tat java.lang.Class.forName
+                \tat com.example.Registry.discover(Registry.java:42)
+                """);
+        assertEquals("java.lang.Class.forName(Class.java:100)", e.observed("a/b/E").trigger());
+        assertEquals(
+                "java.lang.Class.forName from com.example.Registry.discover(Registry.java:42)",
+                e.observed("a/b/F").trigger());
+    }
+
+    /** ServiceLoader's own frames sit between the reflective API and the code that iterated the loader. */
+    @Test
+    void aServiceLoaderLoadNamesTheCodeThatIteratedIt() {
+        Evidence.LoadEvidence e = parse("""
+                Java stack when loading com.example.spi.Impl:
+                \tat java.lang.ClassLoader.loadClass(java.base@21.0.4/ClassLoader.java:526)
+                \tat java.lang.Class.forName0(java.base@21.0.4/Native Method)
+                \tat java.lang.Class.forName(java.base@21.0.4/Class.java:534)
+                \tat java.util.ServiceLoader$LazyClassPathLookupIterator.nextProviderClass(java.base@21.0.4/ServiceLoader.java:1212)
+                \tat java.util.ServiceLoader$3.hasNext(java.base@21.0.4/ServiceLoader.java:1393)
+                \tat com.example.Boot.main(Boot.java:7)
+                """);
+        assertEquals(
+                "java.lang.Class.forName0 from com.example.Boot.main(Boot.java:7)",
+                e.observed("com/example/spi/Impl").trigger());
+    }
+
+    @Test
+    void framesAreClassifiedByPackageAndLoaderMethodName() {
+        for (String frame : List.of(
+                "java.lang.reflect.Method.invoke(Method.java:580)",
+                "jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)",
+                "sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)",
+                "java.lang.invoke.MethodHandleNatives.linkCallSite(MethodHandleNatives.java:1)",
+                "java.util.ServiceLoader.load(ServiceLoader.java:1)")) {
+            assertTrue(Evidence.isReflective(frame), frame);
+        }
+        assertFalse(Evidence.isReflective("com.example.Boot.main(Boot.java:7)"));
+        for (String frame : List.of(
+                "java.net.URLClassLoader.access$100(URLClassLoader.java:74)",
+                "com.example.PluginLoader.findClass(PluginLoader.java:12)",
+                "com.example.PluginLoader.defineClass(PluginLoader.java:30)",
+                "com.example.PluginLoader.loadClass")) {
+            assertTrue(Evidence.isMachinery(frame), frame);
+        }
+        assertFalse(Evidence.isMachinery("com.example.PluginLoader.lookup(PluginLoader.java:5)"));
+    }
+
+    /** A monitor annotation outside a block is not a class name either. */
+    @Test
+    void framesWithoutAnOpenBlockAreIgnored() {
+        Evidence.LoadEvidence e = parse("""
+                \tat com.example.Stray.run(Stray.java:1)
+                Java stack when loading 1.2.3:
+                \tat com.example.Orphan.run(Orphan.java:2)
+                Native stack when loading 4.5:
+                - locked <0x0000000c4f1f3d40> (a java.lang.Object)
+                Java stack when loading :
+                """);
+        assertEquals(0, e.distinctClasses());
+    }
+
+    /** Decorators with nothing after them count as a blank line. */
+    @Test
+    void aBlankLineEndsTheStackBlock() {
+        Evidence.LoadEvidence e = parse("""
+                Java stack when loading a.b.G:
+
+                \tat com.example.TooLate.run(TooLate.java:1)
+                Java stack when loading a.b.H:
+                [0.3s][info][class,load,cause]
+                \tat com.example.TooLate.run(TooLate.java:1)
+                """);
+        assertNull(e.observed("a/b/G").trigger());
+        assertNull(e.observed("a/b/H").trigger());
+        assertEquals(2, e.distinctClasses());
+    }
+
+    /** A crash can cut a line inside its decorators, and what is left is not a class name. */
+    @Test
+    void aLineCutInsideItsDecoratorsRegistersNothing() {
+        assertEquals(0, parse("[0.1s][info][class,load com.example.Cut\n").distinctClasses());
+    }
+
+    @Test
+    void tokensMustBeWellFormedNames() {
+        Evidence.LoadEvidence e = parse("""
+                org.apache.logging.log4j.Log4j2
+                com..example.Empty
+                com.example.
+                com.exa-mple.Dash
+                com.example.At@1f
+                :,;
+                """);
+        assertNotNull(e.observed("org/apache/logging/log4j/Log4j2"));
+        assertEquals(1, e.distinctClasses());
+    }
+
+    /** A file named just ".jfr" has no extension, so it is not taken for a recording. */
+    @Test
+    void theWalkReadsEveryTextFileAndStopsAtEofInsideAnOversizedLine(@TempDir Path dir) throws IOException {
+        byte[] head = "com.example.Before\n".getBytes(StandardCharsets.UTF_8);
+        byte[] junk = new byte[head.length + 2 * Evidence.MAX_LINE];
+        System.arraycopy(head, 0, junk, 0, head.length);
+        Arrays.fill(junk, head.length, junk.length, (byte) 'x');
+        Files.write(dir.resolve("core.bin"), junk);
+        Files.writeString(dir.resolve("classlist"), "\ncom.example.Listed\n\n");
+        Files.writeString(dir.resolve(".jfr"), "com.example.Hidden\n");
+        Evidence.LoadEvidence e = Evidence.load(List.of(dir.toString()));
+        assertNotNull(e.observed("com/example/Before"));
+        assertNotNull(e.observed("com/example/Listed"));
+        assertNotNull(e.observed("com/example/Hidden"));
+        assertEquals(3, e.distinctClasses());
+    }
+
+    /** A JVM that is being attached to has a .java_pid socket in the temp directory, where logs may go too. */
+    @Test
+    void aSocketInTheDirectoryIsSkipped(@TempDir Path dir) throws IOException {
+        Files.writeString(dir.resolve("run.log"), "com.example.A\n");
+        try (ServerSocketChannel socket = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
+            socket.bind(UnixDomainSocketAddress.of(dir.resolve(".java_pid123")));
+            Evidence.LoadEvidence e = Evidence.load(List.of(dir.toString()));
+            assertEquals(1, e.distinctClasses());
+        }
+    }
+
+    /** A directory given with a trailing slash does not grow a doubled one in messages. */
+    @Test
+    void aTrailingSlashIsNotDoubledInMessages(@TempDir Path dir) throws IOException {
+        Files.createSymbolicLink(dir.resolve("zz.log"), Path.of("/nonexistent/uika/target"));
+        String root = dir + "/";
+        assertEquals(
+                "cannot read class-load log directory " + root + ": IO error for operation on " + dir
+                        + "/zz.log: No such file or directory (os error 2): No such file or directory (os error 2)",
+                assertThrows(UikaException.class, () -> Evidence.load(List.of(root))).getMessage());
+    }
+
+    @Test
+    void unreadableLogsEndTheCommand(@TempDir Path dir) throws IOException {
+        Path locked = Files.createDirectories(dir.resolve("logs").resolve("locked"));
+        Path file = Files.writeString(dir.resolve("run.log"), "com.example.A\n");
+        assumeTrue(
+                locked.toFile().setReadable(false, false) && file.toFile().setReadable(false, false)
+                        && !Files.isReadable(locked) && !Files.isReadable(file),
+                "cannot take read permission away here (root or not POSIX)");
+        try {
+            String logs = dir.resolve("logs").toString();
+            assertEquals(
+                    "cannot read class-load log directory " + logs + ": IO error for operation on " + locked
+                            + ": Permission denied (os error 13): Permission denied (os error 13)",
+                    assertThrows(UikaException.class, () -> Evidence.load(List.of(logs))).getMessage());
+            assertEquals(
+                    "cannot read class-load log " + file + ": Permission denied (os error 13)",
+                    assertThrows(UikaException.class, () -> Evidence.load(List.of(file.toString()))).getMessage());
+        } finally {
+            locked.toFile().setReadable(true, false);
+            file.toFile().setReadable(true, false);
+        }
+    }
+
+    @Test
+    void draftedRulesOrderClassLevelFirstThenByMember(@TempDir Path dir) throws IOException {
+        List<Violation> violations = List.of(
+                violation("app/A", "lib/X", "m", "(I)V"),
+                violation("app/B", "lib/X"),
+                violation("app/C", "lib/X", "n", "()V"),
+                violation("app/D", "lib/X", "m", "()V"));
+        String path = dir.resolve("draft.toml").toString();
+        Evidence.LoadEvidence evidence = new Evidence.LoadEvidence(new HashMap<>(), "run.log");
+        assertEquals(4, Evidence.draftExcludes(violations, null, evidence, path));
+        List<String> symbols = new ArrayList<>();
+        for (String line : Files.readAllLines(Path.of(path))) {
+            if (line.startsWith("member = ") || line.startsWith("descriptor = ") || line.equals("[[exclude]]")) {
+                symbols.add(line);
+            }
+        }
+        assertEquals(
+                List.of(
+                        "[[exclude]]",
+                        "[[exclude]]", "member = \"m\"", "descriptor = \"()V\"",
+                        "[[exclude]]", "member = \"m\"", "descriptor = \"(I)V\"",
+                        "[[exclude]]", "member = \"n\"", "descriptor = \"()V\""),
+                symbols);
+    }
+
+    /** Drafting leaves directories to the placeholder, so a parent that is gone by then fails the write. */
+    @Test
+    void aDraftThatCannotBeWrittenIsNamed(@TempDir Path dir) {
+        String path = dir.resolve("no-such-dir").resolve("draft.toml").toString();
+        Evidence.LoadEvidence evidence = new Evidence.LoadEvidence(new HashMap<>(), "run.log");
+        assertEquals(
+                "cannot write draft exclude file " + path + ": No such file or directory (os error 2)",
+                assertThrows(UikaException.class, () -> Evidence.draftExcludes(List.of(), null, evidence, path))
+                        .getMessage());
+    }
+
+    /** Each path names an existing directory, so nothing is written wherever the test runs. */
+    @Test
+    void aDraftPathNamingADirectoryIsRefused(@TempDir Path dir) {
+        for (String path : List.of("/", ".", dir + "/", dir.toString())) {
+            assertEquals(
+                    "cannot write draft exclude file " + path + ": Is a directory (os error 21)",
+                    assertThrows(UikaException.class, () -> Evidence.createDraftPlaceholder(path)).getMessage());
+        }
+    }
+
+    @Test
+    void aDraftParentThatIsAFileFailsBeforeTheScan(@TempDir Path dir) throws IOException {
+        Path file = Files.writeString(dir.resolve("file.txt"), "");
+        // The doubled slash belongs to neither name, so the message names the file as it is.
+        String path = file + "//draft.toml";
+        String message = assertThrows(UikaException.class, () -> Evidence.createDraftPlaceholder(path)).getMessage();
+        assertTrue(message.startsWith("cannot create directory " + file + " for the draft exclude file: "), message);
     }
 
     @Test
