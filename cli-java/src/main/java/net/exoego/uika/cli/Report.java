@@ -843,7 +843,7 @@ final class Report {
                 line.append(", 💤 ").append(latent).append(" latent");
             }
             line.append(", ⚠️ ").append(unproven).append(" not proven reachable)");
-        } else if (latent > 0 && broken > 0) {
+        } else if (latent > 0) {
             line.append(" (of which 💤 ").append(latent).append(" latent)");
         }
         // Runtime load evidence (--class-load-log). The count stays out of evidence-less runs.
