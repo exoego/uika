@@ -2,16 +2,8 @@
 
 Everything under the `net.exoego.uika` group is published to Maven Central in
 one shot when a GitHub release is published: the CLI (`uika-cli`, whose
-classifier `jvm` is the pure-Java jar and whose classifiers `linux-x86_64`,
-`macos-aarch64`, `macos-x86_64`, `windows-x86_64` are the native ZIPs), the
-Gradle plugin, the sbt plugin, the Maven plugin, the Mill plugin, the Clojure CLI
-tool, and the Leiningen plugin.
-
-The jar and the ZIPs share one coordinate, so one build has to own the
-publication. That is `cli-java/`, which attaches the ZIPs it finds under
-`dist/native/<classifier>/`. It takes all four or none, and fails on a partial
-set, because a Central deployment cannot be amended once one platform turns out
-to be missing.
+classifier `jvm` is the runnable jar), the Gradle plugin, the sbt plugin, the
+Maven plugin, the Mill plugin, the Clojure CLI tool, and the Leiningen plugin.
 
 The jar is a classified artifact and the POM keeps `pom` packaging, on purpose.
 Central [requires](https://central.sonatype.org/publish/requirements/) a sources
@@ -30,17 +22,15 @@ nothing against the Central Portal metrics below.
 
 Create a GitHub release with tag `vX.Y.Z`. That is all.
 
-`.github/workflows/publish-release.yml` builds each platform on its native
-runner, stages all Maven artifacts locally, then JReleaser signs everything
-in-memory and uploads a single deployment to the Central Portal
-(all-or-nothing validation). It attaches the CLI jar, the CLI ZIPs and the Bazel ruleset
-tarball to the GitHub release.
+`.github/workflows/publish-release.yml` stages all Maven artifacts locally, then
+JReleaser signs everything in-memory and uploads a single deployment to the
+Central Portal (all-or-nothing validation). It attaches the CLI jar and the Bazel
+ruleset tarball to the GitHub release.
 
-Versions are derived from the tag alone. No source file is rewritten.
-`cli/Cargo.toml` stays at the `0.0.0-dev` placeholder: release builds embed
-the tag version into `uika --version` at compile time through the
-`UIKA_VERSION` environment variable (`option_env!` in `cli/src/cli.rs`), and
-JVM plugin versions are injected too. Every module publishes to a local
+Versions are derived from the tag alone. No source file is rewritten. Every
+build keeps a `0.0.0-dev` placeholder and takes the tag version as a parameter,
+`-PuikaVersion` for the CLI jar, whose manifest carries it into
+`uika --version`, and the equivalent for each plugin. Every module publishes to a local
 `staging-deploy` directory, and `jreleaser.yml` lists those directories as
 staging repositories.
 
@@ -58,16 +48,15 @@ One `vX.Y.Z` tag is one deployment carrying eight components (`uika-cli`,
 `uika-gradle-plugin`, the `net.exoego.uika.gradle.plugin` marker,
 `sbt-uika_2.12_1.0`, `uika-maven-plugin`, `mill-uika_mill1_3`, `clojure-uika`,
 `lein-uika`).
-That is 128 files and about 3.4 MB per tag (`clojure-uika` added 16: four
-artifacts, each with md5, sha1, and asc; the `uika-cli` jar added 4: one
-artifact with the same three). So for uika alone Release Count is
+That is 112 files per tag (`clojure-uika` added 16: four artifacts, each with
+md5, sha1, and asc; the `uika-cli` jar is 4, and the four native ZIPs that were
+16 more left with the Rust CLI). So for uika alone Release Count is
 the binding metric, not file count or size. Riding the shared deployment is
 also why publishing the Clojure CLI tool costs no extra release against that
 metric. July 2026 shipped eight tags and tripped the release-count limit.
 
 All three metrics are metered per organization, so the quota is shared with
-every other project under `net.exoego`. uika is the heavy one because it ships
-four native binaries.
+every other project under `net.exoego`.
 
 Three rules follow.
 
@@ -75,12 +64,10 @@ Batch changes into fewer tags. Do not publish for documentation or metadata
 updates, and do not cut a tag per merged PR. A burst for a security fix is
 explicitly tolerated by Sonatype and is not a reason to delay one.
 
-Keep the deployment small. Two things hold it at 3 MB instead of 6.2 MB, and
-reverting either without a replacement gives the bytes back. `[profile.release]`
-in the workspace `Cargo.toml` is tuned for size over speed, deliberately, and
-its comment carries the measurements. The plugins publish an empty
-javadoc jar, because Central requires that jar to exist but not to have
-content, and readers have the sources jar; each build file comments how.
+Keep the deployment small. The plugins publish an empty javadoc jar, because
+Central requires that jar to exist but not to have content, and readers have the
+sources jar; each build file comments how. The CLI jar ships as a classifier
+under `pom` packaging for the same reason, above.
 
 Do not add files to the deployment without checking the cost. Every artifact
 carries a `.md5`, a `.sha1`, and an `.asc`, so one new artifact is four files
@@ -113,7 +100,7 @@ The public key must be published to `keyserver.ubuntu.com` so Central can verify
 ## Local verification
 
 ```console
-$ make cli-publish-local UIKA_VERSION=0.1.0      # publish the CLI jar (classifier jvm) to ~/.m2, with the ZIPs under dist/native/<classifier>/ when all four are there
+$ make cli-publish-local UIKA_VERSION=0.1.0      # publish the CLI jar (classifier jvm) to ~/.m2
 $ make stage-all UIKA_VERSION=0.1.0              # stage all Maven artifacts locally, plus the Bazel tarball under dist/bazel/
 $ mise exec -- jreleaser deploy --dry-run        # needs JRELEASER_* env vars. Validates POMs and signs without uploading
 ```

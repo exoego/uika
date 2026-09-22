@@ -208,7 +208,7 @@ checkSubprojectTestJavaOptionsInjected := {
 lazy val prepareJfr = taskKey[Unit]("Records a real JFR recording with jdk.ClassLoad into load-logs/rec.jfr")
 
 // A REAL recording inside the log directory: the task must convert it (JfrEvidence)
-// instead of handing binary JFR to the JVM-free CLI. Whatever classes load during the
+// instead of handing binary JFR to the CLI. Whatever classes load during the
 // window (JFR internals at least) give it content; checkJfrConverted asserts plumbing,
 // not specific classes.
 prepareJfr := {

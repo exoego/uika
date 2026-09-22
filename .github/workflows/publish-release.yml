@@ -1,8 +1,8 @@
 name: Publish release
 
-# Publishing a GitHub release triggers the whole pipeline: build native
-# binaries, stage every Maven artifact locally, then JReleaser uploads one
-# signed deployment to Maven Central and attaches the ZIPs to the release.
+# Publishing a GitHub release triggers the whole pipeline: stage every Maven
+# artifact locally, then JReleaser uploads one signed deployment to Maven Central
+# and attaches the CLI jar and the Bazel archive to the release.
 on:
   release:
     types: [published]
@@ -25,66 +25,9 @@ jobs:
           set -euo pipefail
           echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-  build:
-    name: Build ${{ matrix.classifier }}
-    needs: version
-    runs-on: ${{ matrix.os }}
-    env:
-      UIKA_VERSION: ${{ needs.version.outputs.version }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            classifier: linux-x86_64
-            binary: uika
-          - os: macos-14
-            classifier: macos-aarch64
-            binary: uika
-          - os: macos-15-intel
-            classifier: macos-x86_64
-            binary: uika
-          - os: windows-latest
-            classifier: windows-x86_64
-            binary: uika.exe
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Build release binary
-        run: cargo build --release
-
-      - name: Package Unix binary
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          classifier="${{ matrix.classifier }}"
-          staging="dist/native/$classifier/uika-${UIKA_VERSION}-$classifier"
-          mkdir -p "$staging"
-          cp "target/release/${{ matrix.binary }}" "$staging/uika"
-          chmod 0755 "$staging/uika"
-          (cd "dist/native/$classifier" && zip -r "uika-${UIKA_VERSION}-$classifier.zip" "uika-${UIKA_VERSION}-$classifier")
-
-      - name: Package Windows binary
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $classifier = "${{ matrix.classifier }}"
-          $staging = "dist/native/$classifier/uika-$env:UIKA_VERSION-$classifier"
-          New-Item -ItemType Directory -Force -Path $staging | Out-Null
-          Copy-Item "target/release/${{ matrix.binary }}" "$staging/uika.exe"
-          Compress-Archive -Path $staging -DestinationPath "dist/native/$classifier/uika-$env:UIKA_VERSION-$classifier.zip" -Force
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: native-${{ matrix.classifier }}
-          path: dist/native/${{ matrix.classifier }}/*.zip
-          if-no-files-found: error
-
   publish:
     name: Publish to Maven Central
-    needs: [version, build]
+    needs: version
     runs-on: ubuntu-latest
     env:
       UIKA_VERSION: ${{ needs.version.outputs.version }}
@@ -104,23 +47,6 @@ jobs:
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           cache_save: false
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: native-*
-          path: dist/native
-          merge-multiple: false
-
-      - name: Normalize artifact layout
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist/native/{linux-x86_64,macos-aarch64,macos-x86_64,windows-x86_64}
-          for classifier in linux-x86_64 macos-aarch64 macos-x86_64 windows-x86_64; do
-            found="$(find "dist/native/native-$classifier" -name "uika-${UIKA_VERSION}-$classifier.zip" -print -quit)"
-            test -n "$found"
-            cp "$found" "dist/native/$classifier/"
-          done
 
       - name: Stage Maven artifacts
         shell: bash

@@ -20,7 +20,10 @@ milliseconds. Reproduction commands are at the bottom.
   from source, requires JDK 25), Revapi standalone 0.12.1 (+ revapi-java 0.28.4
   and revapi-reporter-text 0.15.1), Linkage Checker 1.5.13.
 - Peak RSS is the `maximum resident set size` from `/usr/bin/time -l`. JVM tools
-  include JVM startup; uika is a native binary.
+  include JVM startup. uika was a native binary when these runs were made. The
+  pure-Java jar that replaced it is measured against that binary in
+  `cli-java/AGENTS.md`: the same or better on the consumer-scale rows, and about
+  25ms of JVM start on the small ones.
 - Canonical case: kotlinx-coroutines-core-jvm 1.7.1 -> 1.11.0. Ktor 2.3.13's
   `BlockingAdapter` calls `EventLoopKt.processNextEventInCurrentThread()`, an
   internal (Kotlin `internal`, public in bytecode) method removed in 1.11.0.
@@ -123,7 +126,7 @@ all diff tools.
 
 | Tool      | Time   | Peak RSS | Findings          | Flags the real break | Notes |
 |-----------|--------|----------|-------------------|----------------------|-------|
-| uika diff | 0.02s  | 23 MB    | 230 entries       | yes | native |
+| uika diff | 0.02s  | 23 MB    | 230 entries       | yes | native binary, see Setup |
 | japicmp   | 0.38s  | 254 MB   | ~267 incompatible (484-line report) | yes | needs `--ignore-missing-classes`, warns the result may be incomplete |
 | roseau    | 0.42s  | 195 MB   | 3 breaking changes | **no** | Kotlin-aware API surface excludes the internal method |
 | Revapi    | ~15s\* | 1077 MB  | 18,051 report lines | yes | very noisy without supplementary jars (`missing-class ... POTENTIALLY_BREAKING`) |
@@ -230,9 +233,10 @@ not report it. No uika false negative surfaced.
   mode it also names the referencing and owning artifacts and suggests a fix
   (upgrade the referencer or pin the owner), which the diff tools cannot do
   because they never see the referencing side.
-- Being native, uika's footprint is one to two orders of magnitude below the
-  JVM tools (23-46 MB vs 195 MB-1.2 GB), and its startup is negligible, which
-  matters for a per-PR CI gate.
+- As a native binary, uika's footprint was one to two orders of magnitude below
+  the JVM tools (23-46 MB vs 195 MB-1.2 GB), and its startup negligible. The jar
+  keeps the footprint well under the JVM tools' (65 MB on the smallest run) and
+  adds a JVM start, which matters little for a per-PR CI gate.
 - Each prior-art tool is strong in its lane: roseau is fast and precise about
   the true public API surface, japicmp adds semantic-versioning advice, Revapi
   has the widest set of checks, and Linkage Checker gives the most detailed
@@ -270,7 +274,7 @@ java -cp <linkage-checker-cp> com.google.cloud.tools.opensource.classpath.Linkag
 # 3. Stress: a whole flattened package cache as the classpath
 uika check --old "$OLD" --new "$NEW" --classpath "$BIG_CP"
 
-# 4. Class-shape breaks (fixtures in cli/tests/fixtures). interface->class flip:
+# 4. Class-shape breaks (fixtures in cli-java/tests/fixtures). interface->class flip:
 uika check --old ktor-io-jvm-2.3.13.jar --new ktor-io-jvm-3.1.0.jar \
      --classpath ktor-network-jvm-2.3.13.jar
 #    new-on-abstract (consumer = the old jar's own ReflectionCache; copy it since

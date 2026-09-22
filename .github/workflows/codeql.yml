@@ -35,7 +35,7 @@ jobs:
         # build-mode `none` CodeQL skips Kotlin and says so in the log. The only
         # Kotlin here is four *.gradle.kts build scripts, which are not worth the
         # autobuild of three Gradle builds plus Maven and sbt that Kotlin needs.
-        language: [ actions, java-kotlin, rust ]
+        language: [ actions, java-kotlin ]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,8 +44,8 @@ jobs:
         uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           languages: ${{ matrix.language }}
-          # None of these need a build. Rust supports no other mode, and Java is
-          # analyzed from source. See the matrix comment before changing this.
+          # Neither needs a build: Java is analyzed from source. See the matrix
+          # comment before changing this.
           build-mode: none
 
       - name: Perform CodeQL Analysis

@@ -26,11 +26,12 @@ updates both. The Clojure CLI tool, Leiningen and Bazel fetch the jar
 differently, and their pages say how.
 
 Every tool takes `UIKA_CLI_PATH` to run a CLI you already have instead, which is
-what an air-gapped build needs. It takes the jar or a native binary. A value
-that is not a file, or a native binary that is not executable, fails naming the
-variable rather than deep inside process start-up: shipping a binary as a CI
-artifact is the usual way to get it onto the runner, and `upload-artifact` does
-not preserve the executable bit. A jar needs no such bit.
+what an air-gapped build needs. It takes the jar, or an executable that runs it,
+such as a script that starts the jar on another JDK. A value that is not a file,
+or an executable that lost its bit, fails naming the variable rather than deep
+inside process start-up: shipping a script as a CI artifact is the usual way to
+get it onto the runner, and `upload-artifact` does not preserve the executable
+bit. A jar needs no such bit.
 
 ## Options
 

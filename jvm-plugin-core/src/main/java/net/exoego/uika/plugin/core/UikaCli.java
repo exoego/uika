@@ -34,7 +34,7 @@ public final class UikaCli {
     public static final String CLI_PATH_ENV = "UIKA_CLI_PATH";
 
     /**
-     * The CLI {@code UIKA_CLI_PATH} names, the jar or a native binary, or null when it is
+     * The CLI {@code UIKA_CLI_PATH} names, the jar or an executable that runs it, or null when it is
      * unset or blank.
      *
      * <p>Short-circuits acquisition entirely, so a build can run air-gapped, against a
@@ -52,7 +52,7 @@ public final class UikaCli {
      * call {@link #binaryOverride()}: Mill's daemon environment is stale by the time a task
      * runs, and Gradle needs the variable to be a declared configuration input.
      *
-     * <p>A native binary has to be executable, not merely present. Handed on without the
+     * <p>Anything but a jar has to be executable, not merely present. Handed on without the
      * bit it dies far away in ProcessBuilder with no cause in sight, and an artifact round
      * trip is the likeliest way a hand-supplied binary loses it, since
      * actions/upload-artifact does not preserve it.
@@ -267,7 +267,7 @@ public final class UikaCli {
     }
 
     /**
-     * What starts {@code cli}: the file itself for a native binary, and for the jar the JVM
+     * What starts {@code cli}: the file itself for an executable, and for the jar the JVM
      * running this build plus the flags the jar's own launcher would pick.
      *
      * <p>The jar re-runs itself in a child JVM to get those flags, which costs a second JVM
@@ -318,7 +318,7 @@ public final class UikaCli {
      * daemon, an sbt server, or mvnd the user would never see it. Returns the CLI exit code:
      * 0 = clean, 1 = violations found (per {@code failOn}), 2 = error.
      *
-     * @param binary the native binary, or the CLI jar, which {@link #launchCommand} starts
+     * @param binary the CLI jar, or an executable that runs it, which {@link #launchCommand} starts
      *     on the JVM running this build.
      * @param failOn when the CLI should exit non-zero ({@code never}, {@code reachable}, or
      *     {@code any}); passed through as {@code --fail-on}. Null or blank leaves the CLI default.

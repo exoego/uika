@@ -20,7 +20,7 @@ import java.util.function.Consumer;
 
 /**
  * Converts JFR recordings into the class-load log text the uika CLI already parses. The
- * conversion lives in the plugins, not the CLI, on purpose: the CLI is JVM-free and must
+ * conversion lives in the plugins, not the CLI, on purpose: the CLI must
  * never read binary JFR, while every build tool runs on a full JDK whose
  * {@code jdk.jfr.consumer.RecordingFile} reads recordings event by event. Emitting the
  * CLI's own trusted text shapes (a {@code [class,load]} line per stackless event, a

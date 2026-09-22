@@ -122,7 +122,7 @@ object Uika extends ExternalModule {
       }
       resolveCli(resolver, version)
     }
-    // Recordings are converted here, never handed to the CLI: the CLI is JVM-free and must
+    // Recordings are converted here, never handed to the CLI: the CLI must
     // not read binary JFR. --jfr falls back to UIKA_JFR, the variable that made the tests
     // record (UikaTestModule), so ONE option serves both phases the way the sibling tools'
     // single option does. The flag stays the explicit override.

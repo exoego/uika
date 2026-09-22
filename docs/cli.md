@@ -1,6 +1,6 @@
 # CLI
 
-The `uika` binary is the engine every
+The `uika` CLI is the engine every
 [build-tool integration](build-tools.md) runs. The plugins
 fetch it, derive its arguments from the build, and print what it reports, so a
 project with a supported build tool never has to invoke it by hand.
@@ -11,14 +11,22 @@ plugin ran. A plugin knows each module's resolved classpath, the release it
 compiles for, and where its build outputs are. A command line knows none of the
 three until you pass it.
 
-## Getting the binary
+## Getting the jar
 
-Native binaries are attached to every [GitHub
+The CLI is one jar, `uika-cli-<version>.jar`, attached to every [GitHub
 release](https://github.com/exoego/uika/releases) and published to Maven
-Central as `net.exoego.uika:uika-cli:<version>:<platform>@zip`, with the
-classifiers `linux-x86_64`, `macos-aarch64`, `macos-x86_64` and
-`windows-x86_64`. Unzip one and put it on the path. Nothing else is needed,
-because the CLI runs no JVM.
+Central as `net.exoego.uika:uika-cli:<version>:jvm@jar`. It needs Java 17 or
+newer and nothing else, not even a JDK. Run it as
+`java -jar uika-cli-<version>.jar <command>`. The examples below spell that
+`uika`, which is the alias to set:
+
+```console
+$ alias uika='java -jar /path/to/uika-cli-<version>.jar'
+```
+
+The jar starts a second JVM with the flags a short run wants (serial collector,
+small young generation, and the first-tier compiler below about 800 scan
+targets). `UIKA_NO_RELAUNCH=1` keeps it in the JVM you started, for debugging.
 
 ## Commands
 
@@ -135,8 +143,8 @@ $ uika dump some.jar
 - [`--jdk-release N`](jdk.md) layers the JDK API of release N under the
   resolution scope, so hierarchy escapes into the JDK conclude instead of
   counting as unverified. It is opt-in here and defaults to on in every plugin,
-  because a build already runs on a JVM and the CLI does not. The API is read
-  from `$UIKA_JDK` when set, else `$JAVA_HOME`.
+  because a plugin knows the release the build compiles for and the CLI does
+  not. The API is read from `$UIKA_JDK` when set, else `$JAVA_HOME`.
 - `--json` prints the report as JSON instead of text. CLI-only, deliberately:
   each plugin prints the CLI's output through its own logger, so the JSON would
   come out of Maven with `[INFO]` on every line and out of Gradle without,

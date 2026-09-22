@@ -162,7 +162,7 @@
     (spit before (apply str (repeat (* 150 800) " ")))
     (is (not-any? #{@#'uika.core/small-run-flag} (launch (io/file dir "uika-cli.jar"))))
     (is (= [(str (io/file dir "uika"))] (launch (io/file dir "uika")))
-        "a native binary starts itself")))
+        "an executable starts itself")))
 
 (deftest a-jar-needs-no-executable-bit
   ;; No download or artifact round trip leaves a jar executable, and a JVM runs it anyway.

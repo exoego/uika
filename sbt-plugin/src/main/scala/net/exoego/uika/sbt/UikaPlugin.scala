@@ -123,7 +123,7 @@ object UikaPlugin extends AutoPlugin {
       // still delegates to ThisBuild, so both spellings work. Absolutized like the
       // javaOptions side so both halves and the CLI agree on one directory. Recordings
       // (a .jfr value, or recordings inside the directory) are converted to the CLI's
-      // text format here: the CLI is JVM-free and never reads binary JFR.
+      // text format here: the CLI never reads binary JFR.
       val classLoadLogs = JfrEvidence.rewrite(
         (LocalRootProject / uikaJfr).value.map(_.getAbsoluteFile.toPath).toSeq.asJava,
         (uikaDir / JfrEvidence.WORK_DIR_NAME).toPath,
@@ -242,9 +242,9 @@ object UikaPlugin extends AutoPlugin {
       // build, 17 configuration reports over 88 distinct files.
       //
       // The cost is dump SIZE, not scan time. The CLI deduplicates scan targets before it
-      // opens anything (cli/src/lib.rs's `seen` set, and gradle.rs when it builds them from
+      // opens anything (`Commands` on the target list, and `Dump` when it builds them from
       // the artifact table), so a repeated ref costs one exists() and nothing more. What it
-      // does cost is a CI artifact and a serde parse proportional to the configuration
+      // does cost is a CI artifact and a JSON parse proportional to the configuration
       // count, and a dump that stops describing the classpath.
       //
       // Distinct over the tuple rather than the Artifact, which defines no equals, and

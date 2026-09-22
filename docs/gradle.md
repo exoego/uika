@@ -40,8 +40,7 @@ The dump task builds the module outputs by default. Pass
 
 `uikaUpgradeCheck` fetches the CLI as the `jvm` jar of
 `net.exoego.uika:uika-cli:<version>` and runs it on the JVM that runs Gradle. So
-it works wherever that JVM does,
-including platforms uika ships no native binary for.
+it works wherever that JVM does.
 
 ## PR gate on GitHub Actions
 
@@ -211,10 +210,10 @@ resolved local paths.
   property itself takes a bare text file: `-PuikaJfr` rejects one, because a
   test JVM told to record into it aborts at startup.
 - `UIKA_CLI_PATH` runs a CLI you already have instead of resolving one, so a
-  build can run air-gapped or against a locally built CLI. It takes the jar or a
-  native binary. It wins over the CLI version, nothing is downloaded, and a value
-  that is not a file, or a native binary that is not executable, fails naming
-  the variable.
+  build can run air-gapped or against a locally built CLI. It takes the jar, or
+  an executable that runs it, such as a script that starts the jar on another
+  JDK. It wins over the CLI version, nothing is downloaded, and a value that is
+  not a file, or an executable that lost its bit, fails naming the variable.
 
 ## Runtime load evidence (JFR)
 

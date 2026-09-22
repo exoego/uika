@@ -32,8 +32,7 @@ Run a `compile` phase in the same invocation when they should be scanned.
 
 `uika:upgrade-check` fetches the CLI as the `jvm` jar of
 `net.exoego.uika:uika-cli:<version>` and runs it on the JVM that runs Maven. So
-it works wherever that JVM does,
-including platforms uika ships no native binary for.
+it works wherever that JVM does.
 
 ## PR gate on GitHub Actions
 
@@ -200,10 +199,10 @@ degrading to a warning. The cache save and restore close that gap.
   recording is passed on unchanged, so `-Xlog:class+load` output and a
   classlist mix with the recordings. There is no separate parameter.
 - `UIKA_CLI_PATH` runs a CLI you already have instead of resolving one, so a
-  build can run air-gapped or against a locally built CLI. It takes the jar or a
-  native binary. It wins over the CLI version, nothing is downloaded, and a value
-  that is not a file, or a native binary that is not executable, fails naming
-  the variable.
+  build can run air-gapped or against a locally built CLI. It takes the jar, or
+  an executable that runs it, such as a script that starts the jar on another
+  JDK. It wins over the CLI version, nothing is downloaded, and a value that is
+  not a file, or an executable that lost its bit, fails naming the variable.
 
 ## Runtime load evidence (JFR)
 

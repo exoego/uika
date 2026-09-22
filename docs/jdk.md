@@ -28,7 +28,7 @@ they pass and the `ct.sym` the CLI reads come from one JVM.
 so the layered release has to be older than the JDK uika finds. That JDK's own
 release comes from its `jmods/`, which a JDK upgrade check reads when one of its
 sides is that release, so checking an upgrade *to* the JDK you now run needs
-only that one JDK. Both sources are plain files, so uika still runs on no JVM.
+only that one JDK. Both sources are plain files, so uika reads them without starting that JDK.
 
 A JDK upgrade check cannot see sealing changes, because `ct.sym` stubs do not
 carry `PermittedSubclasses` and reporting them from the `jmods` side alone would

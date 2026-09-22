@@ -408,7 +408,7 @@
       (when (< feature (long min-cli-java))
         (throw (ex-info (str "uika: the CLI jar needs Java " min-cli-java " or newer and this"
                              " JVM is Java " feature ". Run on a newer JVM, or point"
-                             " :cli-path or UIKA_CLI_PATH at a native uika binary")
+                             " :cli-path or UIKA_CLI_PATH at a script that starts the jar on a newer JDK")
                         {:feature feature})))
       (-> [(str java)]
           (into jvm-flags)

@@ -86,7 +86,7 @@ public final class UpgradeCheckMain {
             evidence.add(jfr);
         }
         if (!evidence.isEmpty()) {
-            // Recordings are converted HERE, never by the CLI: the CLI is JVM-free and must
+            // Recordings are converted HERE, never by the CLI: the CLI must
             // not read binary JFR. The WHOLE list goes through the converter, the shape
             // every sibling integration uses: a recording handed to --classLoadLog converts
             // too (the CLI skips .jfr names silently, so forwarding it raw loses the
@@ -178,7 +178,7 @@ public final class UpgradeCheckMain {
     }
 
     /**
-     * The uika CLI, a jar unless UIKA_CLI_PATH names a native binary. UIKA_CLI_PATH wins over
+     * The uika CLI, a jar unless UIKA_CLI_PATH names an executable. UIKA_CLI_PATH wins over
      * the downloaded one so a build can point at a CLI it already has, which is also how
      * this repository tests against its own freshly built jar.
      *

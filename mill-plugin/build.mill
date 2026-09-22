@@ -47,7 +47,7 @@ object `package` extends ScalaModule, PublishModule {
   def manifest = Task { super.manifest().add("Implementation-Version" -> publishVersion()) }
 
   // The released version is stamped in by the release workflow, exactly as -PuikaVersion and
-  // -Drevision do for the other plugins. cli/Cargo.toml keeps its 0.0.0-dev placeholder, so
+  // -Drevision do for the other plugins. cli-java/build.gradle.kts keeps its 0.0.0-dev placeholder, so
   // there is no in-tree version to read.
   def publishVersion = Task.Input { Task.env.getOrElse("UIKA_VERSION", "0.0.0-dev") }
 

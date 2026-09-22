@@ -1,6 +1,6 @@
 ;; The version is stamped by the release workflow via UIKA_VERSION, exactly as
 ;; -PuikaVersion and -Drevision do for the other plugins; the in-tree placeholder
-;; matches cli/Cargo.toml. project.clj is code, so the env read needs no plugin.
+;; matches cli-java/build.gradle.kts. project.clj is code, so the env read needs no plugin.
 (defproject net.exoego.uika/lein-uika #=(eval (or (System/getenv "UIKA_VERSION") "0.0.0-dev"))
   :description "Leiningen plugin for writing uika resolved classpath dumps and running upgrade checks"
   :url "https://github.com/exoego/uika"

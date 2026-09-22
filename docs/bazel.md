@@ -51,8 +51,8 @@ The CLI is a jar that comes from a repository rule, so Bazel's repository cache
 holds it, a second run needs no network, and the release archive pins its
 checksum. It is one jar for every host, and the check target starts it on its
 own Java runtime. `UIKA_CLI_PATH` points it at a CLI you already have instead,
-the jar or a native binary, and a value that is not a file, or a native binary
-that is not executable, fails naming the variable. The check target repeats
+the jar or an executable that runs it, and a value that is not a file, or an
+executable that lost its bit, fails naming the variable. The check target repeats
 `targets` only to read the API release they compile for, so it builds nothing.
 
 The `uika.cli` module-extension tag overrides where the jar comes from.
