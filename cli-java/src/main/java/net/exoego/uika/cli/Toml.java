@@ -1216,7 +1216,7 @@ final class Toml {
             Value pending = null;
             int end = ee.a[open];
             scan:
-            while (ep < ek.n) {
+            while (true) {
                 int e = ep++;
                 end = ee.a[e];
                 switch (ek.a[e]) {
@@ -1232,10 +1232,7 @@ final class Toml {
                             break scan;
                         }
                     }
-                    case E_WS, E_COMMENT, E_NEWLINE, E_ERROR -> {}
-                    default -> {
-                        break scan;
-                    }
+                    default -> {}
                 }
             }
             Value value = new Value(source, Kind.ARRAY, es.a[open], end);
@@ -1251,7 +1248,7 @@ final class Toml {
             Value pending = null;
             int end = ee.a[open];
             scan:
-            while (ep < ek.n) {
+            while (true) {
                 int e = ep++;
                 end = ee.a[e];
                 switch (ek.a[e]) {
@@ -1272,10 +1269,7 @@ final class Toml {
                             break scan;
                         }
                     }
-                    case E_KEY_VAL_SEP, E_WS, E_COMMENT, E_NEWLINE, E_ERROR -> {}
-                    default -> {
-                        break scan;
-                    }
+                    default -> {}
                 }
             }
             Value value = new Value(source, Kind.TABLE, es.a[open], end);
