@@ -161,7 +161,7 @@ final class Diff {
         int n = methods ? newIndex.methodCount(newEntry) : newIndex.fieldCount(newEntry);
         for (int k = 0; k < n; k++) {
             long candidate = methods ? newIndex.methodKeyAt(newEntry, k) : newIndex.fieldKeyAt(newEntry, k);
-            if (MemberKey.name(candidate) == MemberKey.name(key) && MemberKey.descriptor(candidate) != MemberKey.descriptor(key)) {
+            if (MemberKey.name(candidate) == MemberKey.name(key)) {
                 descriptors.add(MemberKey.descriptor(candidate));
             }
         }
