@@ -23,9 +23,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Runs {@code uika upgrade-check} between two classpath dumps. The CLI binary is resolved as
- * {@code net.exoego.uika:uika-cli:<version>:<platform>@zip} through this build's repositories, so
+ * Runs {@code uika upgrade-check} between two classpath dumps. The CLI is the pure-Java jar,
+ * resolved as {@code net.exoego.uika:uika-cli:jar:jvm:<version>} through this build's repositories, so
  * downloads land in the local repository and the version is bumped together with the plugin.
+ * It runs from the local repository on the JVM that runs Maven.
  */
 @Mojo(name = "upgrade-check", aggregator = true, threadSafe = true)
 public final class UpgradeCheckMojo extends AbstractMojo {
@@ -126,20 +127,17 @@ public final class UpgradeCheckMojo extends AbstractMojo {
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
         // UIKA_CLI_PATH wins outright, so an air-gapped build or one pointed at a locally
-        // built binary never reaches the resolver, the version, or the classifier.
-        Path override = UikaCli.binaryOverride();
-        File zip = null;
-        String classifier = null;
-        if (override == null) {
-            classifier = UikaCli.platformClassifier();
+        // built CLI never reaches the resolver or the version.
+        Path binary = UikaCli.binaryOverride();
+        if (binary == null) {
             var request = new ArtifactRequest(
                     new DefaultArtifact(
-                            UikaCli.GROUP, UikaCli.ARTIFACT, classifier, "zip", cliVersion),
+                            UikaCli.GROUP, UikaCli.ARTIFACT, UikaCli.JAR_CLASSIFIER, "jar", cliVersion),
                     remoteRepositories,
                     "uika");
             try {
-                zip = repositorySystem.resolveArtifact(repositorySession, request)
-                        .getArtifact().getFile();
+                binary = repositorySystem.resolveArtifact(repositorySession, request)
+                        .getArtifact().getFile().toPath();
             } catch (ArtifactResolutionException e) {
                 throw new MojoExecutionException("failed to resolve " + request.getArtifact(), e);
             }
@@ -153,10 +151,6 @@ public final class UpgradeCheckMojo extends AbstractMojo {
                 .toList();
         int exit;
         try {
-            Path binary = override != null
-                    ? override
-                    : UikaCli.extractBinary(zip.toPath(), Path.of(session.getExecutionRootDirectory(),
-                            "target", "uika", "cli-" + cliVersion + "-" + classifier));
             UikaCli.JdkSource jdk = UikaCli.JdkSource.current();
             Integer effectiveJdkRelease = UikaCli.effectiveJdkRelease(
                     jdkRelease != null ? jdkRelease : JdkReleases.lowest(session.getAllProjects()),

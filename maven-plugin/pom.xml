@@ -200,6 +200,9 @@
           <localRepositoryPath>${project.build.directory}/it-repo</localRepositoryPath>
           <postBuildHookScript>verify</postBuildHookScript>
           <streamLogs>true</streamLogs>
+          <!-- The prebuild scripts publish the stub CLI jar with StubCli, which lives in
+               the core test sources. -->
+          <addTestClassPath>true</addTestClassPath>
         </configuration>
         <executions>
           <execution>
