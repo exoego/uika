@@ -308,9 +308,13 @@ final class Cli {
             try {
                 n = Long.parseLong(value);
             } catch (NumberFormatException e) {
-                String why = value.isEmpty() ? "cannot parse integer from empty string" : "invalid digit found in string";
-                throw new UsageException("error: invalid value '" + value + "' for " + shown + ": " + why + "\n\n"
-                        + "For more information, try '--help'.\n");
+                if (!value.matches("[+-]?[0-9]+")) {
+                    String why = value.isEmpty() ? "the value is empty" : value + " is not a whole number";
+                    throw new UsageException("error: invalid value '" + value + "' for " + shown + ": " + why + "\n\n"
+                            + "For more information, try '--help'.\n");
+                }
+                // Digits that overflow a long are still a number, just out of range.
+                n = Long.MAX_VALUE;
             }
             if (n < Jdk.MIN_RELEASE || n > Jdk.MAX_RELEASE) {
                 throw new UsageException("error: invalid value '" + value + "' for " + shown + ": " + value + " is not between "

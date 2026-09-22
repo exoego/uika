@@ -116,7 +116,7 @@ class JdkTest {
         assertEquals(-1, installedFeatureOf("1"));
         assertEquals(17, installedFeatureOf("17-ea"));
         assertEquals(9, installedFeatureOf("9.0.4"));
-        // Rust parses a u32, which takes no sign.
+        // A version number has no sign, so "-17" is not one.
         assertEquals(-1, installedFeatureOf("-17"));
         Path home = dir.resolve("uika-jdk-release-test");
         Files.writeString(home.resolve("release"), "IMPLEMENTOR=\"x\"\n", StandardCharsets.UTF_8);
