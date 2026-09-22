@@ -1744,10 +1744,7 @@ final class Toml {
                 // A leading underscore or dot reads as a mistyped number, not as a bare string.
                 case '_', '1', '2', '3', '4', '5', '6', '7', '8', '9' -> dateOrNumber(0);
                 case '0' -> zeroPrefixed(0, false);
-                case '.' -> {
-                    ensureFloat(0);
-                    yield number(0, Kind.FLOAT, 10);
-                }
+                case '.' -> throw fail("invalid mantissa", 0, 0, "digits");
                 case 't', 'T' -> symbol("true", Kind.BOOLEAN);
                 case 'f', 'F' -> symbol("false", Kind.BOOLEAN);
                 case 'i', 'I' -> symbol("inf", Kind.FLOAT);
@@ -1779,9 +1776,6 @@ final class Toml {
 
         private Value symbol(String symbol, Kind kind) {
             if (!raw.equals(symbol)) {
-                if (raw.contains(" ")) {
-                    throw invalid();
-                }
                 String description = kind == Kind.BOOLEAN ? "invalid boolean" : "invalid float";
                 throw fail(description, 0, raw.length(), lit(symbol));
             }
@@ -1809,8 +1803,7 @@ final class Toml {
                 }
                 case '.' -> {
                     // The crate checks the signed text here, so the sign is what it rejects.
-                    ensureFloat(0);
-                    return number(0, Kind.FLOAT, 10);
+                    throw fail("invalid mantissa", 0, 0, "digits");
                 }
                 case 'i', 'I', 'n', 'N' -> {
                     String symbol = first == 'i' || first == 'I' ? "inf" : "nan";
