@@ -272,6 +272,106 @@ class ClassParserTest {
         assertEquals("unknown constant pool tag 2 at offset 17", e.getMessage());
     }
 
+    /** The resumable parse cannot size an entry of an unknown tag, so it reads the tag and fails like the one-shot parse. */
+    @Test
+    void anUnknownConstantPoolTagFailsTheResumableParseToo() {
+        ClassFileBytes b = ClassFileBytes.header(52, 3);
+        b.utf8("a/B"); // #1
+        b.u8(2); // #2: tag 2 does not exist
+        b.u16(0);
+        byte[] bytes = b.toByteArray();
+        assertEquals("unknown constant pool tag 2 at offset 17", outcome(p -> p.parse(bytes, bytes.length)));
+        for (int split = 0; split <= bytes.length; split++) {
+            int first = split;
+            String actual = outcome(p -> {
+                p.begin(bytes);
+                p.parseHeader(first, false);
+                p.parseHeader(bytes.length, true);
+            });
+            assertEquals("unknown constant pool tag 2 at offset 17", actual, "split at " + split);
+        }
+    }
+
+    /** A class whose only field carries a Code attribute with the given body. */
+    private static byte[] fieldWithCode(int... body) {
+        ClassFileBytes b = ClassFileBytes.header(52, 6);
+        b.utf8("a/B"); // #1
+        b.classRef(1); // #2
+        b.utf8("f"); // #3
+        b.utf8("I"); // #4
+        b.utf8("Code"); // #5
+        b.u16(0x0021).u16(2).u16(0).u16(0);
+        b.u16(1); // fields
+        b.u16(0x0002).u16(3).u16(4);
+        b.u16(1); // attrs
+        b.u16(5).u32(body.length).raw(body);
+        b.u16(0); // methods
+        b.u16(0); // class attrs
+        return b.toByteArray();
+    }
+
+    @Test
+    void aCodeAttributeOnAFieldIsValidatedButNotScanned() throws Exception {
+        ClassParser rc = parse(fieldWithCode(0, 1, 0, 1, 0, 0, 0, 3, 0xb2, 0x00, 0x02, 0, 0, 0, 0));
+        assertEquals(1, rc.fieldCount);
+        assertEquals(0, rc.codeRefCount);
+        ClassParser.FormatException e = assertThrows(ClassParser.FormatException.class, () -> parse(fieldWithCode(0, 1, 0)));
+        assertEquals("truncated class file at offset 0", e.getMessage());
+    }
+
+    /** Operands a cut instruction would need past the end of the code are never read. */
+    @Test
+    void anInstructionCutByTheEndOfTheCodeEndsTheScan() throws Exception {
+        int[] before = {0xb8, 0x00, 0x07}; // invokestatic #7
+        int[][] cuts = {
+            {0xaa, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // tableswitch without its high bound
+            {0xab, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // lookupswitch without its pair count
+            {0xc4}, // wide without the instruction it widens
+        };
+        for (int[] cut : cuts) {
+            int[] code = Arrays.copyOf(before, before.length + cut.length);
+            System.arraycopy(cut, 0, code, before.length, cut.length);
+            ClassParser rc = parse(classWithCode(code));
+            assertArrayEquals(new int[] {0xb8 << 16 | 7}, Arrays.copyOf(rc.codeRefs, rc.codeRefCount), Arrays.toString(cut));
+        }
+    }
+
+    @Test
+    void wideTakesFourBytesUnlessItWidensIinc() throws Exception {
+        ClassParser rc = parse(classWithCode(
+                0xc4, 0x19, 0xb8, 0x00, // wide aload whose index looks like invokestatic
+                0xb6, 0x00, 0x09 // invokevirtual #9
+                ));
+        assertArrayEquals(new int[] {0xb6 << 16 | 9}, Arrays.copyOf(rc.codeRefs, rc.codeRefCount));
+    }
+
+    /** Only an attribute whose name index is the Utf8 "Code" is scanned; any other is skipped by its length. */
+    @Test
+    void onlyAnAttributeNamedCodeIsScanned() throws Exception {
+        ClassFileBytes b = ClassFileBytes.header(52, 9);
+        b.utf8("a/B"); // #1
+        b.classRef(1); // #2
+        b.utf8("m"); // #3
+        b.utf8("()V"); // #4
+        b.utf8("Coda"); // #5
+        b.u8(5).u64(0); // #6 Long, #7 unusable
+        b.utf8("Code"); // #8
+        b.u16(0x0021).u16(2).u16(0).u16(0);
+        b.u16(0); // fields
+        b.u16(1); // methods
+        b.u16(0x0009).u16(3).u16(4);
+        int[] names = {0, 2, 5, 7, 0x7fff, 8};
+        b.u16(names.length);
+        for (int name : names) {
+            // Each body is a Code body holding getstatic #2, so a misread name would record a reference.
+            b.u16(name).u32(15).u16(1).u16(1).u32(3).raw(0xb2, 0x00, 0x02).u16(0).u16(0);
+        }
+        b.u16(0); // class attrs
+
+        ClassParser rc = parse(b.toByteArray());
+        assertArrayEquals(new int[] {0xb2 << 16 | 2}, Arrays.copyOf(rc.codeRefs, rc.codeRefCount));
+    }
+
     /** A class with one method whose Code attribute holds {@code code}. */
     private static byte[] classWithCode(int... code) {
         ClassFileBytes b = ClassFileBytes.header(52, 6);
