@@ -1160,11 +1160,12 @@ final class Report {
                         .append(modules.totalModules())
                         .append(" modules moved to another release\n");
                 for (ModuleOutcome o : jdkRuns) {
-                    String pair = o.jdkPair() == null ? "" : "JDK " + o.jdkPair()[0] + " -> " + o.jdkPair()[1];
                     out.append("    ")
                             .append(String.join(", ", o.jdkModules()))
-                            .append("  ")
-                            .append(pair)
+                            .append("  JDK ")
+                            .append(o.jdkPair()[0])
+                            .append(" -> ")
+                            .append(o.jdkPair()[1])
                             .append("  ")
                             .append(runCounts(o))
                             .append('\n');
