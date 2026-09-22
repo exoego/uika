@@ -16,14 +16,6 @@ final class LongSet {
         java.util.Arrays.fill(slots, EMPTY);
     }
 
-    int size() {
-        return size;
-    }
-
-    boolean isEmpty() {
-        return size == 0;
-    }
-
     private static int slot(long key, int mask) {
         long h = key * 0x9E3779B97F4A7C15L;
         return (int) (h ^ (h >>> 32)) & mask;

@@ -15,10 +15,6 @@ final class IntSet {
         slots = new int[Integer.highestOneBit(Math.max(8, expected * 2 - 1)) * 2];
     }
 
-    int size() {
-        return size;
-    }
-
     boolean isEmpty() {
         return size == 0;
     }

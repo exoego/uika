@@ -1,7 +1,5 @@
 package net.exoego.uika.cli;
 
-import java.util.Arrays;
-
 /** Open-addressing map from a symbol (or any non-negative int) to an int. */
 final class SymMap {
     static final int ABSENT = -1;
@@ -18,10 +16,6 @@ final class SymMap {
         int capacity = Integer.highestOneBit(Math.max(8, expected * 2 - 1)) * 2;
         keys = new int[capacity];
         values = new int[capacity];
-    }
-
-    int size() {
-        return size;
     }
 
     boolean isEmpty() {
@@ -95,22 +89,5 @@ final class SymMap {
                 values[slot] = oldValues[i];
             }
         }
-    }
-
-    void clear() {
-        Arrays.fill(keys, 0);
-        size = 0;
-    }
-
-    /** Keys in table order, which is arbitrary: sort by string value before it reaches output. */
-    int[] keys() {
-        int[] out = new int[size];
-        int n = 0;
-        for (int stored : keys) {
-            if (stored != 0) {
-                out[n++] = stored - 1;
-            }
-        }
-        return out;
     }
 }
