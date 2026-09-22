@@ -510,12 +510,9 @@ class TomlTest {
                 missing field `reason`
                 """,
                 item.missingField("reason").getMessage());
-        assertEquals(
-                "invalid length 2, expected struct RawEntry with 5 elements",
-                item.invalidLength(2, "struct RawEntry with 5 elements").description);
     }
 
-    /** Through the real schema, so the key order rule and the sequence form are pinned too. */
+    /** Through the real schema, so the key order rule is pinned too. */
     @Test
     void excludeFilesAreRejectedLikeTheRustDeserializer() {
         assertEquals("unknown field `other`, expected `exclude`", excludeError("other = 1\n"));
@@ -528,12 +525,10 @@ class TomlTest {
                 "invalid type: integer `2`, expected a string", excludeError("[[exclude]]\nreason = 2\nzzz = 1\n"));
         assertTrue(excludeError("[[exclude]]\nowner = 1\nonwer = \"x\"\n").startsWith("unknown field `onwer`"));
         assertTrue(excludeError("[[exclude]]\nreason = 2\naaa = 1\n").startsWith("unknown field `aaa`"));
-        // A serde struct also reads from a sequence, and leftovers go unchecked.
-        assertEquals("invalid length 2, expected struct RawEntry with 5 elements", excludeError("exclude = [[\"a\", \"m\"]]"));
+        // A list in place of an entry is rejected like any other value that is not a table.
         assertEquals(
-                1,
-                Exclude.parse("exclude = [[\"a\", \"m\", \"()V\", \"method_removed\", \"r\", \"ignored\"]]")
-                        .size());
+                "invalid type: sequence, expected struct RawEntry",
+                excludeError("exclude = [[\"a\", \"m\", \"()V\", \"method_removed\", \"r\"]]"));
     }
 
     private static String excludeError(String toml) {

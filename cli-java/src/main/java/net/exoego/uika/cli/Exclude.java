@@ -132,20 +132,6 @@ final class Exclude {
             }
             for (Toml.Value item : top.value().asArray()) {
                 String[] values = new String[ENTRY_FIELDS.length];
-                if (item.kind() == Toml.Kind.ARRAY) {
-                    // A serde struct also reads from a sequence, field by field, and the
-                    // toml crate never looks for leftovers. Kept so one file loads or fails
-                    // the same way under both implementations.
-                    List<Toml.Value> positional = item.asArray();
-                    for (int i = 0; i < values.length; i++) {
-                        if (i >= positional.size()) {
-                            throw item.invalidLength(i, "struct RawEntry with 5 elements");
-                        }
-                        values[i] = positional.get(i).asString();
-                    }
-                    entries.add(new RawEntry(values[0], values[1], values[2], values[3], values[4]));
-                    continue;
-                }
                 for (Toml.Entry field : item.asTable("struct RawEntry").entries()) {
                     int index = List.of(ENTRY_FIELDS).indexOf(field.key());
                     if (index < 0) {

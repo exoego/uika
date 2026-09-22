@@ -175,11 +175,6 @@ final class Toml {
             return table;
         }
 
-        /** {@code expecting} as serde words it, such as "struct RawEntry with 5 elements". */
-        Error invalidLength(int length, String expecting) {
-            return source.error("invalid length " + length + ", expected " + expecting, start, end);
-        }
-
         Error missingField(String field) {
             return source.error("missing field `" + field + "`", start, end);
         }
