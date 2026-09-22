@@ -49,7 +49,7 @@ final class Report {
      * name column. The indent is derived from TAG_WIDTH, so it cannot drift.
      */
     private static String replacementHint(List<Integer> replacements) {
-        if (replacements == null || replacements.isEmpty()) {
+        if (replacements.isEmpty()) {
             return "";
         }
         StringBuilder out = new StringBuilder("\n");
@@ -164,10 +164,8 @@ final class Report {
         }
         if (kind.isRemoval()) {
             json.key("replacement_descriptors").beginArray();
-            if (c.replacementDescriptors() != null) {
-                for (int descriptor : c.replacementDescriptors()) {
-                    json.sym(descriptor);
-                }
+            for (int descriptor : c.replacementDescriptors()) {
+                json.sym(descriptor);
             }
             json.endArray();
         }
