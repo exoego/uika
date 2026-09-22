@@ -122,12 +122,6 @@ final class Json {
             return this;
         }
 
-        Writer nullValue() {
-            beforeValue();
-            out.append("null");
-            return this;
-        }
-
         /** The symbol's text. */
         Writer sym(int sym) {
             return value(Intern.str(sym));
