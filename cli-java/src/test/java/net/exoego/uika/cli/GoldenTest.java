@@ -13,7 +13,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Golden regression: the full check JSON for fixed fixture scenarios is compared byte for
  * byte against tests/golden/{scenario}.json, so any detection shift (count, order, reason,
- * field) fails here first. The goldens are shared with the Rust crate, which blesses them.
+ * field) fails here first. {@code make java-cli-bless} rewrites them once a shift is verified
+ * as intended.
  *
  * <p>Inputs are loaded via crate-relative paths, because the path string is interned as the
  * violation source and the golden JSON pins it.
@@ -54,7 +55,12 @@ class GoldenTest {
 
     private static void assertGolden(String name) throws Exception {
         String actual = scenarioJson(name) + "\n";
-        String expected = Files.readString(Path.of("tests/golden").resolve(name + ".json"), StandardCharsets.UTF_8);
+        Path golden = Path.of("tests/golden").resolve(name + ".json");
+        if (Boolean.getBoolean("uika.bless")) {
+            Files.writeString(golden, actual, StandardCharsets.UTF_8);
+            return;
+        }
+        String expected = Files.readString(golden, StandardCharsets.UTF_8);
         assertEquals(expected, actual, "golden mismatch for " + name + ": detection output changed");
     }
 

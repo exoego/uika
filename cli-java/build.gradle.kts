@@ -49,6 +49,8 @@ tasks.test {
     // goldens pin it byte for byte.
     workingDir = rootDir.resolve("../cli")
     maxHeapSize = "1g"
+    // -PuikaBless=true makes GoldenTest rewrite the goldens instead of comparing.
+    systemProperty("uika.bless", providers.gradleProperty("uikaBless").getOrElse("false"))
 }
 
 tasks.jacocoTestReport {

@@ -13,7 +13,7 @@
 # only. Run from the repository root (make probe does).
 set -eu
 
-UIKA=${UIKA:-target/debug/uika}
+UIKA=${UIKA:-java -jar cli-java/build/libs/uika-cli-0.0.0-dev.jar}
 JAVA=${JAVA:-java}
 FIX=cli/tests/fixtures
 OUT=${OUT:-target/probe}
@@ -26,9 +26,10 @@ while IFS="$TAB" read -r name old new consumer extra; do
     shared=""
     [ "$extra" != "-" ] && shared=":$FIX/$extra"
     echo "== $name"
-    "$UIKA" check --old "$FIX/$old" --new "$FIX/$new" --classpath "$FIX/$consumer" \
+    # $UIKA and $JAVA unquoted on purpose: both may carry a launcher prefix
+    # ("java -jar x.jar", "mise exec -- java").
+    $UIKA check --old "$FIX/$old" --new "$FIX/$new" --classpath "$FIX/$consumer" \
         --verdicts-json "$OUT/$name.jsonl" --fail-on never >/dev/null
-    # $JAVA unquoted on purpose: it may carry a launcher prefix ("mise exec -- java").
     $JAVA tools/jvm-probe/Probe.java --verdicts "$OUT/$name.jsonl" \
         --classpath "$FIX/$new:$FIX/$consumer$shared" \
         --old-classpath "$FIX/$old:$FIX/$consumer$shared" \

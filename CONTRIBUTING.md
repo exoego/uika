@@ -58,7 +58,8 @@ Central, vendored under `cli/tests/fixtures/` (see its README for coordinates,
 checksums, and licensing). Golden tests pin the full check JSON for those
 scenarios (`cli/tests/golden/`), so any detection shift fails `cargo test`
 before it ships. After verifying a diff is an intended semantic change, re-bless
-with `UIKA_BLESS=1 cargo test --test golden`. The scenario table is
+with `make java-cli-bless` (the Rust crate reads the same files, and
+`UIKA_BLESS=1 cargo test --test golden` writes them too). The scenario table is
 single-sourced in `cli/tests/scenarios.tsv`, shared with the probe harness.
 
 ## JVM probe
