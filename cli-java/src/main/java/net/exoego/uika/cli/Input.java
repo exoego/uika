@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.channels.ReadableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -354,7 +355,7 @@ final class Input {
     }
 
     /** The scratch class buffer, grown to {@code size} with its contents kept. */
-    private static byte[] classBytes(Scratch scratch, int size) {
+    static byte[] classBytes(Scratch scratch, int size) {
         if (scratch.classBytes.length < size) {
             scratch.classBytes = Arrays.copyOf(scratch.classBytes, Math.max(size, scratch.classBytes.length * 2));
         }
@@ -643,31 +644,37 @@ final class Input {
     }
 
     /**
-     * Reads a whole file into the scratch class buffer and returns its length. No size query:
-     * a read that comes back short of the buffer is the end of a regular file, which saves a
-     * system call per file. Reads go through the thread's own direct buffer, because a read
-     * into a heap array is staged through a JDK-internal one sized to the largest request.
+     * Reads a whole file into the scratch class buffer and returns its length. No size query,
+     * which saves a system call per file. Reads go through the thread's own direct buffer,
+     * because a read into a heap array is staged through a JDK-internal one sized to the
+     * largest request.
      */
     static int readFile(Path file, Scratch scratch) throws IOException {
         try (FileChannel channel = FileChannel.open(file, NO_FOLLOW_READ)) {
-            ByteBuffer staging = scratch.fileBuffer;
-            int n = 0;
-            while (true) {
-                staging.clear();
-                int read = channel.read(staging);
-                if (read <= 0) {
-                    return n;
-                }
-                byte[] buf = classBytes(scratch, n + read);
-                if (buf.length < n + read) {
-                    throw new IOException("file too large: " + file);
-                }
-                staging.get(0, buf, n, read);
-                n += read;
-                if (read < staging.capacity()) {
-                    return n;
-                }
+            return readChannel(channel, scratch, file);
+        }
+    }
+
+    /**
+     * Reads until the channel reports its end. A read that comes back short of the buffer
+     * is not that end: FUSE and network file systems answer short before it, and a regular
+     * file's end costs one more read that returns nothing.
+     */
+    static int readChannel(ReadableByteChannel channel, Scratch scratch, Path file) throws IOException {
+        ByteBuffer staging = scratch.fileBuffer;
+        int n = 0;
+        while (true) {
+            staging.clear();
+            int read = channel.read(staging);
+            if (read <= 0) {
+                return n;
             }
+            byte[] buf = classBytes(scratch, n + read);
+            if (buf.length < n + read) {
+                throw new IOException("file too large: " + file);
+            }
+            staging.get(0, buf, n, read);
+            n += read;
         }
     }
 
