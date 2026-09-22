@@ -415,8 +415,8 @@ class InputTest {
         assertEquals(List.of("x/A=dir a"), got);
         assertEquals(
                 List.of(
-                        root + "!x/B.class: No such file or directory (os error 2)",
-                        root + "!x/Gone.class: No such file or directory (os error 2)"),
+                        root + "!x/B.class: No such file or directory",
+                        root + "!x/Gone.class: No such file or directory"),
                 warnings);
     }
 
@@ -424,9 +424,9 @@ class InputTest {
     void anUnreadableJarEndsTheCommand() throws Exception {
         String missing = dir.resolve("missing.jar").toString();
         UikaException open = assertThrows(UikaException.class, () -> stream(missing, null));
-        assertEquals("cannot open " + missing + ": No such file or directory (os error 2)", open.getMessage());
+        assertEquals("cannot open " + missing + ": No such file or directory", open.getMessage());
         UikaException fetch = assertThrows(UikaException.class, () -> Input.fetchEntries(missing, List.of(), (n, b, l) -> {}));
-        assertEquals("cannot open " + missing + ": No such file or directory (os error 2)", fetch.getMessage());
+        assertEquals("cannot open " + missing + ": No such file or directory", fetch.getMessage());
 
         Path garbage = dir.resolve("garbage.jar");
         Files.write(garbage, "this is not a zip file at all".getBytes(StandardCharsets.UTF_8));

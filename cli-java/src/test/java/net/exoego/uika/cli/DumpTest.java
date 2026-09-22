@@ -300,7 +300,7 @@ class DumpTest {
     void aDumpThatCannotBeUsedEndsTheCommandWithItsPath() throws Exception {
         String missing = dir.resolve("missing.json").toString();
         assertEquals(
-                "cannot read classpath dump " + missing + ": No such file or directory (os error 2)",
+                "cannot read classpath dump " + missing + ": No such file or directory",
                 assertThrows(UikaException.class, () -> Dump.loadDump(missing)).getMessage());
 
         String broken = write("broken.json", "{\"modules\":[1,");

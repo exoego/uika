@@ -222,7 +222,7 @@ final class Exclude {
                 throw new UikaException("cannot read exclude file " + path + ": stream did not contain valid UTF-8");
             } catch (IOException e) {
                 if (Files.isDirectory(Path.of(path))) {
-                    throw new UikaException("cannot read exclude file " + path + ": Is a directory (os error 21)");
+                    throw new UikaException("cannot read exclude file " + path + ": Is a directory");
                 }
                 throw new UikaException("cannot read exclude file " + path, e);
             }

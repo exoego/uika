@@ -399,7 +399,7 @@ class JdkTest {
         assertTrue(Jdk.isInstalledRelease(21));
         assertEquals(
                 "release 21 is this JDK's own, which ct.sym never carries, so it must come from " + home.resolve("jmods")
-                        + " (absent in a JRE or a jlink'd runtime): No such file or directory (os error 2)",
+                        + " (absent in a JRE or a jlink'd runtime): No such file or directory",
                 assertThrows(UikaException.class, () -> Jdk.releaseIndex(21, new ArrayList<>())).getMessage());
     }
 
@@ -443,7 +443,7 @@ class JdkTest {
                 "cannot take read permission away here (root or not POSIX)");
         try {
             assertEquals(
-                    "cannot open ct.sym: " + ctSym + ": Permission denied (os error 13)",
+                    "cannot open ct.sym: " + ctSym + ": Permission denied",
                     assertThrows(UikaException.class, () -> Jdk.Indexer.open(ctSym, 17)).getMessage());
         } finally {
             ctSym.toFile().setReadable(true, false);
@@ -478,7 +478,7 @@ class JdkTest {
 
         Path missing = dir.resolve("missing/ct.sym");
         UikaException gone = assertThrows(UikaException.class, () -> Jdk.Indexer.open(missing, 17));
-        assertEquals("cannot open ct.sym: " + missing + ": No such file or directory (os error 2)", gone.getMessage());
+        assertEquals("cannot open ct.sym: " + missing + ": No such file or directory", gone.getMessage());
 
         // A zip with no release-coded entries at all, like the JDK 8 layout.
         Path jdk8 = dir.resolve("jdk8-ct.sym");
