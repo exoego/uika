@@ -169,7 +169,7 @@ final class Scratch {
     }
 
     static int threads() {
-        String env = System.getenv("UIKA_THREADS");
+        String env = Env.get("UIKA_THREADS");
         if (env != null) {
             try {
                 int n = Integer.parseInt(env.trim());
