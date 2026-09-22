@@ -15,7 +15,7 @@ class TomlErrorTest {
     private static final String INVALID_KEY = "invalid unquoted key, expected letters, numbers, `-`, `_`";
     private static final String UNQUOTED = "string values must be quoted, expected literal string";
     private static final String LONE_CR = "carriage return must be followed by newline, expected newline";
-    private static final String UNDERSCORE = "`_` may only go between digits, expected nothing";
+    private static final String UNDERSCORE = "`_` may only go between digits";
 
     private static String error(String input) {
         return assertThrows(Toml.Error.class, () -> Toml.parse(input), input).render("e.toml");
@@ -278,8 +278,8 @@ class TomlErrorTest {
         assertEquals("line 1, column 6: invalid float, expected `inf`", at("a = +Inf"));
         assertEquals("line 1, column 6: invalid float, expected `inf`", at("a = -Inf"));
         assertEquals("line 1, column 6: invalid float, expected `nan`", at("a = +NaN"));
-        assertEquals("line 1, column 6: redundant numeric sign, expected nothing", at("a = ++1"));
-        assertEquals("line 1, column 6: redundant numeric sign, expected nothing", at("a = --1"));
+        assertEquals("line 1, column 6: redundant numeric sign", at("a = ++1"));
+        assertEquals("line 1, column 6: redundant numeric sign", at("a = --1"));
         // The error points at the sign, not at the dot.
         assertEquals("line 1, column 5: invalid mantissa, expected digits", at("a = +.5"));
         assertEquals("line 1, column 5: invalid mantissa, expected digits", at("a = -.5"));
@@ -287,25 +287,25 @@ class TomlErrorTest {
 
     @Test
     void malformedNumbers() {
-        assertEquals("line 1, column 5: redundant integer number prefix, expected nothing", at("a = 0d10"));
+        assertEquals("line 1, column 5: redundant integer number prefix", at("a = 0d10"));
         assertEquals("  |     ^^", caret("a = 0D10"));
         assertEquals("line 1, column 5: radix must be lowercase, expected `0b`", at("a = 0B1"));
         assertEquals("line 1, column 5: radix must be lowercase, expected `0o`", at("a = 0O7"));
-        assertEquals("line 1, column 5: integers with a radix cannot be signed, expected nothing", at("a = -0x1"));
-        assertEquals("line 1, column 7: unexpected sign, expected nothing", at("a = 0x+1"));
-        assertEquals("line 1, column 7: unexpected sign, expected nothing", at("a = 0x-1"));
+        assertEquals("line 1, column 5: integers with a radix cannot be signed", at("a = -0x1"));
+        assertEquals("line 1, column 7: unexpected sign", at("a = 0x+1"));
+        assertEquals("line 1, column 7: unexpected sign", at("a = 0x-1"));
         assertEquals("line 1, column 8: invalid hexadecimal number", at("a = 0x1-2"));
         assertEquals("line 1, column 8: invalid hexadecimal number", at("a = 0x1.5"));
         assertEquals("line 1, column 7: invalid hexadecimal number", at("a = 0xé"));
         assertEquals("line 1, column 7: invalid octal number", at("a = 0o8"));
         assertEquals("line 1, column 7: invalid binary number", at("a = 0b2"));
-        assertEquals("line 1, column 5: unexpected leading zero, expected nothing", at("a = 00"));
-        assertEquals("line 1, column 6: unexpected leading zero, expected nothing", at("a = -01"));
-        assertEquals("line 1, column 5: unexpected leading zero, expected nothing", at("a = 0_0"));
-        assertEquals("line 1, column 5: unexpected leading zero, expected nothing", at("a = 01.5"));
-        assertEquals("line 1, column 8: invalid float, expected nothing", at("a = 1.5x"));
-        assertEquals("line 1, column 8: invalid float, expected nothing", at("a = 1e1.5"));
-        assertEquals("line 1, column 8: invalid float, expected nothing", at("a = 0.0.0"));
+        assertEquals("line 1, column 5: unexpected leading zero", at("a = 00"));
+        assertEquals("line 1, column 6: unexpected leading zero", at("a = -01"));
+        assertEquals("line 1, column 5: unexpected leading zero", at("a = 0_0"));
+        assertEquals("line 1, column 5: unexpected leading zero", at("a = 01.5"));
+        assertEquals("line 1, column 8: invalid float", at("a = 1.5x"));
+        assertEquals("line 1, column 8: invalid float", at("a = 1e1.5"));
+        assertEquals("line 1, column 8: invalid float", at("a = 0.0.0"));
         assertEquals("line 1, column 7: invalid fraction, expected digits", at("a = 1.e5"));
         assertEquals("line 1, column 7: invalid exponent, expected digits", at("a = 1ee5"));
         assertEquals("line 1, column 8: invalid exponent, expected digits", at("a = 1e+"));

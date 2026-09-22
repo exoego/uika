@@ -52,7 +52,7 @@ final class Toml {
     static final class Error extends RuntimeException {
         private static final long serialVersionUID = 1L;
 
-        /** "line L, column C" and the excerpt under it, or null for the one error without a span. */
+        /** "line L, column C" and the excerpt under it. */
         private final String location;
 
         private final boolean syntax;
@@ -66,7 +66,7 @@ final class Toml {
         /** The whole rendering, headed by {@code subject}, which names the input. */
         String render(String subject) {
             String head = syntax ? subject + ": TOML parse error" : subject;
-            return location == null ? head + ": " + getMessage() : head + " at " + location + "\n" + getMessage();
+            return head + " at " + location + "\n" + getMessage();
         }
     }
 
@@ -196,10 +196,6 @@ final class Toml {
 
         String text(int start, int end) {
             return new String(bytes, start, end - start, StandardCharsets.UTF_8);
-        }
-
-        Error error(String message) {
-            return new Error(message, null, true);
         }
 
         Error error(String message, int start, int end) {
@@ -345,8 +341,8 @@ final class Toml {
         }
 
         private Error fail(String description, int start, int end, String... expected) {
-            String list = expected.length == 0 ? "nothing" : String.join(", ", expected);
-            return source.error(description + ", expected " + list, start, end);
+            String message = expected.length == 0 ? description : description + ", expected " + String.join(", ", expected);
+            return source.error(message, start, end);
         }
 
         // Lexer.
@@ -557,7 +553,7 @@ final class Toml {
             event(kind, token);
             depth++;
             if (depth > LIMIT) {
-                throw source.error("cannot recurse further; max recursion depth met", ts.a[token], te.a[token]);
+                throw source.error("nested more than " + LIMIT + " levels deep", ts.a[token], te.a[token]);
             }
         }
 
@@ -1062,7 +1058,7 @@ final class Toml {
                 key = decodeKey(pending);
             }
             if (LIMIT <= path.size()) {
-                throw source.error("recursion limit");
+                throw source.error("key has more than " + LIMIT + " dotted parts", path.get(0).start, key.end);
             }
             return key;
         }

@@ -275,7 +275,7 @@ class TomlTest {
                    |
                 11 | b = = 2
                    |     ^
-                extra `=`, expected nothing""",
+                extra `=`""",
                 error("a = 1\n\n\n\n\n\n\n\n\n\nb = = 2"));
     }
 
@@ -303,8 +303,8 @@ class TomlTest {
     /** A syntax error anywhere wins over an earlier key, string or number error. */
     @Test
     void syntaxErrorsAreReportedBeforeContentErrors() {
-        assertEquals("extra `=`, expected nothing", description("a = \"\\q\"\nb = = 1"));
-        assertEquals("extra `=`, expected nothing", description("a = 1\na = 2\nb = = 1"));
+        assertEquals("extra `=`", description("a = \"\\q\"\nb = = 1"));
+        assertEquals("extra `=`", description("a = 1\na = 2\nb = = 1"));
         assertEquals("missing table open, expected `[`", description("a = 08\nb = 1\n]"));
         // Without one, the earliest content error is the one shown.
         assertTrue(description("a = \"\\q\"\na = 2").startsWith("missing escaped value"));
@@ -378,12 +378,12 @@ class TomlTest {
         assertEquals("missing opening quote, expected `\"`", description("a = bare\""));
         assertEquals("invalid boolean, expected `true`", description("a = True"));
         assertEquals("invalid float, expected `inf`", description("a = Inf"));
-        assertEquals("unexpected leading zero, expected nothing", description("a = 01"));
-        assertEquals("`_` may only go between digits, expected nothing", description("a = 1__0"));
+        assertEquals("unexpected leading zero", description("a = 01"));
+        assertEquals("`_` may only go between digits", description("a = 1__0"));
         assertEquals("radix must be lowercase, expected `0x`", description("a = 0X1F"));
         assertEquals("invalid hexadecimal number", description("a = 0xg"));
-        assertEquals("integers with a radix cannot be signed, expected nothing", description("a = +0x1"));
-        assertEquals("redundant numeric sign, expected nothing", description("a = +-1"));
+        assertEquals("integers with a radix cannot be signed", description("a = +0x1"));
+        assertEquals("redundant numeric sign", description("a = +-1"));
         assertEquals("invalid fraction, expected digits", description("a = 1."));
         assertEquals("invalid mantissa, expected digits", description("a = .5"));
         assertEquals("invalid exponent, expected digits", description("a = 1e"));
@@ -407,7 +407,7 @@ class TomlTest {
         assertEquals("extra assignment between key-value pairs, expected `,`", description("a = {b = 1 c = 2}"));
         assertEquals("missing inline table opening, expected `{`", description("a = }"));
         assertEquals("invalid literal string, expected `'`", description("a = {b}"));
-        assertEquals("cannot recurse further; max recursion depth met", description("a = " + "[".repeat(81) + "]".repeat(81)));
+        assertEquals("nested more than 80 levels deep", description("a = " + "[".repeat(81) + "]".repeat(81)));
         assertEquals(1, Toml.parse("a = " + "[".repeat(80) + "]".repeat(80)).size());
     }
 
@@ -415,9 +415,12 @@ class TomlTest {
     void controlCharactersInCommentsAndBareCarriageReturns() {
         assertEquals("invalid comment character, expected printable characters", description("# bad \u0001 comment\n"));
         assertEquals("carriage return must be followed by newline, expected newline", description("a = 1\rb = 2"));
-        // The one error with no position, so it is rendered without the excerpt.
+        String key = "k" + ".k".repeat(80);
         assertEquals(
-                "e.toml: TOML parse error: recursion limit", error(".".repeat(0) + "k" + ".k".repeat(80) + " = 1"));
+                "e.toml: TOML parse error at line 1, column 1\n  |\n1 | " + key + " = 1\n  | " + "^".repeat(key.length())
+                        + "\nkey has more than 80 dotted parts",
+                error(key + " = 1"));
+        assertEquals(1, Toml.parse("k" + ".k".repeat(79) + " = 1").size());
     }
 
     /** A value is named in TOML terms and, when it is short, as the file spells it. */
