@@ -7,12 +7,21 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Stream;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -270,5 +279,167 @@ class CommandsTest {
         Evidence.LoadEvidence loaded = Evidence.load(List.of(log.toString()));
         assertEquals(1, loaded.distinctClasses());
         Commands.applyEvidenceAndDraft(new ArrayList<>(), null, loaded, draft);
+    }
+
+    /** An exclude file that cannot be resolved is not the draft, and must not stop the others being compared. */
+    @Test
+    void anUnresolvableExcludeFileIsNotTheDraft(@TempDir Path dir) throws Exception {
+        Path rules = Files.writeString(dir.resolve("keep.toml"), "");
+        String gone = dir.resolve("gone.toml").toString();
+        assertEquals(rules.toString(), Commands.aliasesExcludeFile(rules.toString(), List.of(gone, rules.toString())));
+    }
+
+    /** Evidence promotes without a draft being asked for, and then nothing is written. */
+    @Test
+    void evidenceAppliesWithoutADraft(@TempDir Path dir) throws Exception {
+        Path log = Files.writeString(dir.resolve("loads.log"), "[class,load] app.Use\n");
+        Violation v = violation(false, null);
+        String err = stderrOf(() -> Commands.applyEvidenceAndDraft(List.of(v), true, Evidence.load(List.of(log.toString())), null));
+        assertTrue(v.observedLoading);
+        assertEquals("", err);
+        try (Stream<Path> files = Files.list(dir)) {
+            assertEquals(List.of(log), files.toList());
+        }
+    }
+
+    /** Runs {@code body} and returns what it printed to stderr. */
+    private static String stderrOf(Runnable body) {
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        PrintStream previous = Out.err;
+        Out.err = new PrintStream(err, true, StandardCharsets.UTF_8);
+        try {
+            body.run();
+        } finally {
+            Out.err = previous;
+        }
+        return err.toString(StandardCharsets.UTF_8);
+    }
+
+    /** A verdicts stream whose first record already failed, as on a full disk. */
+    private static Verdicts.Writer truncatedStream() {
+        Verdicts.Writer writer = Verdicts.Writer.to(new OutputStream() {
+            @Override
+            public void write(int b) throws IOException {
+                throw new IOException("No space left on device");
+            }
+        });
+        writer.record(Intern.intern("a.jar"), Intern.intern("app/Use"), SymbolRef.ofClass(Intern.intern("lib/C")), "ok", null);
+        return writer;
+    }
+
+    private static final String TRUNCATED = "verdicts output failed, stream truncated: No space left on device";
+
+    /** A truncated stream would let an answer-check pass on a prefix, so a finished check fails over it. */
+    @Test
+    void aTruncatedVerdictsStreamFailsACheckThatFinished() {
+        UikaException e = assertThrows(UikaException.class, () -> Commands.finishVerdicts(truncatedStream(), () -> "report"));
+        assertEquals(TRUNCATED, e.getMessage());
+    }
+
+    /** The check's own failure stays the error, and the stream failure is still said. */
+    @Test
+    void aFailedCheckKeepsItsErrorOverTheStreamFailure() {
+        UikaException[] thrown = new UikaException[1];
+        String err = stderrOf(() -> thrown[0] = assertThrows(
+                UikaException.class,
+                () -> Commands.finishVerdicts(truncatedStream(), () -> {
+                    throw new UikaException("cannot open app.jar");
+                })));
+        assertEquals("cannot open app.jar", thrown[0].getMessage());
+        assertEquals("warning: " + TRUNCATED + "\n", err);
+
+        // Without a stream, or with a healthy one, the failure passes through alone.
+        err = stderrOf(() -> assertThrows(UikaException.class, () -> Commands.finishVerdicts(null, () -> {
+            throw new UikaException("cannot open app.jar");
+        })));
+        assertEquals("", err);
+        Verdicts.Writer healthy = Verdicts.Writer.to(new ByteArrayOutputStream());
+        err = stderrOf(() -> assertThrows(UikaException.class, () -> Commands.finishVerdicts(healthy, () -> {
+            throw new UikaException("cannot open app.jar");
+        })));
+        assertEquals("", err);
+    }
+
+    @AfterEach
+    void clearEnvironment() {
+        Env.clearOverrides();
+    }
+
+    private static final String OLD = GoldenTest.fixture("guava-22.0.jar");
+    private static final String NEW = GoldenTest.fixture("guava-23.0-rc1.jar");
+    private static final String CONSUMER = GoldenTest.fixture("selenium-remote-driver-3.4.0.jar");
+
+    /**
+     * A hand-assembled classpath may name a jar twice, still hold the old version, or name a
+     * jar that is gone. None of that may change the verdicts, and the header counts only what
+     * was scanned.
+     */
+    @Test
+    void theScanTargetsAreWhatIsThereOnceWithoutTheOldVersion(@TempDir Path dir) throws Exception {
+        String missing = dir.resolve("missing.jar").toString();
+        UpgradeCheckIntegrationTest.Run text = UpgradeCheckIntegrationTest.runUika(
+                "check", "--old", OLD, "--new", NEW, "--classpath", CONSUMER + ":" + missing + ":" + OLD + ":" + CONSUMER);
+        assertEquals(1, text.code(), text.stderr());
+        assertEquals("warning: scan target not found, skipping: " + missing + "\n", text.stderr());
+        assertTrue(text.stdout().startsWith("checked guava-22.0.jar -> guava-23.0-rc1.jar against 1 scan target\n\n"), text.stdout());
+
+        UpgradeCheckIntegrationTest.Run json = UpgradeCheckIntegrationTest.runUika(
+                "check", "--json", "--old", OLD, "--new", NEW, "--classpath", CONSUMER + ":" + missing + ":" + OLD + ":" + CONSUMER);
+        assertEquals(GoldenTest.scenarioJson("guava-selenium") + "\n", json.stdout());
+    }
+
+    /**
+     * The JDK layer can only conclude references that escaped into the JDK. It never invents a
+     * violation, since the same index sits under both sides.
+     */
+    @Test
+    void theJdkLayerConcludesEscapesWithoutChangingTheViolations() throws Exception {
+        Path home = Path.of(System.getProperty("java.home"));
+        assumeTrue(Files.isRegularFile(home.resolve("lib/ct.sym")) && Runtime.version().feature() >= 18, "needs a ct.sym that serves 17");
+        Env.override("UIKA_JDK", home.toString());
+
+        UpgradeCheckIntegrationTest.Run run = UpgradeCheckIntegrationTest.runUika(
+                "check", "--json", "--jdk-release", "17", "--old", OLD, "--new", NEW, "--classpath", CONSUMER);
+        assertEquals(1, run.code(), run.stderr());
+        Map<?, ?> layered = (Map<?, ?>) Json.parse(run.stdout());
+        Map<?, ?> plain = (Map<?, ?>) Json.parse(GoldenTest.scenarioJson("guava-selenium"));
+        assertEquals(plain.get("violations"), layered.get("violations"));
+        assertTrue((Long) plain.get("unknown_refs") > 0, plain.toString());
+        assertEquals(0L, layered.get("unknown_refs"));
+    }
+
+    private static Dump.Artifact artifact(String group, String name, String version, String file) {
+        return new Dump.Artifact(group, name, version, file, null);
+    }
+
+    private static Dump.Universe dump(Dump.Module... modules) {
+        Dump.Universe u = modular(modules);
+        for (Dump.Module m : modules) {
+            for (Dump.Artifact a : m.artifacts) {
+                if (a.hasCoordinate()) {
+                    u.versions.add(a.group(), a.name(), a.version(), a.file());
+                }
+            }
+        }
+        return u;
+    }
+
+    /** The build-tool plugins keep names unique, so a repeated one is a broken dump, checked once and said so. */
+    @Test
+    void aRepeatedModuleNameIsCheckedOnce() {
+        Dump.Universe before = dump(new Dump.Module(":app", List.of(), List.of(artifact("g", "guava", "22.0", OLD)), 11));
+        Dump.Universe after = dump(
+                new Dump.Module(":app", List.of(), List.of(artifact("g", "guava", "23.0", NEW)), 17),
+                new Dump.Module(":app", List.of(), List.of(artifact("g", "guava", "23.0", NEW)), 21));
+        Commands.ModulePlan[] plan = new Commands.ModulePlan[1];
+        String err = stderrOf(() -> plan[0] = Commands.planModuleRuns(before, after));
+        assertEquals("warning: duplicate module name :app in dump; only the first is checked\n", err);
+        assertEquals(1, plan[0].totalModules);
+        List<String> names = new ArrayList<>();
+        for (Commands.ModuleRunPlan run : plan[0].runs) {
+            names.add(String.join(", ", run.names));
+        }
+        // The JDK move is the first module's too.
+        assertEquals(List.of(":app", ":app (JDK 11 -> 17)"), names);
     }
 }
