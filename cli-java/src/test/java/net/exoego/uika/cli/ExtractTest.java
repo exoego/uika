@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -55,6 +57,15 @@ class ExtractTest {
     }
 
     @Test
+    void objectClassOfRejectsMalformedArraysAndUndecodableNames() {
+        assertNull(objectClassOf("[[")); // dimensions without an element type
+        assertNull(objectClassOf("[II"));
+        assertNull(objectClassOf("[Lfoo/Bar")); // no closing ';'
+        byte[] undecodable = {'a', (byte) 0xC0, 'b'}; // C0 stands only before 80, for U+0000
+        assertEquals(Intern.NONE, Extract.internObjectClass(scratch, undecodable, 0, undecodable.length));
+    }
+
+    @Test
     void slashedClassNameEdgesOfTheShape() {
         assertEquals("a/b", slashedClassName("a.b"));
         assertEquals("_a/$b9", slashedClassName("_a.$b9"));
@@ -64,6 +75,13 @@ class ExtractTest {
         assertNull(slashedClassName("caf\u00e9.Bar")); // Identifier segments are ASCII only.
         assertNull(slashedClassName("a." + "b".repeat(299))); // Longer than 300 bytes.
         assertEquals("a/" + "b".repeat(298), slashedClassName("a." + "b".repeat(298)));
+    }
+
+    @Test
+    void slashedClassNameRejectsPunctuationAboveTheLetters() {
+        assertNull(slashedClassName("a.b~c"));
+        assertNull(slashedClassName("a.b{c"));
+        assertNull(slashedClassName("a.b[c"));
     }
 
     // ---- extract_refs and extract_edges have no Rust unit test, so these pin the packed Java form ----
@@ -517,6 +535,321 @@ class ExtractTest {
         assertEquals(java.util.Map.of(Intern.intern("app/Main"), "app/After.class"), result.entryOverrides);
         // Edges are only collected when reachability asked for them.
         assertTrue(edgesOf(result.graph, "app/Wide").isEmpty());
+    }
+
+    private static List<String> shownRefs(ClassParser p, Scratch scratch, NameSet oldNames) throws ClassParser.FormatException {
+        List<String> shown = new ArrayList<>();
+        for (SymbolRef r : Extract.extractRefs(p, scratch, oldNames)) {
+            shown.add(show(r));
+        }
+        return shown;
+    }
+
+    /** Code operands that name no member reference, and Class constants that name no class, yield nothing. */
+    @Test
+    void referencesIgnoreOperandsAndClassNamesThatNameNoMember() throws Exception {
+        ClassFileBytes b = ClassFileBytes.header(52, 19);
+        b.utf8("app/Odd"); // #1
+        b.classRef(1); // #2
+        b.utf8("lib/Owner"); // #3
+        b.classRef(3); // #4
+        b.utf8("call"); // #5
+        b.utf8("()V"); // #6
+        b.nameAndType(5, 6); // #7
+        b.memberRef(10, 4, 7); // #8 Methodref lib/Owner.call()V
+        b.utf8(""); // #9
+        b.classRef(9); // #10
+        b.memberRef(10, 10, 7); // #11 Methodref on a class with an empty name
+        b.utf8("[["); // #12
+        b.classRef(12); // #13
+        b.utf8("[II"); // #14
+        b.classRef(14); // #15
+        b.utf8("[Llib/Owner"); // #16
+        b.classRef(16); // #17
+        b.utf8("Code"); // #18
+        b.u16(0x0021).u16(2).u16(0).u16(0);
+        b.u16(0); // fields
+        b.u16(1); // methods
+        b.u16(0x0009).u16(5).u16(6);
+        b.u16(1);
+        int[] code = {
+            0xb8, 0x7f, 0xff, // invokestatic past the end of the pool
+            0xbb, 0x7f, 0xff, // new past the end of the pool
+            0xb2, 0x00, 0x04, // getstatic on a Class constant
+            0xb6, 0x00, 0x07, // invokevirtual on a NameAndType
+            0xb8, 0x00, 0x08, // invokestatic #8
+            0xb1, // return
+        };
+        b.u16(18).u32(8 + code.length + 4).u16(2).u16(1).u32(code.length).raw(code).u16(0).u16(0);
+        b.u16(0); // class attrs
+        byte[] bytes = b.toByteArray();
+        ClassParser p = new ClassParser();
+        p.parse(bytes, bytes.length);
+
+        assertEquals(
+                List.of("CLASS lib/Owner static=null write=null new=null", "METHOD lib/Owner.call:()V static=true write=null new=null"),
+                shownRefs(p, scratch, names("lib/Owner")));
+    }
+
+    /**
+     * Owners are matched by their UTF-8 text. A supplementary character is a surrogate pair in
+     * the class file and four bytes in the name set, so the raw bytes differ.
+     */
+    @Test
+    void ownersWithNonAsciiNamesAreMatchedByTheirDecodedText() throws Exception {
+        byte[] pair = {(byte) 0xED, (byte) 0xA0, (byte) 0xBD, (byte) 0xED, (byte) 0xB8, (byte) 0x80}; // U+1F600
+        ClassFileBytes b = ClassFileBytes.header(52, 13);
+        b.utf8("app/Main"); // #1
+        b.classRef(1); // #2
+        b.utf8("lib/Caf\u00e9"); // #3
+        b.classRef(3); // #4
+        b.utf8(new ClassFileBytes().raw("lib/".getBytes(StandardCharsets.US_ASCII)).raw(pair).toByteArray()); // #5
+        b.classRef(5); // #6
+        b.utf8("lib/Caf\u00e8"); // #7
+        b.classRef(7); // #8
+        b.utf8("call"); // #9
+        b.utf8("()V"); // #10
+        b.nameAndType(9, 10); // #11
+        b.memberRef(10, 6, 11); // #12
+        b.u16(0x0021).u16(2).u16(0).u16(0).u16(0).u16(0).u16(0);
+        byte[] bytes = b.toByteArray();
+        ClassParser p = new ClassParser();
+        p.parse(bytes, bytes.length);
+
+        String smiley = new String(Character.toChars(0x1F600));
+        assertEquals(
+                List.of(
+                        "CLASS lib/Caf\u00e9 static=null write=null new=null",
+                        "CLASS lib/" + smiley + " static=null write=null new=null",
+                        "METHOD lib/" + smiley + ".call:()V static=null write=null new=null"),
+                shownRefs(p, scratch, names("lib/Caf\u00e9", "lib/" + smiley)));
+    }
+
+    /** A scan meets the malformed String too. The malformed Class fails a scanned class before its edges are read. */
+    @Test
+    void edgesSkipConstantsThatNameNoUtf8() throws Exception {
+        ClassFileBytes b = ClassFileBytes.header(52, 8);
+        b.utf8("app/E"); // #1
+        b.classRef(1); // #2
+        b.u8(3).u32(0); // #3 Integer
+        b.classRef(3); // #4 a Class naming the Integer
+        b.stringRef(2); // #5 a String naming the Class
+        b.utf8("x.y.Z"); // #6
+        b.stringRef(6); // #7
+        b.u16(0x0021).u16(2).u16(0).u16(0).u16(0).u16(0).u16(0);
+        byte[] bytes = b.toByteArray();
+        ClassParser p = new ClassParser();
+        p.parse(bytes, bytes.length);
+
+        int[] edges = Extract.extractEdges(p, scratch, Intern.intern("app/E"));
+        assertEquals(1, edges.length);
+        assertEquals("x/y/Z", Intern.str(edges[0]));
+    }
+
+    private static List<String> evidenceOf(IntBuf out) {
+        List<String> evidence = new ArrayList<>();
+        for (int i = 0; i < out.n; i += 3) {
+            evidence.add(Intern.str(out.a[i]) + "." + Intern.str(out.a[i + 1]) + ":" + Intern.str(out.a[i + 2]));
+        }
+        return evidence;
+    }
+
+    @Test
+    void invocationEvidenceSkipsMalformedReferencesAndDecodesNonAsciiNames() throws Exception {
+        byte[] pair = {(byte) 0xED, (byte) 0xA0, (byte) 0xBD, (byte) 0xED, (byte) 0xB8, (byte) 0x80}; // U+1F600
+        String smiley = new String(Character.toChars(0x1F600));
+        ClassFileBytes b = ClassFileBytes.header(52, 39);
+        b.utf8("app/Ev"); // #1
+        b.classRef(1); // #2
+        b.utf8("lib/Owner"); // #3
+        b.classRef(3); // #4
+        b.utf8("call"); // #5
+        b.utf8("()V"); // #6
+        b.nameAndType(5, 6); // #7
+        b.memberRef(10, 4, 5); // #8 its NameAndType is a Utf8
+        b.nameAndType(2, 6); // #9
+        b.memberRef(10, 4, 9); // #10 its name is a Class
+        b.nameAndType(5, 2); // #11
+        b.memberRef(10, 4, 11); // #12 its descriptor is a Class
+        b.memberRef(10, 3, 7); // #13 its class is a Utf8
+        b.u8(3).u32(0); // #14 Integer
+        b.classRef(14); // #15
+        b.memberRef(10, 15, 7); // #16 its class names an Integer
+        b.utf8(""); // #17
+        b.classRef(17); // #18
+        b.memberRef(10, 18, 7); // #19 its class has an empty name
+        b.utf8(new byte[] {'l', 'i', 'b', '/', (byte) 0xC0, 'x'}); // #20
+        b.classRef(20); // #21
+        b.memberRef(10, 21, 7); // #22 its class name does not decode
+        b.utf8("caf\u00e9"); // #23
+        b.nameAndType(23, 6); // #24
+        b.memberRef(11, 4, 24); // #25 a non-ASCII name that is UTF-8 already
+        b.utf8("(Lcaf\u00e9;)V"); // #26
+        b.nameAndType(5, 26); // #27
+        b.memberRef(10, 4, 27); // #28 a non-ASCII descriptor that is UTF-8 already
+        b.utf8(new ClassFileBytes().raw('g', 'o').raw(pair).toByteArray()); // #29
+        b.nameAndType(29, 6); // #30
+        b.memberRef(10, 4, 30); // #31 a name holding a surrogate pair
+        b.utf8(new ClassFileBytes().raw('(', 'L').raw(pair).raw(';', ')', 'V').toByteArray()); // #32
+        b.nameAndType(5, 32); // #33
+        b.memberRef(10, 4, 33); // #34 a descriptor holding a surrogate pair
+        b.utf8(new byte[] {'g', 'o', (byte) 0xED, (byte) 0xA0, (byte) 0xBD}); // #35
+        b.nameAndType(35, 6); // #36
+        b.memberRef(10, 4, 36); // #37 a name holding a lone surrogate
+        b.memberRef(10, 4, 7); // #38
+        b.u16(0x0021).u16(2).u16(0).u16(0).u16(0).u16(0).u16(0);
+        byte[] bytes = b.toByteArray();
+        ClassParser p = new ClassParser();
+        p.parse(bytes, bytes.length);
+
+        MemberProbe probe = new MemberProbe(new long[] {
+            MemberKey.of("call", "()V"),
+            MemberKey.of("caf\u00e9", "()V"),
+            MemberKey.of("call", "(Lcaf\u00e9;)V"),
+            MemberKey.of("go" + smiley, "()V"),
+            MemberKey.of("call", "(L" + smiley + ";)V"),
+        });
+        IntBuf out = new IntBuf();
+        Extract.invocationEvidence(out, p, scratch, probe);
+        assertEquals(
+                List.of(
+                        ".call:()V",
+                        "lib/Owner.caf\u00e9:()V",
+                        "lib/Owner.call:(Lcaf\u00e9;)V",
+                        "lib/Owner.go" + smiley + ":()V",
+                        "lib/Owner.call:(L" + smiley + ";)V",
+                        "lib/Owner.call:()V"),
+                evidenceOf(out));
+    }
+
+    /**
+     * A raw deflate stream holding the first {@code length} bytes of {@code data} in one stored
+     * block, then {@code tail}, with the slack the decoder may read past the end.
+     */
+    private static ByteBuffer storedBlock(byte[] data, int length, boolean last, int... tail) {
+        ByteBuffer input = ByteBuffer.allocateDirect(5 + length + tail.length + Inflate.SLACK).order(ByteOrder.LITTLE_ENDIAN);
+        input.put(0, (byte) (last ? 1 : 0));
+        input.putShort(1, (short) length);
+        input.putShort(3, (short) ~length);
+        input.put(5, data, 0, length);
+        for (int i = 0; i < tail.length; i++) {
+            input.put(5 + length + i, (byte) tail[i]);
+        }
+        return input;
+    }
+
+    /** The header is inflated in steps from nothing, even when its first constant outgrows the first step. */
+    @Test
+    void theHeaderIsInflatedOnlyAsFarAsItReaches() throws Exception {
+        ClassFileBytes b = ClassFileBytes.header(52, 6);
+        b.utf8("x".repeat(200)); // #1
+        b.utf8("app/Wide"); // #2
+        b.classRef(2); // #3
+        b.utf8("java/lang/Object"); // #4
+        b.classRef(4); // #5
+        b.u16(0x0021).u16(3).u16(5).u16(0);
+        b.u16(0); // fields
+        b.u16(1); // methods
+        b.u16(0x0001).u16(1).u16(1);
+        b.u16(1);
+        b.u16(1).u32(8000).raw(new byte[8000]);
+        b.u16(0); // class attrs
+        byte[] bytes = b.toByteArray();
+        ClassParser whole = new ClassParser();
+        whole.parse(bytes, bytes.length);
+
+        ClassSource source = new ClassSource();
+        source.ofDeflate(storedBlock(bytes, bytes.length, true), 0, 5 + bytes.length, bytes.length);
+        ClassParser p = new ClassParser();
+        Extract.parseHeader(p, source);
+
+        assertEquals("app/Wide", Intern.str(p.internClassName(scratch, p.thisClass)));
+        assertEquals("java/lang/Object", Intern.str(p.internClassName(scratch, p.superClass)));
+        assertEquals(whole.headerEnd, p.headerEnd);
+        assertFalse(source.complete);
+        assertTrue(source.available < bytes.length / 2, source.available + " of " + bytes.length);
+    }
+
+    @Test
+    void anEntryThatStopsInflatingIsNotCountedAsScanned() {
+        byte[] bytes = referencingClass();
+        int half = bytes.length / 2;
+        ClassSource source = new ClassSource();
+        // The stored half ends in a block header of the reserved type 3.
+        source.ofDeflate(storedBlock(bytes, half, false, 0x07), 0, 5 + half + 1, bytes.length);
+        Extract.ScanSink sink = new Extract.ScanSink(names("lib/Owner"), new ClassGraph(), true, new MemberProbe(new long[0]));
+        Extract.ScanLeaf leaf = sink.newLeaf();
+
+        assertThrows(
+                ClassSource.DeflateError.class,
+                () -> sink.accept(leaf, scratch, Intern.intern("broken.jar"), Intern.intern("app/Main"), source));
+        assertEquals(0, leaf.scanned);
+        assertEquals(0, leaf.records.n);
+        assertNull(leaf.warnings);
+    }
+
+    /** A class an earlier chunk already put in the graph loses first-wins, yet its evidence still counts. */
+    @Test
+    void aClassTheGraphAlreadyHoldsContributesOnlyEvidence() {
+        int main = Intern.intern("app/Main");
+        ClassGraph known = new ClassGraph();
+        known.insertIfAbsent(main, Scope.objectSym(), new int[0], new int[0], Intern.NONE, Intern.intern("earlier.jar"));
+        MemberProbe probe = new MemberProbe(new long[] {MemberKey.of("call", "()V")});
+        Extract.ScanSink sink = new Extract.ScanSink(names("lib/Owner", "lib/Elem"), known, true, probe);
+        Extract.ScanLeaf leaf = sink.newLeaf();
+        byte[] bytes = referencingClass();
+        ClassSource source = new ClassSource();
+        source.ofBytes(bytes, bytes.length);
+
+        sink.accept(leaf, scratch, Intern.intern("later.jar"), main, source);
+
+        assertEquals(1, leaf.scanned);
+        assertEquals(0, leaf.records.n);
+        assertNull(leaf.warnings);
+        assertEquals(List.of("lib/Owner.call:()V", "lib/Owner.call:()V", "other/Thing.call:()V"), evidenceOf(leaf.invocations));
+    }
+
+    /** A class that fails partway leaves no partial record behind, and the rest of the leaf is still scanned. */
+    @Test
+    void theScanSinkWarnsAboutBrokenClassesAndKeepsTheRest(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        ClassFileBytes badRef = ClassFileBytes.header(52, 7);
+        badRef.utf8("p/BadRef"); // #1
+        badRef.classRef(1); // #2
+        badRef.utf8("lib/Owner"); // #3
+        badRef.classRef(3); // #4
+        badRef.utf8("call"); // #5
+        badRef.memberRef(10, 4, 5); // #6: its NameAndType is a Utf8
+        badRef.u16(0x0021).u16(2).u16(0).u16(0).u16(0).u16(0).u16(0);
+        // No superclass, like java/lang/Object.
+        ClassFileBytes root = ClassFileBytes.header(52, 5);
+        root.utf8("p/Root"); // #1
+        root.classRef(1); // #2
+        root.utf8("lib/Owner"); // #3
+        root.classRef(3); // #4
+        root.u16(0x0021).u16(2).u16(0).u16(0).u16(0).u16(0).u16(0);
+        String jar = writeJar(
+                dir.resolve("odd.jar"),
+                "p/Truncated.class", java.util.Arrays.copyOf(classNamed("p/Truncated", "m"), 20),
+                "p/BadRef.class", badRef.toByteArray(),
+                "p/Root.class", root.toByteArray(),
+                "x/First.class", classNamed("p/One", "m"),
+                "x/Second.class", classNamed("p/Two", "m"));
+
+        Scan.Result result = Scan.scanTargetPaths(List.of(jar), libraryOf("lib/Owner"), new MemberProbe(new long[0]), false);
+
+        assertEquals(
+                List.of(
+                        jar + "!p/Truncated.class: truncated class file at offset 13",
+                        jar + "!p/BadRef.class: constant pool #5 is not NameAndType"),
+                result.warnings);
+        assertEquals(5, result.scannedClasses);
+        assertEquals(3, result.graph.size());
+        assertFalse(result.graph.contains(Intern.intern("p/BadRef")));
+        assertEquals(Intern.NONE, result.graph.superOf(result.graph.node(Intern.intern("p/Root"))));
+        assertEquals(List.of(jar + "!p/Root -> CLASS lib/Owner static=null write=null new=null"), recordsOf(result));
+        assertEquals(
+                java.util.Map.of(Intern.intern("p/One"), "x/First.class", Intern.intern("p/Two"), "x/Second.class"),
+                result.entryOverrides);
     }
 
     /** java/lang/Object is the one class with super_class 0. */
