@@ -91,6 +91,23 @@ class TomlErrorTest {
         assertEquals("line 1, column 12: unclosed inline table, expected `}`", at("a = {b = 1, # c\n"));
     }
 
+    /** A comment that runs to the end of the input used to hide the unclosed value behind a crash. */
+    @Test
+    void aCommentAtTheEndStillReportsTheUnclosedValue() {
+        assertEquals(
+                """
+                TOML parse error at line 1, column 6
+                  |
+                1 | a = [# c
+                  |      ^
+                unclosed array, expected `]`
+                """,
+                error("a = [# c"));
+        assertEquals("line 1, column 7: unclosed array, expected `]`", at("a = [1 # c"));
+        assertEquals("line 1, column 6: unclosed inline table, expected `}`", at("a = {# c"));
+        assertEquals("line 1, column 11: unclosed inline table, expected `}`", at("a = {b = 1 # c"));
+    }
+
     @Test
     void aHeaderWithoutAUsableKeyReportsTheEmptyKey() {
         assertEquals(

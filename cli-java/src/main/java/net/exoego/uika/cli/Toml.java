@@ -1057,10 +1057,10 @@ final class Toml {
                 }
             }
             event(E_COMMENT, comment);
-            // The lexer ends a comment at a line break or at the end, so a newline or EOF follows.
-            int t = pos++;
-            if (tk.a[t] == T_NEWLINE) {
-                newline(t);
+            // The lexer ends a comment at a line break or at the end. The end stays for the caller,
+            // which may still have an array or inline table to report as unclosed.
+            if (tk.a[pos] == T_NEWLINE) {
+                newline(pos++);
             }
         }
 
