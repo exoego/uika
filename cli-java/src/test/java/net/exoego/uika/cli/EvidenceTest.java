@@ -1,5 +1,6 @@
 package net.exoego.uika.cli;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -400,6 +401,39 @@ class EvidenceTest {
         Path empty = dir.resolve("empty.toml");
         Files.writeString(empty, "");
         Evidence.createDraftPlaceholder(empty.toString());
+    }
+
+    /** A failed UTF-8 decode used to count as ours, so the file was replaced. */
+    @Test
+    void aFileThatIsNotUtf8IsNeverTruncated(@TempDir Path dir) throws IOException {
+        byte[] binary = {(byte) 0xff};
+        Path path = Files.write(dir.resolve("draft.toml"), binary);
+
+        assertEquals(
+                "refusing to overwrite " + path
+                        + ": it was not written by --draft-exclude-file. Draft to a new path and merge.",
+                assertThrows(UikaException.class, () -> Evidence.createDraftPlaceholder(path.toString()))
+                        .getMessage());
+        assertArrayEquals(binary, Files.readAllBytes(path));
+    }
+
+    /** A failed read used to count as ours, and a write-only file was replaced. */
+    @Test
+    void aFileThatCannotBeReadIsNeverTruncated(@TempDir Path dir) throws IOException {
+        String handWritten = "[[exclude]]\nowner = \"org/example/Keep\"\nreason = \"mine\"\n";
+        Path path = Files.writeString(dir.resolve("draft.toml"), handWritten);
+        assumeTrue(
+                path.toFile().setReadable(false, false) && !Files.isReadable(path),
+                "cannot take read permission away here (root or not POSIX)");
+        try {
+            assertEquals(
+                    "cannot read draft exclude file " + path + ": Permission denied (os error 13)",
+                    assertThrows(UikaException.class, () -> Evidence.createDraftPlaceholder(path.toString()))
+                            .getMessage());
+        } finally {
+            path.toFile().setReadable(true, false);
+        }
+        assertEquals(handWritten, Files.readString(path));
     }
 
     /**

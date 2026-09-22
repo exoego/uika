@@ -2,9 +2,6 @@ package net.exoego.uika.cli;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -589,7 +586,7 @@ final class Evidence {
         Path file = Path.of(path);
         // Content, not path identity. The caller's real-path comparison misses a HARD LINK to
         // the exclude file.
-        String existing = readUtf8OrNull(file);
+        String existing = existingText(file, path);
         if (existing != null) {
             int newline = existing.indexOf('\n');
             String first = newline < 0 ? existing : existing.substring(0, newline);
@@ -611,19 +608,21 @@ final class Evidence {
         write(path, "# uika --draft-exclude-file: the check did not complete; no rules were drafted.\n");
     }
 
-    private static String readUtf8OrNull(Path file) {
+    /** The file's text, or null when no file is there. */
+    private static String existingText(Path file, String path) {
+        byte[] bytes;
         try {
-            return StandardCharsets.UTF_8
-                    .newDecoder()
-                    .onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .decode(ByteBuffer.wrap(Files.readAllBytes(file)))
-                    .toString();
-        } catch (CharacterCodingException e) {
-            return null;
+            bytes = Files.readAllBytes(file);
         } catch (IOException e) {
+            // A file it cannot read cannot be shown to be ours. A directory is left for the write to name.
+            if (Files.isRegularFile(file)) {
+                throw new UikaException("cannot read draft exclude file " + path, e);
+            }
             return null;
         }
+        // Lenient on purpose. A byte that is not UTF-8 decodes to U+FFFD, which is neither
+        // blank nor the marker, so such a file is refused.
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     /** The path as spelled minus its last name, or null when nothing is left to create. */
