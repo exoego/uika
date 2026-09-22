@@ -1,7 +1,6 @@
 package net.exoego.uika.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -33,6 +32,12 @@ class TomlTest {
             keys.add(entry.key());
         }
         return keys;
+    }
+
+    /** A number or a boolean as a type error names it, the one place a user sees it. */
+    private static String shown(Toml.Value value) {
+        String description = assertThrows(Toml.Error.class, value::asString).description;
+        return description.substring("invalid type: ".length(), description.indexOf(", expected"));
     }
 
     @Test
@@ -120,17 +125,17 @@ class TomlTest {
                 yes = true
                 no = false
                 """);
-        assertEquals(1000, t.get("dec").value().asLong());
-        assertEquals(-17, t.get("neg").value().asLong());
-        assertEquals(5, t.get("plus").value().asLong());
-        assertEquals(0, t.get("zero").value().asLong());
-        assertEquals(0xDEADBEEFL, t.get("hex").value().asLong());
-        assertEquals(15, t.get("oct").value().asLong());
-        assertEquals(10, t.get("bin").value().asLong());
-        assertEquals(Long.MAX_VALUE, t.get("max").value().asLong());
-        assertEquals(Long.MIN_VALUE, t.get("min").value().asLong());
-        assertTrue(t.get("yes").value().asBoolean());
-        assertFalse(t.get("no").value().asBoolean());
+        assertEquals("integer `1000`", shown(t.get("dec").value()));
+        assertEquals("integer `-17`", shown(t.get("neg").value()));
+        assertEquals("integer `5`", shown(t.get("plus").value()));
+        assertEquals("integer `0`", shown(t.get("zero").value()));
+        assertEquals("integer `3735928559`", shown(t.get("hex").value()));
+        assertEquals("integer `15`", shown(t.get("oct").value()));
+        assertEquals("integer `10`", shown(t.get("bin").value()));
+        assertEquals("integer `9223372036854775807`", shown(t.get("max").value()));
+        assertEquals("integer `-9223372036854775808`", shown(t.get("min").value()));
+        assertEquals("boolean `true`", shown(t.get("yes").value()));
+        assertEquals("boolean `false`", shown(t.get("no").value()));
         assertEquals(Toml.Kind.INTEGER, t.get("dec").value().kind());
         assertEquals(Toml.Kind.BOOLEAN, t.get("yes").value().kind());
     }
@@ -195,7 +200,7 @@ class TomlTest {
         assertEquals("spaced dots", string(ab, "d"));
         Toml.Table server = t.get("server").value().asTable("a map");
         assertEquals("h", string(server, "host"));
-        assertTrue(server.get("opts").value().asTable("a map").get("retry").value().asBoolean());
+        assertEquals("boolean `true`", shown(server.get("opts").value().asTable("a map").get("retry").value()));
         assertEquals("c", string(server.get("tls").value().asTable("a map"), "cert"));
         assertEquals("v", string(t.get("quoted").value().asTable("a map").get("table").value().asTable("a map"), "k"));
     }

@@ -160,29 +160,6 @@ final class Toml {
             return text;
         }
 
-        boolean asBoolean() {
-            if (kind != Kind.BOOLEAN) {
-                throw invalidType("a boolean");
-            }
-            return bool;
-        }
-
-        long asLong() {
-            if (kind != Kind.INTEGER) {
-                throw invalidType("i64");
-            }
-            BigInteger value = integer();
-            if (value.bitLength() <= 63) {
-                return value.longValue();
-            }
-            // serde's wording for an i64 field. No schema reads an integer yet, so unlike
-            // the rest of this file it was never compared with the Rust binary.
-            if (value.signum() > 0 && value.bitLength() <= 64) {
-                throw error("invalid value: integer `" + value + "`, expected i64");
-            }
-            throw error("invalid value: " + (value.bitLength() <= 127 ? "i128" : "u128") + ", expected i64");
-        }
-
         List<Value> asArray() {
             if (kind != Kind.ARRAY) {
                 throw invalidType("a sequence");
