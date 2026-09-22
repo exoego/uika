@@ -181,7 +181,7 @@ final class Json {
         Object value = reader.value();
         reader.skipWhitespace();
         if (reader.pos < text.length()) {
-            throw reader.error("trailing characters");
+            throw reader.error("unexpected text after the JSON value");
         }
         return value;
     }
@@ -209,7 +209,12 @@ final class Json {
             if (pos < text.length()) {
                 column++;
             }
-            return new ParseException(what + " at line " + line + " column " + column);
+            return new ParseException(what + " at line " + line + ", column " + column);
+        }
+
+        /** The end of the file is the only place it can be, so it gets no line and column. */
+        ParseException endOfFile(String inside) {
+            return new ParseException("unexpected end of file" + inside);
         }
 
         void skipWhitespace() {
@@ -225,7 +230,7 @@ final class Json {
 
         Object value() throws ParseException {
             if (pos >= text.length()) {
-                throw error("EOF while parsing a value");
+                throw endOfFile(", expected a value");
             }
             char c = text.charAt(pos);
             switch (c) {
@@ -245,7 +250,7 @@ final class Json {
                     if (c == '-' || (c >= '0' && c <= '9')) {
                         return number();
                     }
-                    throw error("expected value");
+                    throw error("expected a value");
             }
         }
 
@@ -292,7 +297,7 @@ final class Json {
             int start = pos;
             while (true) {
                 if (pos >= text.length()) {
-                    throw error("EOF while parsing a string");
+                    throw endOfFile(" inside a string");
                 }
                 char c = text.charAt(pos);
                 if (c == '"') {
@@ -307,7 +312,7 @@ final class Json {
                     sb.append(text, start, pos);
                     pos++;
                     if (pos >= text.length()) {
-                        throw error("EOF while parsing a string");
+                        throw endOfFile(" inside a string");
                     }
                     char e = text.charAt(pos++);
                     switch (e) {
@@ -321,7 +326,7 @@ final class Json {
                         case 't' -> sb.append('\t');
                         case 'u' -> {
                             if (pos + 4 > text.length()) {
-                                throw error("EOF while parsing a string");
+                                throw endOfFile(" inside a string");
                             }
                             try {
                                 sb.append((char) Integer.parseInt(text.substring(pos, pos + 4), 16));
@@ -336,7 +341,7 @@ final class Json {
                     continue;
                 }
                 if (c < 0x20) {
-                    throw error("control character (\\u0000-\\u001F) found while parsing a string");
+                    throw error("unescaped control character in a string");
                 }
                 pos++;
             }
@@ -347,7 +352,7 @@ final class Json {
             List<Object> out = new ArrayList<>();
             skipWhitespace();
             if (pos >= text.length()) {
-                throw error("EOF while parsing an array");
+                throw endOfFile(" inside an array");
             }
             if (text.charAt(pos) == ']') {
                 pos++;
@@ -362,7 +367,7 @@ final class Json {
                 out.add(value());
                 skipWhitespace();
                 if (pos >= text.length()) {
-                    throw error("EOF while parsing an array");
+                    throw endOfFile(" inside an array");
                 }
                 char c = text.charAt(pos);
                 if (c == ',') {
@@ -387,7 +392,7 @@ final class Json {
             while (true) {
                 skipWhitespace();
                 if (pos >= text.length()) {
-                    throw error("EOF while parsing an object");
+                    throw endOfFile(" inside an object");
                 }
                 if (text.charAt(pos) == '}') {
                     throw error("trailing comma");
@@ -398,7 +403,7 @@ final class Json {
                 String key = string();
                 skipWhitespace();
                 if (pos >= text.length()) {
-                    throw error("EOF while parsing an object");
+                    throw endOfFile(" inside an object");
                 }
                 if (text.charAt(pos) != ':') {
                     throw error("expected \":\"");
@@ -408,7 +413,7 @@ final class Json {
                 out.put(key, value());
                 skipWhitespace();
                 if (pos >= text.length()) {
-                    throw error("EOF while parsing an object");
+                    throw endOfFile(" inside an object");
                 }
                 char c = text.charAt(pos);
                 if (c == ',') {

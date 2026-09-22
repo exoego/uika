@@ -124,49 +124,49 @@ class JsonTest {
         assertEquals("é😀", Json.parse("\"\\u00E9\\ud83d\\ude00\""));
     }
 
-    /** A dump cut off mid-write lands here, so the position is where the input ran out. */
+    /** A dump cut off mid-write lands here. */
     @Test
-    void truncatedInputReportsWhereItEnded() {
-        assertEquals("EOF while parsing a value at line 1 column 0", error(""));
-        assertEquals("EOF while parsing a value at line 1 column 3", error("   "));
-        assertEquals("EOF while parsing a value at line 3 column 0", error("\n\n"));
-        assertEquals("EOF while parsing a value at line 1 column 3", error("[1,"));
-        assertEquals("EOF while parsing an array at line 1 column 1", error("["));
-        assertEquals("EOF while parsing an array at line 1 column 2", error("[1"));
-        assertEquals("EOF while parsing an object at line 1 column 1", error("{"));
-        assertEquals("EOF while parsing an object at line 1 column 4", error("{\"a\""));
-        assertEquals("EOF while parsing an object at line 1 column 6", error("{\"a\":1"));
-        assertEquals("EOF while parsing a string at line 1 column 4", error("\"abc"));
-        assertEquals("EOF while parsing a string at line 1 column 3", error("\"a\\"));
-        assertEquals("EOF while parsing a string at line 1 column 3", error("\"\\u"));
+    void truncatedInputSaysWhatWasLeftOpen() {
+        assertEquals("unexpected end of file, expected a value", error(""));
+        assertEquals("unexpected end of file, expected a value", error("   "));
+        assertEquals("unexpected end of file, expected a value", error("\n\n"));
+        assertEquals("unexpected end of file, expected a value", error("[1,"));
+        assertEquals("unexpected end of file inside an array", error("["));
+        assertEquals("unexpected end of file inside an array", error("[1"));
+        assertEquals("unexpected end of file inside an object", error("{"));
+        assertEquals("unexpected end of file inside an object", error("{\"a\""));
+        assertEquals("unexpected end of file inside an object", error("{\"a\":1"));
+        assertEquals("unexpected end of file inside a string", error("\"abc"));
+        assertEquals("unexpected end of file inside a string", error("\"a\\"));
+        assertEquals("unexpected end of file inside a string", error("\"\\u"));
     }
 
     @Test
     void textAfterTheDocumentIsRejected() {
-        assertEquals("trailing characters at line 1 column 4", error("{} x"));
-        assertEquals("trailing characters at line 4 column 1", error("{\n\"a\":1}\n\nx"));
+        assertEquals("unexpected text after the JSON value at line 1, column 4", error("{} x"));
+        assertEquals("unexpected text after the JSON value at line 4, column 1", error("{\n\"a\":1}\n\nx"));
     }
 
     @Test
     void malformedValuesNameTheOffendingColumn() {
-        assertEquals("expected value at line 1 column 1", error("x"));
-        assertEquals("expected value at line 1 column 2", error("[,1]"));
-        assertEquals("expected null at line 1 column 8", error("{\"a\": nope}"));
-        assertEquals("invalid number at line 1 column 3", error("[-]"));
-        assertEquals("invalid number at line 1 column 4", error("[1e]"));
-        assertEquals("control character (\\u0000-\\u001F) found while parsing a string at line 1 column 3", error("\"a\u0001\""));
-        assertEquals("control character (\\u0000-\\u001F) found while parsing a string at line 1 column 5", error("\"tab\there\""));
+        assertEquals("expected a value at line 1, column 1", error("x"));
+        assertEquals("expected a value at line 1, column 2", error("[,1]"));
+        assertEquals("expected null at line 1, column 8", error("{\"a\": nope}"));
+        assertEquals("invalid number at line 1, column 3", error("[-]"));
+        assertEquals("invalid number at line 1, column 4", error("[1e]"));
+        assertEquals("unescaped control character in a string at line 1, column 3", error("\"a\u0001\""));
+        assertEquals("unescaped control character in a string at line 1, column 5", error("\"tab\there\""));
     }
 
     @Test
     void malformedContainersNameTheOffendingColumn() {
-        assertEquals("trailing comma at line 1 column 4", error("[1,]"));
-        assertEquals("trailing comma at line 3 column 1", error("[\n1,\n]"));
-        assertEquals("expected \",\" or \"]\" at line 1 column 4", error("[1 2]"));
-        assertEquals("trailing comma at line 1 column 8", error("{\"a\":1,}"));
-        assertEquals("key must be a string at line 1 column 2", error("{1:2}"));
-        assertEquals("key must be a string at line 3 column 3", error("{\n  \"a\": 1,\n  x\n}"));
-        assertEquals("expected \":\" at line 1 column 6", error("{\"a\" 1}"));
-        assertEquals("expected \",\" or \"}\" at line 1 column 8", error("{\"a\":1 \"b\":2}"));
+        assertEquals("trailing comma at line 1, column 4", error("[1,]"));
+        assertEquals("trailing comma at line 3, column 1", error("[\n1,\n]"));
+        assertEquals("expected \",\" or \"]\" at line 1, column 4", error("[1 2]"));
+        assertEquals("trailing comma at line 1, column 8", error("{\"a\":1,}"));
+        assertEquals("key must be a string at line 1, column 2", error("{1:2}"));
+        assertEquals("key must be a string at line 3, column 3", error("{\n  \"a\": 1,\n  x\n}"));
+        assertEquals("expected \":\" at line 1, column 6", error("{\"a\" 1}"));
+        assertEquals("expected \",\" or \"}\" at line 1, column 8", error("{\"a\":1 \"b\":2}"));
     }
 }

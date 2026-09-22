@@ -305,7 +305,7 @@ class DumpTest {
 
         String broken = write("broken.json", "{\"modules\":[1,");
         assertEquals(
-                "invalid classpath dump " + broken + ": EOF while parsing a value at line 1 column 14",
+                "invalid classpath dump " + broken + ": unexpected end of file, expected a value",
                 assertThrows(UikaException.class, () -> Dump.loadDump(broken)).getMessage());
 
         String noModules = write("no-modules.json", "{}");
