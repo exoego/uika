@@ -287,7 +287,6 @@ public class UikaPlugin implements Plugin<Project> {
                     // execution, so the entry survives.
                     task.getCliPath().set(
                             root.getProviders().environmentVariable(UikaCli.CLI_PATH_ENV));
-                    task.getInstallDir().convention(root.getLayout().getBuildDirectory().dir("uika/cli"));
                     task.getJfrWorkDir().convention(
                             root.getLayout().getBuildDirectory()
                                     .dir("uika/" + net.exoego.uika.plugin.core.JfrEvidence.WORK_DIR_NAME));
@@ -298,25 +297,16 @@ public class UikaPlugin implements Plugin<Project> {
                     // into the graph.
                     task.mustRunAfter(merge, resolve);
                 });
-        // The CLI ZIP's detached configuration is created after evaluation, when the version
+        // The CLI jar's detached configuration is created after evaluation, when the version
         // (convention, -PuikaCliVersion, or a build-script override) is final. Absent version
         // stays unwired; the action reports the friendly error.
         root.afterEvaluate(r -> upgradeCheck.configure(task -> {
             if (!task.getCliVersion().isPresent()) {
                 return;
             }
-            String classifier;
-            try {
-                classifier = UikaCli.platformClassifier();
-            } catch (IllegalStateException unsupportedPlatform) {
-                // Wiring runs whenever the task is realized (IDE sync, `gradle tasks`),
-                // so an unsupported platform must not fail here; the task action calls
-                // platformClassifier() again and reports the same error on execution.
-                return;
-            }
             var notation = UikaCli.GROUP + ":" + UikaCli.ARTIFACT + ":"
-                    + task.getCliVersion().get() + ":" + classifier + "@zip";
-            task.getCliZip().from(detachedFor(root, notation));
+                    + task.getCliVersion().get() + ":" + UikaCli.JAR_CLASSIFIER + "@jar";
+            task.getCliJar().from(detachedFor(root, notation));
         }));
 
         // -PuikaJfr=<dir> makes every Test task record class loads into a JFR recording
