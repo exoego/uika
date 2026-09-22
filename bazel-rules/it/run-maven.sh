@@ -17,14 +17,14 @@ set -eu
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 RULES=$REPO/bazel-rules
-UIKA_BIN=${UIKA_BIN:-$REPO/target/debug/uika}
+UIKA_BIN=${UIKA_BIN:-$REPO/cli-java/build/libs/uika-cli-0.0.0-dev.jar}
 BAZEL=${BAZEL:-bazelisk}
 WORK=${TMPDIR:-/tmp}/uika-bazel-maven-it
 WS=$WORK/ws
 OUT=$WORK/out
 
-if [ ! -x "$UIKA_BIN" ]; then
-  echo "no uika binary at $UIKA_BIN (cargo build first)" >&2
+if [ ! -f "$UIKA_BIN" ]; then
+  echo "no uika CLI jar at $UIKA_BIN (make java-cli-build first)" >&2
   exit 1
 fi
 
@@ -34,7 +34,7 @@ cp -R "$RULES/it/maven-workspace/." "$WS/"
 rm -f "$WS/MODULE.bazel.template"
 
 # Both the @uika_cli repository rule and UpgradeCheckMain read this, so the check runs
-# against the freshly built debug binary instead of downloading a release.
+# against the freshly built jar instead of downloading a release.
 UIKA_CLI_PATH=$UIKA_BIN
 export UIKA_CLI_PATH
 

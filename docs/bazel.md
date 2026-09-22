@@ -47,14 +47,16 @@ $ bazel run //:uika_resolution_dump -- --output /tmp/before.json
 $ bazel run //:uika_upgrade_check -- --before /tmp/before.json --after /tmp/after.json
 ```
 
-The CLI binary comes from a repository rule, so Bazel's repository cache holds
-it, a second run needs no network, and the release archive pins its checksum
-for every platform. `UIKA_CLI_PATH` points it at a binary you already have
-instead, and a value that is not an executable file fails naming the variable. The check target repeats `targets` only to read the API release they
-compile for, so it builds nothing.
+The CLI is a jar that comes from a repository rule, so Bazel's repository cache
+holds it, a second run needs no network, and the release archive pins its
+checksum. It is one jar for every host, and the check target starts it on its
+own Java runtime. `UIKA_CLI_PATH` points it at a CLI you already have instead,
+the jar or a native binary, and a value that is not a file, or a native binary
+that is not executable, fails naming the variable. The check target repeats
+`targets` only to read the API release they compile for, so it builds nothing.
 
-The `uika.cli` module-extension tag overrides where the binary comes from.
-That is the pin for every case the release archive's checksum map cannot
+The `uika.cli` module-extension tag overrides where the jar comes from.
+That is the pin for every case the release archive's checksum cannot
 serve — the rules at a git revision, a different CLI version, a mirror — and
 the unpinned-download warning prints the hash ready to paste:
 
@@ -63,7 +65,7 @@ the unpinned-download warning prints the hash ready to paste:
 uika = use_extension("@uika//:extensions.bzl", "uika")
 uika.cli(
     version = "VERSION_PLACEHOLDER",
-    sha256 = {"linux-x86_64": "<hash from the unpinned-download warning>"},
+    sha256 = "<hash from the unpinned-download warning>",
     # repository = "https://my.mirror/maven2",  # Maven repository base URL
 )
 use_repo(uika, "uika_cli")
