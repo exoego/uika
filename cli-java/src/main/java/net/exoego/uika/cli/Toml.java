@@ -1,9 +1,5 @@
 package net.exoego.uika.cli;
 
-import java.math.BigDecimal;
-import java.math.BigInteger;
-import java.math.MathContext;
-import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -11,16 +7,15 @@ import java.util.List;
 import java.util.TreeMap;
 
 /**
- * TOML reader for {@code --exclude-file}. The jar ships no dependency, so this stands in for
- * the toml crate (1.1.5, spec 1.1.0) and keeps its observable behaviour, because a rejected
- * file prints the crate's message verbatim.
+ * TOML reader for {@code --exclude-file}. The jar ships no dependency, so this reads TOML
+ * 1.1.0 itself. It began as a port of the toml crate (1.1.5) that the Rust CLI used. Comments
+ * that name the crate explain syntax rules kept from it, but matching the crate is not a goal.
  *
- * <p>Three things are load-bearing for that. Errors come from two passes, syntax first and
- * then keys, strings, numbers and duplicate keys, and only the first error is shown, so a
- * syntax error on a later line wins over a duplicate key on an earlier one. Spans are UTF-8
- * byte offsets, since the crate counts the column in chars but the caret width in bytes.
- * Tables iterate in key byte order (the crate's BTreeMap), which decides which of two schema
- * errors a reader sees.
+ * <p>Errors come from two passes, syntax first and then keys, strings, numbers and duplicate
+ * keys, and only the first error is shown, so a syntax error on a later line wins over a
+ * duplicate key on an earlier one. Spans are UTF-8 byte offsets. The column counts characters
+ * while the caret is as wide as the span in bytes. Tables iterate in key byte order, which
+ * decides which of two schema errors a reader sees.
  */
 final class Toml {
     private Toml() {}
@@ -49,16 +44,29 @@ final class Toml {
         }
     }
 
-    /** Message is the crate's whole Display output, trailing newline included. */
+    /**
+     * A rejected input. The message is the problem alone. {@link #parse} raises syntax errors,
+     * and a reader of the parsed tables raises schema errors on valid TOML through
+     * {@link Value#error} and {@link Entry#error}.
+     */
     static final class Error extends RuntimeException {
         private static final long serialVersionUID = 1L;
 
-        /** The last line of the rendering, without the source excerpt. */
-        final String description;
+        /** "line L, column C" and the excerpt under it, or null for the one error without a span. */
+        private final String location;
 
-        Error(String rendered, String description) {
-            super(rendered);
-            this.description = description;
+        private final boolean syntax;
+
+        private Error(String message, String location, boolean syntax) {
+            super(message);
+            this.location = location;
+            this.syntax = syntax;
+        }
+
+        /** The whole rendering, headed by {@code subject}, which names the input. */
+        String render(String subject) {
+            String head = syntax ? subject + ": TOML parse error" : subject;
+            return location == null ? head + ": " + getMessage() : head + " at " + location + "\n" + getMessage();
         }
     }
 
@@ -108,25 +116,9 @@ final class Toml {
             return value;
         }
 
-        /** serde's error for a struct that denies unknown fields. */
-        Error unknownField(String... fields) {
-            StringBuilder message = new StringBuilder("unknown field `").append(key).append("`, ");
-            if (fields.length == 0) {
-                message.append("there are no fields");
-            } else {
-                message.append("expected ");
-                if (fields.length == 1) {
-                    message.append('`').append(fields[0]).append('`');
-                } else if (fields.length == 2) {
-                    message.append('`').append(fields[0]).append("` or `").append(fields[1]).append('`');
-                } else {
-                    message.append("one of ");
-                    for (int i = 0; i < fields.length; i++) {
-                        message.append(i == 0 ? "`" : ", `").append(fields[i]).append('`');
-                    }
-                }
-            }
-            return source.error(message.toString(), keyStart, keyEnd);
+        /** A schema error that points at the key. */
+        Error error(String message) {
+            return source.error(message, keyStart, keyEnd, false);
         }
     }
 
@@ -136,8 +128,6 @@ final class Toml {
         private final int start;
         private final int end;
         private String text;
-        private int radix;
-        private boolean bool;
         private List<Value> items;
         private boolean arrayOfTables;
         private Table table;
@@ -154,140 +144,43 @@ final class Toml {
         }
 
         String asString() {
-            if (kind != Kind.STRING) {
-                throw invalidType("a string");
-            }
+            ensure(Kind.STRING);
             return text;
         }
 
         List<Value> asArray() {
-            if (kind != Kind.ARRAY) {
-                throw invalidType("a sequence");
-            }
+            ensure(Kind.ARRAY);
             return items;
         }
 
-        /** {@code expecting} is serde's name for the target, such as "struct RawEntry". */
-        Table asTable(String expecting) {
-            if (kind != Kind.TABLE) {
-                throw invalidType(expecting);
-            }
+        Table asTable() {
+            ensure(Kind.TABLE);
             return table;
         }
 
-        Error missingField(String field) {
-            return source.error("missing field `" + field + "`", start, end);
+        private void ensure(Kind expected) {
+            if (kind != expected) {
+                throw new IllegalStateException(kind + " read as " + expected);
+            }
         }
 
-        Error invalidType(String expecting) {
-            String unexpected =
-                    switch (kind) {
-                        case STRING -> "string " + debugQuote(text);
-                        case INTEGER -> unexpectedInteger();
-                        case FLOAT -> "floating point `" + floatText() + "`";
-                        case BOOLEAN -> "boolean `" + bool + "`";
-                        case DATETIME, TABLE -> "map";
-                        case ARRAY -> "sequence";
-                    };
-            return source.error("invalid type: " + unexpected + ", expected " + expecting, start, end);
+        /** The value in TOML terms, for the "found" half of a schema error. */
+        String describe() {
+            return switch (kind) {
+                case STRING -> "a string";
+                case INTEGER -> "the integer " + source.text(start, end);
+                case FLOAT -> "the float " + source.text(start, end);
+                case BOOLEAN -> "the boolean " + source.text(start, end);
+                case DATETIME -> "the date-time " + source.text(start, end);
+                case ARRAY -> arrayOfTables ? "an array of tables" : "an array";
+                case TABLE -> "a table";
+            };
         }
 
-        private Error error(String message) {
-            return source.error(message, start, end);
+        /** A schema error that points at the value. */
+        Error error(String message) {
+            return source.error(message, start, end, false);
         }
-
-        private BigInteger integer() {
-            BigInteger value;
-            try {
-                value = new BigInteger(text, radix);
-            } catch (NumberFormatException e) {
-                throw error("integer number overflowed");
-            }
-            if (value.bitLength() > 128 || (value.signum() < 0 && value.bitLength() > 127)) {
-                throw error("integer number overflowed");
-            }
-            return value;
-        }
-
-        private String unexpectedInteger() {
-            BigInteger value = integer();
-            if (value.bitLength() <= 63 || (value.signum() > 0 && value.bitLength() <= 64)) {
-                return "integer `" + value + "`";
-            }
-            return "integer `" + value + "` as " + (value.bitLength() <= 127 ? "i128" : "u128");
-        }
-
-        private String floatText() {
-            String lower = text.toLowerCase(java.util.Locale.ROOT);
-            if (lower.endsWith("nan")) {
-                return "NaN";
-            }
-            if (lower.endsWith("inf")) {
-                return text.startsWith("-") ? "-inf" : "inf";
-            }
-            double value = Double.parseDouble(text);
-            if (Double.isInfinite(value)) {
-                throw error("floating-point number overflowed");
-            }
-            if (value == 0) {
-                return 1 / value < 0 ? "-0.0" : "0.0";
-            }
-            // Shortest digits that read back as the same double, which is what Rust prints.
-            // Double.toString is not that before JDK 19.
-            BigDecimal exact = new BigDecimal(value);
-            BigDecimal shortest;
-            for (int precision = 1; ; precision++) {
-                shortest = exact.round(new MathContext(precision, RoundingMode.HALF_EVEN));
-                if (shortest.doubleValue() == value) {
-                    break;
-                }
-            }
-            String plain = shortest.stripTrailingZeros().toPlainString();
-            return plain.indexOf('.') >= 0 ? plain : plain + ".0";
-        }
-    }
-
-    /**
-     * Rust's {@code {:?}} for a str. The printable test is by general category, which is how
-     * the Rust table is generated. Grapheme_Extend is approximated by the two mark categories,
-     * so the few spacing marks it also holds (U+09BE is one) print unescaped here.
-     */
-    static String debugQuote(String s) {
-        StringBuilder out = new StringBuilder("\"");
-        s.codePoints().forEach(cp -> {
-            switch (cp) {
-                case '"' -> out.append("\\\"");
-                case '\\' -> out.append("\\\\");
-                case '\n' -> out.append("\\n");
-                case '\r' -> out.append("\\r");
-                case '\t' -> out.append("\\t");
-                case 0 -> out.append("\\0");
-                default -> {
-                    if (needsEscape(cp)) {
-                        out.append("\\u{").append(Integer.toHexString(cp)).append('}');
-                    } else {
-                        out.appendCodePoint(cp);
-                    }
-                }
-            }
-        });
-        return out.append('"').toString();
-    }
-
-    private static boolean needsEscape(int cp) {
-        return switch (Character.getType(cp)) {
-            case Character.CONTROL,
-                    Character.FORMAT,
-                    Character.SURROGATE,
-                    Character.PRIVATE_USE,
-                    Character.UNASSIGNED,
-                    Character.LINE_SEPARATOR,
-                    Character.PARAGRAPH_SEPARATOR,
-                    Character.NON_SPACING_MARK,
-                    Character.ENCLOSING_MARK -> true;
-            case Character.SPACE_SEPARATOR -> cp != ' ';
-            default -> false;
-        };
     }
 
     private record Key(String text, int start, int end) {}
@@ -306,10 +199,14 @@ final class Toml {
         }
 
         Error error(String message) {
-            return new Error(message + "\n", message);
+            return new Error(message, null, true);
         }
 
         Error error(String message, int start, int end) {
+            return error(message, start, end, true);
+        }
+
+        Error error(String message, int start, int end, boolean syntax) {
             int index = start;
             int line = 0;
             int lineStart = 0;
@@ -353,13 +250,12 @@ final class Toml {
             String lineNumber = Integer.toString(line + 1);
             String gutter = " ".repeat(lineNumber.length() + 1);
             StringBuilder out = new StringBuilder();
-            out.append("TOML parse error at line ").append(lineNumber).append(", column ").append(column + 1).append('\n');
+            out.append("line ").append(lineNumber).append(", column ").append(column + 1).append('\n');
             out.append(gutter).append("|\n");
             out.append(lineNumber).append(" | ").append(text(lineStart, lineEnd)).append('\n');
             out.append(gutter).append('|').append(" ".repeat(column + 1)).append('^');
-            out.append("^".repeat(Math.max(0, highlight - 1))).append('\n');
-            out.append(message).append('\n');
-            return new Error(out.toString(), message);
+            out.append("^".repeat(Math.max(0, highlight - 1)));
+            return new Error(message, out.toString(), syntax);
         }
     }
 
@@ -1748,10 +1644,7 @@ final class Toml {
                 String description = kind == Kind.BOOLEAN ? "invalid boolean" : "invalid float";
                 throw fail(description, 0, raw.length(), lit(symbol));
             }
-            Value value = of(kind);
-            value.text = symbol;
-            value.bool = symbol.equals("true");
-            return value;
+            return of(kind);
         }
 
         private Value signed() {
@@ -1779,9 +1672,7 @@ final class Toml {
                     if (!raw.substring(at).equals(symbol)) {
                         throw fail("invalid float", at, raw.length(), lit(symbol));
                     }
-                    Value value = of(Kind.FLOAT);
-                    value.text = raw;
-                    return value;
+                    return of(Kind.FLOAT);
                 }
                 default -> throw invalid();
             }
@@ -1789,7 +1680,7 @@ final class Toml {
 
         private Value zeroPrefixed(int at, boolean signed) {
             if (raw.length() - at == 1) {
-                return number(0, Kind.INTEGER, 10);
+                return number(0, Kind.INTEGER);
             }
             char marker = raw.charAt(at + 1);
             int radix =
@@ -1832,7 +1723,7 @@ final class Toml {
                 }
                 i += Character.charCount(c);
             }
-            return number(digits, Kind.INTEGER, radix);
+            return number(digits, Kind.INTEGER);
         }
 
         private static int indexOrMax(int index) {
@@ -1846,7 +1737,7 @@ final class Toml {
             }
             if (digitEnd == raw.length()) {
                 ensureNoLeadingZero(at);
-                return number(0, Kind.INTEGER, 10);
+                return number(0, Kind.INTEGER);
             }
             String rest = raw.substring(digitEnd);
             if (rest.startsWith("-") || rest.startsWith(":")) {
@@ -1854,20 +1745,18 @@ final class Toml {
                 if (problem != null) {
                     throw source.error(problem, start, end);
                 }
-                Value value = of(Kind.DATETIME);
-                value.text = raw;
-                return value;
+                return of(Kind.DATETIME);
             }
             if (rest.contains(" ")) {
                 throw invalid();
             }
             if (rest.indexOf('.') >= 0 || rest.indexOf('e') >= 0 || rest.indexOf('E') >= 0) {
                 ensureFloat(at);
-                return number(0, Kind.FLOAT, 10);
+                return number(0, Kind.FLOAT);
             }
             if (rest.startsWith("_")) {
                 ensureNoLeadingZero(at);
-                return number(0, Kind.INTEGER, 10);
+                return number(0, Kind.INTEGER);
             }
             throw invalid();
         }
@@ -1913,12 +1802,9 @@ final class Toml {
             return i;
         }
 
-        private Value number(int from, Kind kind, int radix) {
-            StringBuilder out = new StringBuilder();
+        private Value number(int from, Kind kind) {
             for (int i = from; i < raw.length(); i++) {
-                char c = raw.charAt(i);
-                if (c != '_') {
-                    out.append(c);
+                if (raw.charAt(i) != '_') {
                     continue;
                 }
                 boolean before = i > from && isSeparable(raw.charAt(i - 1), kind);
@@ -1927,10 +1813,7 @@ final class Toml {
                     throw fail("`_` may only go between digits", i, i + 1);
                 }
             }
-            Value value = of(kind);
-            value.text = out.toString();
-            value.radix = radix;
-            return value;
+            return of(kind);
         }
 
         // The crate accepts any hex digit beside an underscore whatever the radix.

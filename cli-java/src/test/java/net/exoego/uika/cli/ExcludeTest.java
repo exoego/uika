@@ -50,6 +50,10 @@ class ExcludeTest {
         return assertThrows(UikaException.class, () -> Exclude.parse(toml)).getMessage();
     }
 
+    private static String schemaError(String toml) {
+        return assertThrows(Toml.Error.class, () -> Exclude.parse(toml)).getMessage();
+    }
+
     @Test
     void exactOwnerAndMemberSuppressesMatchingViolationOnly() {
         List<Exclude.Rule> rules = Exclude.parse("""
@@ -283,21 +287,20 @@ class ExcludeTest {
 
     @Test
     void misspelledKeyIsRejectedInsteadOfWideningTheRule() {
-        String err = parseError("""
+        String err = schemaError("""
                 [[exclude]]
                 onwer = "org/conscrypt/*"
                 kind = "method_became_abstract"
                 reason = "conscrypt only"
                 """);
-        // The offending key is named by the TOML reader, so read the whole chain.
-        assertTrue(err.contains("onwer"), err);
-        err = parseError("""
+        assertEquals("exclude[0]: unknown key \"onwer\", expected one of owner, member, descriptor, kind, reason", err);
+        err = schemaError("""
                 [[exclude]]
                 owner = "org/conscrypt/*"
                 kimd = "method became abstract"
                 reason = "conscrypt only"
                 """);
-        assertTrue(err.contains("kimd"), err);
+        assertTrue(err.startsWith("exclude[0]: unknown key \"kimd\""), err);
     }
 
     @Test
@@ -446,6 +449,33 @@ class ExcludeTest {
                 assertThrows(UikaException.class, () -> Exclude.load(List.of(good.toString(), bad.toString())))
                         .getMessage());
         assertEquals(1, Exclude.load(List.of(good.toString())).size());
+    }
+
+    /** Only a syntax error calls the file invalid TOML. A wrong shape is valid TOML. */
+    @Test
+    void aShapeErrorIsNotCalledATomlParseError(@TempDir Path dir) throws IOException {
+        Path shape = dir.resolve("shape.toml");
+        Files.writeString(shape, "exclude = [1]\n");
+        assertEquals(
+                "invalid exclude file " + shape + " at line 1, column 12\n"
+                        + "  |\n"
+                        + "1 | exclude = [1]\n"
+                        + "  |            ^\n"
+                        + "exclude[0]: expected a table with owner, member, descriptor, kind or reason,"
+                        + " found the integer 1",
+                assertThrows(UikaException.class, () -> Exclude.load(List.of(shape.toString())))
+                        .getMessage());
+
+        Path syntax = dir.resolve("syntax.toml");
+        Files.writeString(syntax, "exclude = [1\n");
+        assertEquals(
+                "invalid exclude file " + syntax + ": TOML parse error at line 1, column 13\n"
+                        + "  |\n"
+                        + "1 | exclude = [1\n"
+                        + "  |             ^\n"
+                        + "unclosed array, expected `]`",
+                assertThrows(UikaException.class, () -> Exclude.load(List.of(syntax.toString())))
+                        .getMessage());
     }
 
     @Test

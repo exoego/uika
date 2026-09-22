@@ -7,8 +7,8 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * Documents the reader rejects. Every expected message is what the toml crate 1.1.5 prints for
- * the same input, so a change that alters one is a change in what users see.
+ * Documents the syntax errors the reader raises. A change that alters an expected message is a
+ * change in what users see.
  */
 class TomlErrorTest {
     private static final String EMPTY_KEY = "unquoted keys cannot be empty, expected letters, numbers, `-`, `_`";
@@ -18,13 +18,13 @@ class TomlErrorTest {
     private static final String UNDERSCORE = "`_` may only go between digits, expected nothing";
 
     private static String error(String input) {
-        return assertThrows(Toml.Error.class, () -> Toml.parse(input), input).getMessage();
+        return assertThrows(Toml.Error.class, () -> Toml.parse(input), input).render("e.toml");
     }
 
     /** The rendering without its excerpt, as "line L, column C: description". */
     private static String at(String input) {
         String[] lines = error(input).split("\n");
-        return lines[0].substring("TOML parse error at ".length()) + ": " + lines[lines.length - 1];
+        return lines[0].substring("e.toml: TOML parse error at ".length()) + ": " + lines[lines.length - 1];
     }
 
     /** The caret line, whose width is the span in bytes. */
@@ -33,13 +33,13 @@ class TomlErrorTest {
     }
 
     private static String valueError(String value) {
-        return assertThrows(Toml.Error.class, () -> Toml.parse("a = " + value), value).description;
+        return assertThrows(Toml.Error.class, () -> Toml.parse("a = " + value), value).getMessage();
     }
 
     @Test
     void aFirstByteThatOnlyStartsLikeAByteOrderMarkIsKept() {
         assertEquals(
-                "TOML parse error at line 1, column 1\n  |\n1 | \uFEC0 = 1\n  | ^^^\n" + INVALID_KEY + "\n",
+                "e.toml: TOML parse error at line 1, column 1\n  |\n1 | \uFEC0 = 1\n  | ^^^\n" + INVALID_KEY,
                 error("\uFEC0 = 1"));
         assertEquals("line 1, column 1: " + INVALID_KEY, at("\uF000 = 1"));
     }
@@ -48,21 +48,19 @@ class TomlErrorTest {
     void tokensCutShortByALineBreakOrTheEnd() {
         assertEquals(
                 """
-                TOML parse error at line 1, column 9
+                e.toml: TOML parse error at line 1, column 9
                   |
                 1 | a = 'abc
                   |         ^
-                invalid literal string, expected `'`
-                """,
+                invalid literal string, expected `'`""",
                 error("a = 'abc\nb = 1"));
         assertEquals(
                 """
-                TOML parse error at line 1, column 10
+                e.toml: TOML parse error at line 1, column 10
                   |
                 1 | a = "abc\\
                   |          ^
-                invalid basic string, expected `"`
-                """,
+                invalid basic string, expected `"`""",
                 error("a = \"abc\\"));
         assertEquals("line 1, column 12: invalid multi-line basic string, expected `\"`", at("a = \"\"\"abc\\"));
         assertEquals("line 1, column 6: invalid literal string, expected `'`", at("a = '"));
@@ -80,12 +78,11 @@ class TomlErrorTest {
     void anUnclosedValuePointsPastItsLastSignificantToken() {
         String array =
                 """
-                TOML parse error at line 1, column 8
+                e.toml: TOML parse error at line 1, column 8
                   |
                 1 | a = [1, # c
                   |        ^
-                unclosed array, expected `]`
-                """;
+                unclosed array, expected `]`""";
         assertEquals(array, error("a = [1, # c\n"));
         assertEquals(array, error("a = [1, # c\n  \n"));
         assertEquals("line 1, column 12: unclosed inline table, expected `}`", at("a = {b = 1, # c\n"));
@@ -96,12 +93,11 @@ class TomlErrorTest {
     void aCommentAtTheEndStillReportsTheUnclosedValue() {
         assertEquals(
                 """
-                TOML parse error at line 1, column 6
+                e.toml: TOML parse error at line 1, column 6
                   |
                 1 | a = [# c
                   |      ^
-                unclosed array, expected `]`
-                """,
+                unclosed array, expected `]`""",
                 error("a = [# c"));
         assertEquals("line 1, column 7: unclosed array, expected `]`", at("a = [1 # c"));
         assertEquals("line 1, column 6: unclosed inline table, expected `}`", at("a = {# c"));
@@ -112,12 +108,11 @@ class TomlErrorTest {
     void aHeaderWithoutAUsableKeyReportsTheEmptyKey() {
         assertEquals(
                 """
-                TOML parse error at line 1, column 2
+                e.toml: TOML parse error at line 1, column 2
                   |
                 1 | [=]
                   |  ^
-                unquoted keys cannot be empty, expected letters, numbers, `-`, `_`
-                """,
+                unquoted keys cannot be empty, expected letters, numbers, `-`, `_`""",
                 error("[=]"));
         for (String header : List.of("[,]", "[", "[= ]\n", "[=\nb = 1", "[= # c\n", "[.a]", "[. a]")) {
             assertEquals("line 1, column 2: " + EMPTY_KEY, at(header), header);
@@ -134,12 +129,11 @@ class TomlErrorTest {
     void anUnclosedHeaderPointsRightAfterItsKey() {
         assertEquals(
                 """
-                TOML parse error at line 1, column 3
+                e.toml: TOML parse error at line 1, column 3
                   |
                 1 | [a b]
                   |   ^
-                unclosed table, expected `]`
-                """,
+                unclosed table, expected `]`""",
                 error("[a b]"));
         assertEquals("line 1, column 4: unclosed table, expected `]`", at("[ a b ]"));
         assertEquals("line 1, column 4: unclosed array table, expected `]]`", at("[[a b]]"));
@@ -159,12 +153,11 @@ class TomlErrorTest {
     void keysThatAreNeitherBareNorOnOneLine() {
         assertEquals(
                 """
-                TOML parse error at line 1, column 1
+                e.toml: TOML parse error at line 1, column 1
                   |
                 1 | '''a''' = 1
                   | ^^^^^^^
-                keys cannot be multi-line literal strings, expected basic string, literal string
-                """,
+                keys cannot be multi-line literal strings, expected basic string, literal string""",
                 error("'''a''' = 1"));
         for (String key : List.of("a~b", "a^b", "a:b", "a|b", "a@b")) {
             assertEquals("line 1, column 2: " + INVALID_KEY, at(key + " = 1"), key);
@@ -287,7 +280,7 @@ class TomlErrorTest {
         assertEquals("line 1, column 6: invalid float, expected `nan`", at("a = +NaN"));
         assertEquals("line 1, column 6: redundant numeric sign, expected nothing", at("a = ++1"));
         assertEquals("line 1, column 6: redundant numeric sign, expected nothing", at("a = --1"));
-        // The crate points at the sign, not at the dot.
+        // The error points at the sign, not at the dot.
         assertEquals("line 1, column 5: invalid mantissa, expected digits", at("a = +.5"));
         assertEquals("line 1, column 5: invalid mantissa, expected digits", at("a = -.5"));
     }
@@ -323,7 +316,7 @@ class TomlErrorTest {
         assertEquals("line 1, column 7: " + UNDERSCORE, at("a = 1e_5"));
         assertEquals("line 1, column 7: " + UNDERSCORE, at("a = 0x_1"));
         assertEquals("line 1, column 8: " + UNDERSCORE, at("a = 0x1_"));
-        // Beside an underscore the crate takes any hex digit, but nothing else.
+        // Beside an underscore any hex digit is taken, but nothing else.
         for (String number : List.of("1_z", "1_Z", "1_@")) {
             assertEquals("line 1, column 6: " + UNDERSCORE, at("a = " + number), number);
         }
@@ -333,12 +326,11 @@ class TomlErrorTest {
     void malformedDates() {
         assertEquals(
                 """
-                TOML parse error at line 1, column 5
+                e.toml: TOML parse error at line 1, column 5
                   |
                 1 | a = 1979-02-30
                   |     ^^^^^^^^^^
-                invalid date, expected day between 01 and 28
-                """,
+                invalid date, expected day between 01 and 28""",
                 error("a = 1979-02-30"));
         assertEquals("invalid datetime, expected year or hour", valueError("+1979-05-27"));
         assertEquals("invalid datetime, expected year or hour", valueError("-1979-05-27"));
