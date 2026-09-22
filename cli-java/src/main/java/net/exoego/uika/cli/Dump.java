@@ -1,6 +1,7 @@
 package net.exoego.uika.cli;
 
 import java.io.IOException;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -240,11 +241,11 @@ final class Dump {
             }
             List<Artifact> artifacts = new ArrayList<>();
             for (Object ref : optionalList(module, "artifactRefs")) {
-                int idx = index(ref, "artifactRefs");
-                if (idx >= table.size()) {
-                    throw new UikaException("artifact ref " + idx + " out of range");
+                long idx = index(ref, "artifactRefs");
+                if (Long.compareUnsigned(idx, table.size()) >= 0) {
+                    throw new UikaException("artifact ref " + Long.toUnsignedString(idx) + " out of range");
                 }
-                artifacts.add(table.get(idx));
+                artifacts.add(table.get((int) idx));
             }
             // A dump without a module name cannot be paired by name, and positional pairing
             // would diff unrelated modules. The caller falls back to the merged universe.
@@ -263,11 +264,11 @@ final class Dump {
     }
 
     /** An index out of range is not a shape error. Rust reports it bare, without the dump's path. */
-    private static String rooted(List<String> roots, int root, String suffix) {
-        if (root >= roots.size()) {
-            throw new UikaException("root index " + root + " out of range");
+    private static String rooted(List<String> roots, long root, String suffix) {
+        if (Long.compareUnsigned(root, roots.size()) >= 0) {
+            throw new UikaException("root index " + Long.toUnsignedString(root) + " out of range");
         }
-        return roots.get(root) + suffix;
+        return roots.get((int) root) + suffix;
     }
 
     // ---- shape helpers ----
@@ -320,9 +321,13 @@ final class Dump {
         return value == null ? null : string(value, field);
     }
 
-    private static int index(Object value, String field) throws Shape {
-        if (value instanceof Long n && n >= 0 && n <= Integer.MAX_VALUE) {
-            return n.intValue();
+    /** A usize is any u64 on a 64-bit target, so this returns the u64's bits for unsigned use. */
+    private static long index(Object value, String field) throws Shape {
+        if (value instanceof Long n && n >= 0) {
+            return n;
+        }
+        if (value instanceof BigInteger n) {
+            return n.longValue();
         }
         throw outOfShape(value, "usize");
     }
@@ -340,7 +345,7 @@ final class Dump {
 
     /** serde calls an integer outside the target's range an invalid value, and anything else an invalid type. */
     private static Shape outOfShape(Object value, String expected) {
-        String kind = value instanceof Long ? "invalid value" : "invalid type";
+        String kind = value instanceof Long || value instanceof BigInteger ? "invalid value" : "invalid type";
         return new Shape(kind + ": " + describe(value) + ", expected " + expected);
     }
 
@@ -349,8 +354,8 @@ final class Dump {
             return "null";
         } else if (value instanceof String s) {
             return "string " + Json.quote(s);
-        } else if (value instanceof Long n) {
-            return "integer `" + n + "`";
+        } else if (value instanceof Long || value instanceof BigInteger) {
+            return "integer `" + value + "`";
         } else if (value instanceof Double d) {
             return "floating point `" + d + "`";
         } else if (value instanceof Boolean b) {

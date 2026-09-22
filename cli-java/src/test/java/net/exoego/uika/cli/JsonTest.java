@@ -3,6 +3,7 @@ package net.exoego.uika.cli;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -169,5 +170,111 @@ class JsonTest {
         assertEquals("key must be a string at line 3 column 3", error("{\n  \"a\": 1,\n  x\n}"));
         assertEquals("expected `:` at line 1 column 6", error("{\"a\" 1}"));
         assertEquals("expected `,` or `}` at line 1 column 8", error("{\"a\":1 \"b\":2}"));
+    }
+
+    /** After a comma serde expects a value, whatever container it is in. */
+    @Test
+    void inputEndingAfterAnObjectCommaIsAMissingValue() {
+        assertEquals("EOF while parsing a value at line 1 column 7", error("{\"a\":1,"));
+        assertEquals("EOF while parsing a value at line 1 column 8", error("{\"a\":1, "));
+    }
+
+    /** serde reads a literal one byte at a time and stops at the first byte that does not fit. */
+    @Test
+    void truncatedOrMisspelledLiteralsPointWhereTheyStop() {
+        assertEquals("EOF while parsing a value at line 1 column 1", error("t"));
+        assertEquals("EOF while parsing a value at line 1 column 3", error("tru"));
+        assertEquals("expected ident at line 1 column 4", error("trux"));
+        assertEquals("expected ident at line 1 column 5", error("[nul,1]"));
+        assertEquals("expected ident at line 2 column 0", error("t\nrue"));
+    }
+
+    /** serde reads all four hex digits of a unicode escape before it checks them, so the position is past the fourth byte. */
+    @Test
+    void escapeErrorsPointPastTheBytesRead() {
+        assertEquals("invalid escape at line 1 column 3", error("\"\\q\""));
+        assertEquals("invalid escape at line 1 column 3", error("\"\\é\""));
+        assertEquals("invalid escape at line 1 column 7", error("\"\\uZZZZ\""));
+        assertEquals("invalid escape at line 1 column 7", error("\"\\u12G4\""));
+        assertEquals("invalid escape at line 1 column 7", error("\"\\u12é\""));
+        assertEquals("invalid escape at line 1 column 7", error("\"\\u+123\""));
+        assertEquals("invalid escape at line 1 column 7", error("\"\\u-123\""));
+        assertEquals("EOF while parsing a string at line 1 column 5", error("\"\\u12"));
+        assertEquals("EOF while parsing a string at line 1 column 6", error("\"\\u12\""));
+    }
+
+    @Test
+    void surrogateEscapesMustComeInPairs() {
+        assertEquals("unexpected end of hex escape at line 1 column 8", error("\"\\ud83d\""));
+        assertEquals("unexpected end of hex escape at line 1 column 9", error("\"\\ud83d\\n\""));
+        assertEquals("lone leading surrogate in hex escape at line 1 column 13", error("\"\\ud83d\\u0041\""));
+        assertEquals("lone leading surrogate in hex escape at line 1 column 7", error("\"\\udc00\""));
+        assertEquals("EOF while parsing a string at line 1 column 7", error("\"\\ud83d"));
+    }
+
+    @Test
+    void aRawNewlineInAStringIsReportedOnTheNextLine() {
+        String control = "control character (\\u0000-\\u001F) found while parsing a string";
+        assertEquals(control + " at line 2 column 0", error("\"a\nb\""));
+        assertEquals(control + " at line 2 column 0", error("{\"a\nb\":1}"));
+    }
+
+    @Test
+    void malformedNumbersAreWordedLikeSerde() {
+        assertEquals("EOF while parsing a value at line 1 column 1", error("-"));
+        assertEquals("EOF while parsing a value at line 1 column 2", error("1."));
+        assertEquals("EOF while parsing a value at line 1 column 2", error("1e"));
+        assertEquals("EOF while parsing a value at line 1 column 3", error("1e+"));
+        assertEquals("invalid number at line 2 column 0", error("1.\n"));
+        assertEquals("invalid number at line 1 column 4", error("[1.]"));
+        assertEquals("invalid number at line 1 column 2", error("01"));
+        assertEquals("invalid number at line 1 column 3", error("-01"));
+        assertEquals("invalid number at line 1 column 2", error("--1"));
+        assertEquals("invalid number at line 1 column 2", error("-x"));
+        assertEquals("trailing characters at line 1 column 2", error("1-2"));
+        assertEquals("trailing characters at line 1 column 4", error("1.2.3"));
+    }
+
+    @Test
+    void numbersBeyondTheDoubleRangeAreRejected() {
+        assertEquals("number out of range at line 1 column 5", error("1e400"));
+        assertEquals("number out of range at line 1 column 6", error("-1e400"));
+        assertEquals("number out of range at line 1 column 6", error("[1e400]"));
+        assertEquals("number out of range at line 1 column 311", error("1" + "0".repeat(310)));
+        assertEquals("number out of range at line 1 column 12", error("1e2147483648"));
+    }
+
+    /** serde keeps a u64 exact, turns -0 and anything below i64 into a float, and scales floats its own way. */
+    @Test
+    void numbersTakeSerdesKindAndValue() throws Json.ParseException {
+        assertEquals(new BigInteger("9223372036854775808"), Json.parse("9223372036854775808"));
+        assertEquals(new BigInteger("18446744073709551615"), Json.parse("18446744073709551615"));
+        assertEquals(1.8446744073709552e19, Json.parse("18446744073709551616"));
+        assertEquals(Long.MIN_VALUE, Json.parse("-9223372036854775808"));
+        assertEquals(-9.223372036854775808e18, Json.parse("-9223372036854775809"));
+        assertEquals(-0.0, Json.parse("-0"));
+        assertEquals(0.0, Json.parse("1e-400"));
+        assertEquals(0.0, Json.parse("0e2147483648"));
+        // Double.parseDouble gives 3e23. serde multiplies 3 by the double nearest 1e23.
+        assertEquals(2.9999999999999997e23, Json.parse("3e23"));
+    }
+
+    @Test
+    void columnsCountUtf8Bytes() {
+        assertEquals("expected value at line 1 column 8", error("[\"é\", x]"));
+        assertEquals("expected value at line 1 column 10", error("[\"😀\", x]"));
+        assertEquals("expected `:` at line 2 column 6", error("{\"é\":1,\n\"è\" x}"));
+        assertEquals("expected value at line 1 column 1", error("\ufeff{}"));
+    }
+
+    @Test
+    void nestingStopsAtSerdesRecursionLimit() throws Json.ParseException {
+        Object nested = Json.parse("[".repeat(127) + "]".repeat(127));
+        for (int depth = 1; depth < 127; depth++) {
+            nested = ((List<?>) nested).get(0);
+        }
+        assertEquals(List.of(), nested);
+        assertEquals("recursion limit exceeded at line 1 column 128", error("[".repeat(128) + "]".repeat(128)));
+        assertEquals("recursion limit exceeded at line 1 column 636", error("{\"a\":".repeat(128) + "1" + "}".repeat(128)));
     }
 }

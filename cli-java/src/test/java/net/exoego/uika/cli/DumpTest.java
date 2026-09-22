@@ -375,6 +375,41 @@ class DumpTest {
         }
     }
 
+    /** serde_json keeps an integer above i64 as a u64, and reads -0 as a float. */
+    @Test
+    void numbersInShapeErrorsKeepSerdesValue() throws Exception {
+        String release = "{\"version\":2,\"roots\":[],\"artifacts\":[],\"jdkRelease\":%s}";
+        String[][] cases = {
+            {"18446744073709551615", "invalid value: integer `18446744073709551615`, expected u32"},
+            {"-0", "invalid type: floating point `-0.0`, expected u32"},
+        };
+        for (int i = 0; i < cases.length; i++) {
+            String path = write("number-" + i + ".json", release.formatted(cases[i][0]));
+            assertEquals(
+                    "invalid v2 classpath dump " + path + ": " + cases[i][1],
+                    assertThrows(UikaException.class, () -> Dump.loadDump(path)).getMessage(),
+                    cases[i][0]);
+        }
+    }
+
+    /** A usize is any u64 on a 64-bit target, so a huge index passes the shape check and fails the range check. */
+    @Test
+    void indexesAboveIntRangeAreOutOfRangeNotInvalid() throws Exception {
+        String root = write(
+                "huge-root.json",
+                "{\"version\":2,\"roots\":[\"/r/\"],\"artifacts\":[{\"root\":18446744073709551615,\"path\":\"x.jar\"}]}");
+        assertEquals(
+                "root index 18446744073709551615 out of range",
+                assertThrows(UikaException.class, () -> Dump.loadDump(root)).getMessage());
+
+        String ref = write(
+                "huge-ref.json",
+                "{\"version\":2,\"roots\":[\"/r/\"],\"artifacts\":[],\"modules\":[{\"module\":\":a\",\"artifactRefs\":[2147483648]}]}");
+        assertEquals(
+                "artifact ref 2147483648 out of range",
+                assertThrows(UikaException.class, () -> Dump.loadDump(ref)).getMessage());
+    }
+
     @Test
     void anArtifactWithAGroupButNoNameHasNoCoordinate() throws Exception {
         Dump.Universe u = Dump.loadDump(write("group-only.json", """
