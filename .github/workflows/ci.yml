@@ -298,7 +298,7 @@ jobs:
       # publishes what the earlier ones measured.
       - name: Java CLI coverage
         run: make java-cli-coverage
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: cli-java/build/reports/jacoco/test/jacocoTestReport.xml
@@ -308,7 +308,7 @@ jobs:
 
       - name: Gradle plugin coverage
         run: make gradle-coverage
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: gradle-plugin/build/reports/jacoco/test/jacocoTestReport.xml
@@ -318,7 +318,7 @@ jobs:
 
       - name: Maven plugin coverage
         run: make maven-coverage
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: maven-plugin/target/site/jacoco/jacoco.xml,maven-plugin/target/site/jacoco-it/jacoco.xml
@@ -328,7 +328,7 @@ jobs:
 
       - name: Clojure tool coverage
         run: make clojure-coverage
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: clojure-tool/target/coverage/lcov.info
@@ -340,7 +340,7 @@ jobs:
       # with a shell script, and the real-CLI round trip stays in it/run.sh.
       - name: Leiningen plugin coverage
         run: make lein-coverage
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lein-plugin/target/coverage/lcov.info
@@ -350,7 +350,7 @@ jobs:
 
       - name: sbt plugin coverage
         run: make sbt-coverage
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: sbt-plugin/target/jacoco/jacoco.xml
@@ -360,7 +360,7 @@ jobs:
 
       - name: Mill plugin coverage
         run: make mill-coverage
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: mill-plugin/out/jacoco/jacoco.xml
@@ -370,7 +370,7 @@ jobs:
 
       - name: Bazel rules coverage
         run: make bazel-coverage
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           # Two reports, because no one tool sees both halves: bazel.lcov is `bazel
