@@ -522,6 +522,108 @@ final class CheckSelectionTest {
         assertTrue(abstractViolations(oldLib, newLib, fetched, graph).isEmpty());
     }
 
+    /** JVMS 5.4.5: neither a private nor a static method can override, so selection passes both by. */
+    @Test
+    void aPrivateOrStaticMethodDoesNotImplementTheAbstractOne() {
+        ApiIndex oldLib = concreteA();
+        ApiIndex newLib = abstractA();
+        ApiIndex fetched = index(
+                amvClass("app/P", "lib/A", Acc.PUBLIC, m("m", "()V", Acc.PRIVATE)),
+                amvClass("app/S", "lib/A", Acc.PUBLIC, m("m", "()V", Acc.PUBLIC | Acc.STATIC)));
+        ClassGraph graph = scannedGraph("app/P", "lib/A", "app/S", "lib/A");
+        List<Violation> v = abstractViolations(oldLib, newLib, fetched, graph);
+        assertEquals(2, v.size());
+        for (Violation violation : v) {
+            assertEquals(Reason.METHOD_BECAME_ABSTRACT, violation.reason, Intern.str(violation.sourceClass));
+        }
+    }
+
+    /** JVMS 5.4.3.3 leaves static interface methods out of the maximally-specific set. */
+    @Test
+    void aStaticInterfaceMethodDoesNotImplementTheAbstractOne() {
+        CheckTest.Member staticB = m("b", "()V", Acc.PUBLIC | Acc.STATIC);
+        ApiIndex oldLib = index(
+                amvFull("lib/I", JAVA_LANG_OBJECT, IFACE, NO_INTERFACES), amvFull("lib/J", JAVA_LANG_OBJECT, IFACE, NO_INTERFACES, staticB));
+        ApiIndex newLib = index(
+                amvFull("lib/I", JAVA_LANG_OBJECT, IFACE, NO_INTERFACES, m("b", "()V", Acc.PUBLIC | Acc.ABSTRACT)),
+                amvFull("lib/J", JAVA_LANG_OBJECT, IFACE, NO_INTERFACES, staticB));
+        ApiIndex fetched = index(amvFull("app/C", JAVA_LANG_OBJECT, Acc.PUBLIC, new String[] {"lib/I", "lib/J"}));
+        ClassGraph graph = scannedGraphFull(node("app/C", JAVA_LANG_OBJECT, "lib/I", "lib/J"));
+        List<Violation> v = abstractViolations(oldLib, newLib, fetched, graph);
+        assertEquals(1, v.size());
+        assertEquals(Reason.METHOD_BECAME_ABSTRACT, v.get(0).reason);
+        assertEquals("lib/I", Intern.str(v.get(0).reference.owner()));
+    }
+
+    @Test
+    void anInterfaceReachedTwiceReportsItsAddedAbstractMethodOnce() {
+        String[] extendsBase = {"lib/Base"};
+        ApiIndex oldLib = index(
+                amvFull("lib/Base", JAVA_LANG_OBJECT, IFACE, NO_INTERFACES),
+                amvFull("lib/L", JAVA_LANG_OBJECT, IFACE, extendsBase),
+                amvFull("lib/R", JAVA_LANG_OBJECT, IFACE, extendsBase));
+        ApiIndex newLib = index(
+                amvFull("lib/Base", JAVA_LANG_OBJECT, IFACE, NO_INTERFACES, m("b", "()V", Acc.PUBLIC | Acc.ABSTRACT)),
+                amvFull("lib/L", JAVA_LANG_OBJECT, IFACE, extendsBase),
+                amvFull("lib/R", JAVA_LANG_OBJECT, IFACE, extendsBase));
+        ApiIndex fetched = index(amvFull("app/C", JAVA_LANG_OBJECT, Acc.PUBLIC, new String[] {"lib/L", "lib/R"}));
+        ClassGraph graph = scannedGraphFull(node("app/C", JAVA_LANG_OBJECT, "lib/L", "lib/R"));
+        List<Violation> v = abstractViolations(oldLib, newLib, fetched, graph);
+        assertEquals(1, v.size());
+        assertEquals("lib/Base", Intern.str(v.get(0).reference.owner()));
+    }
+
+    @Test
+    void aDiamondAboveOneDefaultStillLeavesTwoCompetingDeclarations() {
+        String[] extendsZ = {"lib/Z"};
+        String[] extendsXy = {"lib/X", "lib/Y"};
+        ApiIndex oldLib = index(
+                amvFull("lib/A", JAVA_LANG_OBJECT, IFACE, extendsXy, DEFAULT_N),
+                amvFull("lib/B", JAVA_LANG_OBJECT, IFACE, NO_INTERFACES),
+                amvFull("lib/X", JAVA_LANG_OBJECT, IFACE, extendsZ),
+                amvFull("lib/Y", JAVA_LANG_OBJECT, IFACE, extendsZ),
+                amvFull("lib/Z", JAVA_LANG_OBJECT, IFACE, NO_INTERFACES));
+        ApiIndex newLib = index(
+                amvFull("lib/A", JAVA_LANG_OBJECT, IFACE, extendsXy, DEFAULT_N),
+                amvFull("lib/B", JAVA_LANG_OBJECT, IFACE, NO_INTERFACES, DEFAULT_N),
+                amvFull("lib/X", JAVA_LANG_OBJECT, IFACE, extendsZ),
+                amvFull("lib/Y", JAVA_LANG_OBJECT, IFACE, extendsZ),
+                amvFull("lib/Z", JAVA_LANG_OBJECT, IFACE, NO_INTERFACES));
+        ApiIndex fetched = index(amvFull("app/C", JAVA_LANG_OBJECT, Acc.PUBLIC, new String[] {"lib/A", "lib/B"}));
+        ClassGraph graph = scannedGraphFull(node("app/C", JAVA_LANG_OBJECT, "lib/A", "lib/B"));
+        List<Violation> v = abstractViolations(oldLib, newLib, fetched, graph);
+        assertEquals(1, v.size());
+        assertEquals(Reason.CONFLICTING_DEFAULT_METHODS, v.get(0).reason);
+    }
+
+    /** The report names the smallest declaring supertype, whichever one the walk meets first. */
+    @Test
+    void theReportedOwnerDoesNotDependOnWalkOrder() {
+        int abstractClass = Acc.PUBLIC | Acc.ABSTRACT;
+        CheckTest.Member concrete = m("m", "()V", Acc.PUBLIC);
+        CheckTest.Member abstractM = m("m", "()V", Acc.PUBLIC | Acc.ABSTRACT);
+        // app/C meets lib/Z before lib/A, and app/D meets lib/B before lib/Y.
+        ApiIndex oldLib = index(
+                amvClass("lib/Z", "lib/A", Acc.PUBLIC, concrete),
+                amvClass("lib/A", JAVA_LANG_OBJECT, Acc.PUBLIC, concrete),
+                amvClass("lib/B", "lib/Y", Acc.PUBLIC, concrete),
+                amvClass("lib/Y", JAVA_LANG_OBJECT, Acc.PUBLIC, concrete));
+        ApiIndex newLib = index(
+                amvClass("lib/Z", "lib/A", abstractClass, abstractM),
+                amvClass("lib/A", JAVA_LANG_OBJECT, abstractClass, abstractM),
+                amvClass("lib/B", "lib/Y", abstractClass, abstractM),
+                amvClass("lib/Y", JAVA_LANG_OBJECT, abstractClass, abstractM));
+        ApiIndex fetched = index(amvClass("app/C", "lib/Z", Acc.PUBLIC), amvClass("app/D", "lib/B", Acc.PUBLIC));
+        ClassGraph graph = scannedGraph("app/C", "lib/Z", "app/D", "lib/B");
+        List<Violation> v = abstractViolations(oldLib, newLib, fetched, graph);
+        v.sort(Violation::compare);
+        assertEquals(2, v.size());
+        assertEquals("app/C", Intern.str(v.get(0).sourceClass));
+        assertEquals("lib/A", Intern.str(v.get(0).reference.owner()));
+        assertEquals("app/D", Intern.str(v.get(1).sourceClass));
+        assertEquals("lib/B", Intern.str(v.get(1).reference.owner()));
+    }
+
     @Test
     void anAbstractSiblingKeepsTheConflictInconclusive() {
         // lib/D declares n() abstract, so phase 2 sees a mix and stays Unknown rather than

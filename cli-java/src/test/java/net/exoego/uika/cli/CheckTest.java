@@ -1072,4 +1072,215 @@ final class CheckTest {
         Check.Verdict v = verdict(fieldWriteRef("lib/C", "x", "I"), "lib/C", new Scope(oldLib), new Scope(newLib), new ClassGraph());
         assertOk(v);
     }
+
+    @Test
+    void readingAFieldThatBecameFinalIsNotReported() {
+        ApiIndex oldLib = index(classWithFields("lib/C", m("x", "I", Acc.PUBLIC)));
+        ApiIndex newLib = index(classWithFields("lib/C", m("x", "I", Acc.PUBLIC | Acc.FINAL)));
+        SymbolRef read = new SymbolRef(RefKind.FIELD, intern("lib/C"), MemberKey.of("x", "I"), Boolean.FALSE, Boolean.FALSE, null);
+        assertOk(verdict(read, "app/Use", new Scope(oldLib), new Scope(newLib), new ClassGraph()));
+    }
+
+    @Test
+    void aRemovedFieldIsReported() {
+        ApiIndex oldLib = index(classWithFields("lib/C", m("x", "I", Acc.PUBLIC)));
+        ApiIndex newLib = index(classWithFields("lib/C"));
+        Check.Verdict v = verdict(fieldWriteRef("lib/C", "x", "I"), "app/Use", new Scope(oldLib), new Scope(newLib), new ClassGraph());
+        assertEquals(Reason.FIELD_REMOVED, broken(v).reason());
+    }
+
+    /**
+     * A scan only records owners of the old index, so these gates always find old flags there.
+     * Asked without them, each answers Unknown rather than a break.
+     */
+    @Test
+    void classShapeGatesAreUnknownWithoutOldSideFlags() {
+        Scope noOld = new Scope(index());
+        ClassGraph graph = new ClassGraph();
+        assertUnknown(verdict(newRef("lib/C"), "app/Use", noOld, new Scope(index(abstractClass("lib/C"))), graph));
+        assertUnknown(verdict(classRef("lib/C"), "app/Use", noOld, new Scope(index(packagePrivateClass())), graph));
+        ClassApi nowInterface = iface("lib/C");
+        setMembers(nowInterface, true, m("m", "()V", Acc.PUBLIC | Acc.ABSTRACT));
+        assertUnknown(verdict(methodRef("lib/C", "m", "()V"), "app/Use", noOld, new Scope(index(nowInterface)), graph));
+    }
+
+    /** The class moved to a scanned jar whose member table pass 2 could not read. */
+    @Test
+    void aMemberReferenceToAClassWithoutAFetchedTableIsUnknown() {
+        ApiIndex oldLib = index(classApi("lib/C", "m", "()V"));
+        ClassGraph graph = new ClassGraph();
+        insert(graph, "lib/C", Scope.objectSym(), new int[0], Intern.NONE, "moved.jar");
+        assertUnknown(verdict(methodRef("lib/C", "m", "()V"), "app/Use", new Scope(oldLib), new Scope(index()), graph));
+    }
+
+    /** A Methodref on an interface threw IncompatibleClassChangeError against old too. */
+    @Test
+    void aMethodrefToAnOwnerThatWasAlreadyAnInterfaceIsPreExisting() {
+        ClassApi oldI = iface("lib/I");
+        setMembers(oldI, true, m("m", "()V", Acc.PUBLIC));
+        ClassApi newI = iface("lib/I");
+        setMembers(newI, true, m("m", "()V", Acc.PUBLIC));
+        assertOk(verdict(methodRef("lib/I", "m", "()V"), "app/Use", new Scope(index(oldI)), new Scope(index(newI)), new ClassGraph()));
+    }
+
+    /** An old class that does not declare the member and whose chain leaves every scope. */
+    private static ClassApi escapingOld() {
+        ClassApi c = classApi("lib/C");
+        c.superName = intern("ext/Base");
+        return c;
+    }
+
+    /** The unseen old super may have supplied the member, so no old-relative gate can decide. */
+    @Test
+    void oldRelativeMemberGatesAreUnknownWhenOldResolutionEscapes() {
+        Scope old = new Scope(index(escapingOld()));
+        ClassGraph graph = new ClassGraph();
+        assertUnknown(verdict(methodRef("lib/C", "gone", "()V"), "app/Use", old, new Scope(index(classApi("lib/C"))), graph));
+        Scope staticM = new Scope(index(classWithMethodAccess("lib/C", m("m", "()V", Acc.PUBLIC | Acc.STATIC))));
+        assertUnknown(verdict(methodRefExpectingInstance("lib/C", "m", "()V"), "app/Use", old, staticM, graph));
+        Scope finalX = new Scope(index(classWithFields("lib/C", m("x", "I", Acc.PUBLIC | Acc.FINAL))));
+        assertUnknown(verdict(fieldWriteRef("lib/C", "x", "I"), "app/Use", old, finalX, graph));
+    }
+
+    /** A member old never resolved was already broken, whatever new did to it. */
+    @Test
+    void oldRelativeMemberGatesIgnoreMembersOldNeverHad() {
+        Scope old = new Scope(index(classApi("lib/C")));
+        ClassGraph graph = new ClassGraph();
+        Scope staticM = new Scope(index(classWithMethodAccess("lib/C", m("m", "()V", Acc.PUBLIC | Acc.STATIC))));
+        assertOk(verdict(methodRefExpectingInstance("lib/C", "m", "()V"), "app/Use", old, staticM, graph));
+        Scope privateM = new Scope(index(classWithMethodAccess("lib/C", m("m", "()V", Acc.PRIVATE))));
+        assertOk(verdict(methodRef("lib/C", "m", "()V"), "app/Use", old, privateM, graph));
+        Scope finalX = new Scope(index(classWithFields("lib/C", m("x", "I", Acc.PUBLIC | Acc.FINAL))));
+        assertOk(verdict(fieldWriteRef("lib/C", "x", "I"), "app/Use", old, finalX, graph));
+    }
+
+    @Test
+    void anUpgradedClassThatMovedOntoAFinalSuperIsReported() {
+        // Old lib/C extended another class, so the edge to the final one came with the upgrade.
+        ClassApi cOld = classApi("lib/C");
+        cOld.superName = intern("cp/Other");
+        Scope runtime = new Scope(index(), index(finalClass("cp/X")));
+        List<Check.LagEdge> edges = List.of(new Check.LagEdge(intern("lib/C"), intern("cp/X"), intern("lib-new.jar")));
+        List<Violation> violations = new ArrayList<>();
+        Check.addExtendsFinalViolations(edges, index(cOld), runtime, violations, new HashSet<>());
+        assertEquals(1, violations.size());
+        assertEquals(Reason.EXTENDS_FINAL_CLASS, violations.get(0).reason);
+        assertEquals("lib/C", Intern.str(violations.get(0).sourceClass));
+    }
+
+    /** android.jar and similar bundles put java/lang/Object itself, which has no superclass, into the scan. */
+    @Test
+    void hierarchyWalksSkipAScannedClassWithoutASuperclass() {
+        ClassGraph graph = new ClassGraph();
+        insert(graph, JAVA_LANG_OBJECT, Intern.NONE, new int[0], Intern.NONE, "android.jar");
+        insert(graph, "app/Impl", Scope.objectSym(), syms("lib/Flip", "lib/Sealed"), Intern.NONE, "app.jar");
+        ApiIndex oldLib = index(iface("lib/Flip"), iface("lib/Sealed"));
+        ApiIndex newLib = index(classApi("lib/Flip"), sealedInterface("lib/Sealed", "lib/Known"));
+        List<Violation> violations = new ArrayList<>();
+        Set<Check.ViolationKey> seen = new HashSet<>();
+        Check.addKindFlipViolations(oldLib, newLib, graph, violations, seen);
+        Check.addSealedViolations(oldLib, newLib, graph, violations, seen);
+        assertEquals(2, violations.size());
+        assertEquals(Reason.INTERFACE_BECAME_CLASS, violations.get(0).reason);
+        assertEquals("lib/Flip", Intern.str(violations.get(0).reference.owner()));
+        assertEquals(Reason.CLASS_BECAME_SEALED, violations.get(1).reason);
+        assertEquals("lib/Sealed", Intern.str(violations.get(1).reference.owner()));
+        for (Violation v : violations) {
+            assertEquals("app/Impl", Intern.str(v.sourceClass));
+        }
+    }
+
+    /** Under old the subclass could not load either, so there is nothing to regress against. */
+    @Test
+    void aSealedTypeTheOldLibraryLackedIsNotJudged() {
+        ApiIndex newLib = index(sealedInterface("lib/New", "lib/Known"));
+        assertTrue(sealedViolations(index(), newLib, "app/Impl", "lib/New", false).isEmpty());
+    }
+
+    /** A second, malformed PermittedSubclasses attribute keeps the first list but not trust in it. */
+    @Test
+    void anUnreadableNewSealingAttributeReportsNothing() {
+        ClassApi c = sealedInterface("lib/I", "lib/Known");
+        c.sealingUnknown = true;
+        assertTrue(sealedViolations(index(iface("lib/I")), index(c), "app/Impl", "lib/I", false).isEmpty());
+    }
+
+    @Test
+    void aProviderReachingTheServiceThroughADiamondIsJudged() {
+        ClassApi a = iface("lib/A");
+        a.interfaces = syms("lib/Base");
+        ClassApi b = iface("lib/B");
+        b.interfaces = syms("lib/Base");
+        ClassApi base = iface("lib/Base");
+        base.interfaces = syms("lib/Spi");
+        ClassApi oldImpl = classWithMethodAccess("lib/Impl", m("<init>", "()V", Acc.PUBLIC));
+        oldImpl.interfaces = syms("lib/A", "lib/B");
+        ClassApi newImpl = classWithMethodAccess("lib/Impl", m("<init>", "()V", Acc.PRIVATE));
+        newImpl.interfaces = syms("lib/A", "lib/B");
+        List<Violation> violations = spiCheck(index(oldImpl, a, b, base), index(newImpl, a, b, base));
+        assertEquals(1, violations.size());
+        assertEquals(Reason.SERVICE_PROVIDER_NOT_INSTANTIABLE, violations.get(0).reason);
+    }
+
+    /** Only a proven old-side yes gates the check, and only a proven new-side no reports. */
+    @Test
+    void aProviderHierarchyLeavingEveryScopeProvesNothing() {
+        // The only route from Impl to Spi would run through ext/Base, which no scope holds.
+        ClassApi oldImpl = classWithMethodAccess("lib/Impl", m("<init>", "()V", Acc.PUBLIC));
+        oldImpl.superName = intern("ext/Base");
+        ApiIndex lostConstructor = index(classWithMethodAccess("lib/Impl", m("<init>", "()V", Acc.PRIVATE)));
+        assertTrue(spiCheck(index(oldImpl), lostConstructor).isEmpty());
+
+        ClassApi newImpl = classWithMethodAccess("lib/Impl", m("<init>", "()V", Acc.PUBLIC));
+        newImpl.superName = intern("ext/Base");
+        assertTrue(spiCheck(index(instantiableProvider("lib/Impl", "lib/Spi")), index(newImpl)).isEmpty());
+    }
+
+    @Test
+    void aClassOnlyReferenceToAScannedClassIsNoJdkEscapeRoot() {
+        ApiIndex oldLib = index(classApi("lib/Moved"));
+        Scan.Result scan = new Scan.Result();
+        scan.merge(Scan.leafOf(List.of(
+                target("app.jar", "app/Use", JAVA_LANG_OBJECT, List.of(classRef("lib/Moved"))),
+                target("other.jar", "lib/Moved", JAVA_LANG_OBJECT, List.of()))));
+        IntSet escapes = new IntSet();
+        Check.collectWanted(scan, oldLib, index(), escapes);
+        assertTrue(escapes.isEmpty());
+    }
+
+    /** A malformed class file can omit its superclass. The walk ends there instead of seeding a bogus root. */
+    @Test
+    void theWantedWalkEndsAtAClassWithoutASuperclass() {
+        ClassApi cOld = new ClassApi();
+        cOld.name = intern("lib/C");
+        cOld.access = Acc.PUBLIC;
+        setMembers(cOld, true, m("m", "()V", Acc.PUBLIC));
+        ClassApi cNew = classApi("lib/C");
+        cNew.superName = intern("cp/Mid");
+        Scan.Result scan = new Scan.Result();
+        scan.merge(Scan.leafOf(List.of(
+                target("app.jar", "app/Use", JAVA_LANG_OBJECT, List.of(methodRef("lib/C", "m", "()V"))),
+                new Scan.Target(intern("cp.jar"), intern("cp/Mid"), true, Intern.NONE, new int[0], Intern.NONE, null, List.of(), new int[0]))));
+        IntSet escapes = new IntSet();
+        IntSet wanted = Check.collectWanted(scan, index(cOld), index(cNew), escapes);
+        assertEquals(List.of(intern("cp/Mid")), java.util.Arrays.stream(wanted.toArray()).boxed().toList());
+        assertTrue(escapes.isEmpty());
+    }
+
+    @Test
+    void upgradedSuperEdgesHandAnOutOfScopeSuperToTheJdkLayer() {
+        ClassGraph graph = new ClassGraph();
+        insert(graph, "lib/C", intern("javax/swing/JPanel"), new int[0], Intern.NONE, "lib-new.jar");
+        // An upgraded android.jar ships java/lang/Object, the one class with no superclass.
+        insert(graph, JAVA_LANG_OBJECT, Intern.NONE, new int[0], Intern.NONE, "lib-new.jar");
+        IntSet upgraded = new IntSet();
+        upgraded.add(intern("lib-new.jar"));
+        IntSet wanted = new IntSet();
+        IntSet escapes = new IntSet();
+        List<Check.LagEdge> edges = Check.collectUpgradedSuperEdges(graph, upgraded, index(), wanted, escapes);
+        assertEquals(List.of(new Check.LagEdge(intern("lib/C"), intern("javax/swing/JPanel"), intern("lib-new.jar"))), edges);
+        assertTrue(escapes.contains(intern("javax/swing/JPanel")));
+        assertTrue(wanted.isEmpty());
+    }
 }

@@ -600,9 +600,6 @@ final class Check {
             return OK;
         }
         RefKind refKind = SymbolRef.kindOf(meta);
-        if (refKind == RefKind.CLASS) {
-            return OK;
-        }
         Scope.MemberKind kind = refKind == RefKind.FIELD ? Scope.MemberKind.FIELD : Scope.MemberKind.METHOD;
         // Methodref vs InterfaceMethodref encodes the owner kind the compiler saw; a class <->
         // interface flip makes resolution throw IncompatibleClassChangeError. Old-relative:
@@ -1364,8 +1361,7 @@ final class Check {
 
     /** @param seen scratch, cleared here: this runs once per scanned class */
     private static int firstAncestorWithFinalMethods(int className, ApiIndex newIndex, ClassGraph graph, IntSet finalOwners, IntSet seen) {
-        int node = graph.node(className);
-        int next = node < 0 ? Intern.NONE : graph.superOf(node);
+        int next = graph.superOf(graph.node(className));
         seen.clear();
         while (next != Intern.NONE) {
             if (!seen.add(next)) {
