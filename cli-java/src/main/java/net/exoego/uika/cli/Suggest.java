@@ -77,8 +77,7 @@ final class Suggest {
                 // referencedBy is "g:n:v", change.coordinate "g:n".
                 if ((v.reason == Reason.SERVICE_PROVIDER_REMOVED || v.reason == Reason.SERVICE_PROVIDER_NOT_INSTANTIABLE)
                         && referencedBy != null) {
-                    int colon = referencedBy.lastIndexOf(':');
-                    if (colon >= 0 && referencedBy.substring(0, colon).equals(change.coordinate())) {
+                    if (referencedBy.substring(0, referencedBy.lastIndexOf(':')).equals(change.coordinate())) {
                         continue;
                     }
                 }
@@ -121,9 +120,6 @@ final class Suggest {
                 }
                 String coordinate = change.coordinate();
                 int colon = coordinate.indexOf(':');
-                if (colon < 0) {
-                    continue;
-                }
                 TreeMap<String, String> versions = before.versions.get(
                         new Dump.Coord(coordinate.substring(0, colon), coordinate.substring(colon + 1)));
                 if (versions == null) {
@@ -185,9 +181,6 @@ final class Suggest {
     private static Set<String> readOptionalDeps(String source, String referencer) {
         // The limit keeps trailing empty segments, like Rust's split.
         String[] parts = referencer.split(":", -1);
-        if (parts.length < 3) {
-            return null;
-        }
         String path = Pom.locate(source, parts[1], parts[2]);
         if (path == null) {
             return null;
