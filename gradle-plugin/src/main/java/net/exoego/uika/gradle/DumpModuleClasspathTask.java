@@ -2,6 +2,7 @@ package net.exoego.uika.gradle;
 
 import org.gradle.api.DefaultTask;
 import org.gradle.api.Project;
+import org.gradle.api.artifacts.component.ComponentIdentifier;
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier;
 import org.gradle.api.artifacts.result.ResolvedArtifactResult;
@@ -25,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 import static net.exoego.uika.plugin.core.DumpFormat.quote;
@@ -37,8 +39,10 @@ import static net.exoego.uika.plugin.core.DumpFormat.quote;
  * list comes from {@code ArtifactCollection.getResolvedArtifacts()}, the resolution-result
  * provider Gradle can serialize into the configuration cache; it still resolves lazily when
  * this task runs. Coordinates come from ResolvedArtifactResult's ModuleComponentIdentifier
- * (more robust than parsing cache paths). Project dependencies and file dependencies become
- * file entries without coordinates and are used by uika only as scan targets.
+ * (more robust than parsing cache paths). A project dependency is dumped as its classes
+ * and resources directories, the secondary variants its runtimeElements publishes next to
+ * the jar, so the dump never waits for a jar to be zipped; file dependencies become file
+ * entries without coordinates. Both are used by uika only as scan targets.
  * Modules without Java-family plugins write an empty file (the merge side skips it).
  */
 @DisableCachingByDefault(because = "Classpath resolution is environment-dependent and cheap to rerun")
@@ -91,9 +95,18 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
     @Internal
     public abstract ConfigurableFileCollection getCompilableSources();
 
-    /** The resolved lenient artifact view, mapped to serializable entries. */
+    /** The resolved lenient artifact views, mapped to serializable entries. */
     @Internal
     public abstract ListProperty<Entry> getArtifactEntries();
+
+    /**
+     * Whether the outputs the entries name were built before this task ran. Then a project
+     * directory that does not exist has no sources behind it (a module without resources
+     * never creates build/resources/main) and is dropped; in a resolution-only dump the
+     * unbuilt directories stay listed, so the CLI can fall back to the producing module.
+     */
+    @Internal
+    public abstract Property<Boolean> getBuiltOutputs();
 
     /** The main source set, or null without a Java-family plugin (one spelling for the
      * dump wiring and the uikaBuildOutputs dependsOn wiring). */
@@ -102,11 +115,29 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
         return javaExt == null ? null : javaExt.getSourceSets().findByName("main");
     }
 
-    /** Static (captures nothing) so the configuration cache can serialize the mapped provider. */
-    static List<Entry> toEntries(Collection<ResolvedArtifactResult> artifacts) {
-        var entries = new ArrayList<Entry>();
-        for (ResolvedArtifactResult artifact : artifacts) {
+    /**
+     * Static (captures nothing) so the configuration cache can serialize the mapped provider.
+     *
+     * <p>{@code classes} is the classpath with classes asked for: a jar per external
+     * dependency and per file dependency, one or more classes directories per project
+     * dependency. {@code resources} is the same classpath with resources asked for, and only
+     * its project directories are taken, right after that project's classes, so the entry
+     * order is still the classpath order. The external jars it lists again are the same files.
+     */
+    static List<Entry> toEntries(Collection<ResolvedArtifactResult> classes, Collection<ResolvedArtifactResult> resources) {
+        var byComponent = new LinkedHashMap<ComponentIdentifier, List<ResolvedArtifactResult>>();
+        for (ResolvedArtifactResult artifact : classes) {
+            byComponent.computeIfAbsent(artifact.getId().getComponentIdentifier(), k -> new ArrayList<>()).add(artifact);
+        }
+        for (ResolvedArtifactResult artifact : resources) {
             var id = artifact.getId().getComponentIdentifier();
+            if (id instanceof ProjectComponentIdentifier && byComponent.containsKey(id)) {
+                byComponent.get(id).add(artifact);
+            }
+        }
+        var entries = new ArrayList<Entry>();
+        for (var component : byComponent.entrySet()) {
+            var id = component.getKey();
             String group = null;
             String name = null;
             String version = null;
@@ -117,15 +148,16 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
                 version = m.getVersion();
             } else if (id instanceof ProjectComponentIdentifier project
                     && ":".equals(project.getBuild().getBuildPath())) {
-                // Attribute project-dependency jars to their producing module so uika can
-                // fall back to that module's classesDirs when the jar was never built.
-                // Only for this build's own projects: an included build's project path
-                // (":lib") can collide with a module of this build, and the fallback
+                // Attribute a project dependency's directories to their producing module so
+                // uika can fall back to that module's classesDirs when they were never
+                // built. Only for this build's own projects: an included build's project
+                // path (":lib") can collide with a module of this build, and the fallback
                 // would then scan the wrong module's classes.
                 projectPath = project.getProjectPath();
             }
-            entries.add(new Entry(group, name, version, projectPath,
-                    artifact.getFile().getAbsolutePath()));
+            for (ResolvedArtifactResult artifact : component.getValue()) {
+                entries.add(new Entry(group, name, version, projectPath, artifact.getFile().getAbsolutePath()));
+            }
         }
         return entries;
     }
@@ -179,7 +211,11 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
 
         json.append(",\"artifacts\":[");
         first = true;
+        var built = getBuiltOutputs().getOrElse(false);
         for (Entry entry : getArtifactEntries().get()) {
+            if (built && entry.projectPath() != null && !new File(entry.file()).exists()) {
+                continue;
+            }
             if (!first) {
                 json.append(',');
             }

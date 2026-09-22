@@ -7,6 +7,7 @@ import org.gradle.testkit.runner.TaskOutcome;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -416,16 +417,21 @@ final class UikaPluginIntegrationTest {
                 "dump does not reflect the dependency added after the first run");
     }
 
-    /// Multi-module: a project dependency is attributed to its producing module ("project"
-    /// key), and the default uikaBuildOutputs wiring builds the dependency jar and the
-    /// module's own classes before dumping (no manual dependsOn, no pre-build step).
+    /// Multi-module: a project dependency is dumped as its classes and resources directories,
+    /// attributed to its producing module ("project" key), and the default uikaBuildOutputs
+    /// wiring builds those directories and the module's own classes before dumping (no manual
+    /// dependsOn, no pre-build step). The dependency's jar is never zipped: the directories
+    /// are what the runtime classpath holds anyway, and zipping is the avoidable cost of a
+    /// large multi-module build.
     @Test
     void attributesProjectDependenciesAndBuildsOutputsByDefault() throws Exception {
         var output = projectDir.resolve("classpath.json");
         writeMultiModuleProject();
 
         var result = runDump(output);
-        assertTaskSuccess(result, ":lib:jar");
+        assertTrue(result.task(":lib:jar") == null, ":lib:jar must not run: the dump lists directories");
+        assertTaskSuccess(result, ":lib:compileJava");
+        assertTaskSuccess(result, ":lib:processResources");
         assertTaskSuccess(result, ":app:compileJava");
         assertTaskSuccess(result, ":app:uikaDumpModuleClasspath");
         assertAppAttributesLib(output);
@@ -489,7 +495,8 @@ final class UikaPluginIntegrationTest {
         var first = runDump(output, "--configuration-cache");
         assertTrue(first.getOutput().contains("Configuration cache entry stored"),
                 () -> "no configuration cache entry was stored:\n" + first.getOutput());
-        assertTaskSuccess(first, ":lib:jar");
+        assertTrue(first.task(":lib:jar") == null, ":lib:jar must not run: the dump lists directories");
+        assertTaskSuccess(first, ":lib:compileJava");
         assertTaskSuccess(first, ":app:uikaDumpModuleClasspath");
         assertAppAttributesLib(output);
 
@@ -528,17 +535,26 @@ final class UikaPluginIntegrationTest {
         assertUnbuiltLibAttributed(output);
     }
 
-    /** The unbuilt :lib jar is listed with its project attribution (the file need not exist). */
+    /** The unbuilt :lib directories are listed with their project attribution (they need not exist). */
     @SuppressWarnings("unchecked")
     private static void assertUnbuiltLibAttributed(Path output) {
         var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
         var artifacts = (List<Map<String, Object>>) doc.get("artifacts");
-        var libArtifact = artifacts.stream()
+        var libPaths = artifacts.stream()
                 .filter(a -> Objects.equals(":lib", a.get("project")))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError(
-                        "unbuilt :lib jar missing from the resolution-only dump: " + artifacts));
-        assertTrue(rootedPath(doc, libArtifact).endsWith("lib.jar"));
+                .map(a -> rootedPath(doc, a))
+                .toList();
+        assertEquals(2, libPaths.size(), "unbuilt :lib directories missing from the resolution-only dump: " + artifacts);
+        assertTrue(libPaths.get(0).endsWith(classesDir("lib")), libPaths.get(0));
+        assertTrue(libPaths.get(1).endsWith(resourcesDir("lib")), libPaths.get(1));
+    }
+
+    private static String classesDir(String module) {
+        return module + File.separator + "build" + File.separator + "classes" + File.separator + "java" + File.separator + "main";
+    }
+
+    private static String resourcesDir(String module) {
+        return module + File.separator + "build" + File.separator + "resources" + File.separator + "main";
     }
 
     /** The :app module's dump attributes the :lib project-dependency jar and lists built classesDirs. */
@@ -555,16 +571,20 @@ final class UikaPluginIntegrationTest {
         var artifacts = (List<Map<String, Object>>) doc.get("artifacts");
         @SuppressWarnings("unchecked")
         var refs = (List<Number>) appModule.get("artifactRefs");
-        var libArtifact = refs.stream()
+        var libPaths = refs.stream()
                 .map(i -> artifacts.get(i.intValue()))
                 .filter(a -> Objects.equals(":lib", a.get("project")))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError(
-                        ":app has no artifact attributed to :lib in " + artifacts));
-        String libPath = rootedPath(doc, libArtifact);
-        assertTrue(libPath.endsWith("lib.jar"), libPath);
-        assertTrue(Files.isRegularFile(Path.of(libPath)),
-                "the dependsOn wiring must have built " + libPath);
+                .map(a -> rootedPath(doc, a))
+                .toList();
+        assertEquals(2, libPaths.size(), ":app must list :lib's classes and resources directories in " + artifacts);
+        // Classes first, then resources: the order the classpath has them.
+        assertTrue(libPaths.get(0).endsWith(classesDir("lib")), libPaths.get(0));
+        assertTrue(libPaths.get(1).endsWith(resourcesDir("lib")), libPaths.get(1));
+        for (String libPath : libPaths) {
+            assertTrue(Files.isDirectory(Path.of(libPath)), "the dependsOn wiring must have built " + libPath);
+        }
+        assertTrue(Files.isRegularFile(Path.of(libPaths.get(1), "META-INF", "services", "example.Spi")),
+                "the resources directory carries the service file the CLI reads providers from");
         @SuppressWarnings("unchecked")
         var classesDirs =
                 (List<Map<String, Object>>) appModule.get("classesDirs");
@@ -611,9 +631,13 @@ final class UikaPluginIntegrationTest {
                     id("net.exoego.uika")
                 }
                 """);
+        // java-library, the shape a producer has in a real build: a consumer then compiles
+        // against its classes, so nothing in the dump's task graph needs the jar. With the
+        // plain java plugin the consumer's compileJava itself wants the jar, which is
+        // Gradle's own dependency and not the dump's.
         write(projectDir.resolve("lib/build.gradle.kts"), """
                 plugins {
-                    java
+                    `java-library`
                 }
                 """);
         write(projectDir.resolve("lib/src/main/java/example/Lib.java"), """
@@ -625,6 +649,8 @@ final class UikaPluginIntegrationTest {
                     }
                 }
                 """);
+        // A resource, so :lib's resources directory exists and the dump can be seen to list it.
+        write(projectDir.resolve("lib/src/main/resources/META-INF/services/example.Spi"), "example.Lib\n");
         write(projectDir.resolve("app/build.gradle.kts"), """
                 plugins {
                     java
