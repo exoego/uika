@@ -4,7 +4,7 @@
 	cargo-coverage java-cli-coverage gradle-coverage maven-coverage clojure-coverage \
 	lein-coverage sbt-coverage mill-coverage bazel-coverage jacoco-tools \
 	gradle-build gradle-check gradle-test gradle-clean \
-	java-cli-build java-cli-test java-cli-clean java-cli-difftest \
+	java-cli-build java-cli-test java-cli-bless java-cli-clean java-cli-difftest \
 	sbt-compile sbt-scripted sbt-clean \
 	maven-verify maven-clean \
 	mill-compile mill-test mill-clean \
@@ -70,6 +70,7 @@ help:
 		'  make probe        Answer-check fixture verdicts against a real JVM' \
 		'  make rewrite      Apply OpenRewrite recipes to Java sources (rewrite-check verifies only)' \
 		'  make java-cli-test' \
+		'  make java-cli-bless   Rewrite the goldens from the current output' \
 		'  make java-cli-difftest MODE=check   Compare the Java CLI with the Rust CLI on local jars' \
 		'  make gradle-check' \
 		'  make sbt-scripted' \
@@ -143,10 +144,10 @@ cargo-coverage:
 	$(CARGO) llvm-cov --workspace --locked --remap-path-prefix \
 		--lcov --output-path $(COVERAGE_DIR)/lcov.info
 
-# Debug binary on purpose: probe verdicts are optimization-independent, the
-# fixtures are tiny, and cargo test has already built target/debug in CI.
-probe: cargo-build
-	UIKA=target/debug/uika JAVA="$(JAVA)" sh tools/jvm-probe/run-fixtures.sh
+# The jar, with the launcher's relaunch switched off: the verdicts are what is checked,
+# and a second JVM per scenario would only add start-up time.
+probe: java-cli-build
+	UIKA="$(JAVA) -Duika.child=true -jar $(JAVA_CLI_JAR)" JAVA="$(JAVA)" sh tools/jvm-probe/run-fixtures.sh
 
 # Applies the OpenRewrite recipes in tools/openrewrite/rewrite.gradle, passed as an
 # init script so the plugin builds stay untouched. Runs through the gradle-plugin
@@ -168,6 +169,11 @@ java-cli-build:
 # Shares cli/tests/fixtures, cli/tests/golden and scenarios.tsv with the Rust crate.
 java-cli-test:
 	$(GRADLE) -p $(JAVA_CLI_DIR) test
+
+# Rewrites cli/tests/golden from the current output. Only after the diff is verified as an
+# intended detection change, since the goldens are what catches an unintended one.
+java-cli-bless:
+	$(GRADLE) -p $(JAVA_CLI_DIR) test --tests 'net.exoego.uika.cli.GoldenTest' -PuikaBless=true
 
 java-cli-clean:
 	$(GRADLE) -p $(JAVA_CLI_DIR) clean
