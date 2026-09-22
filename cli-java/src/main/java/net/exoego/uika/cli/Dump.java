@@ -353,7 +353,7 @@ final class Dump {
         long n = wholeNumber(value, releaseAt);
         // Earlier releases accepted up to 2^32 - 1, so this still does.
         if (n < 0 || n > 0xffffffffL) {
-            throw new Shape(releaseAt, "expected a whole number from 0 to 4294967295, found " + n);
+            throw new Shape(releaseAt, "expected a Java release number such as 17, found " + n);
         }
         return (int) Math.min(n, Integer.MAX_VALUE);
     }

@@ -370,9 +370,9 @@ class DumpTest {
             {"{\"version\":2,\"roots\":[],\"artifacts\":[{\"root\":0,\"path\":\"x.jar\"}]}",
                 "invalid v2 classpath dump %s: artifacts[0].root: index 0 is out of range because roots has 0 entries"},
             {"{\"version\":2,\"roots\":[],\"artifacts\":[],\"jdkRelease\":-1}",
-                "invalid v2 classpath dump %s: jdkRelease: expected a whole number from 0 to 4294967295, found -1"},
+                "invalid v2 classpath dump %s: jdkRelease: expected a Java release number such as 17, found -1"},
             {"{\"version\":2,\"roots\":[],\"artifacts\":[],\"jdkRelease\":4294967296}",
-                "invalid v2 classpath dump %s: jdkRelease: expected a whole number from 0 to 4294967295, found 4294967296"},
+                "invalid v2 classpath dump %s: jdkRelease: expected a Java release number such as 17, found 4294967296"},
             {"{\"version\":2,\"jdkRelease\":\"17\",\"roots\":[],\"artifacts\":[]}",
                 "invalid v2 classpath dump %s: jdkRelease: expected a whole number, found the string \"17\""},
         });
@@ -406,7 +406,7 @@ class DumpTest {
             {v2.formatted("{\"module\":\":a\",\"artifactRefs\":[0,\"0\"]}"),
                 "invalid v2 classpath dump %s: modules[0].artifactRefs[1]: expected a whole number, found the string \"0\""},
             {v2.formatted("{\"module\":\":a\",\"jdkRelease\":4294967296}"),
-                "invalid v2 classpath dump %s: modules[0].jdkRelease: expected a whole number from 0 to 4294967295, found 4294967296"},
+                "invalid v2 classpath dump %s: modules[0].jdkRelease: expected a Java release number such as 17, found 4294967296"},
         });
     }
 
