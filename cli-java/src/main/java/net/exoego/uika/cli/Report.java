@@ -243,9 +243,6 @@ final class Report {
      * "Callable, long, TimeUnit, boolean". Null if the descriptor does not parse.
      */
     private static String prettyParams(String descriptor) {
-        if (!descriptor.startsWith("(")) {
-            return null;
-        }
         int close = descriptor.indexOf(')');
         if (close < 0) {
             return null;
