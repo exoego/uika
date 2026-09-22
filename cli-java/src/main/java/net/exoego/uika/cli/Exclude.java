@@ -186,7 +186,7 @@ final class Exclude {
                     valid.add(reason.configText());
                 }
                 throw new UikaException("exclude rule \"" + label + "\": unknown kind \"" + entry.kind
-                        + "\"; valid kinds: " + String.join(", ", valid));
+                        + "\", expected one of " + String.join(", ", valid));
             }
         }
         OwnerPattern owner = null;
