@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -22,6 +23,7 @@ import java.util.Random;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -34,6 +36,11 @@ import org.junit.jupiter.api.io.TempDir;
 class InputTest {
     @TempDir
     Path dir;
+
+    @AfterEach
+    void clearEnvironment() {
+        Env.clearOverrides();
+    }
 
     private static byte[] classLike(String text) {
         byte[] tail = text.getBytes(StandardCharsets.UTF_8);
@@ -469,5 +476,347 @@ class InputTest {
 
         assertEquals(data.length, n);
         assertArrayEquals(data, java.util.Arrays.copyOf(Input.classBytes(scratch, n), n));
+    }
+
+    @Test
+    void theClassMagicNeedsAllFourBytes() {
+        byte[] magic = {(byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE, 0};
+        assertTrue(Input.hasClassMagic(magic, 4));
+        assertFalse(Input.hasClassMagic(magic, 3));
+        for (int k = 0; k < 4; k++) {
+            byte[] off = magic.clone();
+            off[k] ^= 1;
+            assertFalse(Input.hasClassMagic(off, 5), "byte " + k);
+        }
+    }
+
+    /** A JAR only the fallback reader opens still yields its provider files, from a second read. */
+    @Test
+    void providerFilesOfAFallbackJarAreReadAhead() throws Exception {
+        Path path = dir.resolve("latin1.jar");
+        try (OutputStream file = Files.newOutputStream(path);
+                ZipOutputStream zip = new ZipOutputStream(file, StandardCharsets.ISO_8859_1)) {
+            zip.putNextEntry(new ZipEntry("p/Café.class"));
+            zip.write(classLike("latin"));
+            zip.closeEntry();
+            zip.putNextEntry(new ZipEntry("META-INF/services/com.example.Api"));
+            zip.write("com.example.Impl\n".getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+        }
+        Input.Prepared prepared = Input.prepare(path.toString(), true);
+        assertNull(prepared.entries);
+        assertNull(prepared.serviceWarning);
+        assertEquals(1, prepared.services.size());
+        assertEquals("com/example/Api", Intern.str(prepared.services.get(0).iface()));
+        assertArrayEquals(new int[] {Intern.intern("com/example/Impl")}, prepared.services.get(0).impls());
+
+        String missing = dir.resolve("missing.jar").toString();
+        Input.Prepared absent = Input.prepare(missing, true);
+        assertNull(absent.entries);
+        assertEquals(List.of(), absent.services);
+        assertEquals(missing + ": cannot open " + missing, absent.serviceWarning);
+    }
+
+    private static byte[] randomClass(Random random, int size) {
+        byte[] bytes = new byte[size];
+        random.nextBytes(bytes);
+        System.arraycopy(classLike(""), 0, bytes, 0, 4);
+        return bytes;
+    }
+
+    /** A span ends where the next entry would make it too long, or sits too far past the last one. */
+    @Test
+    void aJarSplitsIntoSpansBySizeAndByGap() throws Exception {
+        Random random = new Random(8);
+        byte[] first = randomClass(random, 1000);
+        byte[] second = randomClass(random, 1000);
+        byte[] big = randomClass(random, 1_500_000);
+        byte[] bigger = randomClass(random, 1_000_000);
+        Path path = dir.resolve("spans.jar");
+        try (OutputStream file = Files.newOutputStream(path);
+                ZipOutputStream zip = new ZipOutputStream(file)) {
+            writeStored(zip, "p/First.class", first);
+            // More than a megabyte of resource between two classes.
+            byte[] resource = new byte[1_200_000];
+            random.nextBytes(resource);
+            writeStored(zip, "p/data.bin", resource);
+            writeStored(zip, "p/Second.class", second);
+            writeStored(zip, "p/Big.class", big);
+            // Second and Big fill 1.5 MB, so adding this one would pass the 2 MiB span limit.
+            writeStored(zip, "p/Bigger.class", bigger);
+        }
+        List<Seen> seen = stream(path.toString(), null);
+        assertEquals(List.of("p/First", "p/Second", "p/Big", "p/Bigger"), entriesOf(seen));
+        assertArrayEquals(first, seen.get(0).bytes());
+        assertArrayEquals(second, seen.get(1).bytes());
+        assertArrayEquals(big, seen.get(2).bytes());
+        assertArrayEquals(bigger, seen.get(3).bytes());
+    }
+
+    /** One read fills one buffer, so a span of 2 GiB or more is an error rather than an overflow. */
+    @Test
+    void aSpanTooLongForOneBufferEndsTheScan() throws Exception {
+        String jar = writeJar(dir.resolve("small.jar"), "p/A.class", classLike("a"));
+        Jar.Entries entries = new Jar.Entries();
+        entries.count = 1;
+        entries.name = new int[] {Intern.intern("p/A")};
+        entries.crc = new int[1];
+        entries.offset = new int[] {0};
+        // 2 GiB as the unsigned 32-bit end a directory can hold.
+        entries.end = new int[] {Integer.MIN_VALUE};
+        entries.compressed = new int[] {5};
+        entries.inflated = new int[] {5};
+        entries.stored = new boolean[] {true};
+        UikaException tooLong = assertThrows(UikaException.class, () -> stream(jar, new Input.Prepared(entries, false)));
+        assertEquals("failed to read jar span at offset 0", tooLong.getMessage());
+    }
+
+    /** Directories are read a chunk ahead of the scan, so the file can change in between. */
+    @Test
+    void aJarCutShortAfterItsDirectoryWasReadEndsTheScan() throws Exception {
+        String jar = writeJar(dir.resolve("cut.jar"), "p/A.class", classLike("a"), "p/B.class", classLike("b"));
+        Input.Prepared prepared = Input.prepare(jar);
+        assertNotNull(prepared.entries);
+        try (FileChannel channel = FileChannel.open(Path.of(jar), StandardOpenOption.WRITE)) {
+            channel.truncate(10);
+        }
+        UikaException cut = assertThrows(UikaException.class, () -> stream(jar, prepared));
+        assertEquals("failed to read jar span at offset 0", cut.getMessage());
+    }
+
+    @Test
+    void pass2WarnsAboutAnEntryThatDoesNotInflateAndReadsTheRest() throws Exception {
+        byte[] text = classLike("compressible ".repeat(200));
+        Path path = dir.resolve("fetch-corrupt.jar");
+        writeJar(path, "x/A.class", text, "x/Bad.class", text, "x/C.class", text);
+        Jar.Entries entries = readEntries(path.toString());
+        byte[] zip = Files.readAllBytes(path);
+        int header = (int) entries.offset(1);
+        int nameLength = (zip[header + 26] & 0xff) | (zip[header + 27] & 0xff) << 8;
+        int extraLength = (zip[header + 28] & 0xff) | (zip[header + 29] & 0xff) << 8;
+        // A final block of the reserved type 3.
+        zip[header + 30 + nameLength + extraLength] = 0x07;
+        Files.write(path, zip);
+
+        List<String> got = new ArrayList<>();
+        List<Input.Wanted> wanted = List.of(
+                new Input.Wanted(Intern.intern("x/A"), "x/A.class"),
+                new Input.Wanted(Intern.intern("x/Bad"), "x/Bad.class"),
+                new Input.Wanted(Intern.intern("x/C"), "x/C.class"));
+        List<String> warnings = Input.fetchEntries(path.toString(), wanted, (name, bytes, length) -> {
+            assertArrayEquals(text, Arrays.copyOf(bytes, length));
+            got.add(Intern.str(name));
+        });
+        assertEquals(List.of("x/A", "x/C"), got);
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).startsWith(path + "!x/Bad.class: "), warnings.get(0));
+    }
+
+    @Test
+    void aDirectoryLargerThanOneBatchComesBackInNameOrder() throws Exception {
+        Path classes = Files.createDirectories(dir.resolve("wide"));
+        List<String> expected = new ArrayList<>();
+        for (int i = 0; i < Input.BATCH + 88; i++) {
+            String name = String.format("C%04d", i);
+            Files.write(classes.resolve(name + ".class"), classLike(name));
+            expected.add(name);
+        }
+        List<Seen> seen = stream(classes.toString(), null);
+        assertEquals(expected, entriesOf(seen));
+        assertArrayEquals(classLike("C0599"), seen.get(599).bytes());
+    }
+
+    @Test
+    void aDirectoryWithoutClassesYieldsNothing() throws Exception {
+        Path empty = Files.createDirectories(dir.resolve("empty"));
+        assertEquals(List.of(), stream(empty.toString(), null));
+        Path resources = Files.createDirectories(dir.resolve("resources/META-INF"));
+        Files.write(resources.resolve("MANIFEST.MF"), "Manifest-Version: 1.0\n".getBytes(StandardCharsets.UTF_8));
+        assertEquals(List.of(), stream(dir.resolve("resources").toString(), null));
+    }
+
+    /**
+     * With the queue past four batches per lane, a walk reads its batch itself. One lane and
+     * six roots queue six walks up front, so the first walk to run finds the queue full.
+     */
+    @Test
+    void aWalkThatOutrunsItsLanesReadsItsOwnBatch() throws Exception {
+        Env.override("UIKA_FILE_LANES", "1");
+        Input.DirectoryScan<List<Seen>> scan = new Input.DirectoryScan<>(COLLECT);
+        List<List<List<Seen>>> outs = new ArrayList<>();
+        for (int r = 0; r < 6; r++) {
+            Path root = Files.createDirectories(dir.resolve("root" + r + "/p"));
+            Files.write(root.resolve("R" + r + ".class"), classLike("root " + r));
+            List<List<Seen>> out = new ArrayList<>();
+            outs.add(out);
+            scan.add(dir.resolve("root" + r).toString(), out);
+        }
+        Scratch.pool().invoke(scan.laneTask());
+        scan.finish();
+        for (int r = 0; r < 6; r++) {
+            List<Seen> seen = Input.concat(outs.get(r));
+            assertEquals(List.of("p/R" + r), entriesOf(seen));
+            assertEquals(dir.resolve("root" + r).toString(), seen.get(0).source());
+            assertArrayEquals(classLike("root " + r), seen.get(0).bytes());
+        }
+    }
+
+    /** Waits on a pool worker through a managed block, so the pool can start a spare for the other lanes. */
+    private static void blockUntil(java.util.function.BooleanSupplier done, String timeoutMessage) {
+        long deadline = System.nanoTime() + 10_000_000_000L;
+        try {
+            java.util.concurrent.ForkJoinPool.managedBlock(new java.util.concurrent.ForkJoinPool.ManagedBlocker() {
+                @Override
+                public boolean block() throws InterruptedException {
+                    while (!done.getAsBoolean()) {
+                        assertTrue(System.nanoTime() < deadline, timeoutMessage);
+                        Thread.sleep(1);
+                    }
+                    return true;
+                }
+
+                @Override
+                public boolean isReleasable() {
+                    return done.getAsBoolean();
+                }
+            });
+        } catch (InterruptedException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /**
+     * A failing lane stops the others at their next item, and what is still queued never runs.
+     * One lane is held inside its walk until the scan has failed, so the order is fixed.
+     */
+    @Test
+    void aFailingLaneStopsTheOthersAndTheQueueIsNotRun() throws Exception {
+        Env.override("UIKA_FILE_LANES", "2");
+        java.util.concurrent.CountDownLatch holding = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<java.util.concurrent.RecursiveAction> region =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        List<String> accepted = java.util.Collections.synchronizedList(new ArrayList<>());
+        Input.Sink<List<Seen>> sink = new Input.Sink<>() {
+            @Override
+            public List<Seen> newLeaf() {
+                return new ArrayList<>();
+            }
+
+            @Override
+            public void accept(List<Seen> leaf, Scratch scratch, int source, int entry, ClassSource bytes) {
+                String name = Intern.str(entry);
+                accepted.add(name);
+                if (name.equals("Hold")) {
+                    holding.countDown();
+                    blockUntil(() -> region.get().isCompletedAbnormally(), "the scan never failed");
+                } else if (name.equals("Fail")) {
+                    blockUntil(() -> holding.getCount() == 0, "the other lane never started");
+                    throw new UikaException("failed on purpose");
+                }
+            }
+        };
+        Input.DirectoryScan<List<Seen>> scan = new Input.DirectoryScan<>(sink);
+        // Twelve walks queued up front: over four per lane, so each walk reads its batch itself.
+        for (int r = 0; r < 12; r++) {
+            Path root = Files.createDirectories(dir.resolve("lane" + r));
+            String name = r == 0 ? "Hold" : r == 1 ? "Fail" : "Rest" + r;
+            Files.write(root.resolve(name + ".class"), classLike(name));
+            scan.add(root.toString(), new ArrayList<>());
+        }
+        region.set(scan.laneTask());
+
+        UikaException stop = assertThrows(UikaException.class, () -> Scratch.pool().invoke(region.get()));
+        assertEquals("failed on purpose", stop.getMessage());
+        List<String> ran;
+        synchronized (accepted) {
+            ran = new ArrayList<>(accepted);
+        }
+        java.util.Collections.sort(ran);
+        assertEquals(List.of("Fail", "Hold"), ran);
+    }
+
+    @Test
+    void fileLanesComeFromTheEnvironmentWhenPositive() {
+        Env.override("UIKA_FILE_LANES", null);
+        int fallback = Input.fileLanes();
+        assertTrue(fallback >= 1 && fallback <= Scratch.threads(), "lanes " + fallback);
+        Env.override("UIKA_FILE_LANES", " 3 ");
+        assertEquals(3, Input.fileLanes());
+        Env.override("UIKA_FILE_LANES", "0");
+        assertEquals(fallback, Input.fileLanes());
+        Env.override("UIKA_FILE_LANES", "-2");
+        assertEquals(fallback, Input.fileLanes());
+        Env.override("UIKA_FILE_LANES", "many");
+        assertEquals(fallback, Input.fileLanes());
+    }
+
+    /** The walk opens anything named like a class without asking what it is, and skips what turns out not to be a file. */
+    @Test
+    void linksAndDirectoriesNamedLikeClassesAreSkipped() throws Exception {
+        Path classes = Files.createDirectories(dir.resolve("odd"));
+        Path real = Files.write(classes.resolve("Real.class"), classLike("real"));
+        Files.createDirectories(classes.resolve("Folder.class"));
+        try {
+            Files.createSymbolicLink(classes.resolve("Link.class"), real);
+        } catch (UnsupportedOperationException | IOException e) {
+            return; // A file system without symbolic links.
+        }
+        List<Seen> seen = stream(classes.toString(), null);
+        assertEquals(List.of("Real"), entriesOf(seen));
+        assertEquals(List.of("Real"), Input.classEntryNames(classes.toString()));
+    }
+
+    @Test
+    void anUnreadableClassFileEndsTheScan() throws Exception {
+        Path classes = Files.createDirectories(dir.resolve("private"));
+        Files.write(classes.resolve("Open.class"), classLike("open"));
+        Path locked = Files.write(classes.resolve("Locked.class"), classLike("locked"));
+        if (!locked.toFile().setReadable(false, false) || locked.toFile().canRead()) {
+            return; // A filesystem or user that cannot lock a file (root, Windows).
+        }
+        try {
+            UikaException boom = assertThrows(UikaException.class, () -> stream(classes.toString(), null));
+            assertTrue(boom.getMessage().contains("Permission denied"), boom.getMessage());
+        } finally {
+            locked.toFile().setReadable(true, false);
+        }
+    }
+
+    /** Listing names is best effort: what cannot be listed is left out, and the rest still is. */
+    @Test
+    void listingNamesSkipsAnUnreadableSubdirectory() throws Exception {
+        Path root = Files.createDirectories(dir.resolve("partly"));
+        Files.write(root.resolve("A.class"), classLike("a"));
+        Path sealed = Files.createDirectories(root.resolve("sealed"));
+        Files.write(sealed.resolve("Hidden.class"), classLike("hidden"));
+        Path open = Files.createDirectories(root.resolve("z"));
+        Files.write(open.resolve("Z.class"), classLike("z"));
+        if (!sealed.toFile().setReadable(false, false) || sealed.toFile().canRead()) {
+            return; // A filesystem or user that cannot lock a directory (root, Windows).
+        }
+        try {
+            assertEquals(List.of("A", "z/Z"), Input.classEntryNames(root.toString()));
+        } finally {
+            sealed.toFile().setReadable(true, false);
+        }
+    }
+
+    @Test
+    void onPoolRunsInlineOnThePoolAndHopsOverFromAnyOtherPool() throws Exception {
+        List<Thread> threads = new ArrayList<>();
+        Input.onPool(() -> {
+            threads.add(Thread.currentThread());
+            Input.onPool(() -> threads.add(Thread.currentThread()));
+        });
+        assertTrue(threads.get(0) instanceof Scratch.Worker, threads.get(0).getName());
+        assertSame(threads.get(0), threads.get(1));
+
+        java.util.concurrent.ForkJoinPool foreign = new java.util.concurrent.ForkJoinPool(1);
+        try {
+            foreign.submit(() -> Input.onPool(() -> threads.add(Thread.currentThread()))).get();
+        } finally {
+            foreign.shutdown();
+        }
+        assertTrue(threads.get(2) instanceof Scratch.Worker, threads.get(2).getName());
     }
 }
