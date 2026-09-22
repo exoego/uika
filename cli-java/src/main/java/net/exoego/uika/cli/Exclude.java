@@ -146,7 +146,7 @@ final class Exclude {
                     entries.add(new RawEntry(values[0], values[1], values[2], values[3], values[4]));
                     continue;
                 }
-                for (Toml.Entry field : item.asTable("struct RawEntry").entries()) {
+                for (Toml.Entry field : item.asStruct("RawEntry", ENTRY_FIELDS).entries()) {
                     int index = List.of(ENTRY_FIELDS).indexOf(field.key());
                     if (index < 0) {
                         throw field.unknownField(ENTRY_FIELDS);

@@ -300,6 +300,63 @@ class ExcludeTest {
         assertTrue(err.contains("kimd"), err);
     }
 
+    /** The toml crate reads a datetime as a map with one private key, so a rule rejects that key. */
+    @Test
+    void aDatetimeInPlaceOfARuleIsRejectedByItsPrivateKey() {
+        String unknown = "unknown field `$__toml_private_datetime`,"
+                + " expected one of `owner`, `member`, `descriptor`, `kind`, `reason`";
+        assertEquals(
+                """
+                invalid TOML: TOML parse error at line 1, column 12
+                  |
+                1 | exclude = [1979-05-27]
+                  |            ^^^^^^^^^^
+                %s
+                """.formatted(unknown),
+                parseError("exclude = [1979-05-27]"));
+        for (String datetime :
+                List.of("1979-05-27T07:32:00Z", "1979-05-27 07:32:00.5+09:00", "1979-05-27T07:32:00", "07:32:00")) {
+            assertEquals(
+                    "invalid TOML: TOML parse error at line 1, column 12\n  |\n1 | exclude = [" + datetime + "]\n"
+                            + "  |            " + "^".repeat(datetime.length()) + "\n" + unknown + "\n",
+                    parseError("exclude = [" + datetime + "]"));
+        }
+        assertEquals(
+                """
+                invalid TOML: TOML parse error at line 3, column 3
+                  |
+                3 |   07:32,
+                  |   ^^^^^
+                %s
+                """.formatted(unknown),
+                parseError("""
+                        exclude = [
+                          {owner = "a", reason = "r"},
+                          07:32,
+                        ]
+                        """));
+    }
+
+    @Test
+    void aDatetimeInPlaceOfAStringOrTheRuleListIsAMap() {
+        assertEquals("line 1, column 11: invalid type: map, expected a sequence", tomlError("exclude = 1979-05-27"));
+        assertEquals(
+                "line 2, column 9: invalid type: map, expected a string",
+                tomlError("[[exclude]]\nowner = 1979-05-27\nreason = \"r\""));
+        assertEquals(
+                "line 1, column 35: invalid type: map, expected a string",
+                tomlError("exclude = [{owner = \"a\", reason = 1979-05-27T07:32:00Z}]"));
+        assertEquals(
+                "line 1, column 48: invalid type: map, expected a string",
+                tomlError("exclude = [[\"a\", \"m\", \"()V\", \"method_removed\", 07:32:00]]"));
+    }
+
+    /** A TOML rejection as "line L, column C: description". */
+    private static String tomlError(String toml) {
+        String[] lines = parseError(toml).split("\n");
+        return lines[0].substring("invalid TOML: TOML parse error at ".length()) + ": " + lines[lines.length - 1];
+    }
+
     @Test
     void ruleWithoutOwnerOrKindIsRejected() {
         String err = parseError("""

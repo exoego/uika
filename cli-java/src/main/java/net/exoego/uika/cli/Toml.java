@@ -110,7 +110,11 @@ final class Toml {
 
         /** serde's error for a struct that denies unknown fields. */
         Error unknownField(String... fields) {
-            StringBuilder message = new StringBuilder("unknown field `").append(key).append("`, ");
+            return source.error(unknownFieldMessage(key, fields), keyStart, keyEnd);
+        }
+
+        private static String unknownFieldMessage(String name, String[] fields) {
+            StringBuilder message = new StringBuilder("unknown field `").append(name).append("`, ");
             if (fields.length == 0) {
                 message.append("there are no fields");
             } else {
@@ -126,7 +130,7 @@ final class Toml {
                     }
                 }
             }
-            return source.error(message.toString(), keyStart, keyEnd);
+            return message.toString();
         }
     }
 
@@ -173,6 +177,17 @@ final class Toml {
                 throw invalidType(expecting);
             }
             return table;
+        }
+
+        /**
+         * A struct that denies unknown fields. The toml crate hands it a datetime as a map with
+         * one private key, so that key is what gets rejected.
+         */
+        Table asStruct(String name, String... fields) {
+            if (kind == Kind.DATETIME) {
+                throw error(Entry.unknownFieldMessage("$__toml_private_datetime", fields));
+            }
+            return asTable("struct " + name);
         }
 
         /** {@code expecting} as serde words it, such as "struct RawEntry with 5 elements". */
