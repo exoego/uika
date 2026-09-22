@@ -1,7 +1,6 @@
 package net.exoego.uika.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -33,6 +32,12 @@ class TomlTest {
             keys.add(entry.key());
         }
         return keys;
+    }
+
+    /** A number or a boolean as a type error names it, the one place a user sees it. */
+    private static String shown(Toml.Value value) {
+        String description = assertThrows(Toml.Error.class, value::asString).description;
+        return description.substring("invalid type: ".length(), description.indexOf(", expected"));
     }
 
     @Test
@@ -120,17 +125,17 @@ class TomlTest {
                 yes = true
                 no = false
                 """);
-        assertEquals(1000, t.get("dec").value().asLong());
-        assertEquals(-17, t.get("neg").value().asLong());
-        assertEquals(5, t.get("plus").value().asLong());
-        assertEquals(0, t.get("zero").value().asLong());
-        assertEquals(0xDEADBEEFL, t.get("hex").value().asLong());
-        assertEquals(15, t.get("oct").value().asLong());
-        assertEquals(10, t.get("bin").value().asLong());
-        assertEquals(Long.MAX_VALUE, t.get("max").value().asLong());
-        assertEquals(Long.MIN_VALUE, t.get("min").value().asLong());
-        assertTrue(t.get("yes").value().asBoolean());
-        assertFalse(t.get("no").value().asBoolean());
+        assertEquals("integer `1000`", shown(t.get("dec").value()));
+        assertEquals("integer `-17`", shown(t.get("neg").value()));
+        assertEquals("integer `5`", shown(t.get("plus").value()));
+        assertEquals("integer `0`", shown(t.get("zero").value()));
+        assertEquals("integer `3735928559`", shown(t.get("hex").value()));
+        assertEquals("integer `15`", shown(t.get("oct").value()));
+        assertEquals("integer `10`", shown(t.get("bin").value()));
+        assertEquals("integer `9223372036854775807`", shown(t.get("max").value()));
+        assertEquals("integer `-9223372036854775808`", shown(t.get("min").value()));
+        assertEquals("boolean `true`", shown(t.get("yes").value()));
+        assertEquals("boolean `false`", shown(t.get("no").value()));
         assertEquals(Toml.Kind.INTEGER, t.get("dec").value().kind());
         assertEquals(Toml.Kind.BOOLEAN, t.get("yes").value().kind());
     }
@@ -195,7 +200,7 @@ class TomlTest {
         assertEquals("spaced dots", string(ab, "d"));
         Toml.Table server = t.get("server").value().asTable("a map");
         assertEquals("h", string(server, "host"));
-        assertTrue(server.get("opts").value().asTable("a map").get("retry").value().asBoolean());
+        assertEquals("boolean `true`", shown(server.get("opts").value().asTable("a map").get("retry").value()));
         assertEquals("c", string(server.get("tls").value().asTable("a map"), "cert"));
         assertEquals("v", string(t.get("quoted").value().asTable("a map").get("table").value().asTable("a map"), "k"));
     }
@@ -536,5 +541,162 @@ class TomlTest {
         assertTrue(e.getMessage().startsWith("invalid TOML: TOML parse error at line "), e.getMessage());
         String[] lines = e.getMessage().split("\n");
         return lines[lines.length - 1];
+    }
+
+    private static Toml.Value value(String toml) {
+        return Toml.parse("v = " + toml).get("v").value();
+    }
+
+    @Test
+    void valuesRightBeforeTheEndOfTheInput() {
+        assertEquals("integer `1`", shown(value("1 ")));
+        assertEquals("integer `1`", shown(value("1\t")));
+        assertEquals("integer `1`", shown(value("1 # c")));
+        assertEquals("x", value("'''x'''").asString());
+        // At most two extra quotes join a multi-line string.
+        assertEquals("x''", value("'''x'''''").asString());
+        assertEquals("x\\", value("\"\"\"x\\\\\"\"\"").asString());
+        assertTrue(Toml.parse("\uFEFF").isEmpty());
+        assertEquals("integer `1`", shown(Toml.parse("\uFEFFa = 1").get("a").value()));
+        Toml.Table t = Toml.parse("a = \"x\" # c\n[b] # c\nc = 2");
+        assertEquals("x", string(t, "a"));
+        assertEquals("integer `2`", shown(t.get("b").value().asTable("t").get("c").value()));
+    }
+
+    @Test
+    void keyValuePairsWithoutSpaces() {
+        Toml.Table t = Toml.parse("a=1\nb =2\nc= 3\nd.e=4");
+        assertEquals("integer `1`", shown(t.get("a").value()));
+        assertEquals("integer `2`", shown(t.get("b").value()));
+        assertEquals("integer `3`", shown(t.get("c").value()));
+        assertEquals("integer `4`", shown(t.get("d").value().asTable("t").get("e").value()));
+    }
+
+    @Test
+    void multiLineStringLineEndingsAndEscapedNewlines() {
+        assertEquals("x", value("'''\r\nx'''").asString());
+        assertEquals("x", value("\"\"\"\r\nx\"\"\"").asString());
+        assertEquals("a\r\nb", value("'''a\r\nb'''").asString());
+        assertEquals("a\tb", value("'a\tb'").asString());
+        assertEquals("é!", value("\"é!\"").asString());
+        assertEquals("aéA", value("\"\"\"a\\u00e9\\x41\"\"\"").asString());
+        // A line-ending backslash swallows spaces, tabs and line breaks of either kind.
+        assertEquals("ab", value("\"\"\"a\\\t\nb\"\"\"").asString());
+        assertEquals("ab", value("\"\"\"a\\\r\nb\"\"\"").asString());
+        assertEquals("ab", value("\"\"\"a\\ \r\nb\"\"\"").asString());
+        assertEquals("ab", value("\"\"\"a\\\n \r\n b\"\"\"").asString());
+        assertEquals("ab", value("\"\"\"a\\\n\t\n  b\"\"\"").asString());
+        assertEquals("a", value("\"\"\"a\\\n\"\"\"").asString());
+    }
+
+    @Test
+    void dottedKeysInsideInlineTablesAndArraysOfTables() {
+        Toml.Table b = value("{b.c = 1, b.d = 2, e = [1]}").asTable("t");
+        assertEquals(List.of("c", "d"), keys(b.get("b").value().asTable("t")));
+        assertEquals("integer `1`", shown(b.get("e").value().asArray().get(0)));
+
+        Toml.Table first = Toml.parse("[[a]]\na.b = 1").get("a").value().asArray().get(0).asTable("t");
+        assertEquals("integer `1`", shown(first.get("a").value().asTable("t").get("b").value()));
+
+        List<Toml.Value> items = Toml.parse("[[a]]\n[a.b]\nc = 1\n[[a]]\n[a.b]\nc = 2")
+                .get("a")
+                .value()
+                .asArray();
+        assertEquals(2, items.size());
+        Toml.Table second = items.get(1).asTable("t").get("b").value().asTable("t");
+        assertEquals("integer `2`", shown(second.get("c").value()));
+    }
+
+    @Test
+    void bareNumbersInEveryAcceptedSpelling() {
+        assertEquals("integer `171`", shown(value("0xa_b")));
+        assertEquals("integer `171`", shown(value("0xA_B")));
+        assertEquals("integer `2097151`", shown(value("0x1F_ffFF")));
+        assertEquals("integer `63`", shown(value("0o7_7")));
+        assertEquals("integer `2`", shown(value("0b1_0")));
+        assertEquals("integer `0`", shown(value("+0")));
+        assertEquals("integer `0`", shown(value("-0")));
+        for (String number : List.of("inf", "nan", "+nan", "-nan", "1E5", "1e+5", "1_000.0", "0.0e0", "0e0", "1.0_1",
+                "1.00", "1e05", "1.5e-0_5")) {
+            assertEquals(Toml.Kind.FLOAT, value(number).kind(), number);
+        }
+    }
+
+    @Test
+    void dateTimesInEveryAcceptedForm() {
+        for (String dateTime : List.of(
+                "1979-05-27T07:32:00+09:00",
+                "1979-05-27T07:32:00-07:00",
+                "1979-05-27T07:32:00.999999Z",
+                "1979-05-27t07:32:00z",
+                "1979-05-27T07:32:00",
+                "1979-05-27T07:32",
+                "1979-05-27T07:32:00.123456789123Z",
+                "1979-05-27 07:32:00",
+                "07:32:00.999",
+                "07:32:00",
+                "07:32:60",
+                "00:00",
+                "2024-02-29",
+                "2000-02-29",
+                "1979-12-31",
+                "0979-05-27")) {
+            assertEquals(Toml.Kind.DATETIME, value(dateTime).kind(), dateTime);
+        }
+        // The space before a comment or a line break is not a date-time separator.
+        assertEquals(Toml.Kind.DATETIME, value("1979-05-27 # c").kind());
+        assertEquals(Toml.Kind.DATETIME, value("1979-05-27 \n").kind());
+    }
+
+    @Test
+    void integersBeyondI64AreNamedByTheirWidestType() {
+        assertEquals(
+                "invalid type: integer `-9223372036854775809` as i128, expected a string",
+                stringError("-9223372036854775809"));
+        assertEquals(
+                "invalid type: integer `-170141183460469231731687303715884105728` as i128, expected a string",
+                stringError("-170141183460469231731687303715884105728"));
+        assertEquals(
+                "invalid type: integer `170141183460469231731687303715884105728` as u128, expected a string",
+                stringError("170141183460469231731687303715884105728"));
+        assertEquals("integer number overflowed", stringError("-170141183460469231731687303715884105729"));
+    }
+
+    /** The crate accepts any hex digit beside `_` and no digit after a radix, and only reading fails. */
+    @Test
+    void integersWithoutValidDigitsFailOnlyWhenRead() {
+        for (String number : List.of("1_a", "1_A", "0x", "0o", "0b")) {
+            assertEquals(Toml.Kind.INTEGER, value(number).kind(), number);
+            assertEquals("integer number overflowed", stringError(number), number);
+        }
+    }
+
+    @Test
+    void floatsPrintWithTheShortestDigitsThatReadBack() {
+        assertEquals("invalid type: floating point `-inf`, expected a string", stringError("-inf"));
+        assertEquals("invalid type: floating point `0.0`, expected a string", stringError("0.0"));
+        assertEquals("invalid type: floating point `0.0`, expected a string", stringError("1e-400"));
+        assertEquals("invalid type: floating point `0.1`, expected a string", stringError("0.1"));
+        assertEquals(
+                "invalid type: floating point `123456789012345680000.0`, expected a string",
+                stringError("123456789012345680000.0"));
+        assertEquals(
+                "invalid type: floating point `0." + "0".repeat(323) + "5`, expected a string",
+                stringError("5e-324"));
+        assertEquals(
+                "invalid type: floating point `17976931348623157" + "0".repeat(292) + ".0`, expected a string",
+                stringError("1.7976931348623157e308"));
+    }
+
+    @Test
+    void stringsAreQuotedWithTheCratesEscapes() {
+        assertEquals("\"a\\rb\\tc\\0d\"", Toml.debugQuote("a\rb\tc\u0000d"));
+        assertEquals("\"del\\u{7f} c1\\u{85}\"", Toml.debugQuote("del\u007f c1\u0085"));
+        assertEquals("\"nbsp\\u{a0} ideographic\\u{3000}\"", Toml.debugQuote("nbsp\u00A0 ideographic\u3000"));
+        assertEquals("\"ls\\u{2028} ps\\u{2029}\"", Toml.debugQuote("ls\u2028 ps\u2029"));
+        assertEquals("\"zwsp\\u{200b} pua\\u{e000}\"", Toml.debugQuote("zwsp\u200B pua\uE000"));
+        assertEquals("\"unassigned\\u{378}\"", Toml.debugQuote("unassigned\u0378"));
+        assertEquals("\"acute\\u{301} enclosing\\u{20dd}\"", Toml.debugQuote("acute\u0301 enclosing\u20DD"));
+        assertEquals("\"emoji😀\"", Toml.debugQuote("emoji😀"));
     }
 }

@@ -160,29 +160,6 @@ final class Toml {
             return text;
         }
 
-        boolean asBoolean() {
-            if (kind != Kind.BOOLEAN) {
-                throw invalidType("a boolean");
-            }
-            return bool;
-        }
-
-        long asLong() {
-            if (kind != Kind.INTEGER) {
-                throw invalidType("i64");
-            }
-            BigInteger value = integer();
-            if (value.bitLength() <= 63) {
-                return value.longValue();
-            }
-            // serde's wording for an i64 field. No schema reads an integer yet, so unlike
-            // the rest of this file it was never compared with the Rust binary.
-            if (value.signum() > 0 && value.bitLength() <= 64) {
-                return fail("invalid value: integer `" + value + "`, expected i64");
-            }
-            return fail("invalid value: " + (value.bitLength() <= 127 ? "i128" : "u128") + ", expected i64");
-        }
-
         List<Value> asArray() {
             if (kind != Kind.ARRAY) {
                 throw invalidType("a sequence");
@@ -220,8 +197,8 @@ final class Toml {
             return source.error("invalid type: " + unexpected + ", expected " + expecting, start, end);
         }
 
-        private <T> T fail(String message) {
-            throw source.error(message, start, end);
+        private Error error(String message) {
+            return source.error(message, start, end);
         }
 
         private BigInteger integer() {
@@ -229,10 +206,10 @@ final class Toml {
             try {
                 value = new BigInteger(text, radix);
             } catch (NumberFormatException e) {
-                return fail("integer number overflowed");
+                throw error("integer number overflowed");
             }
             if (value.bitLength() > 128 || (value.signum() < 0 && value.bitLength() > 127)) {
-                return fail("integer number overflowed");
+                throw error("integer number overflowed");
             }
             return value;
         }
@@ -255,7 +232,7 @@ final class Toml {
             }
             double value = Double.parseDouble(text);
             if (Double.isInfinite(value)) {
-                return fail("floating-point number overflowed");
+                throw error("floating-point number overflowed");
             }
             if (value == 0) {
                 return 1 / value < 0 ? "-0.0" : "0.0";
@@ -263,11 +240,10 @@ final class Toml {
             // Shortest digits that read back as the same double, which is what Rust prints.
             // Double.toString is not that before JDK 19.
             BigDecimal exact = new BigDecimal(value);
-            BigDecimal shortest = exact;
-            for (int precision = 1; precision <= 17; precision++) {
-                BigDecimal rounded = exact.round(new MathContext(precision, RoundingMode.HALF_EVEN));
-                if (rounded.doubleValue() == value) {
-                    shortest = rounded;
+            BigDecimal shortest;
+            for (int precision = 1; ; precision++) {
+                shortest = exact.round(new MathContext(precision, RoundingMode.HALF_EVEN));
+                if (shortest.doubleValue() == value) {
                     break;
                 }
             }
@@ -393,7 +369,7 @@ final class Toml {
     }
 
     private static String lit(String literal) {
-        return literal.equals("\n") ? "newline" : literal.equals("`") ? "'`'" : "`" + literal + "`";
+        return literal.equals("\n") ? "newline" : "`" + literal + "`";
     }
 
     private static final int T_DOT = 0;
@@ -710,13 +686,12 @@ final class Toml {
         }
 
         private int afterLastSignificantToken() {
-            for (int i = pos - 1; i >= 0; i--) {
+            for (int i = pos - 1; ; i--) {
                 int kind = tk.a[i];
                 if (kind != T_WS && kind != T_COMMENT && kind != T_NEWLINE && kind != T_EOF) {
                     return te.a[i];
                 }
             }
-            return 0;
         }
 
         void document() {
@@ -756,7 +731,7 @@ final class Toml {
             optWhitespace();
             if (peek() == T_EQUALS) {
                 onKeyValSep(pos++);
-            } else if (pos < tk.n) {
+            } else {
                 int at = ts.a[pos];
                 throw fail(missing, at, at, lit("="));
             }
@@ -793,12 +768,9 @@ final class Toml {
                     throw fail("unclosed array table", te.a[close], te.a[close], lit("]"));
                 }
             } else if (validKey) {
-                int last = open;
-                for (int i = pos - 1; i >= 0; i--) {
-                    if (tk.a[i] != T_WS) {
-                        last = i;
-                        break;
-                    }
+                int last = pos - 1;
+                while (tk.a[last] == T_WS) {
+                    last--;
                 }
                 int at = te.a[last];
                 throw fail(array ? "unclosed array table" : "unclosed table", at, at, lit(array ? "]]" : "]"));
@@ -811,7 +783,7 @@ final class Toml {
         }
 
         private boolean key() {
-            while (pos < tk.n) {
+            while (true) {
                 int t = pos++;
                 int at = ts.a[t];
                 switch (tk.a[t]) {
@@ -831,17 +803,14 @@ final class Toml {
                     }
                 }
             }
-            int at = afterLastSignificantToken();
-            throw fail("invalid table", at, at, "key");
         }
 
         private boolean optDotKeys() {
             optWhitespace();
             dots:
             while (peek() == T_DOT) {
-                int dot = pos++;
-                event(E_KEY_SEP, dot);
-                while (pos < tk.n) {
+                event(E_KEY_SEP, pos++);
+                while (true) {
                     int t = pos++;
                     int at = ts.a[t];
                     switch (tk.a[t]) {
@@ -862,16 +831,11 @@ final class Toml {
                         }
                     }
                 }
-                emptyKey(te.a[dot]);
             }
             return true;
         }
 
         private void onValue() {
-            if (pos >= tk.n) {
-                int after = afterLastSignificantToken();
-                throw fail("missing value", after, after, "value");
-            }
             int t = pos++;
             int at = ts.a[t];
             if (tk.a[t] == T_EQUALS) {
@@ -894,12 +858,12 @@ final class Toml {
             int end = te.a[t];
             if (tk.a[t] == T_DOT || tk.a[t] == T_ATOM) {
                 scan:
-                while (pos < tk.n) {
+                while (true) {
                     switch (tk.a[pos]) {
                         case T_WS -> {
                             // Only a date-time may hold a space. Whether this one may is the
                             // second pass's call.
-                            if (pos + 1 < tk.n && tk.a[pos + 1] == T_ATOM) {
+                            if (tk.a[pos + 1] == T_ATOM) {
                                 end = te.a[pos + 1];
                                 pos += 2;
                             } else {
@@ -1064,7 +1028,7 @@ final class Toml {
         }
 
         private void wsCommentNewline() {
-            while (pos < tk.n) {
+            while (true) {
                 int t = pos++;
                 switch (tk.a[t]) {
                     case T_WS -> event(E_WS, t);
@@ -1093,21 +1057,16 @@ final class Toml {
                 }
             }
             event(E_COMMENT, comment);
-            if (pos >= tk.n) {
-                return;
-            }
+            // The lexer ends a comment at a line break or at the end, so a newline or EOF follows.
             int t = pos++;
-            switch (tk.a[t]) {
-                case T_NEWLINE -> newline(t);
-                case T_EOF -> {}
-                default ->
-                    throw fail("unexpected content between comment and newline", ts.a[t], ts.a[t], lit("\n"));
+            if (tk.a[t] == T_NEWLINE) {
+                newline(t);
             }
         }
 
         // Reached only after a table header whose key was a silent stand-in.
         private void ignoreToNewline() {
-            while (pos < tk.n) {
+            while (true) {
                 int t = pos++;
                 switch (tk.a[t]) {
                     case T_WS -> event(E_WS, t);
@@ -1144,14 +1103,12 @@ final class Toml {
                     case E_KEY -> {
                         List<Key> path = new ArrayList<>();
                         Key key = onKey(e, path);
-                        if (ep < ek.n && ek.a[ep] == E_WS) {
+                        if (ek.a[ep] == E_WS) {
                             ep++;
                         }
-                        if (ep >= ek.n || ek.a[ep++] != E_KEY_VAL_SEP) {
-                            finishTable();
-                            return root;
-                        }
-                        if (ep < ek.n && ek.a[ep] == E_WS) {
+                        // The first pass always put the `=` here.
+                        ep++;
+                        if (ek.a[ep] == E_WS) {
                             ep++;
                         }
                         captureKeyValue(path, key, buildValue());
@@ -1222,25 +1179,12 @@ final class Toml {
         }
 
         private Value buildValue() {
-            if (ep < ek.n) {
-                int e = ep++;
-                switch (ek.a[e]) {
-                    case E_INLINE_TABLE_OPEN -> {
-                        return inlineTable(e);
-                    }
-                    case E_ARRAY_OPEN -> {
-                        return array(e);
-                    }
-                    case E_SCALAR -> {
-                        return decodeScalar(e);
-                    }
-                    default -> {}
-                }
-            }
-            Value zero = new Value(source, Kind.INTEGER, 0, 0);
-            zero.text = "0";
-            zero.radix = 10;
-            return zero;
+            int e = ep++;
+            return switch (ek.a[e]) {
+                case E_INLINE_TABLE_OPEN -> inlineTable(e);
+                case E_ARRAY_OPEN -> array(e);
+                default -> decodeScalar(e);
+            };
         }
 
         private Value array(int open) {
@@ -1248,7 +1192,7 @@ final class Toml {
             Value pending = null;
             int end = ee.a[open];
             scan:
-            while (ep < ek.n) {
+            while (true) {
                 int e = ep++;
                 end = ee.a[e];
                 switch (ek.a[e]) {
@@ -1264,10 +1208,7 @@ final class Toml {
                             break scan;
                         }
                     }
-                    case E_WS, E_COMMENT, E_NEWLINE, E_ERROR -> {}
-                    default -> {
-                        break scan;
-                    }
+                    default -> {}
                 }
             }
             Value value = new Value(source, Kind.ARRAY, es.a[open], end);
@@ -1283,7 +1224,7 @@ final class Toml {
             Value pending = null;
             int end = ee.a[open];
             scan:
-            while (ep < ek.n) {
+            while (true) {
                 int e = ep++;
                 end = ee.a[e];
                 switch (ek.a[e]) {
@@ -1304,10 +1245,7 @@ final class Toml {
                             break scan;
                         }
                     }
-                    case E_KEY_VAL_SEP, E_WS, E_COMMENT, E_NEWLINE, E_ERROR -> {}
-                    default -> {
-                        break scan;
-                    }
+                    default -> {}
                 }
             }
             Value value = new Value(source, Kind.TABLE, es.a[open], end);
@@ -1371,11 +1309,7 @@ final class Toml {
                     if (!value.arrayOfTables) {
                         throw cannotExtend("array", part);
                     }
-                    Value last = value.items.get(value.items.size() - 1);
-                    if (last.kind != Kind.TABLE) {
-                        throw cannotExtend(last.kind.typeStr, part);
-                    }
-                    table = last.table;
+                    table = value.items.get(value.items.size() - 1).table;
                 } else if (value.kind == Kind.TABLE) {
                     Table child = value.table;
                     if (child.inline) {
@@ -1413,9 +1347,6 @@ final class Toml {
                 root = finished;
                 return;
             }
-            if (h.key == null) {
-                return;
-            }
             Table parent = descend(root, h.path, false);
             Value value = tableValue(finished, h.start, h.end);
             if (!h.array) {
@@ -1436,7 +1367,7 @@ final class Toml {
         }
 
         private void startTable(Header h) {
-            if (!h.array && h.key != null) {
+            if (!h.array) {
                 // Looked up at the header, not when the table ends, so the duplicate is
                 // reported on the redefining line.
                 Table parent = descend(root, h.path, false);
@@ -1546,9 +1477,6 @@ final class Toml {
 
         private String mlLiteralString(int start, int end) {
             String invalid = "invalid multi-line literal string";
-            if (!startsWith(start, '\'', 3) || start + 3 > end) {
-                throw fail(invalid, start, start, lit("'"));
-            }
             int a = skipStartNewline(start + 3, end);
             int b = end;
             if (b - a >= 3 && startsWith(b - 3, '\'', 3)) {
@@ -1574,12 +1502,7 @@ final class Toml {
 
         private String basicString(int start, int end) {
             String invalid = "invalid basic string";
-            int a = start;
-            if (a < end && s[a] == '"') {
-                a++;
-            } else {
-                throw fail(invalid, start, start, lit("\""));
-            }
+            int a = start + 1;
             int b = end;
             if (b > a && s[b - 1] == '"') {
                 b--;
@@ -1655,9 +1578,6 @@ final class Toml {
 
         private String mlBasicString(int start, int end) {
             String invalid = "invalid multi-line basic string";
-            if (!startsWith(start, '"', 3) || start + 3 > end) {
-                throw fail(invalid, start, start, lit("\""));
-            }
             int a = skipStartNewline(start + 3, end);
             int b = end;
             if (b - a >= 3 && startsWith(b - 3, '"', 3)) {
@@ -1800,10 +1720,7 @@ final class Toml {
                 // A leading underscore or dot reads as a mistyped number, not as a bare string.
                 case '_', '1', '2', '3', '4', '5', '6', '7', '8', '9' -> dateOrNumber(0);
                 case '0' -> zeroPrefixed(0, false);
-                case '.' -> {
-                    ensureFloat(0);
-                    yield number(0, Kind.FLOAT, 10);
-                }
+                case '.' -> throw fail("invalid mantissa", 0, 0, "digits");
                 case 't', 'T' -> symbol("true", Kind.BOOLEAN);
                 case 'f', 'F' -> symbol("false", Kind.BOOLEAN);
                 case 'i', 'I' -> symbol("inf", Kind.FLOAT);
@@ -1835,9 +1752,6 @@ final class Toml {
 
         private Value symbol(String symbol, Kind kind) {
             if (!raw.equals(symbol)) {
-                if (raw.contains(" ")) {
-                    throw invalid();
-                }
                 String description = kind == Kind.BOOLEAN ? "invalid boolean" : "invalid float";
                 throw fail(description, 0, raw.length(), lit(symbol));
             }
@@ -1865,8 +1779,7 @@ final class Toml {
                 }
                 case '.' -> {
                     // The crate checks the signed text here, so the sign is what it rejects.
-                    ensureFloat(0);
-                    return number(0, Kind.FLOAT, 10);
+                    throw fail("invalid mantissa", 0, 0, "digits");
                 }
                 case 'i', 'I', 'n', 'N' -> {
                     String symbol = first == 'i' || first == 'I' ? "inf" : "nan";
@@ -2145,10 +2058,8 @@ final class Toml {
                 }
                 hasDate = true;
             }
-            case D_COLON -> lexer.at = 0;
-            default -> {
-                return problem(null, "`-` (YYYY-MM) or `:` (HH:MM)");
-            }
+            // The caller only passes text whose leading digits are followed by `-` or `:`.
+            default -> lexer.at = 0;
         }
 
         boolean hasTime = true;
