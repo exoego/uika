@@ -24,9 +24,12 @@ $ clojure -T:uika upgrade-check :before '"/tmp/before.json"' :after '"/tmp/after
 
 The dump records the resolved Maven coordinates from the project's own
 `deps.edn` basis (`:local/root` and git deps are coordinate-less, like the other
-tools' project dependencies), and `upgrade-check` downloads the platform binary
-from Maven Central (`UIKA_CLI_URL` to override the URL, `UIKA_CLI_PATH` to skip
-the download, or `:cli-path` to do the same from the call). The binary's version
+tools' project dependencies), and `upgrade-check` downloads the CLI jar
+from Maven Central into `~/.cache/uika` (`UIKA_CLI_URL` to override the URL,
+`UIKA_CLI_PATH` to skip the download, or `:cli-path` to do the same from the
+call). The jar runs on the JVM that runs the tool, which therefore has to be
+Java 17 or newer. On an older one, point `:cli-path` at a native uika binary
+instead. The CLI's version
 is taken from the tool's own coordinate in the runtime basis, so the one
 `:mvn/version` in the alias pins the tool and the CLI together;
 `:cli-version` and `UIKA_CLI_VERSION` override it, in that order.
@@ -207,10 +210,12 @@ where this tool says `:exclude-file` and `:class-load-log`.
 - `:jfr` and `:class-load-log` supply
   [runtime load evidence](#runtime-load-evidence-jfr), below.
   `:draft-exclude-file` is where rules drafted from it are written.
-- `:cli-version` and `:cli-path` pick the binary, and `UIKA_CLI_VERSION`,
-  `UIKA_CLI_PATH` and `UIKA_CLI_URL` do the same from the environment. A path that
-  is not an executable file fails naming the one you set, `:cli-path` or the
-  variable.
+- `:cli-version` and `:cli-path` pick the CLI, and `UIKA_CLI_VERSION`,
+  `UIKA_CLI_PATH` and `UIKA_CLI_URL` do the same from the environment. The path
+  takes the jar or a native binary. A path that is not a file, or a native binary
+  that is not executable, fails naming the one you set, `:cli-path` or the
+  variable. `UIKA_CLI_URL` has to name the jar. A platform ZIP, which it named
+  before the CLI became a jar, fails naming the variable.
 - `dump-classpath` alone takes `:output` (default
   `target/uika/classpath.json`), `:dir` to point at another project's
   `deps.edn` (default: where the tool was invoked), `:aliases` to include in

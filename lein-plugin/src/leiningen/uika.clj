@@ -152,8 +152,8 @@
                 draft-exclude-file merged-classpath]
          :as opts} (:uika project)]
     (check-options opts)
-    ;; Binary resolution sits INSIDE the try: an unsupported platform, a zip missing
-    ;; the binary and a failed download all throw from here, and lein answers any
+    ;; CLI resolution sits INSIDE the try: a download that is not the jar, a failed
+    ;; download and a JVM too old for the jar all throw from here, and lein answers any
     ;; exception without :exit-code with a full cause trace. IOException is caught
     ;; alongside ex-info because a download failure is not an ex-info at all.
     (try

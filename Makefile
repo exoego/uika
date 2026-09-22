@@ -275,17 +275,17 @@ mill-coverage: jacoco-tools
 # cargo-build supplies the real binary for the round-trip integration test:
 # the tool writes v2 JSON by hand instead of sharing DumpFormat, so only a run
 # against the real CLI can catch the two drifting apart.
-clojure-test: cargo-build
+clojure-test: java-cli-build
 	cd $(CLOJURE_TOOL_DIR) && $(CLOJURE) -T:build javac
-	cd $(CLOJURE_TOOL_DIR) && UIKA_BIN=$(abspath target/debug/uika) $(CLOJURE) -M:test
+	cd $(CLOJURE_TOOL_DIR) && UIKA_BIN=$(JAVA_CLI_JAR) $(CLOJURE) -M:test
 
 # Cloverage writes SF: paths relative to this directory, so they need the prefix Codecov
 # resolves from. Rewritten in place, which is safe because the run above regenerates the file.
 # CLOJURE_LCOV is not a knob: cloverage is run without --output, so this is where it writes.
 CLOJURE_LCOV = $(CLOJURE_TOOL_DIR)/target/coverage/lcov.info
-clojure-coverage: cargo-build
+clojure-coverage: java-cli-build
 	cd $(CLOJURE_TOOL_DIR) && $(CLOJURE) -T:build javac
-	cd $(CLOJURE_TOOL_DIR) && UIKA_BIN=$(abspath target/debug/uika) $(CLOJURE) -M:coverage
+	cd $(CLOJURE_TOOL_DIR) && UIKA_BIN=$(JAVA_CLI_JAR) $(CLOJURE) -M:coverage
 	sed 's|^SF:|SF:$(CLOJURE_TOOL_DIR)/|' $(CLOJURE_LCOV) > $(CLOJURE_LCOV).tmp
 	mv $(CLOJURE_LCOV).tmp $(CLOJURE_LCOV)
 
@@ -299,9 +299,9 @@ clojure-stage:
 # mise exec puts lein itself on PATH for the script.
 # The unit suite runs here too, not only under lein-coverage: a test reached by nothing
 # but the coverage target is a test that rots without failing anything.
-lein-test: cargo-build
+lein-test: java-cli-build
 	cd $(LEIN_PLUGIN_DIR) && $(LEIN) test
-	UIKA_BIN=$(abspath target/debug/uika) UIKA_IT_ALT_JAVA=$(UIKA_IT_ALT_JAVA) \
+	UIKA_BIN=$(JAVA_CLI_JAR) UIKA_IT_ALT_JAVA=$(UIKA_IT_ALT_JAVA) \
 		mise exec -- sh $(LEIN_PLUGIN_DIR)/it/run.sh
 
 # Cloverage instruments namespaces in the JVM it reports from, so it drives the unit

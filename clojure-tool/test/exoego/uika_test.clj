@@ -130,36 +130,93 @@
            (some-> (scrape #"int MIN_RELEASE = (\d+);") parse-long)))
     (is (= @#'uika.core/cli-group (scrape #"String GROUP = \"([^\"]+)\";")))
     (is (= @#'uika.core/cli-artifact (scrape #"String ARTIFACT = \"([^\"]+)\";")))
-    ;; The published-classifier list is compared WHOLE, scraped from the one message the
-    ;; Java side maintains next to its dispatch. A fixed vocabulary would let a new
-    ;; platform slip past, and a whole-file classifier scrape would count javadoc text.
-    (let [java-list (scrape #"\(available: ([^)]+)\)")
-          fake (fn [os arch]
-                 (let [orig-os (System/getProperty "os.name")
-                       orig-arch (System/getProperty "os.arch")]
-                   (try
-                     (System/setProperty "os.name" os)
-                     (System/setProperty "os.arch" arch)
-                     (try (#'uika.core/platform-classifier)
-                          (catch clojure.lang.ExceptionInfo e (ex-message e)))
-                     (finally
-                       (System/setProperty "os.name" orig-os)
-                       (System/setProperty "os.arch" orig-arch)))))]
-      (is (some? java-list) "could not scrape the (available: ...) list from UikaCli.java")
-      (is (str/includes? (str (fake "solaris" "sparc"))
-                         (str "(available: " java-list ")"))
-          "the ported error message must carry the Java side's list verbatim")
-      ;; The DISPATCH is pinned too, driven by the scraped list rather than a hardcoded
-      ;; table: every published classifier must come back from the cond for a matching
-      ;; os/arch, so a misspelled token cannot hide behind an accurate error string.
-      (doseq [classifier (map str/trim (str/split (str java-list) #","))]
-        (let [[os-token arch] (str/split classifier #"-" 2)
-              os ({"linux" "Linux" "macos" "Mac OS X" "windows" "Windows 11"} os-token)]
-          (is (some? os)
-              (str "unknown OS token in " classifier "; extend the sync test's os map"))
-          (when os
-            (is (= classifier (fake os arch))
-                (str classifier " did not dispatch from " os "/" arch))))))))
+    (is (= @#'uika.core/cli-jar-classifier (scrape #"String JAR_CLASSIFIER = \"([^\"]+)\";")))
+    ;; The JVM flags for the CLI jar. UikaCli's own copy is pinned to the jar's launcher
+    ;; by LauncherFlagsSyncTest, so holding this port to UikaCli holds it to the launcher.
+    (is (= @#'uika.core/jvm-flags
+           (some->> (scrape #"JVM_FLAGS =\s+List\.of\(([^)]*)\)") (re-seq #"\"([^\"]+)\"") (mapv second))))
+    (is (= @#'uika.core/small-run-flag (scrape #"String SMALL_RUN_FLAG = \"([^\"]+)\";")))
+    (is (= @#'uika.core/large (some-> (scrape #"int LARGE = (\d+);") parse-long)))
+    (is (= @#'uika.core/dump-bytes-per-artifact
+           (some-> (scrape #"int DUMP_BYTES_PER_ARTIFACT = (\d+);") parse-long)))
+    (is (str/includes? java-src "command.add(\"-Duika.child=true\")")
+        "the property that switches the jar's relaunch off was renamed")))
+
+(deftest the-cli-jar-is-started-on-this-jvm-with-the-launcher-flags
+  (let [dir (temp-dir)
+        before (io/file dir "before.json")
+        after (io/file dir "after.json")
+        launch #(#'uika.core/launch-command % (str before) (str after))]
+    (spit before "{}")
+    (spit after "{}")
+    (let [command (launch (io/file dir "uika-cli-1.2.3.jar"))]
+      (is (= (str (io/file (System/getProperty "java.home") "bin" "java")) (first command)))
+      (is (= (conj @#'uika.core/jvm-flags @#'uika.core/small-run-flag)
+             (subvec command 1 (- (count command) 3))))
+      ;; Without the property the real jar starts a second JVM for its flags, and the one
+      ;; started here idles for the whole check.
+      (is (= ["-Duika.child=true" "-jar" (str (io/file dir "uika-cli-1.2.3.jar"))]
+             (subvec command (- (count command) 3)))))
+    ;; C1 alone loses to C2 on a large scan, and the dumps' size is the only measure of
+    ;; the scan that costs nothing to read.
+    (spit before (apply str (repeat (* 150 800) " ")))
+    (is (not-any? #{@#'uika.core/small-run-flag} (launch (io/file dir "uika-cli.jar"))))
+    (is (= [(str (io/file dir "uika"))] (launch (io/file dir "uika")))
+        "a native binary starts itself")))
+
+(deftest a-jar-needs-no-executable-bit
+  ;; No download or artifact round trip leaves a jar executable, and a JVM runs it anyway.
+  (let [jar (io/file (temp-dir) "uika-cli-1.2.3.jar")]
+    (spit jar "PK")
+    (.setExecutable jar false false)
+    (is (= (.getPath jar)
+           (.getPath (uika.core/resolve-binary {:cli-path (.getPath jar)}
+                                               (constantly nil) "usage hint" (constantly nil)))))))
+
+(defn- write-jar
+  "A jar at `file`, runnable when `main-class` is given."
+  [file main-class]
+  (let [manifest (java.util.jar.Manifest.)]
+    (.put (.getMainAttributes manifest) java.util.jar.Attributes$Name/MANIFEST_VERSION "1.0")
+    (when main-class
+      (.put (.getMainAttributes manifest) java.util.jar.Attributes$Name/MAIN_CLASS main-class))
+    (with-open [_ (java.util.jar.JarOutputStream. (io/output-stream file) manifest)])
+    file))
+
+(deftest the-default-download-names-the-classified-jar
+  ;; No test downloads from Central, so the URL is the one thing between the ports being
+  ;; in sync and the fetch actually finding the file the release publishes.
+  (is (= "https://repo1.maven.org/maven2/net/exoego/uika/uika-cli/1.2.3/uika-cli-1.2.3-jvm.jar"
+         (#'uika.core/central-url "1.2.3"))))
+
+(deftest the-cli-jar-is-downloaded-once-and-a-zip-is-refused
+  ;; user.home is redirected because the cache lives under it, and the URL knob is read
+  ;; through the private env helper, which System/getenv cannot stand in for.
+  (let [home (temp-dir)
+        source (temp-dir)
+        jar (write-jar (io/file source "uika-cli.jar") "net.exoego.uika.cli.Main")
+        zip (write-jar (io/file source "uika-cli-linux-x86_64.zip") nil)
+        original-home (System/getProperty "user.home")
+        fetch (fn [version file]
+                (with-redefs-fn {#'uika.core/env (fn [k] (when (= k "UIKA_CLI_URL")
+                                                           (str (.toURL (.toURI ^java.io.File file)))))}
+                  #(with-out-str (uika.core/fetch-cli version))))]
+    (try
+      (System/setProperty "user.home" home)
+      (fetch "1.2.3" jar)
+      (let [cached (io/file home ".cache" "uika" "cli-1.2.3" "uika-cli-1.2.3.jar")]
+        (is (.isFile cached))
+        ;; The second call must not fetch again, or an air-gapped rerun would fail.
+        (.delete jar)
+        (fetch "1.2.3" jar)
+        (is (.isFile cached)))
+      ;; The knob named the platform ZIP before the CLI became a jar. It must fail here
+      ;; and by name, and leave nothing in the cache for the next run to trust.
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"UIKA_CLI_URL must name the uika-cli jar"
+                            (fetch "9.9.9" zip)))
+      (is (empty? (.list (io/file home ".cache" "uika" "cli-9.9.9"))))
+      (finally
+        (System/setProperty "user.home" original-home)))))
 
 (deftest the-command-port-carries-every-uikacli-flag
   ;; core.clj hand-ports UikaCli.runUpgradeCheck's command building, and its docstring
