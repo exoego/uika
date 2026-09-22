@@ -303,6 +303,12 @@ class DumpTest {
                 "cannot read classpath dump " + missing + ": No such file or directory",
                 assertThrows(UikaException.class, () -> Dump.loadDump(missing)).getMessage());
 
+        Path latin1 = dir.resolve("latin1.json");
+        Files.write(latin1, "{\"modules\":[{\"module\":\":caf\u00e9\"}]}".getBytes(StandardCharsets.ISO_8859_1));
+        assertEquals(
+                "cannot read classpath dump " + latin1 + ": not valid UTF-8",
+                assertThrows(UikaException.class, () -> Dump.loadDump(latin1.toString())).getMessage());
+
         String broken = write("broken.json", "{\"modules\":[1,");
         assertEquals(
                 "invalid classpath dump " + broken + ": unexpected end of file, expected a value",

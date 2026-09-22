@@ -28,6 +28,9 @@ final class UikaException extends RuntimeException {
         if (cause instanceof java.nio.file.FileSystemException f && "Not a directory".equals(f.getReason())) {
             return "Not a directory";
         }
+        if (cause instanceof java.nio.charset.CharacterCodingException) {
+            return "not valid UTF-8";
+        }
         String message = cause.getMessage();
         return message == null ? cause.getClass().getSimpleName() : message;
     }
