@@ -679,9 +679,6 @@ final class Input {
 
     static byte[] relativeName(Path root, Path file) {
         String relative = root.relativize(file).toString();
-        if (java.io.File.separatorChar != '/') {
-            relative = relative.replace(java.io.File.separatorChar, '/');
-        }
         return relative.replace('\\', '/').getBytes(StandardCharsets.UTF_8);
     }
 
