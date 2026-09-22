@@ -49,7 +49,7 @@ final class Report {
      * name column. The indent is derived from TAG_WIDTH, so it cannot drift.
      */
     private static String replacementHint(List<Integer> replacements) {
-        if (replacements == null || replacements.isEmpty()) {
+        if (replacements.isEmpty()) {
             return "";
         }
         StringBuilder out = new StringBuilder("\n");
@@ -164,10 +164,8 @@ final class Report {
         }
         if (kind.isRemoval()) {
             json.key("replacement_descriptors").beginArray();
-            if (c.replacementDescriptors() != null) {
-                for (int descriptor : c.replacementDescriptors()) {
-                    json.sym(descriptor);
-                }
+            for (int descriptor : c.replacementDescriptors()) {
+                json.sym(descriptor);
             }
             json.endArray();
         }
@@ -245,9 +243,6 @@ final class Report {
      * "Callable, long, TimeUnit, boolean". Null if the descriptor does not parse.
      */
     private static String prettyParams(String descriptor) {
-        if (!descriptor.startsWith("(")) {
-            return null;
-        }
         int close = descriptor.indexOf(')');
         if (close < 0) {
             return null;
@@ -848,7 +843,7 @@ final class Report {
                 line.append(", 💤 ").append(latent).append(" latent");
             }
             line.append(", ⚠️ ").append(unproven).append(" not proven reachable)");
-        } else if (latent > 0 && broken > 0) {
+        } else if (latent > 0) {
             line.append(" (of which 💤 ").append(latent).append(" latent)");
         }
         // Runtime load evidence (--class-load-log). The count stays out of evidence-less runs.
@@ -929,11 +924,13 @@ final class Report {
         // Same judgement the exit gate makes, so sections and --fail-on cannot drift.
         boolean axis = Tier.reachableAxisValid(report.appRootsMatched);
         for (Violation v : report.violations) {
-            switch (Tier.of(v, axis)) {
-                case BREAKS -> breaks.add(v);
-                case LATENT -> latent.add(v);
-                case UNPROVEN -> unproven.add(v);
-            }
+            List<Violation> tier =
+                    switch (Tier.of(v, axis)) {
+                        case BREAKS -> breaks;
+                        case LATENT -> latent;
+                        case UNPROVEN -> unproven;
+                    };
+            tier.add(v);
         }
         if (report.reachabilityComputed) {
             if (!breaks.isEmpty()) {
@@ -1165,11 +1162,12 @@ final class Report {
                         .append(modules.totalModules())
                         .append(" modules moved to another release\n");
                 for (ModuleOutcome o : jdkRuns) {
-                    String pair = o.jdkPair() == null ? "" : "JDK " + o.jdkPair()[0] + " -> " + o.jdkPair()[1];
                     out.append("    ")
                             .append(String.join(", ", o.jdkModules()))
-                            .append("  ")
-                            .append(pair)
+                            .append("  JDK ")
+                            .append(o.jdkPair()[0])
+                            .append(" -> ")
+                            .append(o.jdkPair()[1])
                             .append("  ")
                             .append(runCounts(o))
                             .append('\n');

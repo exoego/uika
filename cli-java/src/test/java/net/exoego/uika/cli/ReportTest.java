@@ -653,4 +653,370 @@ class ReportTest {
         out = Report.checkText(r);
         assertFalse(out.contains("suppressed"), out);
     }
+
+    /**
+     * upgrade-check can attach a suggestion to any violation, the structural ones included, so
+     * every reason needs its own sentence. With no referencing artifact the why-line stops at
+     * the version change.
+     */
+    @Test
+    void everyReasonReadsAsASuggestionSentence() {
+        List<Violation> violations = List.of(
+                classViolation("a/User", "x/Gone", Reason.CLASS_REMOVED, true, null),
+                memberViolation("a/User", "x/C", "<init>", "(I)V", RefKind.METHOD, Reason.METHOD_REMOVED),
+                memberViolation("a/User", "x/C", "f", "I", RefKind.FIELD, Reason.FIELD_REMOVED),
+                classViolation("a/User", "x/Hidden", Reason.CLASS_ACCESS_NARROWED, true, null),
+                memberViolation("a/User", "x/C", "m", "()V", RefKind.METHOD, Reason.METHOD_ACCESS_NARROWED),
+                memberViolation("a/User", "x/C", "g", "J", RefKind.FIELD, Reason.FIELD_ACCESS_NARROWED),
+                memberViolation("a/User", "x/C", "h", "Z", RefKind.FIELD, Reason.FIELD_BECAME_FINAL),
+                classViolation("a/User", "x/Abs", Reason.CLASS_BECAME_ABSTRACT, true, null),
+                memberViolation("a/User", "x/Flip", "run", "()V", RefKind.METHOD, Reason.CLASS_BECAME_INTERFACE),
+                classViolation("a/User", "x/Base", Reason.CLASS_BECAME_INTERFACE, true, null),
+                memberViolation("a/User", "x/Iface", "run", "()V", RefKind.INTERFACE_METHOD, Reason.INTERFACE_BECAME_CLASS),
+                classViolation("a/User", "x/Iface2", Reason.INTERFACE_BECAME_CLASS, true, null),
+                memberViolation("a/User", "x/C", "si", "()V", RefKind.METHOD, Reason.METHOD_BECAME_INSTANCE),
+                memberViolation("a/User", "x/C", "sf", "I", RefKind.FIELD, Reason.FIELD_BECAME_INSTANCE),
+                memberViolation("a/User", "x/C", "is", "()V", RefKind.METHOD, Reason.METHOD_BECAME_STATIC),
+                memberViolation("a/User", "x/C", "if", "I", RefKind.FIELD, Reason.FIELD_BECAME_STATIC),
+                classViolation("a/User", "x/Fin", Reason.CLASS_BECAME_FINAL, true, null),
+                classViolation("a/User", "x/Sealed", Reason.CLASS_BECAME_SEALED, true, null),
+                memberViolation("a/User", "x/C", "o", "()V", RefKind.METHOD, Reason.METHOD_BECAME_FINAL),
+                classViolation("a/User", "x/Final", Reason.EXTENDS_FINAL_CLASS, true, null),
+                memberViolation("a/User", "x/C", "a", "()V", RefKind.METHOD, Reason.METHOD_BECAME_ABSTRACT),
+                memberViolation("a/User", "x/C", "d", "()V", RefKind.METHOD, Reason.CONFLICTING_DEFAULT_METHODS),
+                classViolation("a/Provider", "x/Service", Reason.SERVICE_PROVIDER_REMOVED, true, null),
+                classViolation("a/Provider", "x/Service", Reason.SERVICE_PROVIDER_NOT_INSTANTIABLE, true, null));
+        Suggestion suggestion = new Suggestion(null, "g:owner", "1", "2", "ADVICE");
+        for (Violation v : violations) {
+            v.suggestion = suggestion;
+            v.reachable = true;
+        }
+        String out = Report.checkText(report(violations.toArray(new Violation[0])));
+        String block = """
+                💡 suggestion: ADVICE
+                    why: g:owner changed 1 -> 2:
+                        a.Provider can no longer be instantiated by ServiceLoader, but is still registered as a provider for x.Service
+                        a.Provider was removed, but is still registered as a META-INF/services provider for x.Service
+                        a.User extends or implements x.Iface2, which became a class
+                        a.User extends x.Base, which became an interface
+                        a.User extends x.Final, which is final on the runtime classpath
+                        x.Abs became abstract, but a.User still instantiates it
+                        x.C constructor (int) was removed, but a.User still instantiates it
+                        x.C.a() became abstract, but a.User does not implement it
+                        x.C.d() is now a default that a.User inherits from two unrelated interfaces
+                        x.C.f: int was removed, but a.User still accesses it
+                        x.C.g: long is no longer accessible, but a.User still accesses it
+                        x.C.h: boolean became final, but a.User still writes to it
+                        x.C.if: int became static, but a.User still accesses it as an instance member
+                        x.C.is() became static, but a.User still calls it as an instance member
+                        x.C.m() is no longer accessible, but a.User still calls it
+                        x.C.o() became final, but a.User still overrides it
+                        x.C.sf: int became an instance member, but a.User still accesses it as a static member
+                        x.C.si() became an instance member, but a.User still calls it as a static member
+                        x.Fin became final, but a.User still extends it
+                        x.Flip became an interface, but a.User was compiled against it as a class
+                        x.Gone was removed, but a.User still uses it
+                        x.Hidden is no longer accessible, but a.User still uses it
+                        x.Iface became a class, but a.User was compiled against it as an interface
+                        x.Sealed is now sealed and does not permit a.User, which extends or implements it
+                """;
+        assertTrue(out.contains(block), out);
+        assertEquals(1, count(out, "💡"), out);
+    }
+
+    /**
+     * Each reference-shaped reason names the error the JVM raises and when, which is what a
+     * reader greps production logs for. A constructor reads as one in the heading.
+     */
+    @Test
+    void referenceBlocksNameTheRuntimeErrorOfEveryReason() {
+        Check.Report r = report(
+                classViolation("a/User", "x/Hidden", Reason.CLASS_ACCESS_NARROWED, null, null),
+                classViolation("a/User", "x/Abs", Reason.CLASS_BECAME_ABSTRACT, null, null),
+                memberViolation("a/User", "x/Flip", "run", "()V", RefKind.METHOD, Reason.CLASS_BECAME_INTERFACE),
+                memberViolation("a/User", "x/Iface", "run", "()V", RefKind.INTERFACE_METHOD, Reason.INTERFACE_BECAME_CLASS),
+                memberViolation("a/User", "x/C", "<init>", "(I)V", RefKind.METHOD, Reason.METHOD_REMOVED),
+                memberViolation("a/User", "x/C", "m", "()V", RefKind.METHOD, Reason.METHOD_ACCESS_NARROWED),
+                memberViolation("a/User", "x/C", "g", "J", RefKind.FIELD, Reason.FIELD_ACCESS_NARROWED),
+                memberViolation("a/User", "x/C", "h", "Z", RefKind.FIELD, Reason.FIELD_BECAME_FINAL),
+                memberViolation("a/User", "x/C", "is", "()V", RefKind.METHOD, Reason.METHOD_BECAME_STATIC),
+                memberViolation("a/User", "x/C", "si", "()V", RefKind.METHOD, Reason.METHOD_BECAME_INSTANCE),
+                memberViolation("a/User", "x/C", "if", "I", RefKind.FIELD, Reason.FIELD_BECAME_STATIC),
+                memberViolation("a/User", "x/C", "sf", "I", RefKind.FIELD, Reason.FIELD_BECAME_INSTANCE));
+        r.reachabilityComputed = false;
+        String out = Report.checkText(r);
+        for (String expected : List.of(
+                "❌ x.Hidden\n    class access narrowed, throws IllegalAccessError at first use\n",
+                "❌ x.Abs\n    class became abstract, throws InstantiationError at first `new`\n",
+                "❌ x.Flip.run()\n    class became interface, throws IncompatibleClassChangeError at first call\n",
+                "❌ x.Iface.run()\n    interface became class, throws IncompatibleClassChangeError at first call\n",
+                "❌ x.C constructor (int)\n    constructor removed, throws NoSuchMethodError at first `new`\n",
+                "❌ x.C.m()\n    method access narrowed, throws IllegalAccessError at first call\n",
+                "❌ x.C.g: long\n    field access narrowed, throws IllegalAccessError at first access\n",
+                "❌ x.C.h: boolean\n    field became final, throws IllegalAccessError at first write\n",
+                "❌ x.C.is()\n    method became static, throws IncompatibleClassChangeError at first call\n",
+                "❌ x.C.si()\n    method became instance, throws IncompatibleClassChangeError at first call\n",
+                "❌ x.C.if: int\n    field became static, throws IncompatibleClassChangeError at first access\n",
+                "❌ x.C.sf: int\n    field became instance, throws IncompatibleClassChangeError at first access\n")) {
+            assertTrue(out.contains(expected), "missing " + Json.quote(expected) + "\n" + out);
+        }
+        assertEquals(12, count(out, "❌ x."), out);
+    }
+
+    /**
+     * A constructor call whose owner flipped kind keeps the flip as its reason. Only a removal
+     * or a narrowing is reworded to "constructor ...".
+     */
+    @Test
+    void aConstructorKeepsAKindFlipReason() {
+        Check.Report r =
+                report(memberViolation("a/User", "x/Flip", "<init>", "()V", RefKind.METHOD, Reason.CLASS_BECAME_INTERFACE));
+        r.reachabilityComputed = false;
+        String out = Report.checkText(r);
+        assertTrue(
+                out.startsWith(
+                        "❌ x.Flip constructor ()\n    class became interface, throws IncompatibleClassChangeError at first call\n"),
+                out);
+    }
+
+    /** Every structural reason pairs what the scanned class does with the error the JVM raises for it. */
+    @Test
+    void structuralBlocksPairEveryReasonWithItsError() {
+        Violation conflicting =
+                memberViolation("a/Impl", "x/C", "d", "()V", RefKind.METHOD, Reason.CONFLICTING_DEFAULT_METHODS);
+        conflicting.invocationFound = true;
+        Check.Report r = report(
+                classViolation("a/Sub", "x/Fin", Reason.CLASS_BECAME_FINAL, null, null),
+                classViolation("a/Sub2", "x/Sealed", Reason.CLASS_BECAME_SEALED, null, null),
+                classViolation("a/Sub3", "x/Final", Reason.EXTENDS_FINAL_CLASS, null, null),
+                conflicting,
+                classViolation("a/Provider", "x/Service", Reason.SERVICE_PROVIDER_REMOVED, null, null),
+                classViolation("a/Provider2", "x/Service", Reason.SERVICE_PROVIDER_NOT_INSTANTIABLE, null, null));
+        r.reachabilityComputed = false;
+        String out = Report.checkText(r);
+        assertEquals(
+                """
+                ❌ a.Impl  (consumer.jar)
+                    inherits x.C.d() as a default from two unrelated interfaces
+                        throws IncompatibleClassChangeError or AbstractMethodError when d is called
+
+                ❌ a.Provider  (consumer.jar)
+                    is still registered in this jar's META-INF/services as a provider for x.Service, but the class is gone
+                        throws ServiceConfigurationError (provider not found) when ServiceLoader loads it
+
+                ❌ a.Provider2  (consumer.jar)
+                    is registered in META-INF/services as a provider for x.Service, but is no longer a public concrete subtype of it with a public no-arg constructor
+                        throws ServiceConfigurationError (not a subtype, or provider could not be instantiated) when ServiceLoader loads it
+
+                ❌ a.Sub  (consumer.jar)
+                    extends x.Fin, which became final
+                        throws IncompatibleClassChangeError (VerifyError up to JDK 15) when Sub loads
+
+                ❌ a.Sub2  (consumer.jar)
+                    extends or implements x.Sealed, which is now sealed without permitting it
+                        throws IncompatibleClassChangeError when Sub2 loads
+
+                ❌ a.Sub3  (consumer.jar)
+                    extends x.Final, which is final on the runtime classpath
+                        throws IncompatibleClassChangeError (VerifyError up to JDK 15) when Sub3 loads
+
+                scanned 100 classes: ❌ 6 broken
+                """,
+                out);
+    }
+
+    /**
+     * Without app roots there is no reachability section, but latency comes from scanned
+     * bytecode, so the latent violations still get their own section and summary count.
+     */
+    @Test
+    void latentKeepsItsSectionWithoutReachability() {
+        Violation latent =
+                memberViolation("a/Idle", "x/C", "e", "()V", RefKind.METHOD, Reason.CONFLICTING_DEFAULT_METHODS);
+        latent.invocationFound = false;
+        Check.Report r = report(classViolation("a/Foo", "x/Gone", Reason.CLASS_REMOVED, null, null), latent);
+        r.reachabilityComputed = false;
+        String latentSection =
+                """
+                --------------------------------------------------------------------------------
+                💤 latent (no scanned code invokes the affected member)
+                --------------------------------------------------------------------------------
+
+                ❌ a.Idle  (consumer.jar)
+                    inherits x.C.e() as a default from two unrelated interfaces
+                        throws IncompatibleClassChangeError or AbstractMethodError only when e is first called (no invocation found in scanned bytecode)
+                """;
+        assertEquals(
+                """
+                ❌ x.Gone
+                    class removed, throws NoClassDefFoundError at first use
+                    used by 1 class:
+                        a.Foo  (consumer.jar)
+
+                """
+                        + latentSection
+                        + "\nscanned 100 classes: ❌ 2 broken (of which 💤 1 latent)\n",
+                Report.checkText(r));
+
+        // With nothing but latent violations the flat list is left out rather than printed empty.
+        Check.Report onlyLatent = report(latent);
+        onlyLatent.reachabilityComputed = false;
+        assertEquals(
+                latentSection + "\nscanned 100 classes: ❌ 1 broken (of which 💤 1 latent)\n",
+                Report.checkText(onlyLatent));
+    }
+
+    /**
+     * The graph walks always attach a member to these reasons, and the non-structural reasons
+     * never render here. Either mistake still has to print the reason and the owner.
+     */
+    @Test
+    void structuralLinesDegradeReadablyForAMalformedViolation() {
+        String loads = "throws IncompatibleClassChangeError (VerifyError up to JDK 15) when Sub loads";
+        for (Reason reason : List.of(
+                Reason.METHOD_BECAME_ABSTRACT,
+                Reason.METHOD_BECAME_FINAL,
+                Reason.CONFLICTING_DEFAULT_METHODS,
+                Reason.CLASS_REMOVED)) {
+            assertEquals(
+                    new Report.StructuralLines(reason.text + ": x.Base", loads),
+                    Report.structuralLines(classViolation("a/Sub", "x/Base", reason, null, null)));
+        }
+    }
+
+    /** Per-module attribution lands on the line that names the class, in both block shapes. */
+    @Test
+    void moduleAttributionFollowsTheReferencingLine() {
+        Violation reference = classViolation("a/Foo", "x/Gone", Reason.CLASS_REMOVED, null, null);
+        reference.modules = List.of(":app", ":web");
+        Violation structural = classViolation("a/Sub", "x/Fin", Reason.CLASS_BECAME_FINAL, null, null);
+        structural.modules = List.of(":app");
+        Check.Report r = report(reference, structural);
+        r.reachabilityComputed = false;
+        String out = Report.checkText(r);
+        assertTrue(out.contains("        a.Foo  (consumer.jar) [:app, :web]\n"), out);
+        assertTrue(out.contains("    extends x.Fin, which became final [:app]\n"), out);
+    }
+
+    /** Descriptors decode every primitive and array, and one that does not parse prints raw. */
+    @Test
+    void descriptorsDecodeOrFallBackToRaw() {
+        Check.Report r = report(
+                memberViolation("a/Foo", "x/C", "all", "(BCDFJSZ[Ljava/lang/String;)V", RefKind.METHOD, Reason.METHOD_REMOVED),
+                memberViolation("a/Foo", "x/C", "open", "(I", RefKind.METHOD, Reason.METHOD_REMOVED),
+                memberViolation("a/Foo", "x/C", "unterminated", "(Ljava/lang/String)V", RefKind.METHOD, Reason.METHOD_REMOVED),
+                memberViolation("a/Foo", "x/C", "unknown", "(Q)V", RefKind.METHOD, Reason.METHOD_REMOVED),
+                memberViolation("a/Foo", "x/C", "odd", "Q", RefKind.FIELD, Reason.FIELD_REMOVED),
+                memberViolation("a/Foo", "x/C", "bare", "[", RefKind.FIELD, Reason.FIELD_REMOVED));
+        r.reachabilityComputed = false;
+        String out = Report.checkText(r);
+        for (String heading : List.of(
+                "❌ x.C.all(byte, char, double, float, long, short, boolean, String[])\n",
+                "❌ x.C.open (I\n",
+                "❌ x.C.unterminated (Ljava/lang/String)V\n",
+                "❌ x.C.unknown (Q)V\n",
+                "❌ x.C.odd Q\n",
+                "❌ x.C.bare [\n")) {
+            assertTrue(out.contains(heading), "missing " + Json.quote(heading) + "\n" + out);
+        }
+        assertEquals(new Report.ParsedType("void", 1), Report.parseType("V"));
+        assertNull(Report.parseType("["));
+        assertNull(Report.parseType(""));
+    }
+
+    @Test
+    void aSingleUnverifiedReferenceIsSingular() {
+        Check.Report r = report();
+        r.unknownRefs = 1;
+        assertEquals(
+                "✅ scanned 100 classes: 0 broken, ❓ 1 unverified reference (hierarchy escapes the analyzed scope)\n",
+                Report.checkText(r));
+    }
+
+    /** Several jars per side are all named, each by file name, whatever the path separator. */
+    @Test
+    void checkHeaderNamesEveryJarOfASide() {
+        assertEquals(
+                "checked a-1.jar, b-1.jar -> a-2.jar against 2 scan targets\n\n",
+                Report.checkHeader(List.of("/x/a-1.jar", "C:\\x\\b-1.jar"), List.of("/y/a-2.jar"), 2));
+    }
+
+    @Test
+    void jdkHeaderNamesBothReleases() {
+        assertEquals("checked JDK 11 -> JDK 17 against 1 scan target\n\n", Report.checkHeaderJdk(11, 17, 1));
+        assertEquals("checked JDK 11 -> JDK 17 against 3 scan targets\n\n", Report.checkHeaderJdk(11, 17, 3));
+    }
+
+    /** A side with no version reads as "-", and the skipped modules are counted by why they were skipped. */
+    @Test
+    void upgradeTextListsEveryChangeKindAndSkippedModule() {
+        List<Dump.DependencyChange> changes = List.of(
+                new Dump.DependencyChange("g:changed", Dump.ChangeKind.CHANGED, List.of("1.0", "1.1"), List.of("2.0")),
+                new Dump.DependencyChange("g:removed", Dump.ChangeKind.REMOVED, List.of("1.0"), List.of()),
+                new Dump.DependencyChange("g:added", Dump.ChangeKind.ADDED, List.of(), List.of("3.0")));
+        Report.ModuleRunSummary summary = new Report.ModuleRunSummary(
+                List.of(new Report.ModuleOutcome(List.of(":app", ":web"), false, List.of(), null, 10, 0, 3)), 6, 2, 1, 1);
+        assertEquals(
+                """
+                dependency changes: 3
+                    CHANGED g:changed 1.0,1.1 -> 2.0
+                    REMOVED g:removed 1.0 -> -
+                    ADDED   g:added - -> 3.0
+
+                per-module check: 2 of 6 modules changed their resolved versions (2 unchanged, 1 new, 1 incomplete)
+                    :app, :web  scanned 10 classes, ✅ 0 broken, ❓ 3 unverified
+                """,
+                Report.upgradeText(changes, null, summary));
+    }
+
+    /** Only a JDK run carries the jdk keys, so a dependency run's JSON has none of them. */
+    @Test
+    void upgradeJsonMarksOnlyTheJdkRuns() {
+        Report.ModuleRunSummary summary = new Report.ModuleRunSummary(
+                List.of(
+                        outcome(List.of(":app"), List.of(), 1),
+                        outcome(List.of(":app (JDK 11 -> 17)"), List.of(":app"), 2)),
+                3,
+                1,
+                0,
+                0);
+        assertEquals(
+                """
+                {
+                  "changes": [],
+                  "module_runs": {
+                    "outcomes": [
+                      {
+                        "modules": [
+                          ":app"
+                        ],
+                        "scanned_classes": 10,
+                        "broken": 1,
+                        "unknown_refs": 0
+                      },
+                      {
+                        "modules": [
+                          ":app (JDK 11 -> 17)"
+                        ],
+                        "jdk": true,
+                        "jdk_modules": [
+                          ":app"
+                        ],
+                        "jdk_pair": [
+                          11,
+                          17
+                        ],
+                        "scanned_classes": 10,
+                        "broken": 2,
+                        "unknown_refs": 0
+                      }
+                    ],
+                    "total_modules": 3,
+                    "unchanged_modules": 1,
+                    "new_modules": 0,
+                    "incomplete_modules": 0
+                  }
+                }""",
+                Report.upgradeJson(List.of(), null, summary));
+    }
 }
