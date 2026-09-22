@@ -178,9 +178,9 @@ final class Toml {
             // serde's wording for an i64 field. No schema reads an integer yet, so unlike
             // the rest of this file it was never compared with the Rust binary.
             if (value.signum() > 0 && value.bitLength() <= 64) {
-                return fail("invalid value: integer `" + value + "`, expected i64");
+                throw error("invalid value: integer `" + value + "`, expected i64");
             }
-            return fail("invalid value: " + (value.bitLength() <= 127 ? "i128" : "u128") + ", expected i64");
+            throw error("invalid value: " + (value.bitLength() <= 127 ? "i128" : "u128") + ", expected i64");
         }
 
         List<Value> asArray() {
@@ -220,8 +220,8 @@ final class Toml {
             return source.error("invalid type: " + unexpected + ", expected " + expecting, start, end);
         }
 
-        private <T> T fail(String message) {
-            throw source.error(message, start, end);
+        private Error error(String message) {
+            return source.error(message, start, end);
         }
 
         private BigInteger integer() {
@@ -229,10 +229,10 @@ final class Toml {
             try {
                 value = new BigInteger(text, radix);
             } catch (NumberFormatException e) {
-                return fail("integer number overflowed");
+                throw error("integer number overflowed");
             }
             if (value.bitLength() > 128 || (value.signum() < 0 && value.bitLength() > 127)) {
-                return fail("integer number overflowed");
+                throw error("integer number overflowed");
             }
             return value;
         }
@@ -255,7 +255,7 @@ final class Toml {
             }
             double value = Double.parseDouble(text);
             if (Double.isInfinite(value)) {
-                return fail("floating-point number overflowed");
+                throw error("floating-point number overflowed");
             }
             if (value == 0) {
                 return 1 / value < 0 ? "-0.0" : "0.0";
