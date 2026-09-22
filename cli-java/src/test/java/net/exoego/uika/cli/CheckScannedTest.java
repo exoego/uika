@@ -6,13 +6,16 @@ import static net.exoego.uika.cli.CheckTest.classWithMethodAccess;
 import static net.exoego.uika.cli.CheckTest.intern;
 import static net.exoego.uika.cli.CheckTest.m;
 import static net.exoego.uika.cli.CheckTest.syms;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
 import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -192,6 +195,17 @@ final class CheckScannedTest {
 
     // ---- scans of real class files ----
 
+    /** The class-file form of {@code text}. Unlike UTF-8 it can hold a lone surrogate. */
+    private static byte[] modifiedUtf8(String text) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try {
+            new DataOutputStream(out).writeUTF(text);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return Arrays.copyOfRange(out.toByteArray(), 2, out.size());
+    }
+
     /** A minimal class-file writer: constant pool, header, members with code, and nest attributes. */
     private static final class ClassWriter {
         private final ByteArrayOutputStream pool = new ByteArrayOutputStream();
@@ -239,7 +253,7 @@ final class CheckScannedTest {
             if (known != null) {
                 return known;
             }
-            byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+            byte[] bytes = modifiedUtf8(text);
             pool.write(1);
             u16(pool, bytes.length);
             pool.writeBytes(bytes);
@@ -461,6 +475,50 @@ final class CheckScannedTest {
         assertEquals(1, report.unknownRefs);
         assertEquals(1, report.warnings.size());
         assertTrue(report.warnings.get(0).startsWith(cp + "!cp/Mid: truncated class file"), report.warnings.get(0));
+    }
+
+    /**
+     * JVMS 4.4.7 allows a lone surrogate in a name, and HotSpot 21 links a call through one,
+     * so these removals throw NoSuchMethodError.
+     */
+    @Test
+    void referencesNamedWithALoneSurrogateAreChecked() throws Exception {
+        String libOld = jar(
+                "lib-old.jar",
+                "lib/Owner.class", new ClassWriter("lib/Owner", JAVA_LANG_OBJECT).method(Acc.PUBLIC, "go\uD800", "()V", RETURN).bytes(),
+                "lib/Odd.class", new ClassWriter("lib/Odd\uDC00", JAVA_LANG_OBJECT).method(Acc.PUBLIC, "run", "()V", RETURN).bytes());
+        String libNew = jar(
+                "lib-new.jar",
+                "lib/Owner.class", new ClassWriter("lib/Owner", JAVA_LANG_OBJECT).bytes(),
+                "lib/Odd.class", new ClassWriter("lib/Odd\uDC00", JAVA_LANG_OBJECT).bytes());
+        ClassWriter caller = new ClassWriter("app/Call", JAVA_LANG_OBJECT);
+        int go = caller.memberRef(10, "lib/Owner", "go\uD800", "()V");
+        int run = caller.memberRef(10, "lib/Odd\uDC00", "run", "()V");
+        caller.method(Acc.PUBLIC, "call", "()V",
+                ACONST_NULL, INVOKEVIRTUAL, go >>> 8, go & 0xff, ACONST_NULL, INVOKEVIRTUAL, run >>> 8, run & 0xff, RETURN);
+        String app = jar("app.jar", "app/Call.class", caller.bytes());
+        List<String> warnings = new ArrayList<>();
+        ApiIndex oldLib = ApiIndex.fromPaths(List.of(libOld), warnings);
+        ApiIndex newLib = ApiIndex.fromPaths(List.of(libNew), warnings);
+        assertEquals(List.of(), warnings);
+
+        Check.Report report = Check.check(List.of(app), oldLib, newLib, List.of(libNew));
+
+        assertEquals(List.of(), report.warnings);
+        assertEquals(2, report.violations.size());
+        Violation odd = report.violations.get(0);
+        Violation owner = report.violations.get(1);
+        assertArrayEquals(modifiedUtf8("lib/Odd\uDC00"), Intern.bytes(odd.reference.owner()));
+        assertEquals("run", Intern.str(MemberKey.name(odd.reference.member())));
+        assertEquals("lib/Owner", Intern.str(owner.reference.owner()));
+        assertArrayEquals(modifiedUtf8("go\uD800"), Intern.bytes(MemberKey.name(owner.reference.member())));
+        for (Violation v : report.violations) {
+            assertEquals("app/Call", Intern.str(v.sourceClass));
+            assertEquals(Reason.METHOD_REMOVED, v.reason);
+        }
+        // A String cannot hold the surrogate's bytes, so the report shows U+FFFD in its place.
+        assertEquals("lib/Odd\uFFFD", Intern.str(odd.reference.owner()));
+        assertEquals(0, report.unknownRefs);
     }
 
     /** An unreadable jar or class yields no evidence; whatever else was read still counts. */

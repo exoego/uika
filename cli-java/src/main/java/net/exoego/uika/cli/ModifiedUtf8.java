@@ -10,6 +10,9 @@ import java.nio.ByteOrder;
  * <p>ASCII (nearly every real name) has the same bytes in both, so it is interned in place.
  * Anything else is accepted as-is when it is already valid UTF-8, and otherwise decoded
  * (the 0xC0 0x80 NUL and surrogate pairs written as two 3-byte sequences).
+ *
+ * <p>An unpaired surrogate is legal Modified UTF-8, and HotSpot loads and links names holding
+ * one, so it keeps its three bytes (generalized UTF-8). {@link Intern#str} shows it as U+FFFD.
  */
 final class ModifiedUtf8 {
     private static final VarHandle LONG_VIEW =
@@ -128,24 +131,13 @@ final class ModifiedUtf8 {
                     out[n++] = (byte) second;
                 } else if (width == 3) {
                     int third = cont(b, i++, end);
-                    boolean plain = switch (first) {
-                        case 0xE0 -> second >= 0xA0;
-                        case 0xED -> second <= 0x9F;
-                        default -> true;
-                    };
-                    if (plain) {
-                        out[n++] = (byte) first;
-                        out[n++] = (byte) second;
-                        out[n++] = (byte) third;
-                    } else if (first == 0xED && second >= 0xA0 && second <= 0xAF) {
-                        if (i >= end || (b[i++] & 0xff) != 0xED) {
-                            throw new ClassParser.FormatException(INVALID);
-                        }
-                        int fifth = cont(b, i++, end);
-                        if (fifth < 0xB0) {
-                            throw new ClassParser.FormatException(INVALID);
-                        }
-                        int sixth = cont(b, i++, end);
+                    if (first == 0xE0 && second < 0xA0) {
+                        throw new ClassParser.FormatException(INVALID);
+                    }
+                    if (first == 0xED && (second & 0xF0) == 0xA0 && startsLowSurrogate(b, i, end)) {
+                        int fifth = b[i + 1] & 0xff;
+                        int sixth = b[i + 2] & 0xff;
+                        i += 3;
                         int high = 0xD000 | (second & 0x3F) << 6 | (third & 0x3F);
                         int low = 0xD000 | (fifth & 0x3F) << 6 | (sixth & 0x3F);
                         int c = 0x10000 + (((high - 0xD800) << 10) | (low - 0xDC00));
@@ -154,7 +146,9 @@ final class ModifiedUtf8 {
                         out[n++] = (byte) (0x80 | ((c >> 6) & 0x3F));
                         out[n++] = (byte) (0x80 | (c & 0x3F));
                     } else {
-                        throw new ClassParser.FormatException(INVALID);
+                        out[n++] = (byte) first;
+                        out[n++] = (byte) second;
+                        out[n++] = (byte) third;
                     }
                 } else {
                     throw new ClassParser.FormatException(INVALID);
@@ -162,6 +156,10 @@ final class ModifiedUtf8 {
             }
         }
         return n;
+    }
+
+    private static boolean startsLowSurrogate(byte[] b, int i, int end) {
+        return i + 2 < end && (b[i] & 0xff) == 0xED && (b[i + 1] & 0xF0) == 0xB0 && isCont(b[i + 2] & 0xff);
     }
 
     private static int cont(byte[] b, int i, int end) throws ClassParser.FormatException {
