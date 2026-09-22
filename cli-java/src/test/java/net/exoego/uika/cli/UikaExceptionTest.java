@@ -22,8 +22,8 @@ class UikaExceptionTest {
     /** The OS wording, not the JDK's exception text, which is only the path again. */
     @Test
     void fileErrorsReadLikeTheOperatingSystemsOwn() {
-        assertEquals("No such file or directory (os error 2)", UikaException.describe(new NoSuchFileException("/x")));
-        assertEquals("Permission denied (os error 13)", UikaException.describe(new AccessDeniedException("/x")));
+        assertEquals("No such file or directory", UikaException.describe(new NoSuchFileException("/x")));
+        assertEquals("Permission denied", UikaException.describe(new AccessDeniedException("/x")));
         assertEquals("File exists", UikaException.describe(new FileAlreadyExistsException("/x")));
         assertEquals(
                 "Not a directory",

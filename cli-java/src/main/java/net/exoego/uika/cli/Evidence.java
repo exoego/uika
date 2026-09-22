@@ -233,8 +233,7 @@ final class Evidence {
 
     /**
      * Children in file-name byte order, a directory's contents where the directory sorts.
-     * That order decides which of two stacks for one class is the first. Messages follow
-     * walkdir, whose IO errors name the cause twice once the context chain is printed.
+     * That order decides which of two stacks for one class is the first.
      *
      * @param root the path as the user spelled it
      * @param display {@code root} plus the names walked so far
@@ -275,7 +274,7 @@ final class Evidence {
                 }
                 parseFile(childDisplay, child, loaded);
             } else if (!Files.exists(child) && Files.exists(child, LinkOption.NOFOLLOW_LINKS)) {
-                throw walkError(root, childDisplay, "No such file or directory (os error 2)");
+                throw walkError(root, childDisplay, "No such file or directory");
             }
         }
         ancestors.remove(ancestors.size() - 1);
@@ -283,7 +282,7 @@ final class Evidence {
 
     private static UikaException walkError(String root, String at, String io) {
         return new UikaException(
-                "cannot read class-load log directory " + root + ": IO error for operation on " + at + ": " + io + ": " + io);
+                "cannot read class-load log directory " + root + ": IO error for operation on " + at + ": " + io);
     }
 
     private static void parseFile(String display, Path path, Map<String, LoadRecord> loaded) {

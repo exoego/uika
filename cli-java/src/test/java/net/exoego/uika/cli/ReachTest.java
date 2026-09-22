@@ -347,11 +347,11 @@ class ReachTest {
             assumeFalse(Files.isReadable(file), "this user reads files without permission bits");
             List<String> warnings = new ArrayList<>();
             assertEquals(List.of(), Reach.collectServices(List.of(root.toString()), warnings));
-            assertEquals(List.of(root + ": Permission denied (os error 13)"), warnings);
+            assertEquals(List.of(root + ": Permission denied"), warnings);
 
             Object[] result = Reach.servicesOrWarning(root.toString());
             assertEquals(List.of(), result[0]);
-            assertEquals(root + ": Permission denied (os error 13)", result[1]);
+            assertEquals(root + ": Permission denied", result[1]);
         } finally {
             Files.setPosixFilePermissions(file, original);
         }

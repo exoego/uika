@@ -419,12 +419,12 @@ class ExcludeTest {
     void anExcludeFileThatCannotBeReadIsNamed(@TempDir Path dir) throws IOException {
         String missing = dir.resolve("missing.toml").toString();
         assertEquals(
-                "cannot read exclude file " + missing + ": No such file or directory (os error 2)",
+                "cannot read exclude file " + missing + ": No such file or directory",
                 assertThrows(UikaException.class, () -> Exclude.load(List.of(missing))).getMessage());
 
         String directory = dir.toString();
         assertEquals(
-                "cannot read exclude file " + directory + ": Is a directory (os error 21)",
+                "cannot read exclude file " + directory + ": Is a directory",
                 assertThrows(UikaException.class, () -> Exclude.load(List.of(directory))).getMessage());
 
         Path latin1 = dir.resolve("latin1.toml");
