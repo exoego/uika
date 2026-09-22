@@ -1215,12 +1215,12 @@ final class Check {
             int n = oldIndex.methodCount(e);
             for (int k = 0; k < n; k++) {
                 int oldAccess = oldIndex.methodAccessAt(e, k);
-                if ((oldAccess & Acc.FINAL) != 0 || isSyntheticOrBridge(oldAccess)) {
+                if ((oldAccess & Acc.FINAL) != 0) {
                     continue;
                 }
                 long key = oldIndex.methodKeyAt(e, k);
                 int newAccess = newIndex.findMethod(newEntry, key);
-                if (newAccess >= 0 && (newAccess & Acc.FINAL) != 0 && !isSyntheticOrBridge(newAccess)) {
+                if (newAccess >= 0 && (newAccess & Acc.FINAL) != 0 && !compilerGeneratedOnly(oldAccess, newAccess)) {
                     out.computeIfAbsent(className, c -> new LongSet()).add(key);
                 }
             }
@@ -1229,10 +1229,16 @@ final class Check {
     }
 
     /**
-     * Compiler-generated methods must not be the SUBJECT of a library-side became-abstract or
-     * became-final inference: a generic-signature edit can reshape a bridge without a
-     * source-visible API change. A consumer's explicit reference to one is still checked.
+     * A generic-signature edit can reshape a bridge without a source-visible API change, so a
+     * method that is synthetic or a bridge on every side where it exists is not the subject of
+     * a became-abstract or became-final inference. A real method on either side still is. A
+     * concrete bridge turned real abstract, a bridge turned real final, and a real method turned
+     * kotlinc's final collection bridge all break subclasses (JVM-confirmed).
      */
+    private static boolean compilerGeneratedOnly(int oldAccess, int newAccess) {
+        return isSyntheticOrBridge(newAccess) && (oldAccess < 0 || isSyntheticOrBridge(oldAccess));
+    }
+
     private static boolean isSyntheticOrBridge(int access) {
         return (access & (Acc.SYNTHETIC | Acc.BRIDGE)) != 0;
     }
@@ -1253,12 +1259,12 @@ final class Check {
             int n = newIndex.methodCount(e);
             for (int k = 0; k < n; k++) {
                 int newAccess = newIndex.methodAccessAt(e, k);
-                if ((newAccess & Acc.ABSTRACT) == 0 || isSyntheticOrBridge(newAccess)) {
+                if ((newAccess & Acc.ABSTRACT) == 0) {
                     continue;
                 }
                 long key = newIndex.methodKeyAt(e, k);
                 int oldAccess = oldIndex.findMethod(oldEntry, key);
-                if (oldAccess < 0 || ((oldAccess & Acc.ABSTRACT) == 0 && !isSyntheticOrBridge(oldAccess))) {
+                if ((oldAccess < 0 || (oldAccess & Acc.ABSTRACT) == 0) && !compilerGeneratedOnly(oldAccess, newAccess)) {
                     out.computeIfAbsent(className, c -> new LongSet()).add(key);
                 }
             }
