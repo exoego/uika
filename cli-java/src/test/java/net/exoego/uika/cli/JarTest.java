@@ -2,6 +2,7 @@ package net.exoego.uika.cli;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -9,7 +10,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.channels.ReadableByteChannel;
+import java.nio.channels.WritableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -578,5 +584,275 @@ class JarTest {
         List<Seen> seen = Input.concat(leaves);
         assertEquals(List.of("p/A", "p/C"), seen.stream().map(Seen::entry).toList());
         assertArrayEquals(classLike("ccc"), seen.get(1).bytes());
+    }
+
+    @Test
+    void releasingEntriesTwiceIsHarmless() throws Exception {
+        Jar.Entries entries = readAssembled("twice.jar", List.of(new Rec("p/A.class", classLike("a"))), -1);
+        entries.release();
+        // A second release must not hand the same columns to the pool again.
+        entries.release();
+        assertNull(entries.name);
+        assertEquals(0, entries.count);
+    }
+
+    // ---- (e) reads that fail ----
+
+    @Test
+    void aReadPastTheEndOrOnAClosedChannelAnswersFalse() throws Exception {
+        Path path = write("ten.bin", new byte[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
+        ByteBuffer buf = ByteBuffer.allocate(16);
+        try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {
+            assertTrue(Jar.readFully(channel, buf, 0, 10));
+            assertEquals(10, buf.get(9));
+            assertFalse(Jar.readFully(channel, buf, 5, 10));
+        }
+        FileChannel closed = FileChannel.open(path, StandardOpenOption.READ);
+        closed.close();
+        assertFalse(Jar.readFully(closed, buf, 0, 10));
+        assertNull(Jar.readEntries(closed, Scratch.current()));
+    }
+
+    /**
+     * A channel over a file that changed after it was opened: it reports a size the file no
+     * longer has, and fails reads below an offset.
+     */
+    private static final class ChangedChannel extends FileChannel {
+        private final FileChannel real;
+        private final long size;
+        private final long unreadableBelow;
+
+        ChangedChannel(FileChannel real, long size, long unreadableBelow) {
+            this.real = real;
+            this.size = size;
+            this.unreadableBelow = unreadableBelow;
+        }
+
+        @Override
+        public long size() {
+            return size;
+        }
+
+        @Override
+        public int read(ByteBuffer dst, long position) throws IOException {
+            if (position < unreadableBelow) {
+                throw new IOException("Input/output error");
+            }
+            return real.read(dst, position);
+        }
+
+        @Override
+        public int read(ByteBuffer dst) throws IOException {
+            return real.read(dst);
+        }
+
+        @Override
+        public long read(ByteBuffer[] dsts, int offset, int length) throws IOException {
+            return real.read(dsts, offset, length);
+        }
+
+        @Override
+        public int write(ByteBuffer src) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long write(ByteBuffer[] srcs, int offset, int length) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int write(ByteBuffer src, long position) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long position() throws IOException {
+            return real.position();
+        }
+
+        @Override
+        public FileChannel position(long newPosition) throws IOException {
+            real.position(newPosition);
+            return this;
+        }
+
+        @Override
+        public FileChannel truncate(long newSize) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void force(boolean metaData) {
+            // read-only
+        }
+
+        @Override
+        public long transferTo(long position, long count, WritableByteChannel target) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long transferFrom(ReadableByteChannel src, long position, long count) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public MappedByteBuffer map(MapMode mode, long position, long length) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public FileLock lock(long position, long length, boolean shared) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public FileLock tryLock(long position, long length, boolean shared) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        protected void implCloseChannel() throws IOException {
+            real.close();
+        }
+    }
+
+    @Test
+    void aJarThatShrankAfterItsSizeWasReadIsRefused() throws Exception {
+        Rec a = new Rec("p/A.class", classLike("a"));
+        Path path = write("shrank.jar", assemble(List.of(a), List.of(a), -1, 0));
+        try (FileChannel channel = new ChangedChannel(FileChannel.open(path, StandardOpenOption.READ), Files.size(path) + 500, 0)) {
+            assertNull(Jar.readEntries(channel, Scratch.current()));
+        }
+    }
+
+    @Test
+    void aDirectoryReadErrorOutsideTheTailIsRefused() throws Exception {
+        Rec a = new Rec("p/A.class", classLike("a"));
+        Rec filler = new Rec("filler.bin", new byte[80_000]);
+        // The same layout as the last archive-comment case: the directory starts before the tail read.
+        filler.cdComment = 600;
+        Path path = write("unreadable-directory.jar", assemble(List.of(filler, a), List.of(filler, a), -1, 0xffff));
+        long directory = a.localOffset + 30 + a.name.length + a.data.length;
+        long size = Files.size(path);
+        assertTrue(directory < size - 66_000, "the directory must start before the tail read");
+
+        try (FileChannel channel = new ChangedChannel(FileChannel.open(path, StandardOpenOption.READ), size, 0)) {
+            assertEquals(List.of("p/A"), names(Jar.readEntries(channel, Scratch.current())));
+        }
+        try (FileChannel channel = new ChangedChannel(FileChannel.open(path, StandardOpenOption.READ), size, directory + 1)) {
+            assertNull(Jar.readEntries(channel, Scratch.current()));
+        }
+    }
+
+    // ---- (f) an end record or a record that is not what it claims ----
+
+    private static byte[] withLe32(byte[] zip, int at, long value) {
+        byte[] out = zip.clone();
+        for (int k = 0; k < 4; k++) {
+            out[at + k] = (byte) (value >>> (8 * k));
+        }
+        return out;
+    }
+
+    @Test
+    void zip64MarkersInTheEndRecordSendTheJarToTheFallback() throws Exception {
+        Rec a = new Rec("p/A.class", classLike("a"));
+        byte[] zip = assemble(List.of(a), List.of(a), -1, 0);
+        int eocd = zip.length - 22;
+        assertNull(readEntries(write("cd-size.jar", withLe32(zip, eocd + 12, 0xFFFFFFFFL))));
+        assertNull(readEntries(write("cd-offset.jar", withLe32(zip, eocd + 16, 0xFFFFFFFFL))));
+    }
+
+    @Test
+    void aRecordWhoseNameRunsPastTheDirectoryIsRefused() throws Exception {
+        Rec a = new Rec("p/A.class", classLike("a"));
+        byte[] zip = assemble(List.of(a), List.of(a), -1, 0);
+        // The directory claims the fixed record part and two bytes of its nine-byte name.
+        assertNull(readEntries(write("cut-name.jar", withLe32(zip, zip.length - 22 + 12, 46 + 2))));
+    }
+
+    /**
+     * An order break found only after the window has moved on sends the parse back to the
+     * start of the directory, which the window no longer holds.
+     */
+    @Test
+    void anOrderBreakPastTheFirstWindowRereadsTheDirectory() throws Exception {
+        List<Rec> physical = new ArrayList<>();
+        String padding = "w".repeat(250);
+        for (int i = 0; i < 4000; i++) {
+            physical.add(new Rec("pkg/" + padding + "/C" + i + ".class", classLike("n" + i)));
+        }
+        List<Rec> central = new ArrayList<>(physical);
+        java.util.Collections.swap(central, central.size() - 2, central.size() - 1);
+        Path path = write("late-swap.jar", assemble(physical, central, -1, 0));
+
+        Jar.Entries entries = readEntries(path);
+        assertNotNull(entries);
+        assertEquals(physical.size(), entries.count);
+        for (int i = 0; i < physical.size(); i++) {
+            assertEquals("pkg/" + padding + "/C" + i, Intern.str(entries.name[i]));
+            assertEquals(physical.get(i).localOffset, entries.offset(i));
+        }
+        List<Seen> seen = stream(path);
+        assertEquals(physical.size(), seen.size());
+        assertArrayEquals(classLike("n3999"), seen.get(3999).bytes());
+    }
+
+    // ---- (g) entries the directory describes wrongly ----
+
+    private static List<Seen> streamCapturingWarnings(Path path, StringBuilder captured) {
+        java.io.PrintStream stderr = Out.err;
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try {
+            Out.err = new java.io.PrintStream(bytes, true, StandardCharsets.UTF_8);
+            return stream(path);
+        } finally {
+            Out.err.flush();
+            Out.err = stderr;
+            captured.append(bytes.toString(StandardCharsets.UTF_8));
+        }
+    }
+
+    @Test
+    void aLocalHeaderTooCloseToTheDirectoryIsSkippedWithAWarning() throws Exception {
+        Rec a = new Rec("p/A.class", classLike("a"));
+        Rec b = new Rec("p/B.class", classLike("b"));
+        int directory = 2 * (30 + 9 + 5);
+        b.cdOffset = directory - 10;
+        Path path = write("near-directory.jar", assemble(List.of(a, b), List.of(a, b), -1, 0));
+
+        StringBuilder captured = new StringBuilder();
+        List<Seen> seen = streamCapturingWarnings(path, captured);
+        assertEquals(List.of("p/A"), seen.stream().map(Seen::entry).toList());
+        assertEquals("warning: " + path + "!p/B.class: local header out of span\n", captured.toString());
+    }
+
+    @Test
+    void anEntryClaimingMoreDataThanItsSpanHoldsIsSkippedWithAWarning() throws Exception {
+        Rec a = new Rec("p/A.class", classLike("a"));
+        Rec b = new Rec("p/B.class", classLike("b"));
+        b.cdCompressed = 5 + 100;
+        Path path = write("overlong.jar", assemble(List.of(a, b), List.of(a, b), -1, 0));
+
+        StringBuilder captured = new StringBuilder();
+        List<Seen> seen = streamCapturingWarnings(path, captured);
+        assertEquals(List.of("p/A"), seen.stream().map(Seen::entry).toList());
+        assertEquals("warning: " + path + "!p/B.class: entry data out of span\n", captured.toString());
+    }
+
+    @Test
+    void theFallbackSkipsAClassEntryWithoutTheMagic() throws Exception {
+        byte[] latin1 = "p/Café.class".getBytes(StandardCharsets.ISO_8859_1);
+        List<Rec> records = List.of(
+                new Rec("p/A.class", classLike("a")),
+                new Rec("p/Text.class", "not a class".getBytes(StandardCharsets.UTF_8)),
+                new Rec(latin1, classLike("latin")));
+        Path path = write("fallback-text.jar", assemble(records, records, -1, 0));
+        assertNull(readEntries(path));
+
+        List<Seen> seen = stream(path);
+        assertEquals(List.of("p/A", "p/Café"), seen.stream().map(Seen::entry).toList());
     }
 }
