@@ -263,11 +263,10 @@ final class Toml {
             // Shortest digits that read back as the same double, which is what Rust prints.
             // Double.toString is not that before JDK 19.
             BigDecimal exact = new BigDecimal(value);
-            BigDecimal shortest = exact;
-            for (int precision = 1; precision <= 17; precision++) {
-                BigDecimal rounded = exact.round(new MathContext(precision, RoundingMode.HALF_EVEN));
-                if (rounded.doubleValue() == value) {
-                    shortest = rounded;
+            BigDecimal shortest;
+            for (int precision = 1; ; precision++) {
+                shortest = exact.round(new MathContext(precision, RoundingMode.HALF_EVEN));
+                if (shortest.doubleValue() == value) {
                     break;
                 }
             }
@@ -393,7 +392,7 @@ final class Toml {
     }
 
     private static String lit(String literal) {
-        return literal.equals("\n") ? "newline" : literal.equals("`") ? "'`'" : "`" + literal + "`";
+        return literal.equals("\n") ? "newline" : "`" + literal + "`";
     }
 
     private static final int T_DOT = 0;
@@ -2082,10 +2081,8 @@ final class Toml {
                 }
                 hasDate = true;
             }
-            case D_COLON -> lexer.at = 0;
-            default -> {
-                return problem(null, "`-` (YYYY-MM) or `:` (HH:MM)");
-            }
+            // The caller only passes text whose leading digits are followed by `-` or `:`.
+            default -> lexer.at = 0;
         }
 
         boolean hasTime = true;
