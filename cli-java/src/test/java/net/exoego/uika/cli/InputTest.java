@@ -433,4 +433,23 @@ class InputTest {
         assertFalse(Input.isScannable("META-INF/versions/9/a/B.class"));
         assertTrue(Input.isScannable("META-INF/versionsX/a/B.class"));
     }
+
+    /** A channel that never fills the buffer, the way FUSE and some network mounts answer. */
+    @Test
+    void aShortReadIsNotTheEndOfTheFile() throws Exception {
+        byte[] data = new byte[200_000];
+        new java.util.Random(1).nextBytes(data);
+        java.io.InputStream trickle = new java.io.ByteArrayInputStream(data) {
+            @Override
+            public synchronized int read(byte[] b, int off, int len) {
+                return super.read(b, off, Math.min(len, 7));
+            }
+        };
+        Scratch scratch = Scratch.current();
+
+        int n = Input.readChannel(java.nio.channels.Channels.newChannel(trickle), scratch, Path.of("trickle"));
+
+        assertEquals(data.length, n);
+        assertArrayEquals(data, java.util.Arrays.copyOf(Input.classBytes(scratch, n), n));
+    }
 }
