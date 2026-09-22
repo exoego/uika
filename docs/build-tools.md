@@ -15,17 +15,22 @@ them, and the PR gate workflow there shows which baseline dumps can skip them.
 
 ## Getting the CLI
 
-The upgrade-check task fetches the CLI itself as
-`net.exoego.uika:uika-cli:<version>:<platform>@zip` through the build's own
-dependency resolution, reusing its repositories, credentials, and cache, so
-there is no separate install step. The version defaults to the plugin's own, so
-one coordinate bump updates both. The Clojure CLI tool, Leiningen and Bazel
-resolve the binary differently, and their pages say how. Every tool takes
-`UIKA_CLI_PATH` to run a binary you already have instead, which is what an
-air-gapped build needs. A value that is not an executable file fails naming the
-variable rather than deep inside process start-up: shipping the binary as a CI
+The upgrade-check task fetches the CLI itself, the pure-Java jar published as
+the `jvm` classifier of `net.exoego.uika:uika-cli:<version>`, through the
+build's own dependency resolution, reusing its repositories, credentials, and
+cache, so there is no separate install step. It runs the jar on the JVM that
+runs the build, so an
+integration works wherever its build tool does, with no per-platform binary to
+be missing. The version defaults to the plugin's own, so one coordinate bump
+updates both. The Clojure CLI tool, Leiningen and Bazel fetch the jar
+differently, and their pages say how.
+
+Every tool takes `UIKA_CLI_PATH` to run a CLI you already have instead, which is
+what an air-gapped build needs. It takes the jar or a native binary. A value
+that is not a file, or a native binary that is not executable, fails naming the
+variable rather than deep inside process start-up: shipping a binary as a CI
 artifact is the usual way to get it onto the runner, and `upload-artifact` does
-not preserve the executable bit.
+not preserve the executable bit. A jar needs no such bit.
 
 ## Options
 

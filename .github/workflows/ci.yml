@@ -182,10 +182,9 @@ jobs:
             exit 1
           fi
 
-      # stage.sh hashes whatever zips dist/native holds and splices them into
-      # checksums.bzl, and the uika-cli publication attaches them. Stand-in files exercise
-      # both; the real binaries come from the release workflow's build jobs and nothing
-      # here reads their content.
+      # The uika-cli publication attaches whatever zips dist/native holds. Stand-in files
+      # exercise that; the real binaries come from the release workflow's build jobs and
+      # nothing here reads their content.
       - name: Plant stand-in native ZIPs
         shell: bash
         run: |
