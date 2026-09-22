@@ -41,8 +41,23 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   resolve other projects' configurations at execution time, and the split
   avoids Gradle 9 exclusive-lock failures.
 - Coordinates come from `ResolvedArtifactResult`; never recover them from file
-  paths. The artifact view is lenient so unbuilt project dependencies are
-  skipped instead of failing the dump.
+  paths. The artifact views are lenient so unbuilt project dependencies are
+  listed instead of failing the dump.
+- A project dependency is dumped as DIRECTORIES, never its jar: two artifact views of
+  the configuration, one asking `LibraryElements=classes` and one `resources`, select
+  the secondary variants every Java project publishes on `runtimeElements`, while an
+  external jar satisfies either request through Gradle's own compatibility rule (the
+  compileClasspath mechanism). `toEntries` merges them per component, classes first, so
+  the entry order stays the classpath order, and it takes external jars from the classes
+  view only, since the resources view lists them again. The `dependsOn` wiring depends on
+  the views' `artifactFiles`, which build compile and processResources of the producer
+  and not its jar; depending on the Configuration itself builds the jar (measured with a
+  dry run). A producer applying plain `java` still gets its jar built, by the consumer's
+  own `compileJava`, which is Gradle's dependency and not ours; the fixture uses
+  `java-library` for that reason. With outputs built, a project directory that does not
+  exist is dropped from the dump (a module without resources never creates
+  build/resources/main); in a resolution-only dump the unbuilt directories stay listed
+  so the CLI's project fallback still has an entry to work from.
 - `uikaResolveClasspath` (rehydration) uses one detached configuration per
   notation: multiple versions of a module in one configuration would be
   conflict-resolved down to the highest. Classifiers are reconstructed from the

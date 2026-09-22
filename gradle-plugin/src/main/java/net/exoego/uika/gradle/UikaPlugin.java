@@ -6,6 +6,7 @@ import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.ModuleDependency;
+import org.gradle.api.attributes.LibraryElements;
 import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.tasks.SourceSet;
@@ -364,15 +365,17 @@ public class UikaPlugin implements Plugin<Project> {
                         task.getConfigurationName().convention(configurationName);
                         task.getModulePath().set(p.getPath());
                         task.getEmptyDump().convention(false);
-                        // Build the outputs the dump refers to (project-dependency jars and
-                        // this module's own classes) before dumping, so the CLI never scans
-                        // a classpath with unbuilt holes. Opt out with
-                        // -PuikaBuildOutputs=false for a resolution-only dump. One lazy
-                        // provider, evaluated at task-graph time: the java plugin may not be
-                        // applied yet at registration, and the property may be set after
-                        // apply. A Configuration is Buildable, so depending on it builds
-                        // project dependencies' jars; the main SourceSetOutput builds this
-                        // module's classes (matching the dumped classesDirs).
+                        // Build the outputs the dump refers to (project dependencies'
+                        // classes and resources, and this module's own classes) before
+                        // dumping, so the CLI never scans a classpath with unbuilt holes.
+                        // Opt out with -PuikaBuildOutputs=false for a resolution-only dump.
+                        // One lazy provider, evaluated at task-graph time: the java plugin
+                        // may not be applied yet at registration, and the property may be
+                        // set after apply. The two artifact views are Buildable and build
+                        // the producers' compile and processResources tasks, never their
+                        // jar, which is the whole point of dumping directories; the main
+                        // SourceSetOutput builds this module's classes (matching the
+                        // dumped classesDirs).
                         task.dependsOn(p.provider(() -> {
                             if (!buildOutputs(root)) {
                                 return java.util.List.of();
@@ -381,7 +384,8 @@ public class UikaPlugin implements Plugin<Project> {
                             var conf = p.getConfigurations().findByName(
                                     task.getConfigurationName().get());
                             if (conf != null && conf.isCanBeResolved()) {
-                                dependencies.add(conf);
+                                dependencies.add(elementsView(p, conf, LibraryElements.CLASSES).getArtifactFiles());
+                                dependencies.add(elementsView(p, conf, LibraryElements.RESOURCES).getArtifactFiles());
                             }
                             var main = DumpModuleClasspathTask.mainSourceSet(p);
                             if (main != null) {
@@ -393,8 +397,8 @@ public class UikaPlugin implements Plugin<Project> {
             // Wire the module's state in once every project is evaluated, so the java
             // plugin, any build-script configuration (configurationName, uikaBuildOutputs),
             // and the dependency projects' outgoing variants are all settled. The lenient
-            // artifact view lists project-dependency JARs even when they have not been
-            // built (the CLI falls back to the producing module's classesDirs).
+            // artifact views list a project dependency's directories even when they have
+            // not been built (the CLI falls back to the producing module's classesDirs).
             p.getGradle().projectsEvaluated(gradle -> moduleTask.configure(task -> {
                 var confName = task.getConfigurationName().get();
                 var conf = p.getConfigurations().findByName(confName);
@@ -413,30 +417,51 @@ public class UikaPlugin implements Plugin<Project> {
                     task.getCompilableSources().from(
                             main.getAllSource().minus(main.getResources()));
                 }
+                task.getBuiltOutputs().set(buildOutputs(root));
                 if (conf != null && conf.isCanBeResolved()) {
-                    var artifacts = conf.getIncoming()
-                            .artifactView(view -> view.lenient(true))
-                            .getArtifacts();
+                    var classes = elementsView(p, conf, LibraryElements.CLASSES);
+                    var resources = elementsView(p, conf, LibraryElements.RESOURCES);
                     if (buildOutputs(root)) {
                         // Default: the dependsOn wiring builds the producer tasks, so the
                         // resolution provider may resolve lazily at execution time (in
                         // parallel across module tasks).
-                        task.getArtifactEntries().set(artifacts.getResolvedArtifacts()
-                                .map(DumpModuleClasspathTask::toEntries));
+                        task.getArtifactEntries().set(classes.getResolvedArtifacts()
+                                .zip(resources.getResolvedArtifacts(), DumpModuleClasspathTask::toEntries));
                     } else {
-                        // Resolution-only dump: unbuilt project jars must still be listed,
-                        // but the resolution provider refuses any query (configuration or
-                        // execution time) while a producer task has not run. Iterate the
-                        // ArtifactCollection directly instead, now, at configuration time;
-                        // that is plain eager resolution without the producer guard, and
-                        // the extracted entries are what the configuration cache stores.
-                        task.getArtifactEntries().set(
-                                DumpModuleClasspathTask.toEntries(artifacts.getArtifacts()));
+                        // Resolution-only dump: unbuilt project directories must still be
+                        // listed, but the resolution provider refuses any query
+                        // (configuration or execution time) while a producer task has not
+                        // run. Iterate the ArtifactCollections directly instead, now, at
+                        // configuration time; that is plain eager resolution without the
+                        // producer guard, and the extracted entries are what the
+                        // configuration cache stores.
+                        task.getArtifactEntries().set(DumpModuleClasspathTask.toEntries(
+                                classes.getArtifacts(), resources.getArtifacts()));
                     }
                 }
             }));
             merge.configure(m -> m.getFragments().from(moduleTask));
         });
+    }
+
+    /**
+     * The runtime classpath with one kind of library element asked for. A project dependency
+     * answers with its classes or resources directories, the secondary variants every Java
+     * project publishes next to its jar, so the dump never needs the jar built. An external
+     * dependency has only its jar, which Gradle's own compatibility rule accepts for either
+     * request, the same way compileClasspath gets jars from Maven and directories from
+     * sibling projects.
+     */
+    private static org.gradle.api.artifacts.ArtifactCollection elementsView(
+            Project p, org.gradle.api.artifacts.Configuration conf, String elements) {
+        return conf.getIncoming()
+                .artifactView(view -> {
+                    view.lenient(true);
+                    view.attributes(attributes -> attributes.attribute(
+                            LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE,
+                            p.getObjects().named(LibraryElements.class, elements)));
+                })
+                .getArtifacts();
     }
 
     /**
