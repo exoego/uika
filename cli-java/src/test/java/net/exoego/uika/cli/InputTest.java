@@ -338,6 +338,24 @@ class InputTest {
         assertArrayEquals(classLike("deep"), seen.get(2).bytes());
     }
 
+    /** A walk that fails ends the scan through the lane task's join, not silently and not by hanging. */
+    @Test
+    void anUnreadableSubdirectoryEndsTheScan() throws Exception {
+        Path classes = Files.createDirectories(dir.resolve("locked"));
+        Files.write(classes.resolve("Top.class"), classLike("top"));
+        Path sealed = Files.createDirectories(classes.resolve("sealed"));
+        Files.write(sealed.resolve("Inner.class"), classLike("inner"));
+        if (!sealed.toFile().setReadable(false, false) || sealed.toFile().canRead()) {
+            return; // A filesystem or user that cannot lock a directory (root, Windows).
+        }
+        try {
+            UikaException boom = assertThrows(UikaException.class, () -> stream(classes.toString(), null));
+            assertTrue(boom.getMessage().contains("Permission denied"), boom.getMessage());
+        } finally {
+            sealed.toFile().setReadable(true, false);
+        }
+    }
+
     @Test
     void listsClassEntryNamesWithoutInflating() throws Exception {
         String jar = writeJar(

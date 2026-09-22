@@ -430,9 +430,12 @@ final class Input {
      * thread. The lane count bounds how many loose files are open at once, which matters
      * because opening small files from many threads collapses under kernel lock contention on
      * macOS: 124K files took 3.2s and 26s of system time on 12 threads, against 1.7s and 4.5s
-     * on 4. Nothing blocks: a worker without a lane simply takes other work (JARs), and the
-     * lanes are ordinary tasks of the same parallel region. Other systems scale, so there
-     * every worker may hold a lane.
+     * on 4. Other systems scale, so there every worker may hold a lane.
+     *
+     * <p>A lane is a task of the same parallel region as the JARs, forked when an item is
+     * queued and fewer than the lane count are running, and it ends when the queue is empty.
+     * So a worker never waits on a walk: it is a lane only while there is a batch to read,
+     * and takes other work otherwise. One task joins the whole scan through the item count.
      *
      * <p>Each directory's listing is sorted, because the file system returns entries in its
      * own order and first-wins among same-named classes under one root must be reproducible.
@@ -443,9 +446,22 @@ final class Input {
     static final class DirectoryScan<L> {
         private final Sink<L> sink;
         private final java.util.concurrent.ConcurrentLinkedQueue<Runnable> queue = new java.util.concurrent.ConcurrentLinkedQueue<>();
-        /** Queued plus running items. Lanes retire when it reaches zero. */
-        private final java.util.concurrent.atomic.AtomicInteger outstanding = new java.util.concurrent.atomic.AtomicInteger();
         private final java.util.concurrent.atomic.AtomicInteger queued = new java.util.concurrent.atomic.AtomicInteger();
+        /** Lanes draining the queue right now, never more than {@link #lanes}. */
+        private final java.util.concurrent.atomic.AtomicInteger active = new java.util.concurrent.atomic.AtomicInteger();
+        /** Queued plus running items. The last one to end completes {@link #completion}. */
+        private final java.util.concurrent.atomic.AtomicInteger outstanding = new java.util.concurrent.atomic.AtomicInteger();
+        /** Never run: completed by the last item, or exceptionally by the first failing one. */
+        private final RecursiveAction completion = new RecursiveAction() {
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            protected void compute() {
+                // Completed by the items, never by running it.
+            }
+        };
+        /** Set by the region's task. Lanes fork only inside the pool, since a fork elsewhere lands in the common pool. */
+        private volatile boolean started;
         private final List<Root<L>> roots = new ArrayList<>();
         private final int lanes;
 
@@ -478,23 +494,21 @@ final class Input {
             submit(() -> walkRoot(root, dir, source));
         }
 
-        /** The lane tasks, to run in the same parallel region as everything else. */
-        List<RecursiveAction> laneTasks() {
-            List<RecursiveAction> tasks = new ArrayList<>(lanes);
-            for (int i = 0; i < lanes; i++) {
-                tasks.add(new RecursiveAction() {
-                    private static final long serialVersionUID = 1L;
+        /** The task that starts the lanes and ends when every queued item has run. Runs in the region. */
+        RecursiveAction laneTask() {
+            return new RecursiveAction() {
+                private static final long serialVersionUID = 1L;
 
-                    @Override
-                    protected void compute() {
-                        runLane();
-                    }
-                });
-            }
-            return tasks;
+                @Override
+                protected void compute() {
+                    started = true;
+                    spawnLanes();
+                    completion.join();
+                }
+            };
         }
 
-        /** Hands every directory's leaves over, in walk order. Call after the lanes have joined. */
+        /** Hands every directory's leaves over, in walk order. Call after {@link #laneTask} has joined. */
         void finish() {
             for (Root<L> root : roots) {
                 root.out.addAll(root.leaves.values());
@@ -505,23 +519,50 @@ final class Input {
             outstanding.incrementAndGet();
             queued.incrementAndGet();
             queue.add(item);
+            if (started) {
+                spawnLanes();
+            }
         }
 
-        private void runLane() {
-            while (outstanding.get() > 0) {
-                Runnable item = queue.poll();
-                if (item == null) {
-                    // Another lane is still walking and may produce more batches.
-                    Thread.onSpinWait();
-                    Thread.yield();
-                    continue;
+        /** Forks a lane per queued item while fewer than {@link #lanes} run. Never waits. */
+        private void spawnLanes() {
+            while (!queue.isEmpty() && !completion.isCompletedAbnormally()) {
+                int running = active.get();
+                if (running >= lanes) {
+                    return;
                 }
-                queued.decrementAndGet();
+                if (active.compareAndSet(running, running + 1)) {
+                    new Lane().fork();
+                }
+            }
+        }
+
+        private final class Lane extends RecursiveAction {
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            protected void compute() {
                 try {
-                    item.run();
+                    Runnable item;
+                    while (!completion.isCompletedAbnormally() && (item = queue.poll()) != null) {
+                        queued.decrementAndGet();
+                        try {
+                            item.run();
+                        } catch (Throwable t) {
+                            // Surfaces through the region task's join; the other lanes stop.
+                            completion.completeExceptionally(t);
+                            return;
+                        }
+                        if (outstanding.decrementAndGet() == 0) {
+                            completion.quietlyComplete();
+                        }
+                    }
                 } finally {
-                    outstanding.decrementAndGet();
+                    active.decrementAndGet();
                 }
+                // An item queued between the last poll and that decrement saw a full lane
+                // count and forked nothing, so it is this lane's to hand on.
+                spawnLanes();
             }
         }
 
@@ -631,7 +672,8 @@ final class Input {
     private static <L> void scanDirectory(String path, Sink<L> sink, List<L> out) {
         DirectoryScan<L> scan = new DirectoryScan<>(sink);
         scan.add(path, out);
-        ForkJoinTask.invokeAll(scan.laneTasks());
+        // Through the pool, so the lanes fork into it whether or not the caller is a worker.
+        Scratch.pool().invoke(scan.laneTask());
         scan.finish();
     }
 
