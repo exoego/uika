@@ -1081,15 +1081,10 @@ final class Toml {
                 }
             }
             event(E_COMMENT, comment);
-            if (pos >= tk.n) {
-                return;
-            }
+            // The lexer ends a comment at a line break or at the end, so a newline or EOF follows.
             int t = pos++;
-            switch (tk.a[t]) {
-                case T_NEWLINE -> newline(t);
-                case T_EOF -> {}
-                default ->
-                    throw fail("unexpected content between comment and newline", ts.a[t], ts.a[t], lit("\n"));
+            if (tk.a[t] == T_NEWLINE) {
+                newline(t);
             }
         }
 
