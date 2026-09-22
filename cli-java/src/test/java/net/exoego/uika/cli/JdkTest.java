@@ -285,9 +285,9 @@ class JdkTest {
         }
 
         UikaException unsupported = assertThrows(UikaException.class, () -> Jdk.Indexer.open(ctSym, 7));
-        assertEquals("unsupported --jdk-release 7 (expected 8..=35)", unsupported.getMessage());
+        assertEquals("unsupported --jdk-release 7 (not between 8 and 35)", unsupported.getMessage());
         assertEquals(
-                "unsupported --jdk-release 36 (expected 8..=35)",
+                "unsupported --jdk-release 36 (not between 8 and 35)",
                 assertThrows(UikaException.class, () -> Jdk.Indexer.open(ctSym, 36)).getMessage());
     }
 

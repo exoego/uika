@@ -313,8 +313,8 @@ final class Cli {
                         + "For more information, try '--help'.\n");
             }
             if (n < Jdk.MIN_RELEASE || n > Jdk.MAX_RELEASE) {
-                throw new UsageException("error: invalid value '" + value + "' for " + shown + ": " + value + " is not in 8..=35\n\n"
-                        + "For more information, try '--help'.\n");
+                throw new UsageException("error: invalid value '" + value + "' for " + shown + ": " + value + " is not between "
+                        + Jdk.MIN_RELEASE + " and " + Jdk.MAX_RELEASE + "\n\nFor more information, try '--help'.\n");
             }
             return (int) n;
         }

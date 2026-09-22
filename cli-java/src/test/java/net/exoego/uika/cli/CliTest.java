@@ -200,10 +200,10 @@ class CliTest {
     @Test
     void aReleaseMustBeANumberCtSymCanServe() {
         assertEquals(
-                "error: invalid value '7' for '--jdk-release <JDK_RELEASE>': 7 is not in 8..=35" + TAIL,
+                "error: invalid value '7' for '--jdk-release <JDK_RELEASE>': 7 is not between 8 and 35" + TAIL,
                 usageError("check", "--old", "a.jar", "--new", "b.jar", "--jdk-release", "7"));
         assertEquals(
-                "error: invalid value '36' for '--jdk-release <JDK_RELEASE>': 36 is not in 8..=35" + TAIL,
+                "error: invalid value '36' for '--jdk-release <JDK_RELEASE>': 36 is not between 8 and 35" + TAIL,
                 usageError("upgrade-check", "--before", "a.json", "--after", "b.json", "--jdk-release", "36"));
         assertEquals(
                 "error: invalid value 'seventeen' for '--jdk-release <JDK_RELEASE>': invalid digit found in string" + TAIL,
