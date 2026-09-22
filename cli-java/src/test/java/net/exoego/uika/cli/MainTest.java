@@ -7,7 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -206,6 +208,42 @@ class MainTest {
         }
         assertEquals(0, Main.exitCode(new String[] {"dump", jar.toString()}));
         assertEquals(2, Main.exitCode(new String[] {"dump", dir.resolve("missing.jar").toString()}));
+    }
+
+    /** With no java to start a child with, the command runs in this JVM instead of failing. */
+    @Test
+    void withoutAChildJvmTheCommandRunsHere() throws Exception {
+        Path classes = Files.createDirectories(dir.resolve("classes/net/exoego/uika/cli"));
+        Files.write(classes.resolve("Main.class"), mainClass());
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        PrintStream previousOut = Out.out;
+        PrintStream previousErr = Out.err;
+        String javaHome = System.getProperty("java.home");
+        Out.out = new PrintStream(out, true, StandardCharsets.UTF_8);
+        Out.err = new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8);
+        System.setProperty("java.home", dir.toString());
+        try {
+            assertEquals(0, Main.exitCode(new String[] {"dump", dir.resolve("classes").toString()}));
+        } finally {
+            System.setProperty("java.home", javaHome);
+            Out.out = previousOut;
+            Out.err = previousErr;
+        }
+        // A child would have written to the inherited stdout, not to this buffer.
+        assertTrue(out.toString(StandardCharsets.UTF_8).startsWith("class net/exoego/uika/cli/Main [public]\n"), out.toString());
+    }
+
+    /** java/lang/Object is the one class without a superclass, as in a dump of an extracted JDK module. */
+    @Test
+    void theRootClassHasNoSuperclassLine() throws Exception {
+        Path lang = Files.createDirectories(dir.resolve("java.base/java/lang"));
+        try (InputStream in = ClassLoader.getSystemResourceAsStream("java/lang/Object.class")) {
+            Files.write(lang.resolve("Object.class"), in.readAllBytes());
+        }
+        Run run = runUika("dump", dir.resolve("java.base").toString());
+        assertEquals(0, run.code(), run.stderr());
+        assertTrue(run.stdout().startsWith("class java/lang/Object [public]\n  method java/lang/Object."), run.stdout());
+        assertFalse(run.stdout().contains("  extends "), run.stdout());
     }
 
     private static byte[] mainClass() throws Exception {

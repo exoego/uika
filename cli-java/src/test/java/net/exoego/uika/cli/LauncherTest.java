@@ -3,9 +3,11 @@ package net.exoego.uika.cli;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -100,5 +102,80 @@ class LauncherTest {
     void aChildJvmRunsTheCommand() {
         assertEquals(0, Launcher.relaunch(new String[] {"--version"}));
         assertEquals(2, Launcher.relaunch(new String[] {"no-such-command"}));
+    }
+
+    @Test
+    void aLeadingFlagStaysInProcessWhateverFollows() {
+        assertFalse(Launcher.shouldRelaunch(new String[] {"-h", "check"}));
+    }
+
+    @Test
+    void everyAppIsOneScanTarget() {
+        List<String> args = new ArrayList<>(List.of("check", "--old", "a.jar", "--new", "b.jar"));
+        for (int i = 0; i < 799; i++) {
+            args.add("--app");
+            args.add("classes" + i);
+        }
+        assertFalse(Launcher.isLarge(args.toArray(new String[0])));
+        args.add("--app");
+        args.add("classes799");
+        assertTrue(Launcher.isLarge(args.toArray(new String[0])));
+    }
+
+    @Test
+    void aClasspathFileIsSizedLikeADump(@TempDir Path dir) throws Exception {
+        Path big = Files.writeString(dir.resolve("big.json"), "x".repeat(400_000));
+        assertTrue(Launcher.isLarge(new String[] {"check", "--old", "a.jar", "--new", "b.jar", "--classpath-file", big.toString()}));
+        assertTrue(Launcher.isLarge(new String[] {"check", "--old", "a.jar", "--new", "b.jar", "--classpath-file=" + big}));
+    }
+
+    /** A value-taking option at the end is the parser's error to report, so it counts nothing here. */
+    @Test
+    void anOptionWithoutItsValueCountsNothing() {
+        assertFalse(Launcher.isLarge(new String[] {"check", "--classpath"}));
+        assertFalse(Launcher.isLarge(new String[] {"upgrade-check", "--after", "a.json", "--before"}));
+    }
+
+    /** Swaps a system property, or clears it for a null value, for the length of {@code body}. */
+    private static void withProperty(String name, String value, Runnable body) {
+        String previous = System.getProperty(name);
+        if (value == null) {
+            System.clearProperty(name);
+        } else {
+            System.setProperty(name, value);
+        }
+        try {
+            body.run();
+        } finally {
+            System.setProperty(name, previous);
+        }
+    }
+
+    /** -1 hands the command back to this JVM, which is better than failing a run that could still work. */
+    @Test
+    void noUsableJavaMeansRunInProcess(@TempDir Path dir) throws Exception {
+        String[] args = {"--version"};
+        withProperty("java.home", null, () -> assertEquals(-1, Launcher.relaunch(args)));
+        withProperty("java.class.path", null, () -> assertEquals(-1, Launcher.relaunch(args)));
+        withProperty("java.class.path", "", () -> assertEquals(-1, Launcher.relaunch(args)));
+        // A runtime image without a java launcher.
+        withProperty("java.home", dir.toString(), () -> assertEquals(-1, Launcher.relaunch(args)));
+
+        // A java that is there but cannot be started.
+        Path java = Files.createDirectories(dir.resolve("bin")).resolve("java");
+        Files.writeString(java, "#!/no/such/interpreter\n");
+        assumeTrue(java.toFile().setExecutable(true), "cannot mark a file executable here");
+        withProperty("java.home", dir.toString(), () -> assertEquals(-1, Launcher.relaunch(args)));
+    }
+
+    /** The child's exit code is the command's result, so an interrupt must not lose it. */
+    @Test
+    void anInterruptDoesNotLoseTheChildsExitCode() {
+        Thread.currentThread().interrupt();
+        try {
+            assertEquals(2, Launcher.relaunch(new String[] {"no-such-command"}));
+        } finally {
+            Thread.interrupted();
+        }
     }
 }
