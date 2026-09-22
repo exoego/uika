@@ -170,7 +170,7 @@ final class Scan {
     private Scan() {}
 
     static int chunkSize() {
-        String env = System.getenv("UIKA_CHUNK");
+        String env = Env.get("UIKA_CHUNK");
         if (env != null) {
             try {
                 int n = Integer.parseInt(env.trim());
