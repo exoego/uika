@@ -10,12 +10,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -315,6 +320,153 @@ class JdkTest {
         assertEquals(-1, running.permittedCount(running.entry(constantDesc)));
         // The whole release is in, not an escape closure.
         assertTrue(older.classCount() > 3000, "classes in release " + release + ": " + older.classCount());
+    }
+
+    // ---- stand-in JDK homes and archives, which need no ct.sym on this machine ----
+
+    private static void zip(Path file, Map<String, byte[]> entries) throws IOException {
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(file))) {
+            for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
+                zip.putNextEntry(new ZipEntry(entry.getKey()));
+                zip.write(entry.getValue());
+                zip.closeEntry();
+            }
+        }
+    }
+
+    /** A real class file from the running JDK. */
+    private static byte[] jdkClass(String name) throws IOException {
+        try (InputStream in = ClassLoader.getSystemResourceAsStream(name + ".class")) {
+            return in.readAllBytes();
+        }
+    }
+
+    private Path fakeHome(String version) throws IOException {
+        Path home = Files.createDirectories(dir.resolve("home"));
+        Files.writeString(home.resolve("release"), "JAVA_VERSION=\"" + version + "\"\n", StandardCharsets.UTF_8);
+        Env.override("UIKA_JDK", home.toString());
+        return home;
+    }
+
+    /** Release 17 holds ArrayList without its supertypes plus a stub that does not parse. A joint dir covers 7 to 9. */
+    private static Path fakeCtSym(Path file) throws IOException {
+        Map<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("META-INF/MANIFEST.MF", new byte[0]);
+        entries.put("789/java.base/java/lang/Old.sig", new byte[0]);
+        entries.put("H/java.base/java/util/ArrayList.sig", jdkClass("java/util/ArrayList"));
+        entries.put("H/java.base/x/Bad.sig", "not a class file at all".getBytes(StandardCharsets.UTF_8));
+        Files.createDirectories(file.getParent());
+        zip(file, entries);
+        return file;
+    }
+
+    @Test
+    void aStubThatDoesNotParseIsAWarningAndTheClosureStopsAtTheArchive() throws Exception {
+        Path ctSym = fakeCtSym(dir.resolve("ct.sym"));
+        List<String> warnings = new ArrayList<>();
+        try (Jdk.Indexer indexer = Jdk.Indexer.open(ctSym, 17)) {
+            IntSet roots = new IntSet();
+            roots.add(Intern.intern("java/util/ArrayList"));
+            roots.add(Intern.intern("x/Bad"));
+            ApiIndex index = indexer.fetchClosure(roots, warnings);
+            assertTrue(index.containsClass(Intern.intern("java/util/ArrayList")));
+            // Its supertypes are not in this archive, so they stay out rather than fail.
+            assertEquals(1, index.classCount());
+        }
+        assertEquals(List.of("ct.sym!x/Bad: not a class file (bad magic)"), warnings);
+
+        // '7' is a real code in joint dirs but no selectable release, so it is not offered.
+        assertEquals(
+                "release 11 not present in " + ctSym + " (available: 8, 9, 17; the installed JDK's own release is served"
+                        + " from its runtime image, not ct.sym, so pick an older one)",
+                assertThrows(UikaException.class, () -> Jdk.Indexer.open(ctSym, 11)).getMessage());
+    }
+
+    @Test
+    void anOlderReleaseComesWholeFromTheHomesCtSym() throws Exception {
+        Path home = fakeHome("21.0.4");
+        fakeCtSym(home.resolve("lib").resolve("ct.sym"));
+        assertFalse(Jdk.isInstalledRelease(17));
+        List<String> warnings = new ArrayList<>();
+        ApiIndex index = Jdk.releaseIndex(17, warnings);
+        assertTrue(index.containsClass(Intern.intern("java/util/ArrayList")));
+        assertEquals(List.of("ct.sym!x/Bad: not a class file (bad magic)"), warnings);
+    }
+
+    @Test
+    void theRunningReleaseNeedsJmods() throws Exception {
+        Path home = fakeHome("21.0.4");
+        assertTrue(Jdk.isInstalledRelease(21));
+        assertEquals(
+                "release 21 is this JDK's own, which ct.sym never carries, so it must come from " + home.resolve("jmods")
+                        + " (absent in a JRE or a jlink'd runtime): No such file or directory (os error 2)",
+                assertThrows(UikaException.class, () -> Jdk.releaseIndex(21, new ArrayList<>())).getMessage());
+    }
+
+    @Test
+    void jmodsServeTheirClassesAndWarnOnOnesThatDoNotParse() throws Exception {
+        Path home = fakeHome("21");
+        Path jmods = Files.createDirectories(home.resolve("jmods"));
+        Files.writeString(jmods.resolve("README"), "not a jmod, so never opened");
+        Map<String, byte[]> entries = new LinkedHashMap<>();
+        entries.put("classes/module-info.class", "never parsed".getBytes(StandardCharsets.UTF_8));
+        entries.put("classes/java/lang/constant/ConstantDesc.class", jdkClass("java/lang/constant/ConstantDesc"));
+        entries.put("classes/x/Bad.class", "not a class file at all".getBytes(StandardCharsets.UTF_8));
+        entries.put("classes/META-INF/services/x.Y", "x.Z".getBytes(StandardCharsets.UTF_8));
+        entries.put("lib/libx.so", new byte[] {1, 2, 3});
+        Path jmod = jmods.resolve("java.base.jmod");
+        zip(jmod, entries);
+
+        List<String> warnings = new ArrayList<>();
+        ApiIndex index = Jdk.releaseIndex(21, warnings);
+        assertEquals(List.of(jmod + "!classes/x/Bad.class: not a class file (bad magic)"), warnings);
+        assertEquals(1, index.classCount());
+        int constantDesc = Intern.intern("java/lang/constant/ConstantDesc");
+        assertTrue(index.containsClass(constantDesc));
+        assertEquals(-1, index.permittedCount(index.entry(constantDesc)));
+    }
+
+    @Test
+    void aJmodThatIsNotAZipIsRefused() throws Exception {
+        Path home = fakeHome("21");
+        Path jmod = Files.createDirectories(home.resolve("jmods")).resolve("broken.jmod");
+        Files.writeString(jmod, "plain text");
+        UikaException e = assertThrows(UikaException.class, () -> Jdk.releaseIndex(21, new ArrayList<>()));
+        assertTrue(e.getMessage().startsWith("not a zip: " + jmod + ": "), e.getMessage());
+    }
+
+    @Test
+    void anUnreadableCtSymIsNamed() throws Exception {
+        Path ctSym = fakeCtSym(dir.resolve("ct.sym"));
+        assumeTrue(
+                ctSym.toFile().setReadable(false, false) && !Files.isReadable(ctSym),
+                "cannot take read permission away here (root or not POSIX)");
+        try {
+            assertEquals(
+                    "cannot open ct.sym: " + ctSym + ": Permission denied (os error 13)",
+                    assertThrows(UikaException.class, () -> Jdk.Indexer.open(ctSym, 17)).getMessage());
+        } finally {
+            ctSym.toFile().setReadable(true, false);
+        }
+    }
+
+    /** An empty UIKA_JDK is unset, so the hint is the general one rather than blaming the pin. */
+    @Test
+    void anEmptyPinGetsTheGeneralHint() {
+        Env.override("UIKA_JDK", "");
+        Env.override("JAVA_HOME", dir.resolve("nowhere").toString());
+        assertEquals(
+                "--jdk-release 17 needs a JDK: set UIKA_JDK to a JDK home or a ct.sym file (checked first), "
+                        + "or JAVA_HOME to a JDK home",
+                assertThrows(UikaException.class, () -> Jdk.indexerFor(17)).getMessage());
+    }
+
+    @Test
+    void onlyUppercaseBase36DirsHoldStubs() {
+        assertNull(Jdk.parseEntry("ct.properties"));
+        assertNull(Jdk.parseEntry("/java.base/java/lang/Object.sig"));
+        assertNull(Jdk.parseEntry("h/java.base/java/lang/Object.sig"));
+        assertFalse(Jdk.isCodesDir(""));
     }
 
     @Test
