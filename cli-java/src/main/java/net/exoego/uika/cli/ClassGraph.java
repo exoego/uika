@@ -82,10 +82,6 @@ final class ClassGraph {
         return nodeCount;
     }
 
-    boolean isEmpty() {
-        return nodeCount == 0;
-    }
-
     int nameOf(int node) {
         return rows.get(node * STRIDE + NAME);
     }

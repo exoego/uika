@@ -275,4 +275,51 @@ class IndexTest {
         assertFalse(graph.contains(later));
         assertEquals(-1, graph.node(later));
     }
+
+    /** JVMS 5.4.3.4: an interface owner is searched through its superinterfaces. */
+    @Test
+    void anInterfaceOwnerIsSearchedThroughItsSuperinterfaces() {
+        ClassApi i = classOf("a/I", null);
+        i.interfaces = syms("a/J");
+        ApiIndex idx = ApiIndex.build(List.of(i, classOf("a/J", null, m("m", "()V"))));
+        assertEquals("a/J", resolvedOwner(idx, "a/I", MemberKey.of("m", "()V"), Scope.MemberKind.METHOD));
+        assertEquals(Scope.Resolution.NOT_FOUND, resolveMethod(idx, "a/I", "gone", "()V"));
+    }
+
+    @Test
+    void aFieldMissingFromAnInterfaceBranchFallsThroughToTheSuperclass() {
+        ClassApi c = fieldClass("a/C", "a/Base", new String[] {"a/I"});
+        ClassApi base = fieldClass("a/Base", JAVA_LANG_OBJECT, new String[0], f("x", "I", Acc.PUBLIC));
+        ClassApi i = fieldClass("a/I", null, new String[0]);
+        ApiIndex idx = ApiIndex.build(List.of(c, base, i));
+        assertEquals("a/Base", resolvedOwner(idx, "a/C", MemberKey.of("x", "I"), Scope.MemberKind.FIELD));
+        assertEquals(Scope.Resolution.NOT_FOUND, idx.resolve(Intern.intern("a/C"), MemberKey.of("y", "I"), Scope.MemberKind.FIELD));
+    }
+
+    /** The JVM rejects this hierarchy with ClassCircularityError. Resolution must still end. */
+    @Test
+    void aCyclicSuperclassChainTerminates() {
+        ApiIndex idx = ApiIndex.build(List.of(classOf("a/P", "a/Q"), classOf("a/Q", "a/P", m("m", "()V"))));
+        assertEquals("a/Q", resolvedOwner(idx, "a/P", MemberKey.of("m", "()V"), Scope.MemberKind.METHOD));
+        assertEquals(Scope.Resolution.NOT_FOUND, resolveMethod(idx, "a/P", "gone", "()V"));
+    }
+
+    @Test
+    void byNameLookupsAnswerMinusOneForAClassInNoIndex() {
+        ClassApi c = classOf("a/C", JAVA_LANG_OBJECT, m("m", "()V"));
+        ApiIndex idx = ApiIndex.build(List.of(c));
+        Scope scope = new Scope(idx);
+        int absent = Intern.intern("a/Absent");
+        long key = MemberKey.of("m", "()V");
+
+        assertEquals(Acc.PUBLIC, idx.classAccess(c.name));
+        assertEquals(-1, idx.directMethodAccess(absent, key));
+        assertEquals(-1, idx.directFieldAccess(absent, MemberKey.of("x", "I")));
+        assertEquals(Acc.PUBLIC, scope.directMethodAccess(c.name, key));
+        assertEquals(-1, scope.directMethodAccess(absent, key));
+        assertEquals(idx.entry(c.name), scope.entryOf(c.name));
+        assertEquals(-1, scope.entryOf(absent));
+        assertTrue(c.hasMethod(key));
+        assertFalse(c.hasField(MemberKey.of("m", "()V")));
+    }
 }

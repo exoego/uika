@@ -95,6 +95,30 @@ class VerdictsTest {
         assertEquals("verdicts output failed, stream truncated: disk full", msg);
     }
 
+    /** The report names the write that truncated the stream, not the close that followed it. */
+    @Test
+    void aCloseFailureAfterAWriteFailureKeepsTheFirstError() {
+        OutputStream failing = new OutputStream() {
+            @Override
+            public void write(int b) throws IOException {
+                throw new IOException("disk full");
+            }
+
+            @Override
+            public void write(byte[] b, int off, int len) throws IOException {
+                throw new IOException("disk full");
+            }
+
+            @Override
+            public void close() throws IOException {
+                throw new IOException("stale file handle");
+            }
+        };
+        Verdicts.Writer w = Verdicts.Writer.to(failing);
+        w.record(Intern.intern("a.jar"), Intern.intern("com/example/C"), SymbolRef.ofClass(Intern.intern("com/example/Owner")), "ok", null);
+        assertEquals("verdicts output failed, stream truncated: disk full", w.finish());
+    }
+
     /** A failure that only shows at flush time is a truncated stream all the same. */
     @Test
     void aFlushFailureIsReportedByFinish() {
