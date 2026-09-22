@@ -1,9 +1,6 @@
 package net.exoego.uika.cli;
 
-import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.math.MathContext;
-import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -237,17 +234,7 @@ final class Toml {
             if (value == 0) {
                 return 1 / value < 0 ? "-0.0" : "0.0";
             }
-            // Shortest digits that read back as the same double, which is what Rust prints.
-            // Double.toString is not that before JDK 19.
-            BigDecimal exact = new BigDecimal(value);
-            BigDecimal shortest;
-            for (int precision = 1; ; precision++) {
-                shortest = exact.round(new MathContext(precision, RoundingMode.HALF_EVEN));
-                if (shortest.doubleValue() == value) {
-                    break;
-                }
-            }
-            String plain = shortest.stripTrailingZeros().toPlainString();
+            String plain = Text.shortestDecimal(value).stripTrailingZeros().toPlainString();
             return plain.indexOf('.') >= 0 ? plain : plain + ".0";
         }
     }

@@ -375,13 +375,18 @@ class DumpTest {
         }
     }
 
-    /** serde_json keeps an integer above i64 as a u64, and reads -0 as a float. */
+    /** serde_json keeps a big integer as a u64, and prints a float, -0 included, in its own format. */
     @Test
     void numbersInShapeErrorsKeepSerdesValue() throws Exception {
         String release = "{\"version\":2,\"roots\":[],\"artifacts\":[],\"jdkRelease\":%s}";
         String[][] cases = {
             {"18446744073709551615", "invalid value: integer `18446744073709551615`, expected u32"},
             {"-0", "invalid type: floating point `-0.0`, expected u32"},
+            {"1e20", "invalid type: floating point `1e+20`, expected u32"},
+            {"1e-7", "invalid type: floating point `1e-7`, expected u32"},
+            {"3e23", "invalid type: floating point `2.9999999999999997e+23`, expected u32"},
+            {"-9223372036854775809", "invalid type: floating point `-9.223372036854776e+18`, expected u32"},
+            {"1e15", "invalid type: floating point `1000000000000000.0`, expected u32"},
         };
         for (int i = 0; i < cases.length; i++) {
             String path = write("number-" + i + ".json", release.formatted(cases[i][0]));

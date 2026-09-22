@@ -357,7 +357,7 @@ final class Dump {
         } else if (value instanceof Long || value instanceof BigInteger) {
             return "integer `" + value + "`";
         } else if (value instanceof Double d) {
-            return "floating point `" + d + "`";
+            return "floating point `" + Json.errorFloat(d) + "`";
         } else if (value instanceof Boolean b) {
             return "boolean `" + b + "`";
         } else if (value instanceof List<?>) {

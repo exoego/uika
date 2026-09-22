@@ -1,6 +1,10 @@
 package net.exoego.uika.cli;
 
-/** String helpers that keep output in the same order on every platform. */
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
+
+/** Text helpers that give the same output on every platform. */
 final class Text {
     private Text() {}
 
@@ -21,5 +25,19 @@ final class Text {
             j += Character.charCount(y);
         }
         return Integer.compare(a.length() - i, b.length() - j);
+    }
+
+    /**
+     * The shortest decimal that reads back as the same double, the digits serde's errors print.
+     * Double.toString is not that before JDK 19.
+     */
+    static BigDecimal shortestDecimal(double value) {
+        BigDecimal exact = new BigDecimal(value);
+        for (int precision = 1; ; precision++) {
+            BigDecimal shortest = exact.round(new MathContext(precision, RoundingMode.HALF_EVEN));
+            if (shortest.doubleValue() == value) {
+                return shortest;
+            }
+        }
     }
 }

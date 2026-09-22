@@ -1,5 +1,6 @@
 package net.exoego.uika.cli;
 
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -162,6 +163,26 @@ final class Json {
         StringBuilder out = new StringBuilder(s.length() + 2);
         string(out, s);
         return out.toString();
+    }
+
+    /**
+     * A float the way serde_json's typed-read errors print it (zmij's format): the shortest
+     * digits, plain from 1e-5 up to below 1e16, otherwise like {@code 1.5e+20}.
+     */
+    static String errorFloat(double value) {
+        if (value == 0) {
+            return 1 / value < 0 ? "-0.0" : "0.0";
+        }
+        BigDecimal shortest = Text.shortestDecimal(Math.abs(value)).stripTrailingZeros();
+        String digits = shortest.unscaledValue().toString();
+        int exponent = digits.length() - 1 - shortest.scale();
+        String sign = value < 0 ? "-" : "";
+        if (exponent >= -5 && exponent <= 15) {
+            String plain = shortest.toPlainString();
+            return sign + (plain.indexOf('.') >= 0 ? plain : plain + ".0");
+        }
+        String mantissa = digits.length() == 1 ? digits : digits.charAt(0) + "." + digits.substring(1);
+        return sign + mantissa + "e" + (exponent < 0 ? "-" : "+") + Math.abs(exponent);
     }
 
     // ---- reader ----
