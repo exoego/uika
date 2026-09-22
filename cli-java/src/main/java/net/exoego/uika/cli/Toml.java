@@ -710,13 +710,12 @@ final class Toml {
         }
 
         private int afterLastSignificantToken() {
-            for (int i = pos - 1; i >= 0; i--) {
+            for (int i = pos - 1; ; i--) {
                 int kind = tk.a[i];
                 if (kind != T_WS && kind != T_COMMENT && kind != T_NEWLINE && kind != T_EOF) {
                     return te.a[i];
                 }
             }
-            return 0;
         }
 
         void document() {
@@ -756,7 +755,7 @@ final class Toml {
             optWhitespace();
             if (peek() == T_EQUALS) {
                 onKeyValSep(pos++);
-            } else if (pos < tk.n) {
+            } else {
                 int at = ts.a[pos];
                 throw fail(missing, at, at, lit("="));
             }
@@ -793,12 +792,9 @@ final class Toml {
                     throw fail("unclosed array table", te.a[close], te.a[close], lit("]"));
                 }
             } else if (validKey) {
-                int last = open;
-                for (int i = pos - 1; i >= 0; i--) {
-                    if (tk.a[i] != T_WS) {
-                        last = i;
-                        break;
-                    }
+                int last = pos - 1;
+                while (tk.a[last] == T_WS) {
+                    last--;
                 }
                 int at = te.a[last];
                 throw fail(array ? "unclosed array table" : "unclosed table", at, at, lit(array ? "]]" : "]"));
@@ -811,7 +807,7 @@ final class Toml {
         }
 
         private boolean key() {
-            while (pos < tk.n) {
+            while (true) {
                 int t = pos++;
                 int at = ts.a[t];
                 switch (tk.a[t]) {
@@ -831,17 +827,14 @@ final class Toml {
                     }
                 }
             }
-            int at = afterLastSignificantToken();
-            throw fail("invalid table", at, at, "key");
         }
 
         private boolean optDotKeys() {
             optWhitespace();
             dots:
             while (peek() == T_DOT) {
-                int dot = pos++;
-                event(E_KEY_SEP, dot);
-                while (pos < tk.n) {
+                event(E_KEY_SEP, pos++);
+                while (true) {
                     int t = pos++;
                     int at = ts.a[t];
                     switch (tk.a[t]) {
@@ -862,16 +855,11 @@ final class Toml {
                         }
                     }
                 }
-                emptyKey(te.a[dot]);
             }
             return true;
         }
 
         private void onValue() {
-            if (pos >= tk.n) {
-                int after = afterLastSignificantToken();
-                throw fail("missing value", after, after, "value");
-            }
             int t = pos++;
             int at = ts.a[t];
             if (tk.a[t] == T_EQUALS) {
@@ -894,12 +882,12 @@ final class Toml {
             int end = te.a[t];
             if (tk.a[t] == T_DOT || tk.a[t] == T_ATOM) {
                 scan:
-                while (pos < tk.n) {
+                while (true) {
                     switch (tk.a[pos]) {
                         case T_WS -> {
                             // Only a date-time may hold a space. Whether this one may is the
                             // second pass's call.
-                            if (pos + 1 < tk.n && tk.a[pos + 1] == T_ATOM) {
+                            if (tk.a[pos + 1] == T_ATOM) {
                                 end = te.a[pos + 1];
                                 pos += 2;
                             } else {
@@ -1064,7 +1052,7 @@ final class Toml {
         }
 
         private void wsCommentNewline() {
-            while (pos < tk.n) {
+            while (true) {
                 int t = pos++;
                 switch (tk.a[t]) {
                     case T_WS -> event(E_WS, t);
@@ -1107,7 +1095,7 @@ final class Toml {
 
         // Reached only after a table header whose key was a silent stand-in.
         private void ignoreToNewline() {
-            while (pos < tk.n) {
+            while (true) {
                 int t = pos++;
                 switch (tk.a[t]) {
                     case T_WS -> event(E_WS, t);
