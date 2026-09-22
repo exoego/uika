@@ -23,7 +23,7 @@ The plugin downloads the CLI jar straight from Maven Central into
 `~/.cache/uika` (`UIKA_CLI_URL` to override the URL, `:cli-path` or
 `UIKA_CLI_PATH` to point at a CLI you already have and skip the download). The
 jar runs on the JVM that runs lein, which therefore has to be Java 17 or newer.
-On an older one, point `:cli-path` at a native uika binary instead.
+On an older one, point `:cli-path` at a script that starts the jar on a newer JDK.
 `UIKA_CLI_URL` has to name the jar. A platform ZIP, which it named before the
 CLI became a jar, fails naming the variable.
 
@@ -200,9 +200,9 @@ flag. Watch for the Clojure CLI tool's spellings: it says `:exclude-file` and
   `--class-load-log`, whose keyword form this map rejects as unknown.
 - `:cli-version` and `:cli-path` pick the CLI, as do `UIKA_CLI_VERSION` and
   `UIKA_CLI_PATH` from the environment. There is no command-line override. The
-  path takes the jar or a native binary. A path that is not a file, or a native
-  binary that is not executable, fails naming the one you set, `:cli-path` or
-  the variable.
+  path takes the jar, or an executable that runs it. A path that is not a file,
+  or an executable that lost its bit, fails naming the one you set, `:cli-path`
+  or the variable.
 
 ## Runtime load evidence (JFR)
 

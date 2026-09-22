@@ -140,7 +140,7 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         Integer jdkRelease = UikaCli.effectiveJdkRelease(
                 getJdkRelease().getOrNull(), jdk, getLogger()::lifecycle);
         // JFR recordings on the knob (a .jfr value, or recordings inside a directory) are
-        // converted to the CLI's text format here: the CLI is JVM-free and never reads
+        // converted to the CLI's text format here: the CLI never reads
         // binary JFR, while this task always runs on a full JDK.
         var classLoadLogs = net.exoego.uika.plugin.core.JfrEvidence.rewrite(
                 getClassLoadLogs().getFiles().stream().map(File::toPath).toList(),
@@ -168,7 +168,7 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         }
     }
 
-    /// UIKA_CLI_PATH wins outright, so a build can point at a jar or a native binary it
+    /// UIKA_CLI_PATH wins outright, so a build can point at a jar or an executable it
     /// already has without the repositories or the version mattering at all.
     private Path resolveBinary() {
         // The shared check, not a local copy: it also rejects a path that exists and is not

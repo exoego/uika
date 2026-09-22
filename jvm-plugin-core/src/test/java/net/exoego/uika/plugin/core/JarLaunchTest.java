@@ -68,7 +68,7 @@ final class JarLaunchTest {
     }
 
     @Test
-    void aNativeBinaryStartsItself() {
+    void anExecutableStartsItself() {
         var binary = dir.resolve("uika");
         assertEquals(List.of(binary.toString()),
                 UikaCli.launchCommand(binary, dir.resolve("before.json"), dir.resolve("after.json")));

@@ -337,7 +337,7 @@ final class UpgradeCheckTaskIntegrationTest {
     }
 
     /// A .jfr value on the knob is converted before the CLI runs: the recording itself
-    /// never reaches the JVM-free CLI, the converted text (with the probe class and its
+    /// never reaches the CLI, the converted text (with the probe class and its
     /// stack) does. The recording is REAL, made in this test JVM; the probe is compiled
     /// at runtime (JfrTestRecordings explains why a member class cannot serve).
     @Test
@@ -673,7 +673,7 @@ final class UpgradeCheckTaskIntegrationTest {
     void cliPathEnvironmentVariableSkipsResolution() throws Exception {
         Assumptions.assumeFalse(
                 System.getProperty("os.name", "").toLowerCase().contains("windows"),
-                "this stub is a shell script, standing in for a native binary");
+                "this stub is a shell script, standing in for an executable");
         var binary = projectDir.resolve("uika-stub.sh");
         Files.writeString(binary, """
                 #!/bin/sh

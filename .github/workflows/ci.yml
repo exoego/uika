@@ -25,11 +25,6 @@ jobs:
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
       # The setup-java steps are a cache layer only. mise owns the build JDK,
       # and set-default keeps this one off JAVA_HOME and PATH.
       - name: Cache Gradle
@@ -182,19 +177,6 @@ jobs:
             exit 1
           fi
 
-      # The uika-cli publication attaches whatever zips dist/native holds. Stand-in files
-      # exercise that; the real binaries come from the release workflow's build jobs and
-      # nothing here reads their content.
-      - name: Plant stand-in native ZIPs
-        shell: bash
-        run: |
-          set -euo pipefail
-          for classifier in linux-x86_64 macos-aarch64 macos-x86_64 windows-x86_64; do
-            mkdir -p "dist/native/$classifier"
-            echo "stand-in for the release binary" \
-              > "dist/native/$classifier/uika-0.0.0-ci-$classifier.zip"
-          done
-
       - name: Stage the CLI
         run: mise exec -- gradle -p cli-java publishAllPublicationsToStagingRepository -PuikaVersion=0.0.0-ci
 
@@ -203,9 +185,7 @@ jobs:
         run: |
           set -euo pipefail
           dir=cli-java/build/staging-deploy/net/exoego/uika/uika-cli/0.0.0-ci
-          for f in uika-cli-0.0.0-ci-jvm.jar uika-cli-0.0.0-ci.pom \
-                   uika-cli-0.0.0-ci-linux-x86_64.zip uika-cli-0.0.0-ci-macos-aarch64.zip \
-                   uika-cli-0.0.0-ci-macos-x86_64.zip uika-cli-0.0.0-ci-windows-x86_64.zip; do
+          for f in uika-cli-0.0.0-ci-jvm.jar uika-cli-0.0.0-ci.pom; do
             test -s "$dir/$f" && test -s "$dir/$f.sha1"
           done
           # "pom" packaging is what keeps Central from demanding a sources and a javadoc jar,
@@ -247,17 +227,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The check job owns every cache these two share a key with, so this one only
-      # restores. Cargo is keyed by job name, so it gets its own entry and can save;
-      # sharing with check would thrash anyway, since these builds are instrumented.
+      # The check job owns every cache this job shares a key with, so this one only
+      # restores.
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           cache_save: false
-
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Cache Gradle
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -320,23 +294,8 @@ jobs:
           restore-keys: |
             bazel-${{ runner.os }}-
 
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@3f74d7c16a4242f1c95561e98edc25d36adb4375 # v2.87.12
-        with:
-          tool: cargo-llvm-cov
-
       # Uploaded per target rather than in one batch, so a later target failing still
       # publishes what the earlier ones measured.
-      - name: Rust coverage
-        run: make cargo-coverage
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: target/coverage/lcov.info
-          flags: rust
-          disable_search: true
-          fail_ci_if_error: true
-
       - name: Java CLI coverage
         run: make java-cli-coverage
       - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
@@ -377,8 +336,8 @@ jobs:
           disable_search: true
           fail_ci_if_error: true
 
-      # No cargo-build dependency, unlike clojure-coverage: the unit suite stubs the CLI
-      # with a shell script, and the real-binary round trip stays in it/run.sh.
+      # No java-cli-build dependency, unlike clojure-coverage: the unit suite stubs the CLI
+      # with a shell script, and the real-CLI round trip stays in it/run.sh.
       - name: Leiningen plugin coverage
         run: make lein-coverage
       - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0

@@ -39,11 +39,6 @@
       matchManagers: ["github-actions"],
       groupName: "github-actions",
     },
-    {
-      matchManagers: ["cargo"],
-      matchUpdateTypes: ["minor", "patch"],
-      groupName: "rust crates (non-major)",
-    },
     // gradle, sbt, maven, java and other toolchain pins in .mise.toml, plus the
     // custom manager that reads the same file.
     {

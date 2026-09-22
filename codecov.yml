@@ -40,12 +40,8 @@ flag_management:
 # they replace, which had no per-flag status either.
 component_management:
   individual_components:
-    - component_id: cli
-      name: CLI
-      paths:
-        - cli/**
     - component_id: cli_java
-      name: Java CLI
+      name: CLI
       paths:
         - cli-java/**
     - component_id: jvm_plugin_core

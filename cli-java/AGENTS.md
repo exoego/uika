@@ -6,15 +6,13 @@ semantics, then what only matters on the JVM.
 
 ## Parity
 
-- stdout, JSON, the verdicts stream and exit codes are byte-identical to the Rust binary.
-  `make java-cli-difftest MODE=dump|diff|check` runs both over the local Gradle cache. Any
-  difference is a bug in the port until proven otherwise.
-- `GoldenTest` reads the same `cli/tests/golden/*.json` the Rust crate blesses. Tests run
-  with `cli/` as the working directory, because a violation's `source` is the path string
-  as given and the goldens pin it.
-- One known deviation. Pass 1 stops reading a class once its constant pool names no class of
-  the checked library, so a class whose MEMBER section is malformed is kept where Rust warns
-  and drops it. Output only differs for a corrupt class file.
+- The goldens (`tests/golden`), the probe (`make probe`) and the integration tests pin the
+  behaviour the Rust crate had when it was retired: stdout, JSON, the verdicts stream and
+  exit codes are byte-identical to what it printed. Treat a change in any of them as a
+  detection change to argue for, never as a port detail.
+- `GoldenTest` runs with `cli-java/` as the working directory, because a violation's
+  `source` is the path string as given (`tests/fixtures/x.jar`) and the goldens pin it.
+  `make java-cli-bless` rewrites them.
 - Symbols order by UTF-8 bytes (`Intern.compare`, `Text.compareUtf8`). `String.compareTo`
   orders by UTF-16 unit and disagrees above the surrogate range.
 
@@ -616,6 +614,9 @@ pass-2 classes are typically below 0.1% of the scan.
   sets `-Duika.child=true`. Measure with that property set, or you measure two JVMs.
 
 ## Measured (M4 Pro, 12 cores, JDK 21, launcher flags)
+
+The Rust column is the binary the jar replaced, measured in the same session on
+2026-09-21.
 
 | Workload | Java | Rust |
 |---|---|---|

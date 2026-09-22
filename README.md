@@ -345,7 +345,7 @@ rather than silently ignored.
 
 ## Development
 
-`make check` runs fmt, clippy, and the Rust and plugin test suites.
+`make check` runs the lint checks and the test suites of the CLI and every plugin.
 [CONTRIBUTING.md](CONTRIBUTING.md) covers the rest, including the vendored
 real-incident fixtures, the golden-bless workflow, and the JVM probe harness.
 Releases are described in [PUBLISHING.md](PUBLISHING.md).

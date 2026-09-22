@@ -1,10 +1,9 @@
-.PHONY: help build check test fmt fmt-check clean probe placeholder-check \
+.PHONY: help build check test clean probe placeholder-check \
 	rewrite rewrite-check coverage \
-	cargo-build cargo-release cargo-test cargo-clippy cargo-fmt cargo-fmt-check \
-	cargo-coverage java-cli-coverage gradle-coverage maven-coverage clojure-coverage \
+	java-cli-coverage gradle-coverage maven-coverage clojure-coverage \
 	lein-coverage sbt-coverage mill-coverage bazel-coverage jacoco-tools \
 	gradle-build gradle-check gradle-test gradle-clean \
-	java-cli-build java-cli-test java-cli-bless java-cli-clean java-cli-difftest \
+	java-cli-build java-cli-test java-cli-bless java-cli-clean \
 	sbt-compile sbt-scripted sbt-clean \
 	maven-verify maven-clean \
 	mill-compile mill-test mill-clean \
@@ -13,7 +12,6 @@
 	bazel-unit-test bazel-test bazel-maven-test bazel-clean bazel-stage \
 	cli-publish-local stage-all
 
-CARGO ?= cargo
 JAVA ?= mise exec -- java
 GRADLE ?= mise exec -- gradle
 SBT ?= mise exec -- sbt
@@ -42,7 +40,7 @@ JACOCO_VERSION ?= 0.8.15
 JACOCO_DIR ?= $(CURDIR)/target/jacoco
 JACOCO_AGENT = $(JACOCO_DIR)/org.jacoco.agent-$(JACOCO_VERSION)-runtime.jar
 JACOCO_CLI = $(JACOCO_DIR)/org.jacoco.cli-$(JACOCO_VERSION)-nodeps.jar
-UIKA_VERSION ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' cli/Cargo.toml | head -1)
+UIKA_VERSION ?= 0.0.0-dev
 TMPDIR ?= /tmp
 SBT_CACHE_DIR ?= $(TMPDIR)/uika-sbt
 SBT_CLI_STUB = $(CURDIR)/$(SBT_PLUGIN_DIR)/target/uika-cli-path-stub
@@ -58,20 +56,17 @@ SBT_FLAGS ?= -Dsbt.supershell=false -batch \
 help:
 	@printf '%s\n' \
 		'Targets:' \
-		'  make build        Build Rust CLI and JVM build-tool plugins' \
-		'  make test         Run Rust tests and JVM build-tool plugin tests' \
+		'  make build        Build the CLI jar and the JVM build-tool plugins' \
+		'  make test         Run the CLI and build-tool plugin tests' \
 		'  make coverage     Write the coverage reports ci.yml uploads to Codecov' \
-		'  make check        Run formatting and lint checks and all plugin checks' \
-		'  make fmt          Format Rust sources' \
-		'  make clean        Remove Rust and JVM plugin build outputs' \
+		'  make check        Run the lint checks and every test suite' \
+		'  make clean        Remove every build output' \
 		'' \
 		'Useful direct targets:' \
-		'  make cargo-release' \
 		'  make probe        Answer-check fixture verdicts against a real JVM' \
 		'  make rewrite      Apply OpenRewrite recipes to Java sources (rewrite-check verifies only)' \
 		'  make java-cli-test' \
 		'  make java-cli-bless   Rewrite the goldens from the current output' \
-		'  make java-cli-difftest MODE=check   Compare the Java CLI with the Rust CLI on local jars' \
 		'  make gradle-check' \
 		'  make sbt-scripted' \
 		'  make maven-verify' \
@@ -83,7 +78,7 @@ help:
 		'  make cli-publish-local UIKA_VERSION=0.1.0' \
 		'  make stage-all UIKA_VERSION=0.1.0'
 
-build: cargo-build gradle-build sbt-compile maven-verify mill-compile
+build: java-cli-build gradle-build sbt-compile maven-verify mill-compile
 
 # Every in-tree version placeholder must be 0.0.0-dev, which is structurally
 # unpublishable. A plausible placeholder (0.1.0 was the old one in the JVM plugins) makes
@@ -92,17 +87,17 @@ build: cargo-build gradle-build sbt-compile maven-verify mill-compile
 placeholder-check:
 	@for f in gradle-plugin/build.gradle.kts sbt-plugin/build.sbt maven-plugin/pom.xml \
 	  mill-plugin/build.mill lein-plugin/project.clj clojure-tool/build.clj \
-	  cli/Cargo.toml bazel-rules/private/version.bzl; do \
+	  cli-java/build.gradle.kts bazel-rules/private/version.bzl; do \
 	  grep -q '0\.0\.0-dev' $$f || { echo "$$f lost its 0.0.0-dev version placeholder" >&2; exit 1; }; \
 	done
 	@echo "version placeholders: all 0.0.0-dev"
 
-check: placeholder-check rewrite-check cargo-fmt-check cargo-clippy cargo-test java-cli-test gradle-check sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
+check: placeholder-check rewrite-check java-cli-test gradle-check sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
-test: rewrite cargo-test java-cli-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
+test: rewrite java-cli-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
 # Every front end; ci.yml uploads one flag per target.
-coverage: cargo-coverage java-cli-coverage gradle-coverage maven-coverage clojure-coverage lein-coverage \
+coverage: java-cli-coverage gradle-coverage maven-coverage clojure-coverage lein-coverage \
 	sbt-coverage mill-coverage bazel-coverage
 
 jacoco-tools:
@@ -112,37 +107,7 @@ jacoco-tools:
 	$(MAVEN) -q -B dependency:copy -DoutputDirectory=$(JACOCO_DIR) \
 		-Dartifact=org.jacoco:org.jacoco.cli:$(JACOCO_VERSION):jar:nodeps
 
-fmt: cargo-fmt
-
-fmt-check: cargo-fmt-check
-
 clean: java-cli-clean gradle-clean sbt-clean maven-clean mill-clean clojure-clean lein-clean bazel-clean
-	$(CARGO) clean
-
-cargo-build:
-	$(CARGO) build
-
-cargo-release:
-	$(CARGO) build --release
-
-cargo-test:
-	$(CARGO) test
-
-cargo-clippy:
-	$(CARGO) clippy --all-targets --all-features
-
-cargo-fmt:
-	$(CARGO) fmt
-
-cargo-fmt-check:
-	$(CARGO) fmt -- --check
-
-# --remap-path-prefix makes the lcov SF: paths repo-root relative, which is what Codecov
-# resolves against. Without it they are absolute and machine-specific.
-cargo-coverage:
-	mkdir -p $(COVERAGE_DIR)
-	$(CARGO) llvm-cov --workspace --locked --remap-path-prefix \
-		--lcov --output-path $(COVERAGE_DIR)/lcov.info
 
 # The jar, with the launcher's relaunch switched off: the verdicts are what is checked,
 # and a second JVM per scenario would only add start-up time.
@@ -166,11 +131,10 @@ JAVA_CLI_JAR = $(abspath $(JAVA_CLI_DIR)/build/libs/uika-cli-$(UIKA_VERSION).jar
 java-cli-build:
 	$(GRADLE) -p $(JAVA_CLI_DIR) jar -PuikaVersion=$(UIKA_VERSION)
 
-# Shares cli/tests/fixtures, cli/tests/golden and scenarios.tsv with the Rust crate.
 java-cli-test:
 	$(GRADLE) -p $(JAVA_CLI_DIR) test
 
-# Rewrites cli/tests/golden from the current output. Only after the diff is verified as an
+# Rewrites cli-java/tests/golden from the current output. Only after the diff is verified as an
 # intended detection change, since the goldens are what catches an unintended one.
 java-cli-bless:
 	$(GRADLE) -p $(JAVA_CLI_DIR) test --tests 'net.exoego.uika.cli.GoldenTest' -PuikaBless=true
@@ -183,10 +147,6 @@ java-cli-coverage:
 
 # Runs both CLIs over every jar in the local Gradle cache and compares stdout and exit
 # codes. Not hermetic, so not part of check. MODE is dump, diff or check.
-java-cli-difftest: cargo-release java-cli-build
-	UIKA_JAVA="$(JAVA) -jar $(JAVA_CLI_JAR)" \
-		python3 $(JAVA_CLI_DIR)/tools/difftest.py $(or $(MODE),diff)
-
 gradle-build:
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) build
 
@@ -278,7 +238,7 @@ mill-coverage: jacoco-tools
 		--sourcefiles jvm-plugin-core/src/main/java \
 		--xml $(MILL_JACOCO_DIR)/jacoco.xml
 
-# cargo-build supplies the real binary for the round-trip integration test:
+# java-cli-build supplies the real CLI for the round-trip integration test:
 # the tool writes v2 JSON by hand instead of sharing DumpFormat, so only a run
 # against the real CLI can catch the two drifting apart.
 clojure-test: java-cli-build
@@ -425,8 +385,7 @@ cli-publish-local:
 	$(GRADLE) -p $(JAVA_CLI_DIR) publishToMavenLocal -PuikaVersion=$(UIKA_VERSION)
 
 # Stage every Maven artifact locally; JReleaser signs and uploads the result
-# (see jreleaser.yml). The uika-cli publication attaches the ZIPs under
-# dist/native/<classifier>/ when they are there, all four or none.
+# (see jreleaser.yml).
 stage-all:
 	$(GRADLE) -p $(JAVA_CLI_DIR) publishAllPublicationsToStagingRepository -PuikaVersion=$(UIKA_VERSION)
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) publishAllPublicationsToStagingRepository -PuikaVersion=$(UIKA_VERSION)

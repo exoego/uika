@@ -157,7 +157,7 @@ public final class UpgradeCheckMojo extends AbstractMojo {
                     jdk,
                     line -> getLog().info(line));
             // Recordings (a .jfr value, or recordings inside the directory) are converted
-            // to the CLI's text format here: the CLI is JVM-free and never reads binary
+            // to the CLI's text format here: the CLI never reads binary
             // JFR.
             var classLoadLogs = JfrEvidence.rewrite(
                     jfr != null ? List.of(jfr.toPath()) : List.of(),

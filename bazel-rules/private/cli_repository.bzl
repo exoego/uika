@@ -34,7 +34,7 @@ def _uika_cli_impl(repository_ctx):
         # The CLI is chosen at RUN time as well (UpgradeCheckMain reads the same
         # variable), so this only avoids a pointless download. Symlinked rather than
         # copied so rebuilding the CLI in place is picked up without a refetch. The link
-        # keeps the suffix, because that is how UikaCli tells the jar from a native binary.
+        # keeps the suffix, because that is how UikaCli tells the jar from an executable.
         name = _JAR if override.lower().endswith(".jar") else "uika"
         repository_ctx.symlink(override, name)
         repository_ctx.file("BUILD.bazel", _BUILD.format(file = name))

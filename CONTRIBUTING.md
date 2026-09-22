@@ -3,16 +3,13 @@
 ## Build and test
 
 ```console
-$ make check   # cargo fmt --check + cargo clippy + cargo test + build-tool plugin checks
-$ make test    # cargo test + build-tool plugin tests
-$ make build   # cargo build + Gradle/sbt/Maven/Mill plugin builds
-
-$ cargo build --release                       # for benchmarks
-$ cargo build --release --features memstats   # memory breakdown (counting allocator, slower)
+$ make check   # OpenRewrite dry run + CLI tests + build-tool plugin checks
+$ make test    # CLI tests + build-tool plugin tests
+$ make build   # CLI jar + Gradle/sbt/Maven/Mill plugin builds
 ```
 
-Measure with release builds. Debug builds are roughly 10x slower, and
-`memstats` swaps in a counting allocator, so it is not a throughput benchmark.
+Benchmark the jar the way the plugins run it, with the launcher's flags and
+`-Duika.child=true`. `cli-java/AGENTS.md` has the numbers to expect.
 
 Java sources are kept in shape by the OpenRewrite recipes in
 `tools/openrewrite/rewrite.gradle`. `make test` applies them in place before
@@ -25,9 +22,9 @@ enforces. `make rewrite` applies them on demand.
 $ make coverage   # writes the reports CI uploads to Codecov
 ```
 
-All eight front ends are instrumented. The CLI uses cargo-llvm-cov, the Clojure
-tool and the Leiningen plugin use cloverage, the Bazel rules use `bazel
-coverage`, and the rest use JaCoCo.
+All eight front ends are instrumented. The Clojure tool and the Leiningen plugin
+use cloverage, the Bazel rules use `bazel coverage`, and the rest, the CLI
+included, use JaCoCo.
 
 Every JVM front end runs its tests in a second JVM, so every one of them has to
 pass an agent into it. The Gradle build writes a `gradle.properties` in the
@@ -54,13 +51,12 @@ Three numbers are over less than the whole component.
 ## Test fixtures and goldens
 
 The integration tests replay real incidents against unmodified JARs from Maven
-Central, vendored under `cli/tests/fixtures/` (see its README for coordinates,
-checksums, and licensing). Golden tests pin the full check JSON for those
-scenarios (`cli/tests/golden/`), so any detection shift fails `cargo test`
-before it ships. After verifying a diff is an intended semantic change, re-bless
-with `make java-cli-bless` (the Rust crate reads the same files, and
-`UIKA_BLESS=1 cargo test --test golden` writes them too). The scenario table is
-single-sourced in `cli/tests/scenarios.tsv`, shared with the probe harness.
+Central, vendored under `cli-java/tests/fixtures/` (see its README for
+coordinates, checksums, and licensing). Golden tests pin the full check JSON for
+those scenarios (`cli-java/tests/golden/`), so any detection shift fails
+`make java-cli-test` before it ships. After verifying a diff is an intended
+semantic change, re-bless with `make java-cli-bless`. The scenario table is
+single-sourced in `cli-java/tests/scenarios.tsv`, shared with the probe harness.
 
 ## JVM probe
 
