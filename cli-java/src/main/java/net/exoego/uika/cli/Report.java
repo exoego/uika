@@ -924,11 +924,13 @@ final class Report {
         // Same judgement the exit gate makes, so sections and --fail-on cannot drift.
         boolean axis = Tier.reachableAxisValid(report.appRootsMatched);
         for (Violation v : report.violations) {
-            switch (Tier.of(v, axis)) {
-                case BREAKS -> breaks.add(v);
-                case LATENT -> latent.add(v);
-                case UNPROVEN -> unproven.add(v);
-            }
+            List<Violation> tier =
+                    switch (Tier.of(v, axis)) {
+                        case BREAKS -> breaks;
+                        case LATENT -> latent;
+                        case UNPROVEN -> unproven;
+                    };
+            tier.add(v);
         }
         if (report.reachabilityComputed) {
             if (!breaks.isEmpty()) {
