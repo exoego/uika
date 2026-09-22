@@ -459,6 +459,28 @@ final class CheckScannedTest {
         assertEquals(new SymbolRef(RefKind.METHOD, intern("lib/M"), MemberKey.of("m", "()V"), Boolean.FALSE, null, null), v.reference);
     }
 
+    /**
+     * lib/Mid adds `@Override public final void m()` of the m it inherits from cp/Base in another
+     * jar. Only pass 2 has cp/Base's members, which show m was overridable in old.
+     */
+    @Test
+    void anAddedFinalOverrideOfAClasspathMethodIsJudgedInPassTwo() throws Exception {
+        String cp = jar("cp.jar", "cp/Base.class", new ClassWriter("cp/Base", JAVA_LANG_OBJECT).method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
+        String app = jar("app.jar", "app/Sub.class", new ClassWriter("app/Sub", "lib/Mid").method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
+        ApiIndex oldLib = index(classApi("lib/Mid", "cp/Base", Acc.PUBLIC));
+        ClassApi mid = classApi("lib/Mid", "cp/Base", Acc.PUBLIC);
+        CheckTest.setMembers(mid, true, m("m", "()V", Acc.PUBLIC | Acc.FINAL));
+
+        Check.Report report = Check.check(List.of(cp, app), oldLib, index(mid), List.of());
+
+        assertEquals(List.of(), report.warnings);
+        assertEquals(1, report.violations.size());
+        Violation v = report.violations.get(0);
+        assertEquals("app/Sub", Intern.str(v.sourceClass));
+        assertEquals(Reason.METHOD_BECAME_FINAL, v.reason);
+        assertEquals(new SymbolRef(RefKind.METHOD, intern("lib/Mid"), MemberKey.of("m", "()V"), Boolean.FALSE, null, null), v.reference);
+    }
+
     /** The JVM would throw ClassFormatError loading lib/D's new superclass. Here it stays unverified. */
     @Test
     void aSuperclassThatFailsToParseInPassTwoLeavesTheReferenceUnverified() throws Exception {

@@ -206,7 +206,13 @@ pass-2 classes are typically below 0.1% of the scan.
   direction as Unknown.
 - Newly-final classes/methods break scanned subclasses/overriders even without
   a constant-pool reference; `Check.addFinalViolations` walks the class
-  graph for these.
+  graph for these. A final method a class adds in new counts too when old only
+  inherited an overridable version of it (`Check.addedFinalOverrides`). Porting a
+  Java `AbstractList` subclass to Kotlin adds a final `contains(Object)` bridge
+  this way (JVM-confirmed). The inherited declaration is the old side of the bridge
+  guard. An old chain that leaves every scope stays unreported, so a JDK super needs
+  `--jdk-release`. The walk checks every superclass that owns such a method, so an
+  added one cannot hide another further up.
 - Three JVMS class-shape breaks, all old-relative:
   - InstantiationError: `new X` where X became abstract or an interface. The
     `new` opcode (0xbb) is scanned in `ClassParser` and sets `SymbolRef.instantiated`
