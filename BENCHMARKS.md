@@ -10,20 +10,19 @@ milliseconds. Reproduction commands are at the bottom.
 
 ## Setup
 
-- Machine: 10-core Apple Silicon Mac.
-- The head-to-head run was measured on 2026-07-14. uika's library-diff and
-  class-shape counts were re-checked against the current binary on 2026-09-01.
-  Detections added since the original run moved the diff total from 218 to 230.
-  The third-party numbers and uika's two consumer-scale rows were not
-  re-measured, so read those as a snapshot of the original date.
-- Tool versions: uika (release build), japicmp 0.26.1, roseau 0.7.0 (built
-  from source, requires JDK 25), Revapi standalone 0.12.1 (+ revapi-java 0.28.4
-  and revapi-reporter-text 0.15.1), Linkage Checker 1.5.13.
-- Peak RSS is the `maximum resident set size` from `/usr/bin/time -l`. JVM tools
-  include JVM startup. uika was a native binary when these runs were made. The
-  pure-Java jar that replaced it is measured against that binary in
-  `cli-java/AGENTS.md`: the same or better on the consumer-scale rows, and about
-  25ms of JVM start on the small ones.
+- Machine: Apple M4 Pro (12 cores), macOS.
+- Every number here was measured in one session on 2026-09-22, each command run
+  three times back to back, keeping the best wall time and the largest peak RSS.
+- Tool versions: uika (the pure-Java jar built from `main` at fbc60d9), japicmp
+  0.26.1, roseau 0.7.0 (built from source, requires JDK 25), Revapi standalone
+  0.12.1 (+ revapi-java 0.28.4 and revapi-reporter-text 0.15.1), Linkage Checker
+  1.5.13. All ran on Temurin 21.0.11 except roseau on Temurin 25.0.3.
+- Peak RSS is the `maximum resident set size` from `/usr/bin/time -l`. Every
+  tool is a JVM tool, so every number includes JVM startup. uika ran as
+  `java -jar uika-cli.jar`, the shipped form, in which the launcher re-runs the
+  command in a child JVM with its own flags. Its numbers cover both JVMs.
+  `cli-java/AGENTS.md` keeps the last side-by-side against the native binary
+  this table measured before the Java port.
 - Canonical case: kotlinx-coroutines-core-jvm 1.7.1 -> 1.11.0. Ktor 2.3.13's
   `BlockingAdapter` calls `EventLoopKt.processNextEventInCurrentThread()`, an
   internal (Kotlin `internal`, public in bytecode) method removed in 1.11.0.
@@ -46,14 +45,22 @@ uika `upgrade-check` (the CI mode, fed resolved dumps that carry coordinates)
 resolves the reference, names the artifact on each end, and suggests a fix:
 
 ```text
-dependency changes: 1
+dependency changes: 5
+    CHANGED org.jetbrains.kotlin:kotlin-stdlib 1.8.22 -> 2.2.20
+    REMOVED org.jetbrains.kotlin:kotlin-stdlib-common 1.8.22 -> -
     CHANGED org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm 1.7.1 -> 1.11.0
+    CHANGED org.jetbrains.kotlinx:kotlinx-coroutines-jdk8 1.7.1 -> 1.11.0
+    CHANGED org.jetbrains.kotlinx:kotlinx-coroutines-slf4j 1.7.1 -> 1.11.0
+
+per-module check: 1 of 1 modules changed their resolved versions (0 unchanged)
+    :app  scanned 9013 classes, ❌ 1 broken, 0 unverified
 
 💡 suggestion: upgrade io.ktor:ktor-io-jvm:2.3.13 to a release built against org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm 1.11.0, or pin org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm to 1.7.1
+    affected modules: :app
     why: org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm changed 1.7.1 -> 1.11.0, which breaks io.ktor:ktor-io-jvm:2.3.13:
         kotlinx.coroutines.EventLoopKt.processNextEventInCurrentThread() was removed, but io.ktor.utils.io.jvm.javaio.BlockingAdapter still calls it
 
-scanned 8164 classes: ❌ 2 broken
+scanned 9013 classes: ❌ 1 broken
 ```
 
 Plain `uika check`, given bare JAR paths instead of a resolved dump, groups the
@@ -78,7 +85,7 @@ japicmp groups removals under each modified class (bytecode level, finds it):
 	---! REMOVED METHOD: PUBLIC(-) STATIC(-) FINAL(-) kotlinx.coroutines.AbstractTimeSource getTimeSource()
 ...
 	---! REMOVED METHOD: PUBLIC(-) STATIC(-) FINAL(-) long processNextEventInCurrentThread()
-... (~267 incompatible members)
+... (184 removed members in 62 modified classes)
 ```
 
 roseau reports only its inferred public API surface, so the internal method is
@@ -105,18 +112,14 @@ SOURCE: BREAKING, BINARY: BREAKING
 ... (18,051 lines total)
 ```
 
-Linkage Checker (consumer scan) gives the most detailed root cause per error:
+Linkage Checker (consumer scan) names the referencing class file per error.
+Fed a jar list it has no dependency graph, so it cannot say which version
+conflict caused the error, which it does when given Maven coordinates:
 
 ```text
-(kotlinx-coroutines-core-jvm:1.11.0) kotlinx.coroutines.EventLoopKt's method
-  "long processNextEventInCurrentThread()" is not found;
+(.../kotlinx-coroutines-core-jvm-1.11.0.jar) kotlinx.coroutines.EventLoopKt's method "long processNextEventInCurrentThread()" is not found;
   referenced by 1 class file
-    io.ktor.utils.io.jvm.javaio.BlockingAdapter (io.ktor:ktor-io-jvm:2.3.13)
-  Cause:
-    Dependency conflict: ...coroutines...1.11.0 does not define the method
-    but ...coroutines...1.7.1 defines it.
-      selected:   ...coroutines-core-jvm:1.11.0 (compile)
-      unselected: ktor-io-jvm:2.3.13 (compile) / ...coroutines-core-jvm:1.7.1 (compile)
+    io.ktor.utils.io.jvm.javaio.BlockingAdapter (.../ktor-io-jvm-2.3.13.jar)
 ```
 
 ## 1. Library diff (coroutines 1.7.1 -> 1.11.0)
@@ -126,13 +129,13 @@ all diff tools.
 
 | Tool      | Time   | Peak RSS | Findings          | Flags the real break | Notes |
 |-----------|--------|----------|-------------------|----------------------|-------|
-| uika diff | 0.02s  | 23 MB    | 230 entries       | yes | native binary, see Setup |
-| japicmp   | 0.38s  | 254 MB   | ~267 incompatible (484-line report) | yes | needs `--ignore-missing-classes`, warns the result may be incomplete |
-| roseau    | 0.42s  | 195 MB   | 3 breaking changes | **no** | Kotlin-aware API surface excludes the internal method |
-| Revapi    | ~15s\* | 1077 MB  | 18,051 report lines | yes | very noisy without supplementary jars (`missing-class ... POTENTIALLY_BREAKING`) |
+| uika diff | 0.09s  | 58 MB    | 230 entries       | yes | two JVMs, see Setup |
+| japicmp   | 0.29s  | 203 MB   | 184 removed members in 62 classes (484-line report) | yes | needs `--ignore-missing-classes`, warns the result may be incomplete |
+| roseau    | 0.39s  | 182 MB   | 3 breaking changes | **no** | Kotlin-aware API surface excludes the internal method |
+| Revapi    | 3.1s\* | 846 MB   | 18,051 report lines | yes | very noisy without supplementary jars (`missing-class ... POTENTIALLY_BREAKING`) |
 
-\* Revapi's wall time is dominated by a one-time extension download (~12s); the
-analysis itself is a few seconds.
+\* Steady state. Revapi's first run downloads its extensions, which took 23s
+here; the analysis itself is about 3s after that.
 
 Reading the counts: japicmp, Revapi and uika work at the bytecode level, so they
 report every JVM-public member, including Kotlin `internal` and synthetic ones.
@@ -143,23 +146,25 @@ niche.
 
 ## 2. Consumer-scale scan, small coherent classpath
 
-The same 42 JARs (a coherent Ktor server + client tree, coroutines pinned to
-1.11.0) given to each tool in its native input form: a resolved dump for uika
-`upgrade-check`, a JAR list for Linkage Checker. This is the fair
-apples-to-apples for the two classpath scanners.
+The same 40 JARs (a Ktor 2.3.13 server + client tree resolved by Gradle,
+coroutines forced to 1.11.0) given to each tool in its native input form: a
+resolved dump for uika `upgrade-check`, a JAR list for Linkage Checker. This is
+the fair apples-to-apples for the two classpath scanners. uika ran with
+`--jdk-release 20`, which the build-tool plugins pass on their own. Without it
+the same run takes 0.19s and reports the same break plus 131 unverified
+references whose hierarchy escapes into the JDK.
 
-| Tool               | Time       | Peak RSS  | Findings          | Flags the real break |
-|--------------------|------------|-----------|-------------------|----------------------|
-| uika upgrade-check | 0.03-0.04s | ~46 MB    | 2 broken          | yes |
-| Linkage Checker    | ~1.5s      | ~1.2 GB   | 15 linkage errors | yes |
+| Tool               | Time  | Peak RSS | Findings          | Flags the real break |
+|--------------------|-------|----------|-------------------|----------------------|
+| uika upgrade-check | 0.21s | 110 MB   | 1 broken          | yes |
+| Linkage Checker    | 1.5s  | ~1.2 GB  | 15 linkage errors | yes |
 
 Both catch the real break. On a coherent, moderate classpath Linkage Checker is
-perfectly healthy (~1.5s, most of it JVM startup). The difference is what they
+perfectly healthy (1.5s, most of it JVM startup). The difference is what they
 report:
 
-- uika reports the 2 references the upgrade newly broke: the removed
-  `EventLoopKt.processNextEventInCurrentThread`, plus an access-narrowing on
-  `FlowKt__TransformKt`.
+- uika reports the one reference the upgrade newly broke: the removed
+  `EventLoopKt.processNextEventInCurrentThread`.
 - Linkage Checker reports 15 linkage errors for the whole snapshot. 14 of them
   are `org.conscrypt.*` / `org.bouncycastle.*`, optional TLS dependencies that
   are absent by design and never fail at runtime. They are unrelated to the
@@ -175,22 +180,23 @@ is narrower in scope: it suppresses a specific, investigated reference inside
 a break the upgrade actually introduced (e.g. a reflection-only field access),
 not permanent unrelated noise like the conscrypt/bouncycastle case above.
 
-## 3. Stress: large flat classpath (~2,400 JARs / ~2M classes)
+## 3. Stress: large flat classpath (2,801 JARs / 1.95M classes)
 
 A whole local package cache flattened into one classpath: many artifacts,
 many conflicting versions. This is uika's design target and, deliberately, not
 Linkage Checker's (it expects a coherent resolved tree).
 
-| Tool            | Time    | Peak RSS  | Result |
-|-----------------|---------|-----------|--------|
-| uika check      | ~7s     | ~436 MB   | scanned ~2.05M classes, 1,163 broken references |
-| Linkage Checker | >4.5min | ~7.5 GB   | did not complete (stopped near the 8 GB heap cap) |
+| Tool            | Time   | Peak RSS | Result |
+|-----------------|--------|----------|--------|
+| uika check      | 1.6s   | 347 MB   | scanned 1,951,880 classes, 140 broken references |
+| Linkage Checker | 6.6min | 8.4 GB   | 14,046 linkage errors, heap capped at 8 GB |
 
-Linkage Checker's exhaustive class-graph does not scale to an arbitrary
-version-conflict pile, and it hard-fails up front if any single entry is
-unreadable. uika streams the same input, skips non-scannable entries silently,
-and finishes in seconds. This row measures behavior on pathological input, not
-Linkage Checker's intended use.
+Linkage Checker's exhaustive class graph pays minutes and gigabytes on an
+arbitrary version-conflict pile, and it refuses the whole list up front when a
+single entry is unreadable (this cache holds a directory named `*.jar`, which
+had to be filtered out first). uika streams the same input, skips non-scannable
+entries silently, and finishes in seconds. This row measures behavior on
+pathological input, not Linkage Checker's intended use.
 
 ## 4. Class-shape breaks: interface↔class flip and InstantiationError
 
@@ -228,19 +234,19 @@ not report it. No uika false negative surfaced.
 
 - uika is the only tool here that answers "which changes break the code on my
   classpath" rather than "what changed in this library" or "every linkage error
-  in this snapshot". That scoping is why it reports 2 where Linkage Checker
-  reports 15, and 1 where the diff tools report hundreds. In `upgrade-check`
+  in this snapshot". That scoping is why it reports 1 where Linkage Checker
+  reports 15 and the diff tools hundreds. In `upgrade-check`
   mode it also names the referencing and owning artifacts and suggests a fix
   (upgrade the referencer or pin the owner), which the diff tools cannot do
   because they never see the referencing side.
-- As a native binary, uika's footprint was one to two orders of magnitude below
-  the JVM tools (23-46 MB vs 195 MB-1.2 GB), and its startup negligible. The jar
-  keeps the footprint well under the JVM tools' (65 MB on the smallest run) and
-  adds a JVM start, which matters little for a per-PR CI gate.
+- uika's footprint is a third to a twelfth of the other JVM tools' on the same
+  input (58-102 MB against 182 MB-1.2 GB), and the two JVM starts it pays are
+  inside the 0.1-0.2s its small rows take.
 - Each prior-art tool is strong in its lane: roseau is fast and precise about
   the true public API surface, japicmp adds semantic-versioning advice, Revapi
-  has the widest set of checks, and Linkage Checker gives the most detailed
-  root-cause for each linkage error on a coherent tree.
+  has the widest set of checks, and Linkage Checker names every referencing
+  class on a coherent tree, with the version conflict behind it when it is
+  given Maven coordinates rather than jars.
 - On the class-shape breaks (section 4), the library-diff tools flag the change
   and Linkage Checker catches the interface↔class flip, but the `new`-on-abstract
   `InstantiationError` is caught by uika alone among the classpath scanners:
@@ -252,6 +258,7 @@ not report it. No uika false negative surfaced.
 ```zsh
 OLD=.../kotlinx-coroutines-core-jvm-1.7.1.jar
 NEW=.../kotlinx-coroutines-core-jvm-1.11.0.jar
+alias uika='java -jar uika-cli.jar'
 
 # 1. Library diff
 uika diff "$OLD" "$NEW"
@@ -266,13 +273,19 @@ revapi.sh -e org.revapi:revapi-java:0.28.4,org.revapi:revapi-reporter-text:0.15.
 #    carry coordinates, so it can print the referenced-by/removed-by lines and a
 #    fix suggestion. Plain check takes bare JAR paths and finds the same breaks
 #    without those lines.
-uika upgrade-check --before before.json --after after.json
+#    --jdk-release is what the plugins pass by default, derived from the build.
+uika upgrade-check --before before.json --after after.json --jdk-release 20
 uika check --old "$OLD" --new "$NEW" --classpath "$TREE"
 java -cp <linkage-checker-cp> com.google.cloud.tools.opensource.classpath.LinkageCheckerMain \
      -j "$TREE_COMMA"
 
-# 3. Stress: a whole flattened package cache as the classpath
+# 3. Stress: a whole flattened package cache as the classpath (files only:
+#    Linkage Checker refuses the list if a directory named *.jar is on it)
+BIG_CP=$(find ~/.gradle/caches/modules-2/files-2.1 -type f -name '*.jar' \
+         ! -name '*-sources*' ! -name '*-javadoc*' | tr '\n' ':' | sed 's/:$//')
 uika check --old "$OLD" --new "$NEW" --classpath "$BIG_CP"
+java -Xmx8g -cp <linkage-checker-cp> com.google.cloud.tools.opensource.classpath.LinkageCheckerMain \
+     -j "${BIG_CP//:/,}"
 
 # 4. Class-shape breaks (fixtures in cli-java/tests/fixtures). interface->class flip:
 uika check --old ktor-io-jvm-2.3.13.jar --new ktor-io-jvm-3.1.0.jar \
