@@ -399,7 +399,7 @@ final class Commands {
                         + "(regenerate the dumps with a current uika plugin for per-module checking)");
             }
 
-            int[] jdkPair = releaseChange(before.jdkRelease, after.jdkRelease);
+            int[] jdkPair = jdkChange(before, after);
             if (changes.oldJars().isEmpty() && jdkPair == null) {
                 // The empty list still writes the requested draft file, like --verdicts-json.
                 applyEvidenceAndDraft(new ArrayList<>(), null, evidence, args.draftExcludeFile());
