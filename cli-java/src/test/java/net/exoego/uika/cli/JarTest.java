@@ -826,7 +826,7 @@ class JarTest {
         StringBuilder captured = new StringBuilder();
         List<Seen> seen = streamCapturingWarnings(path, captured);
         assertEquals(List.of("p/A"), seen.stream().map(Seen::entry).toList());
-        assertEquals("warning: " + path + "!p/B.class: local header out of span\n", captured.toString());
+        assertEquals("warning: " + path + "!p/B.class: local header runs into the next entry or the central directory\n", captured.toString());
     }
 
     @Test
@@ -839,7 +839,7 @@ class JarTest {
         StringBuilder captured = new StringBuilder();
         List<Seen> seen = streamCapturingWarnings(path, captured);
         assertEquals(List.of("p/A"), seen.stream().map(Seen::entry).toList());
-        assertEquals("warning: " + path + "!p/B.class: entry data out of span\n", captured.toString());
+        assertEquals("warning: " + path + "!p/B.class: entry data runs into the next entry or the central directory\n", captured.toString());
     }
 
     @Test
