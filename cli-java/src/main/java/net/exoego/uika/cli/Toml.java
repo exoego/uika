@@ -1333,11 +1333,7 @@ final class Toml {
                     if (!value.arrayOfTables) {
                         throw cannotExtend("array", part);
                     }
-                    Value last = value.items.get(value.items.size() - 1);
-                    if (last.kind != Kind.TABLE) {
-                        throw cannotExtend(last.kind.typeStr, part);
-                    }
-                    table = last.table;
+                    table = value.items.get(value.items.size() - 1).table;
                 } else if (value.kind == Kind.TABLE) {
                     Table child = value.table;
                     if (child.inline) {
@@ -1375,9 +1371,6 @@ final class Toml {
                 root = finished;
                 return;
             }
-            if (h.key == null) {
-                return;
-            }
             Table parent = descend(root, h.path, false);
             Value value = tableValue(finished, h.start, h.end);
             if (!h.array) {
@@ -1398,7 +1391,7 @@ final class Toml {
         }
 
         private void startTable(Header h) {
-            if (!h.array && h.key != null) {
+            if (!h.array) {
                 // Looked up at the header, not when the table ends, so the duplicate is
                 // reported on the redefining line.
                 Table parent = descend(root, h.path, false);
