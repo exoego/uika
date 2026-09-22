@@ -17,7 +17,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class ModifiedUtf8Test {
-    private static final String INVALID = "could not convert CESU-8 data to UTF-8";
+    private static final String INVALID = "a constant pool string is not valid modified UTF-8";
 
     private static byte[] bytes(int... values) {
         byte[] out = new byte[values.length];

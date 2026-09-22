@@ -250,14 +250,16 @@ final class Input {
         }
         long spanLength = end - start;
         if (spanLength > Integer.MAX_VALUE - 64) {
-            throw new UikaException("failed to read jar span at offset " + start);
+            throw new UikaException(
+                    "cannot read " + Intern.str(source) + ": the entry at offset " + start + " is larger than 2 GB");
         }
         // The decoder refills its bit buffer a word at a time, so it may read (never consume)
         // a few bytes past the last entry.
         ByteBuffer span = BufPool.acquire((int) spanLength + Inflate.SLACK);
         try {
             if (!Jar.readFully(channel, span, start, (int) spanLength)) {
-                throw new UikaException("failed to read jar span at offset " + start);
+                throw new UikaException(
+                        "cannot read " + Intern.str(source) + ": the entries from offset " + start + " could not be read in full");
             }
             span.limit((int) spanLength + Inflate.SLACK);
             runLeaves(from, to, sink, out, (leaf, a, b) -> decodeEntries(entries, span, start, a, b, source, sink, leaf));
@@ -323,7 +325,7 @@ final class Input {
             Jar.Entries entries, int i, ByteBuffer view, int spanLength, long spanStart, Scratch scratch, int source, Sink<L> sink, L leaf) {
         long base = entries.offset(i) - spanStart;
         if (base < 0 || base + 30 > spanLength) {
-            return "local header out of span";
+            return "local header runs into the next entry or the central directory";
         }
         int at = (int) base;
         if (view.getInt(at) != Jar.LOCAL_SIGNATURE) {
@@ -335,7 +337,7 @@ final class Input {
         long dataStart = base + 30 + nameLength + extraLength;
         long compressed = entries.compressed(i);
         if (dataStart + compressed > spanLength) {
-            return "entry data out of span";
+            return "entry data runs into the next entry or the central directory";
         }
         ClassSource cs = scratch.classSource;
         if (entries.stored[i]) {

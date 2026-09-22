@@ -17,7 +17,7 @@ import java.nio.ByteOrder;
 final class ModifiedUtf8 {
     private static final VarHandle LONG_VIEW =
             MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.nativeOrder());
-    private static final String INVALID = "could not convert CESU-8 data to UTF-8";
+    private static final String INVALID = "a constant pool string is not valid modified UTF-8";
 
     private ModifiedUtf8() {}
 

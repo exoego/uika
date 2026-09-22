@@ -26,7 +26,7 @@ final class Jar {
 
     /**
      * The scannable entries of one JAR in local-header-offset order, which is the order they
-     * are read and therefore the first-wins order inside the JAR. Offsets and sizes are u32.
+     * are read and therefore the first-wins order inside the JAR. Offsets and sizes are unsigned 32-bit.
      * The columns are pooled: only the first {@link #count} elements of each are meaningful.
      */
     static final class Entries {

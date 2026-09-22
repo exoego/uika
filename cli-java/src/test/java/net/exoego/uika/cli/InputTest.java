@@ -568,7 +568,7 @@ class InputTest {
         entries.inflated = new int[] {5};
         entries.stored = new boolean[] {true};
         UikaException tooLong = assertThrows(UikaException.class, () -> stream(jar, new Input.Prepared(entries, false)));
-        assertEquals("failed to read jar span at offset 0", tooLong.getMessage());
+        assertEquals("cannot read " + jar + ": the entry at offset 0 is larger than 2 GB", tooLong.getMessage());
     }
 
     /** Directories are read a chunk ahead of the scan, so the file can change in between. */
@@ -581,7 +581,7 @@ class InputTest {
             channel.truncate(10);
         }
         UikaException cut = assertThrows(UikaException.class, () -> stream(jar, prepared));
-        assertEquals("failed to read jar span at offset 0", cut.getMessage());
+        assertEquals("cannot read " + jar + ": the entries from offset 0 could not be read in full", cut.getMessage());
     }
 
     @Test
