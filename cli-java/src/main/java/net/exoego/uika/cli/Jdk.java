@@ -266,7 +266,7 @@ final class Jdk {
                     for (int i = 0; i < apis.length; i++) {
                         if (apis[i] != null) {
                             index.insertIfAbsent(apis[i]);
-                        } else if (failures[i] != null) {
+                        } else {
                             warnings.add(failures[i]);
                         }
                     }
@@ -429,9 +429,7 @@ final class Jdk {
                 for (int i = 0; i < apis.length; i++) {
                     ClassApi api = apis[i];
                     if (api == null) {
-                        if (failures[i] != null) {
-                            warnings.add(failures[i]);
-                        }
+                        warnings.add(failures[i]);
                         continue;
                     }
                     if (api.superName != Intern.NONE) {
