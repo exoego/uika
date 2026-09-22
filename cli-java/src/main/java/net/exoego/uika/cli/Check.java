@@ -129,16 +129,36 @@ final class Check {
         }
     }
 
-    private static void collectFinalWanted(ApiIndex oldIndex, ApiIndex newIndex, ClassGraph graph, IntSet wanted) {
+    private static void collectFinalWanted(ApiIndex oldIndex, ApiIndex newIndex, ClassGraph graph, IntSet wanted, IntSet escapes) {
         Map<Integer, LongSet> finalMethods = newlyFinalMethods(oldIndex, newIndex);
-        if (finalMethods.isEmpty()) {
+        // Pass 2 has not run yet. An added final method whose old chain leaves the library
+        // stays a candidate, and the chain is fetched so the verdict can judge the old side.
+        IntSet unresolved = new IntSet();
+        mergeMethods(finalMethods, addedFinalOverrides(oldIndex, newIndex, new Scope(oldIndex), unresolved));
+        if (finalMethods.isEmpty() && unresolved.isEmpty()) {
             return;
         }
         IntSet finalOwners = ownersOf(finalMethods);
+        Walk walk = new Walk();
+        for (int owner : unresolved.toArray()) {
+            finalOwners.add(owner);
+            forEachSupertype(owner, oldIndex, graph, walk, type -> {
+                if (oldIndex.containsClass(type)) {
+                    return;
+                }
+                if (graph.contains(type)) {
+                    wanted.add(type);
+                } else if (escapes != null) {
+                    escapes.add(type);
+                }
+            });
+        }
         IntSet seen = new IntSet();
+        IntBuf owners = new IntBuf(8);
         for (int node = 0; node < graph.size(); node++) {
             int className = graph.nameOf(node);
-            if (firstAncestorWithFinalMethods(className, newIndex, graph, finalOwners, seen) != Intern.NONE) {
+            finalOwnersOnChain(className, newIndex, graph, finalOwners, seen, owners);
+            if (!owners.isEmpty()) {
                 wanted.add(className);
             }
         }
@@ -390,7 +410,7 @@ final class Check {
         Reach.Result reachResult = reach == null ? null : Reach.reachableClasses(graph, reach);
         IntSet escapes = jdk == null ? null : new IntSet();
         IntSet wanted = collectWanted(scan, oldIndex, newIndex, escapes);
-        collectFinalWanted(oldIndex, newIndex, graph, wanted);
+        collectFinalWanted(oldIndex, newIndex, graph, wanted, escapes);
         collectAbstractWanted(oldIndex, newIndex, graph, wanted);
         collectSpiWanted(services, oldIndex, newIndex, graph, wanted);
         List<LagEdge> lagEdges = collectUpgradedSuperEdges(graph, upgradedSources, newIndex, wanted, escapes);
@@ -450,7 +470,7 @@ final class Check {
             }
             at = refsAt + refCount * 4;
         }
-        addFinalViolations(oldIndex, newIndex, fetched, graph, violations, seen);
+        addFinalViolations(oldIndex, newIndex, oldScope, fetched, graph, violations, seen);
         addExtendsFinalViolations(lagEdges, oldIndex, runtimeScope, violations, seen);
         addKindFlipViolations(oldIndex, newIndex, graph, violations, seen);
         addSealedViolations(oldIndex, newIndex, graph, violations, seen);
@@ -673,8 +693,14 @@ final class Check {
 
     // ---- graph walks: breaks that need no constant-pool reference ----
 
-    private static void addFinalViolations(
-            ApiIndex oldIndex, ApiIndex newIndex, ApiIndex fetched, ClassGraph graph, List<Violation> violations, Set<ViolationKey> seen) {
+    static void addFinalViolations(
+            ApiIndex oldIndex,
+            ApiIndex newIndex,
+            Scope oldScope,
+            ApiIndex fetched,
+            ClassGraph graph,
+            List<Violation> violations,
+            Set<ViolationKey> seen) {
         IntSet finalClasses = newlyFinalClasses(oldIndex, newIndex);
         for (int node = 0; node < graph.size(); node++) {
             int superName = graph.superOf(node);
@@ -684,28 +710,31 @@ final class Check {
         }
 
         Map<Integer, LongSet> finalMethods = newlyFinalMethods(oldIndex, newIndex);
+        mergeMethods(finalMethods, addedFinalOverrides(oldIndex, newIndex, oldScope, null));
         if (finalMethods.isEmpty()) {
             return;
         }
         IntSet finalOwners = ownersOf(finalMethods);
         IntSet seenAncestors = new IntSet();
+        IntBuf owners = new IntBuf(8);
         for (int node = 0; node < graph.size(); node++) {
             int className = graph.nameOf(node);
-            int owner = firstAncestorWithFinalMethods(className, newIndex, graph, finalOwners, seenAncestors);
-            if (owner == Intern.NONE) {
-                continue;
-            }
             int entry = fetched.entry(className);
             if (entry < 0) {
                 continue;
             }
-            LongSet methods = finalMethods.get(owner);
-            int n = fetched.methodCount(entry);
+            finalOwnersOnChain(className, newIndex, graph, finalOwners, seenAncestors, owners);
+            int n = owners.isEmpty() ? 0 : fetched.methodCount(entry);
             for (int k = 0; k < n; k++) {
                 long key = fetched.methodKeyAt(entry, k);
-                if (methods.contains(key)) {
-                    SymbolRef reference = new SymbolRef(RefKind.METHOD, owner, key, Boolean.FALSE, null, null);
-                    pushViolation(violations, seen, graph.sourceOf(node), className, reference, Reason.METHOD_BECAME_FINAL);
+                // The nearest final declaration is the one the JVM names.
+                for (int i = 0; i < owners.n; i++) {
+                    int owner = owners.a[i];
+                    if (finalMethods.get(owner).contains(key)) {
+                        SymbolRef reference = new SymbolRef(RefKind.METHOD, owner, key, Boolean.FALSE, null, null);
+                        pushViolation(violations, seen, graph.sourceOf(node), className, reference, Reason.METHOD_BECAME_FINAL);
+                        break;
+                    }
                 }
             }
         }
@@ -1222,6 +1251,62 @@ final class Check {
     }
 
     /**
+     * Final methods a class declares in new but only inherited in old (owner -> keys), when the
+     * inherited version was one a subclass could override. The inherited declaration is the old
+     * side of the bridge guard. A method whose old chain leaves {@code oldScope} is left out like
+     * Unknown, and its class goes to {@code unresolved} when that is non-null.
+     */
+    static Map<Integer, LongSet> addedFinalOverrides(ApiIndex oldIndex, ApiIndex newIndex, Scope oldScope, IntSet unresolved) {
+        Map<Integer, LongSet> out = new HashMap<>();
+        for (int e = 0; e < newIndex.classCount(); e++) {
+            int className = newIndex.nameOf(e);
+            int oldEntry = oldIndex.entry(className);
+            // A subclass of a class that was already final never loaded.
+            if (oldEntry < 0 || (oldIndex.accessOf(oldEntry) & Acc.FINAL) != 0) {
+                continue;
+            }
+            int n = newIndex.methodCount(e);
+            for (int k = 0; k < n; k++) {
+                int newAccess = newIndex.methodAccessAt(e, k);
+                long key = newIndex.methodKeyAt(e, k);
+                boolean blocksOverride = (newAccess & (Acc.FINAL | Acc.STATIC | Acc.PRIVATE)) == Acc.FINAL;
+                if (!blocksOverride || oldIndex.findMethod(oldEntry, key) >= 0) {
+                    continue;
+                }
+                long inherited = oldScope.resolveMember(className, key, Scope.MemberKind.METHOD);
+                if (inherited == Scope.UNKNOWN) {
+                    if (unresolved != null) {
+                        unresolved.add(className);
+                    }
+                    continue;
+                }
+                if (!Scope.isFound(inherited)) {
+                    continue;
+                }
+                int oldAccess = Scope.foundAccess(inherited);
+                if (isOverridable(oldAccess) && !compilerGeneratedOnly(oldAccess, newAccess)) {
+                    out.computeIfAbsent(className, c -> new LongSet()).add(key);
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Static and private methods never override, and a final one cannot be overridden. */
+    private static boolean isOverridable(int access) {
+        return (access & (Acc.FINAL | Acc.STATIC | Acc.PRIVATE)) == 0;
+    }
+
+    private static void mergeMethods(Map<Integer, LongSet> into, Map<Integer, LongSet> from) {
+        for (Map.Entry<Integer, LongSet> e : from.entrySet()) {
+            LongSet keys = into.computeIfAbsent(e.getKey(), c -> new LongSet());
+            for (long key : e.getValue().toArray()) {
+                keys.add(key);
+            }
+        }
+    }
+
+    /**
      * A generic-signature edit can reshape a bridge without a source-visible API change, so a
      * method that is synthetic or a bridge on every side where it exists is not the subject of
      * a became-abstract or became-final inference. A real method on either side still is. A
@@ -1358,16 +1443,19 @@ final class Check {
         return owners;
     }
 
-    /** @param seen scratch, cleared here: this runs once per scanned class */
-    private static int firstAncestorWithFinalMethods(int className, ApiIndex newIndex, ClassGraph graph, IntSet finalOwners, IntSet seen) {
+    /**
+     * Fills {@code out} with the superclasses of {@code className} that own a newly final
+     * method, nearest first.
+     *
+     * @param seen scratch, cleared here: this runs once per scanned class
+     */
+    private static void finalOwnersOnChain(int className, ApiIndex newIndex, ClassGraph graph, IntSet finalOwners, IntSet seen, IntBuf out) {
+        out.n = 0;
         int next = graph.superOf(graph.node(className));
         seen.clear();
-        while (next != Intern.NONE) {
-            if (!seen.add(next)) {
-                return Intern.NONE;
-            }
+        while (next != Intern.NONE && seen.add(next)) {
             if (finalOwners.contains(next)) {
-                return next;
+                out.add(next);
             }
             int n = graph.node(next);
             int superName = n < 0 ? Intern.NONE : graph.superOf(n);
@@ -1377,7 +1465,6 @@ final class Check {
             }
             next = superName;
         }
-        return Intern.NONE;
     }
 
     // ---- access ----

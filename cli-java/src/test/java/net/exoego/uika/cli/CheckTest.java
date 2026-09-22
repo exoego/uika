@@ -960,6 +960,155 @@ final class CheckTest {
         assertOk(v);
     }
 
+    // ---- newly-final walk (addFinalViolations) ----
+
+    private static final Member PUBLIC_M = m("m", "()V", Acc.PUBLIC);
+    private static final Member FINAL_M = m("m", "()V", Acc.PUBLIC | Acc.FINAL);
+    private static final String CONTAINS = "(Ljava/lang/Object;)Z";
+
+    private static ClassApi extending(String name, String superName, Member... methods) {
+        ClassApi c = classWithMethodAccess(name, methods);
+        c.superName = intern(superName);
+        return c;
+    }
+
+    /** lib/Base declares {@code baseM}, and lib/Mid extends it declaring {@code midMethods}. */
+    private static ApiIndex baseAndMid(Member baseM, Member... midMethods) {
+        return index(classWithMethodAccess("lib/Base", baseM), extending("lib/Mid", "lib/Base", midMethods));
+    }
+
+    /** Runs the walk over scanned subclasses fetched in pass 2, with {@code jdk} as the ct.sym layer when non-null. */
+    private static List<Violation> finalViolations(ApiIndex oldLib, ApiIndex newLib, ApiIndex jdk, ClassApi... scanned) {
+        ClassGraph graph = new ClassGraph();
+        for (ClassApi c : scanned) {
+            insert(graph, Intern.str(c.name), c.superName, new int[0], Intern.NONE, "app.jar");
+        }
+        ApiIndex fetched = index(scanned);
+        Scope oldScope = jdk == null ? new Scope(oldLib, fetched) : new Scope(oldLib, fetched, jdk);
+        List<Violation> violations = new ArrayList<>();
+        Check.addFinalViolations(oldLib, newLib, oldScope, fetched, graph, violations, new HashSet<>());
+        return violations;
+    }
+
+    private static SymbolRef overridden(String owner, String name, String descriptor) {
+        return new SymbolRef(RefKind.METHOD, intern(owner), MemberKey.of(name, descriptor), Boolean.FALSE, null, null);
+    }
+
+    @Test
+    void aFinalOverrideOfAnInheritedMethodIsReported() {
+        // Mid adds `@Override public final void m()`. JVM: class app.Sub overrides final method lib.Mid.m()V.
+        List<Violation> v = finalViolations(baseAndMid(PUBLIC_M), baseAndMid(PUBLIC_M, FINAL_M), null, extending("app/Sub", "lib/Mid", PUBLIC_M));
+        assertEquals(1, v.size());
+        assertEquals(Reason.METHOD_BECAME_FINAL, v.get(0).reason);
+        assertEquals("app/Sub", Intern.str(v.get(0).sourceClass));
+        assertEquals(overridden("lib/Mid", "m", "()V"), v.get(0).reference);
+    }
+
+    @Test
+    void anInheritedMethodThatWasAlreadyFinalIsPreExisting() {
+        // Base.m was final in old, so Sub failed to load before the upgrade too.
+        List<Violation> v = finalViolations(baseAndMid(FINAL_M), baseAndMid(PUBLIC_M, FINAL_M), null, extending("app/Sub", "lib/Mid", PUBLIC_M));
+        assertTrue(v.isEmpty());
+    }
+
+    @Test
+    void aSubclassThatDoesNotOverrideTheAddedFinalMethodIsNotReported() {
+        ClassApi sub = extending("app/Sub", "lib/Mid", m("n", "()V", Acc.PUBLIC));
+        assertTrue(finalViolations(baseAndMid(PUBLIC_M), baseAndMid(PUBLIC_M, FINAL_M), null, sub).isEmpty());
+    }
+
+    @Test
+    void anAddedStaticFinalMethodIsNotAnOverride() {
+        // Mid adds `public static final String helper()` over Base's static one. On the JVM Sub's static helper() still loads.
+        Member helper = m("helper", "()Ljava/lang/String;", Acc.PUBLIC | Acc.STATIC);
+        Member finalHelper = m("helper", "()Ljava/lang/String;", Acc.PUBLIC | Acc.STATIC | Acc.FINAL);
+        List<Violation> v = finalViolations(baseAndMid(helper), baseAndMid(helper, finalHelper), null, extending("app/Sub", "lib/Mid", helper));
+        assertTrue(v.isEmpty());
+    }
+
+    @Test
+    void anAddedFinalBridgeOverAnInheritedBridgeIsGuarded() {
+        // Compiler-generated on both sides, the case the bridge guard skips for a declared method too.
+        Member bridge = m("m", "()V", Acc.PUBLIC | Acc.BRIDGE | Acc.SYNTHETIC);
+        Member finalBridge = m("m", "()V", Acc.PUBLIC | Acc.FINAL | Acc.BRIDGE);
+        List<Violation> v = finalViolations(baseAndMid(bridge), baseAndMid(bridge, finalBridge), null, extending("app/Sub", "lib/Mid", PUBLIC_M));
+        assertTrue(v.isEmpty());
+    }
+
+    @Test
+    void anAddedFinalMethodDoesNotHideANewlyFinalOneFurtherUp() {
+        // Mid, the nearer owner, adds a final m while Base makes n final. Sub overrides only n.
+        Member n = m("n", "()V", Acc.PUBLIC);
+        ApiIndex oldLib = index(classWithMethodAccess("lib/Base", PUBLIC_M, n), extending("lib/Mid", "lib/Base"));
+        ApiIndex newLib = index(
+                classWithMethodAccess("lib/Base", PUBLIC_M, m("n", "()V", Acc.PUBLIC | Acc.FINAL)), extending("lib/Mid", "lib/Base", FINAL_M));
+        List<Violation> v = finalViolations(oldLib, newLib, null, extending("app/Sub", "lib/Mid", n));
+        assertEquals(1, v.size());
+        assertEquals(overridden("lib/Base", "n", "()V"), v.get(0).reference);
+    }
+
+    /** javac's `Items extends java.util.AbstractList<String>` with get and size. */
+    private static ApiIndex javaItems() {
+        return index(extending(
+                "lib/Items",
+                "java/util/AbstractList",
+                m("<init>", "()V", Acc.PUBLIC),
+                m("get", "(I)Ljava/lang/String;", Acc.PUBLIC),
+                m("size", "()I", Acc.PUBLIC),
+                m("get", "(I)Ljava/lang/Object;", Acc.PUBLIC | Acc.BRIDGE | Acc.SYNTHETIC)));
+    }
+
+    /** kotlinc 2.1.10's `open class Items : java.util.AbstractList<String>()` with the same get and size. */
+    private static ApiIndex kotlinItems() {
+        int bridge = Acc.PUBLIC | Acc.BRIDGE;
+        int finalBridge = Acc.PUBLIC | Acc.FINAL | Acc.BRIDGE;
+        return index(extending(
+                "lib/Items",
+                "java/util/AbstractList",
+                m("<init>", "()V", Acc.PUBLIC),
+                m("get", "(I)Ljava/lang/String;", Acc.PUBLIC),
+                m("getSize", "()I", Acc.PUBLIC),
+                m("get", "(I)Ljava/lang/Object;", Acc.PUBLIC | Acc.BRIDGE | Acc.SYNTHETIC),
+                m("size", "()I", finalBridge),
+                m("remove", "(Ljava/lang/String;)Z", bridge),
+                m("remove", CONTAINS, finalBridge),
+                m("indexOf", "(Ljava/lang/String;)I", bridge),
+                m("indexOf", "(Ljava/lang/Object;)I", finalBridge),
+                m("lastIndexOf", "(Ljava/lang/String;)I", bridge),
+                m("lastIndexOf", "(Ljava/lang/Object;)I", finalBridge),
+                m("contains", "(Ljava/lang/String;)Z", bridge),
+                m("contains", CONTAINS, finalBridge),
+                m("removeAt", "(I)Ljava/lang/String;", bridge),
+                m("remove", "(I)Ljava/lang/String;", finalBridge)));
+    }
+
+    /** The ct.sym stubs Items inherits from, trimmed to the members this test reads. */
+    private static ApiIndex jdkCollections() {
+        ClassApi list = extending("java/util/AbstractList", "java/util/AbstractCollection", m("indexOf", "(Ljava/lang/Object;)I", Acc.PUBLIC));
+        list.access = Acc.PUBLIC | Acc.ABSTRACT;
+        ClassApi collection = classWithMethodAccess(
+                "java/util/AbstractCollection", m("contains", CONTAINS, Acc.PUBLIC), m("size", "()I", Acc.PUBLIC | Acc.ABSTRACT));
+        collection.access = Acc.PUBLIC | Acc.ABSTRACT;
+        return index(list, collection);
+    }
+
+    @Test
+    void aKotlinFinalBridgeOverAnInheritedMethodIsReported() {
+        // Items ported from Java to Kotlin. JVM: class app.Containing overrides final method lib.Items.contains(Ljava/lang/Object;)Z.
+        ClassApi containing = extending("app/Containing", "lib/Items", m("contains", CONTAINS, Acc.PUBLIC));
+        List<Violation> v = finalViolations(javaItems(), kotlinItems(), jdkCollections(), containing);
+        assertEquals(1, v.size());
+        assertEquals("app/Containing", Intern.str(v.get(0).sourceClass));
+        assertEquals(overridden("lib/Items", "contains", CONTAINS), v.get(0).reference);
+    }
+
+    @Test
+    void anAddedFinalMethodWhoseOldChainEscapesIsNotReported() {
+        // Without the JDK layer old resolution cannot see AbstractCollection, so the old side is unknown.
+        ClassApi containing = extending("app/Containing", "lib/Items", m("contains", CONTAINS, Acc.PUBLIC));
+        assertTrue(finalViolations(javaItems(), kotlinItems(), null, containing).isEmpty());
+    }
+
     // ---- version lag (addExtendsFinalViolations) ----
 
     @Test

@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -363,6 +364,8 @@ final class CheckScannedTest {
     private static final int ACONST_NULL = 0x01;
     private static final int POP = 0x57;
     private static final int RETURN = 0xb1;
+    private static final int ICONST_0 = 0x03;
+    private static final int IRETURN = 0xac;
 
     private static ClassWriter callingMethod(String name, String owner, String method, String descriptor) {
         ClassWriter w = new ClassWriter(name, JAVA_LANG_OBJECT);
@@ -457,6 +460,66 @@ final class CheckScannedTest {
         assertEquals("app/Over", Intern.str(v.sourceClass));
         assertEquals(Reason.METHOD_BECAME_FINAL, v.reason);
         assertEquals(new SymbolRef(RefKind.METHOD, intern("lib/M"), MemberKey.of("m", "()V"), Boolean.FALSE, null, null), v.reference);
+    }
+
+    /**
+     * lib/Mid adds `@Override public final void m()` of the m it inherits from cp/Base in another
+     * jar. Only pass 2 has cp/Base's members, which show m was overridable in old.
+     */
+    @Test
+    void anAddedFinalOverrideOfAClasspathMethodIsJudgedInPassTwo() throws Exception {
+        String cp = jar("cp.jar", "cp/Base.class", new ClassWriter("cp/Base", JAVA_LANG_OBJECT).method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
+        String app = jar("app.jar", "app/Sub.class", new ClassWriter("app/Sub", "lib/Mid").method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
+        ApiIndex oldLib = index(classApi("lib/Mid", "cp/Base", Acc.PUBLIC));
+        ClassApi mid = classApi("lib/Mid", "cp/Base", Acc.PUBLIC);
+        CheckTest.setMembers(mid, true, m("m", "()V", Acc.PUBLIC | Acc.FINAL));
+
+        Check.Report report = Check.check(List.of(cp, app), oldLib, index(mid), List.of());
+
+        assertEquals(List.of(), report.warnings);
+        assertEquals(1, report.violations.size());
+        Violation v = report.violations.get(0);
+        assertEquals("app/Sub", Intern.str(v.sourceClass));
+        assertEquals(Reason.METHOD_BECAME_FINAL, v.reason);
+        assertEquals(new SymbolRef(RefKind.METHOD, intern("lib/Mid"), MemberKey.of("m", "()V"), Boolean.FALSE, null, null), v.reference);
+    }
+
+    /**
+     * A Java AbstractList subclass ported to Kotlin gets a final contains(Object) bridge from kotlinc,
+     * over the version old inherited from the JDK. Only the JDK layer can see that inherited one.
+     */
+    @Test
+    void anAddedFinalBridgeOverAJdkMethodIsJudgedWithTheJdkLayer() throws Exception {
+        Path home = Path.of(System.getProperty("java.home"));
+        assumeTrue(Files.isRegularFile(home.resolve("lib/ct.sym")) && Runtime.version().feature() >= 18, "needs a ct.sym that serves 17");
+        String oldLib = jar("lib-1.jar", "lib/Items.class", new ClassWriter("lib/Items", "java/util/AbstractList").bytes());
+        String newLib = jar(
+                "lib-2.jar",
+                "lib/Items.class",
+                new ClassWriter("lib/Items", "java/util/AbstractList")
+                        .method(Acc.PUBLIC | Acc.FINAL | Acc.BRIDGE, "contains", "(Ljava/lang/Object;)Z", ICONST_0, IRETURN)
+                        .bytes());
+        String app = jar(
+                "app.jar",
+                "app/Containing.class",
+                new ClassWriter("app/Containing", "lib/Items")
+                        .method(Acc.PUBLIC, "contains", "(Ljava/lang/Object;)Z", ICONST_0, IRETURN)
+                        .bytes());
+        Env.override("UIKA_JDK", home.toString());
+        try {
+            UpgradeCheckIntegrationTest.Run layered = UpgradeCheckIntegrationTest.runUika(
+                    "check", "--jdk-release", "17", "--old", oldLib, "--new", newLib, "--classpath", app);
+            assertEquals(1, layered.code(), layered.stderr());
+            assertTrue(
+                    layered.stdout().contains("❌ app.Containing  (app.jar)\n    overrides lib.Items.contains(Object), which became final\n"),
+                    layered.stdout());
+
+            UpgradeCheckIntegrationTest.Run plain =
+                    UpgradeCheckIntegrationTest.runUika("check", "--old", oldLib, "--new", newLib, "--classpath", app);
+            assertEquals(0, plain.code(), plain.stdout());
+        } finally {
+            Env.clearOverrides();
+        }
     }
 
     /** The JVM would throw ClassFormatError loading lib/D's new superclass. Here it stays unverified. */
