@@ -102,6 +102,15 @@ object `package` extends ScalaModule, PublishModule {
       mvn"com.lihaoyi::utest:0.9.1"
     )
 
+    // The stub CLI jar comes from the core test suite's StubCli, so the stub has one
+    // implementation across the builds. That one file only: the rest of the directory is
+    // JUnit tests, which this module has no runner for.
+    def sources = Task.Sources(
+      moduleDir / "src",
+      moduleDir / os.up / os.up / "jvm-plugin-core" / "src" / "test" / "java" /
+        "net" / "exoego" / "uika" / "plugin" / "core" / "StubCli.java"
+    )
+
     // scoverage sees almost none of this module: Mill's task bodies are inline macros, and
     // Scala 3 does not instrument inlined code. Measured on Uika.scala's 125 executable
     // lines, scoverage reached 25 and JaCoCo 74.
