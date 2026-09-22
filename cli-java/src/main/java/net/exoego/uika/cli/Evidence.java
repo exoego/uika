@@ -246,8 +246,8 @@ final class Evidence {
             real = dir.toRealPath();
             for (Ancestor ancestor : ancestors) {
                 if (ancestor.real.equals(real)) {
-                    throw new UikaException("cannot read class-load log directory " + root
-                            + ": File system loop found: " + display + " points to an ancestor " + ancestor.display);
+                    throw new UikaException("cannot read class-load log directory " + root + ": " + display
+                            + " loops back to " + ancestor.display);
                 }
             }
             try (Stream<Path> listing = Files.list(dir)) {
@@ -281,8 +281,8 @@ final class Evidence {
     }
 
     private static UikaException walkError(String root, String at, String io) {
-        return new UikaException(
-                "cannot read class-load log directory " + root + ": IO error for operation on " + at + ": " + io);
+        String where = at.equals(root) ? "" : at + ": ";
+        return new UikaException("cannot read class-load log directory " + root + ": " + where + io);
     }
 
     private static void parseFile(String display, Path path, Map<String, LoadRecord> loaded) {

@@ -499,8 +499,7 @@ class EvidenceTest {
         String message = assertThrows(UikaException.class, () -> Evidence.load(List.of(looped.toString())))
                 .getMessage();
         assertEquals(
-                "cannot read class-load log directory " + looped + ": File system loop found: " + looped
-                        + "/sub/back points to an ancestor " + looped,
+                "cannot read class-load log directory " + looped + ": " + looped + "/sub/back loops back to " + looped,
                 message);
 
         Path dangling = dir.resolve("dangling");
@@ -509,8 +508,7 @@ class EvidenceTest {
         message = assertThrows(UikaException.class, () -> Evidence.load(List.of(dangling.toString())))
                 .getMessage();
         assertEquals(
-                "cannot read class-load log directory " + dangling + ": IO error for operation on " + dangling
-                        + "/zz.log: No such file or directory",
+                "cannot read class-load log directory " + dangling + ": " + dangling + "/zz.log: No such file or directory",
                 message);
     }
 
@@ -698,8 +696,7 @@ class EvidenceTest {
         Files.createSymbolicLink(dir.resolve("zz.log"), Path.of("/nonexistent/uika/target"));
         String root = dir + "/";
         assertEquals(
-                "cannot read class-load log directory " + root + ": IO error for operation on " + dir
-                        + "/zz.log: No such file or directory",
+                "cannot read class-load log directory " + root + ": " + dir + "/zz.log: No such file or directory",
                 assertThrows(UikaException.class, () -> Evidence.load(List.of(root))).getMessage());
     }
 
@@ -714,9 +711,11 @@ class EvidenceTest {
         try {
             String logs = dir.resolve("logs").toString();
             assertEquals(
-                    "cannot read class-load log directory " + logs + ": IO error for operation on " + locked
-                            + ": Permission denied",
+                    "cannot read class-load log directory " + logs + ": " + locked + ": Permission denied",
                     assertThrows(UikaException.class, () -> Evidence.load(List.of(logs))).getMessage());
+            assertEquals(
+                    "cannot read class-load log directory " + locked + ": Permission denied",
+                    assertThrows(UikaException.class, () -> Evidence.load(List.of(locked.toString()))).getMessage());
             assertEquals(
                     "cannot read class-load log " + file + ": Permission denied",
                     assertThrows(UikaException.class, () -> Evidence.load(List.of(file.toString()))).getMessage());

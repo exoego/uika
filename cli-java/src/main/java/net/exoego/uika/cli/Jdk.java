@@ -413,7 +413,7 @@ final class Jdk {
                                 try {
                                     ZipEntry entry = archive.getEntry(entries.get(text));
                                     if (entry == null) {
-                                        failures[i] = "ct.sym!" + text + ": specified file not found in archive";
+                                        failures[i] = "ct.sym!" + text + ": not found in the archive";
                                         continue;
                                     }
                                     int length = Input.readEntry(archive, entry, scratch);

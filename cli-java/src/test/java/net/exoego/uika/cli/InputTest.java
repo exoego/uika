@@ -404,7 +404,7 @@ class InputTest {
         List<String> warnings = Input.fetchEntries(
                 jar, wanted, (name, bytes, length) -> got.add(Intern.str(name) + "=" + new String(bytes, 4, length - 4, StandardCharsets.UTF_8)));
         assertEquals(List.of("x/B=b", "x/A=a"), got);
-        assertEquals(List.of(jar + "!x/Gone.class: specified file not found in archive"), warnings);
+        assertEquals(List.of(jar + "!x/Gone.class: not found in the archive"), warnings);
 
         Path classes = Files.createDirectories(dir.resolve("fetch/x"));
         Files.write(classes.resolve("A.class"), classLike("dir a"));
