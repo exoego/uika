@@ -5,10 +5,10 @@
     <option name="linkedExternalProjectsSettings">
       <GradleProjectSettings>
         <option name="distributionType" value="LOCAL" />
-        <option name="externalProjectPath" value="$PROJECT_DIR$/binary-publishing" />
+        <option name="externalProjectPath" value="$PROJECT_DIR$/cli-java" />
         <option name="modules">
           <set>
-            <option value="$PROJECT_DIR$/binary-publishing" />
+            <option value="$PROJECT_DIR$/cli-java" />
           </set>
         </option>
       </GradleProjectSettings>

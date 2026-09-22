@@ -29,8 +29,8 @@ release:
     owner: exoego
     name: uika
     tagName: "v{{projectVersion}}"
-    # The release is created by hand in the GitHub UI; only attach the native
-    # CLI ZIPs to it, never touch tag, title, or body.
+    # The release is created by hand in the GitHub UI; only attach the CLI jar,
+    # the native CLI ZIPs and the Bazel archive to it, never touch tag, title, or body.
     skipTag: true
     overwrite: false
     update:
@@ -41,6 +41,9 @@ release:
       enabled: false
 
 files:
+  artifacts:
+    # A path and not a glob: build/libs keeps the jars of other versions built earlier.
+    - path: cli-java/build/libs/uika-cli-{{projectVersion}}.jar
   globs:
     - pattern: dist/native/*/uika-*.zip
     # The Bazel module ships as a release archive rather than through a registry, so the
@@ -63,7 +66,7 @@ deploy:
         # unaffected; .asc files come from the `signing` block above.
         checksums: false
         stagingRepositories:
-          - binary-publishing/build/staging-deploy
+          - cli-java/build/staging-deploy
           - gradle-plugin/build/staging-deploy
           - sbt-plugin/target/staging-deploy
           - maven-plugin/target/staging-deploy
