@@ -1,6 +1,8 @@
 package net.exoego.uika.cli;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.ByteBuffer;
@@ -37,5 +39,27 @@ class ClassSourceTest {
         source.readAll();
         assertTrue(source.complete);
         assertArrayEquals(data, Arrays.copyOf(source.bytes, source.available));
+    }
+
+    /** The parser asks again for bytes it already has; that must not inflate further. */
+    @Test
+    void askingForLessThanIsInflatedKeepsThePartialRead() {
+        byte[] data = new byte[200_000];
+        for (int i = 0; i < data.length; i++) {
+            data[i] = (byte) (i * 31 % 251);
+        }
+        byte[] stream = deflate(data);
+        ByteBuffer input = ByteBuffer.allocateDirect(stream.length + Inflate.SLACK).order(ByteOrder.LITTLE_ENDIAN);
+        input.put(0, stream);
+        ClassSource source = new ClassSource();
+        source.ofDeflate(input, 0, stream.length, data.length);
+
+        source.ensure(1000);
+        int available = source.available;
+        assertTrue(available >= 1000 && available < data.length, "inflated " + available);
+        source.ensure(500);
+        assertEquals(available, source.available);
+        assertFalse(source.complete);
+        assertArrayEquals(Arrays.copyOf(data, available), Arrays.copyOf(source.bytes, available));
     }
 }
