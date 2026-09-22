@@ -7,7 +7,6 @@ package net.exoego.uika.cli;
 final class NameSet {
     private final int[] slots;
     private final int mask;
-    private int size;
     /**
      * One bit per hash of a name's first eight bytes. A checked library's classes share a
      * package prefix, so nearly every foreign constant-pool owner is rejected here on one
@@ -47,21 +46,12 @@ final class NameSet {
         mask = slots.length - 1;
     }
 
-    int size() {
-        return size;
-    }
-
-    boolean isEmpty() {
-        return size == 0;
-    }
-
     void add(int sym) {
         int slot = Intern.hashOf(sym) & mask;
         while (true) {
             int stored = slots[slot];
             if (stored == 0) {
                 slots[slot] = sym + 1;
-                size++;
                 byte[] name = Intern.bytes(sym);
                 int bit = filterBit(prefixOf(name, 0, name.length));
                 prefixFilter[bit >>> 6] |= 1L << bit;
