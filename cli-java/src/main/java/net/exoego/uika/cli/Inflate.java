@@ -376,9 +376,6 @@ final class Inflate {
                         if (next > table.length) {
                             throw new FormatException("code table overflow");
                         }
-                        if (left > 0) {
-                            Arrays.fill(table, subStart, next, INVALID);
-                        }
                         table[prefix] = SUBTABLE | subStart << 16 | subBits << 8 | primaryBits;
                     }
                     int entry = payload | (len - primaryBits);
