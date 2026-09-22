@@ -302,11 +302,6 @@ final class Intern {
         return true;
     }
 
-    static byte byteAt(int sym, int index) {
-        long loc = locOf(sym);
-        return bufferOf(loc).get(offsetOf(loc) + index);
-    }
-
     /** Copies the symbol's UTF-8 bytes into {@code dst} and returns the length. */
     static int copyBytes(int sym, byte[] dst, int dstOff) {
         long loc = locOf(sym);

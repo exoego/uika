@@ -3,6 +3,7 @@ package net.exoego.uika.cli;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
@@ -151,6 +152,50 @@ class InternTest {
             distinct.add(seen[0][n]);
         }
         assertEquals(strings, distinct.size());
+    }
+
+    @Test
+    void equalsBytesSeesADifferenceAtEveryPosition() {
+        // 15 bytes: one whole 8-byte word and a shorter tail.
+        byte[] name = "net/exoego/Tail".getBytes(StandardCharsets.UTF_8);
+        int sym = Intern.intern(null, name, 0, name.length);
+        for (int i = 0; i < name.length; i++) {
+            byte[] other = name.clone();
+            other[i] ^= 1;
+            assertFalse(Intern.equalsBytes(sym, other, 0, other.length), "differs at " + i);
+        }
+        assertTrue(Intern.equalsBytes(sym, name.clone(), 0, name.length));
+    }
+
+    @Test
+    void findDoesNotAnswerAStringThatOnlySharesTheHash() {
+        java.util.Map<Integer, String> seen = new java.util.HashMap<>();
+        String first = null;
+        String second = null;
+        for (int i = 0; second == null; i++) {
+            String s = "find/collision/" + i;
+            byte[] utf8 = s.getBytes(StandardCharsets.UTF_8);
+            String earlier = seen.putIfAbsent(Intern.hash(utf8, 0, utf8.length), s);
+            if (earlier != null) {
+                first = earlier;
+                second = s;
+            }
+        }
+        int firstSym = Intern.intern(first);
+        assertEquals(Intern.NONE, Intern.find(second));
+        int secondSym = Intern.intern(second);
+        assertNotEquals(firstSym, secondSym);
+        assertEquals(firstSym, Intern.find(first));
+        assertEquals(secondSym, Intern.find(second));
+        assertEquals(second, Intern.str(secondSym));
+    }
+
+    /** A symbol keeps its length in 24 bits. */
+    @Test
+    void refusesAStringTooLongForItsLengthField() {
+        byte[] huge = new byte[1 << 24];
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> Intern.intern(null, huge, 0, huge.length));
+        assertEquals("string too long to intern: 16777216 bytes", e.getMessage());
     }
 
     @Test
