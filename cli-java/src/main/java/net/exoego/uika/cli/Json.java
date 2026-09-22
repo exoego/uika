@@ -8,15 +8,15 @@ import java.util.Map;
 /**
  * Minimal JSON reader and writer, so the jar ships no dependency.
  *
- * <p>The writer reproduces serde_json byte for byte (escaping, and the two-space pretty
- * layout), because the goldens and the build-tool plugins' parsers were pinned against it.
+ * <p>The goldens compare the writer's output byte for byte, so its escaping and its
+ * two-space pretty layout must not change.
  */
 final class Json {
     private Json() {}
 
     // ---- writer ----
 
-    /** Streaming writer. Pretty mode matches serde_json's PrettyFormatter. */
+    /** Streaming writer. */
     static final class Writer {
         private final StringBuilder out;
         private final boolean pretty;
@@ -162,7 +162,7 @@ final class Json {
 
     // ---- reader ----
 
-    /** A syntax error, positioned the way serde_json words it. */
+    /** A syntax error with its line and column. */
     static final class ParseException extends Exception {
         private static final long serialVersionUID = 1L;
 
@@ -252,7 +252,7 @@ final class Json {
         private Object literal(String word, Object value) throws ParseException {
             if (!text.startsWith(word, pos)) {
                 pos = Math.min(text.length(), pos + 1);
-                throw error("expected ident");
+                throw error("expected " + word);
             }
             pos += word.length();
             return value;
@@ -347,7 +347,7 @@ final class Json {
             List<Object> out = new ArrayList<>();
             skipWhitespace();
             if (pos >= text.length()) {
-                throw error("EOF while parsing a list");
+                throw error("EOF while parsing an array");
             }
             if (text.charAt(pos) == ']') {
                 pos++;
@@ -362,7 +362,7 @@ final class Json {
                 out.add(value());
                 skipWhitespace();
                 if (pos >= text.length()) {
-                    throw error("EOF while parsing a list");
+                    throw error("EOF while parsing an array");
                 }
                 char c = text.charAt(pos);
                 if (c == ',') {
@@ -371,7 +371,7 @@ final class Json {
                     pos++;
                     return out;
                 } else {
-                    throw error("expected `,` or `]`");
+                    throw error("expected \",\" or \"]\"");
                 }
             }
         }
@@ -401,7 +401,7 @@ final class Json {
                     throw error("EOF while parsing an object");
                 }
                 if (text.charAt(pos) != ':') {
-                    throw error("expected `:`");
+                    throw error("expected \":\"");
                 }
                 pos++;
                 skipWhitespace();
@@ -417,7 +417,7 @@ final class Json {
                     pos++;
                     return out;
                 } else {
-                    throw error("expected `,` or `}`");
+                    throw error("expected \",\" or \"}\"");
                 }
             }
         }
