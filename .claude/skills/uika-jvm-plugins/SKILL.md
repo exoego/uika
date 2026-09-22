@@ -255,6 +255,15 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   URLClassLoader (`JfrTestRecordings`): a nested test class cannot serve —
   JUnit discovery loads nested classes via getDeclaredClasses() before any
   test body runs, so its load never lands in the recording.
+- A CLI path ending in `.jar` is the pure-Java CLI, and `UikaCli.launchCommand` puts a JVM
+  in front of it: the JVM running the build, never the `JdkSource` one, which is the API
+  the application is checked against and may be older than the 17 the jar needs. It passes
+  the jar launcher's flags itself with `-Duika.child=true`, because the jar otherwise
+  re-runs itself in a child JVM to get them and the parent idles for the whole run. That
+  makes the flags a hand copy of `Launcher.flags` in cli-java, where the measurements
+  live. `LauncherFlagsSyncTest` reads the launcher's source and fails on drift, so retune
+  the flags there and let the test point here. `overrideFrom` asks a jar for no
+  executable bit, since no download leaves a jar with one.
 - `UIKA_CLI_PATH` goes through `UikaCli.overrideFrom` in every integration, the Bazel
   check binary and both Clojure front ends included, so a path that is not an
   executable FILE fails naming the knob instead of inside ProcessBuilder. Losing the

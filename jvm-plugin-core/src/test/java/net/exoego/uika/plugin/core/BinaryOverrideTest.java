@@ -68,6 +68,22 @@ final class BinaryOverrideTest {
         assertTrue(boom.getMessage().contains("is not executable"), boom.getMessage());
     }
 
+    /// The jar is the everyday value once the plugins run the Java CLI, and no download or
+    /// artifact round trip leaves a jar executable.
+    @Test
+    void aJarNeedsNoExecutableBit(@TempDir Path dir) throws IOException {
+        var jar = Files.write(dir.resolve("uika-cli-1.2.3.JAR"), new byte[] {'P', 'K'});
+        if (jar.toFile().canExecute() && !jar.toFile().setExecutable(false, false)) {
+            return; // A filesystem that cannot clear the bit (Windows, some mounts).
+        }
+        assertEquals(jar, UikaCli.overrideFrom(jar.toString()));
+
+        var missing = dir.resolve("nowhere/uika-cli.jar");
+        var boom = assertThrows(IllegalStateException.class,
+                () -> UikaCli.overrideFrom(missing.toString()));
+        assertTrue(boom.getMessage().contains("does not name a file"), boom.getMessage());
+    }
+
     @Test
     void anExecutableFileIsReturnedUnchanged(@TempDir Path dir) throws IOException {
         var binary = Files.writeString(dir.resolve("uika"), "#!/bin/sh\nexit 0\n");

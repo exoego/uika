@@ -25,6 +25,13 @@ public final class UikaCli {
     public static final String GROUP = "net.exoego.uika";
     public static final String ARTIFACT = "uika-cli";
 
+    /**
+     * Maven classifier of the pure-Java CLI jar. The jar is not the coordinate's main
+     * artifact: the POM keeps {@code pom} packaging so Maven Central demands no sources or
+     * javadoc jar for it, which would be eight more files on every release.
+     */
+    public static final String JAR_CLASSIFIER = "jvm";
+
     /** Maven classifier of the published binary for the current platform, e.g. "macos-aarch64". */
     public static String platformClassifier() {
         return platformClassifier(System.getProperty("os.name", ""), System.getProperty("os.arch", ""));
@@ -89,7 +96,8 @@ public final class UikaCli {
         if (!Files.isRegularFile(binary)) {
             throw new IllegalStateException(CLI_PATH_ENV + " does not name a file: " + binary);
         }
-        if (!Files.isExecutable(binary)) {
+        // A jar is run by a JVM, so it never carries the bit and must not be asked for it.
+        if (!isJar(binary) && !Files.isExecutable(binary)) {
             throw new IllegalStateException(CLI_PATH_ENV + " is not executable: " + binary);
         }
         return binary;
@@ -359,6 +367,56 @@ public final class UikaCli {
                 + filename;
     }
 
+    /** Whether {@code cli} is the pure-Java CLI, which needs a JVM in front of it. */
+    static boolean isJar(Path cli) {
+        return cli.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".jar");
+    }
+
+    /**
+     * What starts {@code cli}: the file itself for a native binary, and for the jar the JVM
+     * running this build plus the flags the jar's own launcher would pick.
+     *
+     * <p>The jar re-runs itself in a child JVM to get those flags, which costs a second JVM
+     * boot and an idle parent for the whole run. Passing them here with
+     * {@code -Duika.child=true} skips that. {@code Launcher} in cli-java holds the
+     * measurements behind each flag, and {@code LauncherFlagsSyncTest} holds this copy to it.
+     *
+     * <p>This JVM and not the {@link JdkSource} one: that JDK is the API the application is
+     * checked against and may be older than the 17 the jar needs, while whatever loaded this
+     * class is 17 or newer already.
+     */
+    static List<String> launchCommand(Path cli, Path before, Path after) {
+        if (!isJar(cli)) {
+            return List.of(cli.toString());
+        }
+        var windows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("windows");
+        var java = Path.of(System.getProperty("java.home"), "bin", windows ? "java.exe" : "java");
+        var command = new ArrayList<String>();
+        command.add(java.toString());
+        command.addAll(JVM_FLAGS);
+        if (dumpArtifacts(before) + dumpArtifacts(after) < LARGE) {
+            command.add(SMALL_RUN_FLAG);
+        }
+        command.add("-Duika.child=true");
+        command.add("-jar");
+        command.add(cli.toString());
+        return command;
+    }
+
+    static final List<String> JVM_FLAGS =
+            List.of("-XX:+UseSerialGC", "-Xmn32m", "-XX:-UsePerfData", "-Xshare:auto");
+    static final String SMALL_RUN_FLAG = "-XX:TieredStopAtLevel=1";
+    static final int LARGE = 800;
+    static final int DUMP_BYTES_PER_ARTIFACT = 150;
+
+    private static long dumpArtifacts(Path dump) {
+        try {
+            return Files.size(dump) / DUMP_BYTES_PER_ARTIFACT;
+        } catch (IOException | RuntimeException e) {
+            return 0;
+        }
+    }
+
     /**
      * Runs {@code uika upgrade-check}, passing each line of the CLI's merged stdout/stderr to
      * {@code output}. The report must go through the build tool's own logger: a child process
@@ -366,6 +424,8 @@ public final class UikaCli {
      * daemon, an sbt server, or mvnd the user would never see it. Returns the CLI exit code:
      * 0 = clean, 1 = violations found (per {@code failOn}), 2 = error.
      *
+     * @param binary the native binary, or the CLI jar, which {@link #launchCommand} starts
+     *     on the JVM running this build.
      * @param failOn when the CLI should exit non-zero ({@code never}, {@code reachable}, or
      *     {@code any}); passed through as {@code --fail-on}. Null or blank leaves the CLI default.
      * @param excludeFiles TOML files of known false positives to suppress, passed through as
@@ -391,8 +451,8 @@ public final class UikaCli {
             List<Path> excludeFiles, Integer jdkRelease, JdkSource jdk, List<Path> classLoadLogs,
             Path draftExcludeFile, boolean mergedClasspath, Consumer<String> output)
             throws IOException, InterruptedException {
-        var command = new ArrayList<String>(List.of(
-                binary.toString(), "upgrade-check",
+        var command = new ArrayList<String>(launchCommand(binary, before, after));
+        command.addAll(List.of("upgrade-check",
                 "--before", before.toString(),
                 "--after", after.toString()));
         if (failOn != null && !failOn.isBlank()) {
