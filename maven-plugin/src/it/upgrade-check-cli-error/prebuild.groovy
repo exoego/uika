@@ -3,9 +3,8 @@ import net.exoego.uika.plugin.core.StubCli
 
 def version = "9.9.9"
 
-// The it-repo copy of the jar survives between runs and would shadow an edited stub: Maven
+// The it-repo copy of the jar survives between runs and would shadow an edited stub. Maven
 // never re-fetches a cached release version.
-new File(basedir, "target").deleteDir()
 new File(localRepositoryPath, "net/exoego/uika/uika-cli").deleteDir()
 
 def dir = new File(basedir, "repo/net/exoego/uika/uika-cli/$version")

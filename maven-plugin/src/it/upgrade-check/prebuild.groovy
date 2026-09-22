@@ -3,9 +3,8 @@ import net.exoego.uika.plugin.core.StubCli
 
 def version = "9.9.9"
 
-// The it-repo copy of the jar survives between runs and would shadow an edited stub: Maven
+// The it-repo copy of the jar survives between runs and would shadow an edited stub. Maven
 // never re-fetches a cached release version.
-new File(basedir, "target").deleteDir()
 new File(localRepositoryPath, "net/exoego/uika/uika-cli").deleteDir()
 
 def dir = new File(basedir, "repo/net/exoego/uika/uika-cli/$version")
@@ -15,12 +14,15 @@ new File(dir, "uika-cli-${version}.pom").text =
     "<artifactId>uika-cli</artifactId><version>$version</version><packaging>pom</packaging></project>"
 
 // The stub leaves a marker next to the --before argument to prove it ran and records its
-// full argument list (.args) so verify.groovy can assert the flags passed to the CLI; the
+// full argument list (.args) so verify.groovy can assert the flags passed to the CLI. The
 // printed line must surface in the build log through the mojo's logger.
 StubCli.writeJar(new File(dir, "uika-cli-${version}-jvm.jar").toPath(), "uika-stub: dependency changes: 0", 0)
 
 new File(basedir, "before.json").text = "{}"
 new File(basedir, "after.json").text = "{}"
+// The clone survives between runs too. What the stub recorded last time would otherwise
+// satisfy verify.groovy without the stub running.
+(basedir as File).listFiles().findAll { it.name.startsWith("before.json.") }.each { it.delete() }
 // The evidence directory the goals point at with -Duika.jfr. Before the
 // return: a Groovy script's return ends it, so a statement after one never runs.
 new File(basedir, "load-logs").mkdirs()
