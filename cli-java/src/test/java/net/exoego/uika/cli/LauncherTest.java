@@ -94,4 +94,11 @@ class LauncherTest {
         }
         assertEquals(previous, System.getProperty("uika.child"));
     }
+
+    /** A real child JVM on this test's classpath, which is what the launcher hands every command to. */
+    @Test
+    void aChildJvmRunsTheCommand() {
+        assertEquals(0, Launcher.relaunch(new String[] {"--version"}));
+        assertEquals(2, Launcher.relaunch(new String[] {"no-such-command"}));
+    }
 }

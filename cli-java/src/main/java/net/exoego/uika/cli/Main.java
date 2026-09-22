@@ -6,18 +6,23 @@ public final class Main {
     private Main() {}
 
     public static void main(String[] args) {
+        // Not a plain return: worker threads and the JDK's zip cleaner must not keep a
+        // finished command alive.
+        System.exit(exitCode(args));
+    }
+
+    /** The command's exit code, from a child JVM with the launcher's flags when that pays, else from here. */
+    static int exitCode(String[] args) {
         if (Launcher.shouldRelaunch(args)) {
             int child = Launcher.relaunch(args);
             if (child >= 0) {
-                System.exit(child);
+                return child;
             }
         }
         int code = run(args);
         Out.out.flush();
         Out.err.flush();
-        // Not a plain return: worker threads and the JDK's zip cleaner must not keep a
-        // finished command alive.
-        System.exit(code);
+        return code;
     }
 
     /** Runs one command and returns its exit code: 0 clean, 1 violations found, 2 error. */
