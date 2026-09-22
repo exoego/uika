@@ -751,7 +751,7 @@ final class Input {
             for (Wanted wanted : entries) {
                 ZipEntry entry = zip.getEntry(wanted.entry());
                 if (entry == null) {
-                    warnings.add(path + "!" + wanted.entry() + ": specified file not found in archive");
+                    warnings.add(path + "!" + wanted.entry() + ": not found in the archive");
                     continue;
                 }
                 try {

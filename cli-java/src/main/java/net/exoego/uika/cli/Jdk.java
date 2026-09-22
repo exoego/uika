@@ -412,10 +412,6 @@ final class Jdk {
                                 String text = Intern.str(level.get(i));
                                 try {
                                     ZipEntry entry = archive.getEntry(entries.get(text));
-                                    if (entry == null) {
-                                        failures[i] = "ct.sym!" + text + ": specified file not found in archive";
-                                        continue;
-                                    }
                                     int length = Input.readEntry(archive, entry, scratch);
                                     scratch.parser.parse(scratch.classBytes, length);
                                     apis[i] = Extract.extractApi(scratch.parser, scratch);
