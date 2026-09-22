@@ -163,6 +163,18 @@ class ModelTest {
         assertTrue(Violation.compare(otherSource, classLevel) < 0);
     }
 
+    /** Merged per-module runs can report one caller and owner under two reasons. */
+    @Test
+    void classLevelViolationsOnOneOwnerOrderByReasonText() {
+        int source = Intern.intern("order.jar");
+        int caller = Intern.intern("order/Caller");
+        SymbolRef owner = SymbolRef.ofClass(Intern.intern("order/Owner"));
+        Violation removed = new Violation(source, caller, owner, Reason.CLASS_REMOVED);
+        Violation narrowed = new Violation(source, caller, owner, Reason.CLASS_ACCESS_NARROWED);
+        assertTrue(Violation.compare(narrowed, removed) < 0);
+        assertTrue(Violation.compare(removed, narrowed) > 0);
+    }
+
     /** Java strings order by UTF-16 unit. Rust orders by UTF-8 byte, which is code point order. */
     @Test
     void textOrderIsCodePointOrder() {
