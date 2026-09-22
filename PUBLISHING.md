@@ -58,9 +58,9 @@ One `vX.Y.Z` tag is one deployment carrying eight components (`uika-cli`,
 `uika-gradle-plugin`, the `net.exoego.uika.gradle.plugin` marker,
 `sbt-uika_2.12_1.0`, `uika-maven-plugin`, `mill-uika_mill1_3`, `clojure-uika`,
 `lein-uika`).
-That was 124 files and about 3 MB per tag before the `uika-cli` jar
-(`clojure-uika` added 16: four artifacts, each with md5, sha1, and asc). The jar
-adds 4 files and about 0.4 MB. So for uika alone Release Count is
+That is 128 files and about 3.4 MB per tag (`clojure-uika` added 16: four
+artifacts, each with md5, sha1, and asc; the `uika-cli` jar added 4: one
+artifact with the same three). So for uika alone Release Count is
 the binding metric, not file count or size. Riding the shared deployment is
 also why publishing the Clojure CLI tool costs no extra release against that
 metric. July 2026 shipped eight tags and tripped the release-count limit.
