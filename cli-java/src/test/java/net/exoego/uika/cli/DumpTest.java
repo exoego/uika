@@ -351,6 +351,41 @@ class DumpTest {
                 assertThrows(UikaException.class, () -> Dump.loadDump(fraction)).getMessage());
     }
 
+    /** A value of the wrong type is named by its JSON kind, and an explicit null is not an absent field. */
+    @Test
+    void shapeErrorsNameEveryJsonKind() throws Exception {
+        String[][] cases = {
+            {"{\"modules\":true}", "invalid v1 classpath dump %s: invalid type: boolean `true`, expected a sequence"},
+            {"{\"modules\":[{\"module\":\":a\",\"artifacts\":null}]}", "invalid v1 classpath dump %s: invalid type: null, expected a sequence"},
+            {"{\"modules\":[{\"module\":[]}]}", "invalid v1 classpath dump %s: invalid type: sequence, expected a string"},
+            {"{\"version\":2,\"roots\":{},\"artifacts\":[]}", "invalid v2 classpath dump %s: invalid type: map, expected a sequence"},
+            {"{\"version\":2,\"roots\":[\"/r/\"],\"artifacts\":[{\"root\":-1,\"path\":\"x.jar\"}]}",
+                "invalid v2 classpath dump %s: invalid value: integer `-1`, expected usize"},
+            {"{\"version\":2,\"roots\":[],\"artifacts\":[],\"jdkRelease\":4294967296}",
+                "invalid v2 classpath dump %s: invalid value: integer `4294967296`, expected u32"},
+            {"{\"modules\":[{\"module\":\":a\",\"jdkRelease\":\"17\"}]}",
+                "invalid v1 classpath dump %s: invalid type: string \"17\", expected u32"},
+        };
+        for (int i = 0; i < cases.length; i++) {
+            String path = write("shape-" + i + ".json", cases[i][0]);
+            assertEquals(
+                    cases[i][1].formatted(path),
+                    assertThrows(UikaException.class, () -> Dump.loadDump(path)).getMessage(),
+                    cases[i][0]);
+        }
+    }
+
+    @Test
+    void anArtifactWithAGroupButNoNameHasNoCoordinate() throws Exception {
+        Dump.Universe u = Dump.loadDump(write("group-only.json", """
+                {"modules":[{"module":":a","artifacts":[{"group":"g","version":"1","file":"/r/group-only.jar"}]}]}"""));
+        Dump.Artifact artifact = u.module(":a").artifacts.get(0);
+        assertFalse(artifact.hasCoordinate());
+        assertNull(artifact.version());
+        assertTrue(u.versions.isEmpty());
+        assertEquals(List.of("/r/group-only.jar"), u.scanTargets);
+    }
+
     /** Coordinates and versions order by string value, the way Rust BTreeMap keys do. */
     @Test
     void versionMapsOrderByText() {
