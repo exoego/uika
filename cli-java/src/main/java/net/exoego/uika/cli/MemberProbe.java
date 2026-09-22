@@ -55,10 +55,6 @@ final class MemberProbe {
         return size == 0;
     }
 
-    int size() {
-        return size;
-    }
-
     private static int combine(int nameHash, int descriptorHash) {
         return nameHash * 31 + descriptorHash;
     }
