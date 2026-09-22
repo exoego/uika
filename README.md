@@ -72,7 +72,7 @@ common and tool-specific setup on one page per tool:
 - [Bazel](docs/bazel.md)
 
 There's also [CLI](docs/cli.md) in case you want to run it by hand.
-[What every integration shares](docs/build-tools.md) covers the dump format, how the CLI
+[What every integration shares](docs/build-tools.md) covers the [dump format](docs/dump-format.md), how the CLI
 is fetched, and where `jdkRelease` comes from.
 
 ## What a check reports

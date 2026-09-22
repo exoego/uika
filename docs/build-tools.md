@@ -7,11 +7,13 @@ none of them covers drives [the CLI](cli.md) by hand instead.
 
 ## The dump
 
-All of them write the same dump format: every module's resolved runtime
-classpath as coordinate-annotated JSON, kept per module so a check
-[runs each against its own resolution](../README.md#per-module-checking). A dump
-also refers to build outputs. Each tool page says how its dump command builds
-them, and the PR gate workflow there shows which baseline dumps can skip them.
+All of them write the same [dump format](dump-format.md): every module's
+resolved runtime classpath as coordinate-annotated JSON, kept per module so a
+check [runs each against its own resolution](../README.md#per-module-checking).
+A dump also refers to build outputs. Each tool page says how its dump command
+builds them, and the PR gate workflow there shows which baseline dumps can skip
+them. The format is a public contract, so a build with no integration of its
+own can write it and run the CLI on the pair.
 
 ## Getting the CLI
 
