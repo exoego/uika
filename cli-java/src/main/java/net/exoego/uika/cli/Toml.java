@@ -1501,9 +1501,6 @@ final class Toml {
 
         private String mlLiteralString(int start, int end) {
             String invalid = "invalid multi-line literal string";
-            if (!startsWith(start, '\'', 3) || start + 3 > end) {
-                throw fail(invalid, start, start, lit("'"));
-            }
             int a = skipStartNewline(start + 3, end);
             int b = end;
             if (b - a >= 3 && startsWith(b - 3, '\'', 3)) {
@@ -1529,12 +1526,7 @@ final class Toml {
 
         private String basicString(int start, int end) {
             String invalid = "invalid basic string";
-            int a = start;
-            if (a < end && s[a] == '"') {
-                a++;
-            } else {
-                throw fail(invalid, start, start, lit("\""));
-            }
+            int a = start + 1;
             int b = end;
             if (b > a && s[b - 1] == '"') {
                 b--;
@@ -1610,9 +1602,6 @@ final class Toml {
 
         private String mlBasicString(int start, int end) {
             String invalid = "invalid multi-line basic string";
-            if (!startsWith(start, '"', 3) || start + 3 > end) {
-                throw fail(invalid, start, start, lit("\""));
-            }
             int a = skipStartNewline(start + 3, end);
             int b = end;
             if (b - a >= 3 && startsWith(b - 3, '"', 3)) {
