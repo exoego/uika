@@ -23,10 +23,10 @@ final class UikaException extends RuntimeException {
             return "Permission denied (os error 13)";
         }
         if (cause instanceof java.nio.file.FileAlreadyExistsException) {
-            return "File exists (os error 17)";
+            return "File exists";
         }
         if (cause instanceof java.nio.file.FileSystemException f && "Not a directory".equals(f.getReason())) {
-            return "Not a directory (os error 20)";
+            return "Not a directory";
         }
         String message = cause.getMessage();
         return message == null ? cause.getClass().getSimpleName() : message;

@@ -585,7 +585,7 @@ final class Evidence {
     static void createDraftPlaceholder(String path) {
         // Path drops a trailing slash, so "new/" would otherwise become a regular file named new.
         if (path.endsWith("/")) {
-            throw new UikaException("cannot write draft exclude file " + path + ": Is a directory (os error 21)");
+            throw new UikaException("cannot write draft exclude file " + path + ": Is a directory");
         }
         Path file = Path.of(path);
         // Content, not path identity. The caller's real-path comparison misses a HARD LINK to
@@ -646,7 +646,7 @@ final class Evidence {
             Files.writeString(Path.of(path), content, StandardCharsets.UTF_8);
         } catch (IOException e) {
             if (Files.isDirectory(Path.of(path))) {
-                throw new UikaException("cannot write draft exclude file " + path + ": Is a directory (os error 21)");
+                throw new UikaException("cannot write draft exclude file " + path + ": Is a directory");
             }
             throw new UikaException("cannot write draft exclude file " + path, e);
         }

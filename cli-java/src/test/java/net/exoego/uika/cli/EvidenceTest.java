@@ -481,7 +481,7 @@ class EvidenceTest {
 
         for (String path : List.of(dir + "/new/", dir + "/made/new/", draft + "/")) {
             assertEquals(
-                    "cannot write draft exclude file " + path + ": Is a directory (os error 21)",
+                    "cannot write draft exclude file " + path + ": Is a directory",
                     assertThrows(UikaException.class, () -> Evidence.createDraftPlaceholder(path)).getMessage());
         }
         assertFalse(Files.exists(dir.resolve("new")));
@@ -767,7 +767,7 @@ class EvidenceTest {
     void aDraftPathNamingADirectoryIsRefused(@TempDir Path dir) {
         for (String path : List.of("/", ".", dir + "/", dir.toString())) {
             assertEquals(
-                    "cannot write draft exclude file " + path + ": Is a directory (os error 21)",
+                    "cannot write draft exclude file " + path + ": Is a directory",
                     assertThrows(UikaException.class, () -> Evidence.createDraftPlaceholder(path)).getMessage());
         }
     }
@@ -778,11 +778,11 @@ class EvidenceTest {
         // The doubled slash belongs to neither name, so the message names the file as it is.
         String path = file + "//draft.toml";
         assertEquals(
-                "cannot create directory " + file + " for the draft exclude file: File exists (os error 17)",
+                "cannot create directory " + file + " for the draft exclude file: File exists",
                 assertThrows(UikaException.class, () -> Evidence.createDraftPlaceholder(path)).getMessage());
         String deeper = file + "/sub/draft.toml";
         assertEquals(
-                "cannot create directory " + file + "/sub for the draft exclude file: Not a directory (os error 20)",
+                "cannot create directory " + file + "/sub for the draft exclude file: Not a directory",
                 assertThrows(UikaException.class, () -> Evidence.createDraftPlaceholder(deeper)).getMessage());
     }
 

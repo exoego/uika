@@ -24,9 +24,9 @@ class UikaExceptionTest {
     void fileErrorsReadLikeTheOperatingSystemsOwn() {
         assertEquals("No such file or directory (os error 2)", UikaException.describe(new NoSuchFileException("/x")));
         assertEquals("Permission denied (os error 13)", UikaException.describe(new AccessDeniedException("/x")));
-        assertEquals("File exists (os error 17)", UikaException.describe(new FileAlreadyExistsException("/x")));
+        assertEquals("File exists", UikaException.describe(new FileAlreadyExistsException("/x")));
         assertEquals(
-                "Not a directory (os error 20)",
+                "Not a directory",
                 UikaException.describe(new FileSystemException("/x/y", null, "Not a directory")));
     }
 
