@@ -4,13 +4,22 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.OutputStream;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import org.junit.jupiter.api.Test;
@@ -223,6 +232,129 @@ class ReachTest {
         Reach.Result result = Reach.reachableClasses(graph, inputs(List.of(), "late-dir"));
         assertTrue(isReachable(result, "late/Main"));
         assertFalse(result.isReachable(Intern.intern("late/InternedAfterwards-" + System.nanoTime())));
+    }
+
+    @Test
+    void controlCharactersBelowTabAreNotWhiteSpace() {
+        assertEquals("\u0000x\u0008", Reach.trim("\u0000x\u0008"));
+    }
+
+    private static void storedEntry(ZipOutputStream zip, String name, byte[] data) throws Exception {
+        ZipEntry entry = new ZipEntry(name);
+        entry.setMethod(ZipEntry.STORED);
+        entry.setSize(data.length);
+        entry.setCompressedSize(data.length);
+        CRC32 crc = new CRC32();
+        crc.update(data);
+        entry.setCrc(crc.getValue());
+        zip.putNextEntry(entry);
+        zip.write(data);
+        zip.closeEntry();
+    }
+
+    /**
+     * The fast path reads provider files through the channel the scan already opened. Each
+     * record it cannot use is skipped alone, and the readable files around it still count.
+     */
+    @Test
+    void providerFilesReadThroughAnOpenJarSkipOnlyTheUnreadableOnes() throws Exception {
+        Path jar = dir.resolve("providers-fast.jar");
+        try (OutputStream file = Files.newOutputStream(jar);
+                ZipOutputStream zip = new ZipOutputStream(file)) {
+            storedEntry(zip, "META-INF/services/com.example.Stored", "com.example.StoredImpl\n".getBytes(StandardCharsets.UTF_8));
+            // 0xff opens a deflate block of the reserved type 3.
+            storedEntry(zip, "META-INF/services/com.example.Garbage", new byte[] {(byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff});
+            zip.putNextEntry(new ZipEntry("META-INF/services/com.example.Deflated"));
+            zip.write("com.example.DeflatedImpl\n".getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+        }
+        long size = Files.size(jar);
+        try (FileChannel channel = FileChannel.open(jar, StandardOpenOption.READ)) {
+            Scratch scratch = Scratch.current();
+            Jar.Entries entries = Jar.readEntries(channel, scratch);
+            Map<String, Jar.ServiceEntry> byName = new HashMap<>();
+            for (Jar.ServiceEntry entry : entries.services) {
+                byName.put(entry.service(), entry);
+            }
+            Jar.ServiceEntry stored = byName.get("com.example.Stored");
+            Jar.ServiceEntry deflated = byName.get("com.example.Deflated");
+            long garbage = byName.get("com.example.Garbage").offset();
+            entries.services = List.of(
+                    stored,
+                    new Jar.ServiceEntry("com.example.Bzip2", deflated.offset(), deflated.compressed(), deflated.inflated(), 12),
+                    new Jar.ServiceEntry("nested/com.example.Spi", stored.offset(), stored.compressed(), stored.inflated(), 0),
+                    new Jar.ServiceEntry("com.example.Huge", stored.offset(), 65L * 1024 * 1024, 65L * 1024 * 1024, 0),
+                    new Jar.ServiceEntry("com.example.PastTheEnd", size + 16, 4, 4, 0),
+                    new Jar.ServiceEntry("com.example.NotAHeader", stored.offset() + 1, 4, 4, 0),
+                    new Jar.ServiceEntry("com.example.Truncated", stored.offset(), size, size, 0),
+                    new Jar.ServiceEntry("com.example.Corrupt", garbage, 4, 64, 8),
+                    deflated);
+            List<Reach.ServiceFile> services = Reach.servicesOf(channel, entries, Intern.intern(jar.toString()), scratch);
+            entries.release();
+
+            assertEquals(2, services.size());
+            assertEquals("com/example/Stored", Intern.str(services.get(0).iface()));
+            assertArrayEquals(syms("com/example/StoredImpl"), services.get(0).impls());
+            assertEquals("com/example/Deflated", Intern.str(services.get(1).iface()));
+            assertArrayEquals(syms("com/example/DeflatedImpl"), services.get(1).impls());
+        }
+    }
+
+    /** A deflate error in one provider file of the fallback reader costs that file only. */
+    @Test
+    void aCorruptProviderFileInTheFallbackReaderIsSkipped() throws Exception {
+        Path jar = dir.resolve("providers-corrupt.jar");
+        try (OutputStream file = Files.newOutputStream(jar);
+                ZipOutputStream zip = new ZipOutputStream(file)) {
+            zip.putNextEntry(new ZipEntry("META-INF/services/com.example.Broken"));
+            zip.write("com.example.BrokenImpl\n".getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+            zip.putNextEntry(new ZipEntry("META-INF/services/com.example.Spi"));
+            zip.write("com.example.Impl\n".getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+        }
+        byte[] bytes = Files.readAllBytes(jar);
+        // The first local header sits at offset 0, and its data follows the name and extra field.
+        int dataStart = 30 + (bytes[26] & 0xff | (bytes[27] & 0xff) << 8) + (bytes[28] & 0xff | (bytes[29] & 0xff) << 8);
+        bytes[dataStart] = (byte) 0xff;
+        Files.write(jar, bytes);
+
+        List<String> warnings = new ArrayList<>();
+        List<Reach.ServiceFile> services = Reach.collectServices(List.of(jar.toString()), warnings);
+        assertEquals(1, services.size());
+        assertEquals("com/example/Spi", Intern.str(services.get(0).iface()));
+        assertArrayEquals(syms("com/example/Impl"), services.get(0).impls());
+        assertEquals(List.of(), warnings);
+    }
+
+    @Test
+    void aMissingTargetYieldsItsWarningInsteadOfProviders() {
+        String missing = dir.resolve("gone.jar").toString();
+        Object[] result = Reach.servicesOrWarning(missing);
+        assertEquals(List.of(), result[0]);
+        assertEquals(missing + ": cannot open " + missing, result[1]);
+    }
+
+    @Test
+    void anUnreadableProviderFileInADirectoryWarnsForTheTarget() throws Exception {
+        Path root = dir.resolve("locked");
+        Path file = Files.createDirectories(root.resolve("META-INF/services")).resolve("com.example.Spi");
+        Files.write(file, "com.example.Impl\n".getBytes(StandardCharsets.UTF_8));
+        assumeTrue(file.getFileSystem().supportedFileAttributeViews().contains("posix"), "no POSIX permissions here");
+        Set<PosixFilePermission> original = Files.getPosixFilePermissions(file);
+        Files.setPosixFilePermissions(file, Set.of());
+        try {
+            assumeFalse(Files.isReadable(file), "this user reads files without permission bits");
+            List<String> warnings = new ArrayList<>();
+            assertEquals(List.of(), Reach.collectServices(List.of(root.toString()), warnings));
+            assertEquals(List.of(root + ": Permission denied (os error 13)"), warnings);
+
+            Object[] result = Reach.servicesOrWarning(root.toString());
+            assertEquals(List.of(), result[0]);
+            assertEquals(root + ": Permission denied (os error 13)", result[1]);
+        } finally {
+            Files.setPosixFilePermissions(file, original);
+        }
     }
 
     @Test
