@@ -214,7 +214,7 @@ class ScanTest {
         }
         try {
             Scan.Result result = scan(List.of(classes.toString()), true);
-            assertEquals(List.of(classes + ": Permission denied (os error 13)"), result.serviceWarnings);
+            assertEquals(List.of(classes + ": Permission denied"), result.serviceWarnings);
             assertEquals(List.of(), result.services);
             assertTrue(result.graph.contains(intern("Main")));
         } finally {

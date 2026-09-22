@@ -167,6 +167,6 @@ class VerdictsTest {
     void anUncreatableOutputEndsTheCommand() {
         String path = dir.resolve("no/such/dir/verdicts.jsonl").toString();
         UikaException e = assertThrows(UikaException.class, () -> Verdicts.Writer.create(path));
-        assertEquals("cannot create verdicts output " + path + ": No such file or directory (os error 2)", e.getMessage());
+        assertEquals("cannot create verdicts output " + path + ": No such file or directory", e.getMessage());
     }
 }

@@ -165,7 +165,7 @@ final class CheckScannedTest {
         assertEquals(Reason.CLASS_BECAME_FINAL, v.reason);
         assertEquals("app/Sub", Intern.str(v.sourceClass));
         assertEquals("lib/F", Intern.str(v.reference.owner()));
-        assertEquals(List.of(gone + ": cannot open " + gone + ": No such file or directory (os error 2)"), report.warnings);
+        assertEquals(List.of(gone + ": cannot open " + gone + ": No such file or directory"), report.warnings);
     }
 
     /**

@@ -29,7 +29,7 @@ import java.util.zip.ZipFile;
  * <p>ct.sym entry layouts: 12+ is {@code <codes>/<module>/<binary/name>.sig} (module dirs
  * contain a '.'); 9-11 is {@code <codes>/<binary/name>.sig}; 8 is unsupported. Codes are
  * base-36 digits, one per release, and real files keep '6'/'7' in joint dirs, so the codes
- * charset accepts ALL base-36 digits even though only 8..=35 are selectable.
+ * charset accepts ALL base-36 digits even though only 8 to 35 are selectable.
  */
 final class Jdk {
     static final int MIN_RELEASE = 8;
@@ -305,7 +305,8 @@ final class Jdk {
         static Indexer open(Path ctSym, int release) {
             char code = releaseCode(release);
             if (code == 0) {
-                throw new UikaException("unsupported --jdk-release " + release + " (expected 8..=35)");
+                throw new UikaException(
+                        "unsupported --jdk-release " + release + " (not between " + MIN_RELEASE + " and " + MAX_RELEASE + ")");
             }
             if (!Files.exists(ctSym)) {
                 throw new UikaException("cannot open ct.sym: " + ctSym, new java.nio.file.NoSuchFileException(ctSym.toString()));

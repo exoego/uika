@@ -67,7 +67,7 @@ class CliTest {
                         + "  [possible values: never, reachable, any]" + tail,
                 usageError("check", "--old", "a.jar", "--new", "b.jar", "--fail-on", ""));
         assertEquals(
-                "error: invalid value '' for '--jdk-release <JDK_RELEASE>': cannot parse integer from empty string" + tail,
+                "error: invalid value '' for '--jdk-release <JDK_RELEASE>': the value is empty" + tail,
                 usageError("check", "--old", "a.jar", "--new", "b.jar", "--jdk-release="));
         assertEquals(
                 "error: a value is required for '<OLD>' but none was supplied" + tail,
@@ -200,19 +200,26 @@ class CliTest {
     @Test
     void aReleaseMustBeANumberCtSymCanServe() {
         assertEquals(
-                "error: invalid value '7' for '--jdk-release <JDK_RELEASE>': 7 is not in 8..=35" + TAIL,
+                "error: invalid value '7' for '--jdk-release <JDK_RELEASE>': 7 is not between 8 and 35" + TAIL,
                 usageError("check", "--old", "a.jar", "--new", "b.jar", "--jdk-release", "7"));
         assertEquals(
-                "error: invalid value '36' for '--jdk-release <JDK_RELEASE>': 36 is not in 8..=35" + TAIL,
+                "error: invalid value '36' for '--jdk-release <JDK_RELEASE>': 36 is not between 8 and 35" + TAIL,
                 usageError("upgrade-check", "--before", "a.json", "--after", "b.json", "--jdk-release", "36"));
         assertEquals(
-                "error: invalid value 'seventeen' for '--jdk-release <JDK_RELEASE>': invalid digit found in string" + TAIL,
+                "error: invalid value 'seventeen' for '--jdk-release <JDK_RELEASE>': seventeen is not a whole number" + TAIL,
                 usageError("check", "--old", "a.jar", "--new", "b.jar", "--jdk-release", "seventeen"));
         assertEquals(
-                "error: invalid value '' for '--jdk-release-old <JDK_RELEASE_OLD>': cannot parse integer from empty string" + TAIL,
+                "error: invalid value '17.0' for '--jdk-release <JDK_RELEASE>': 17.0 is not a whole number" + TAIL,
+                usageError("check", "--old", "a.jar", "--new", "b.jar", "--jdk-release", "17.0"));
+        assertEquals(
+                "error: invalid value '99999999999999999999' for '--jdk-release <JDK_RELEASE>': 99999999999999999999 is not between 8 and 35"
+                        + TAIL,
+                usageError("check", "--old", "a.jar", "--new", "b.jar", "--jdk-release", "99999999999999999999"));
+        assertEquals(
+                "error: invalid value '' for '--jdk-release-old <JDK_RELEASE_OLD>': the value is empty" + TAIL,
                 usageError("check", "--jdk-release-old=", "--jdk-release-new", "17"));
         assertEquals(
-                "error: invalid value '' for '--jdk-release-new <JDK_RELEASE_NEW>': cannot parse integer from empty string" + TAIL,
+                "error: invalid value '' for '--jdk-release-new <JDK_RELEASE_NEW>': the value is empty" + TAIL,
                 usageError("check", "--jdk-release-old", "11", "--jdk-release-new="));
     }
 }

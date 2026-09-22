@@ -2,9 +2,6 @@ package net.exoego.uika.cli;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -236,8 +233,7 @@ final class Evidence {
 
     /**
      * Children in file-name byte order, a directory's contents where the directory sorts.
-     * That order decides which of two stacks for one class is the first. Messages follow
-     * walkdir, whose IO errors name the cause twice once the context chain is printed.
+     * That order decides which of two stacks for one class is the first.
      *
      * @param root the path as the user spelled it
      * @param display {@code root} plus the names walked so far
@@ -278,7 +274,7 @@ final class Evidence {
                 }
                 parseFile(childDisplay, child, loaded);
             } else if (!Files.exists(child) && Files.exists(child, LinkOption.NOFOLLOW_LINKS)) {
-                throw walkError(root, childDisplay, "No such file or directory (os error 2)");
+                throw walkError(root, childDisplay, "No such file or directory");
             }
         }
         ancestors.remove(ancestors.size() - 1);
@@ -286,7 +282,7 @@ final class Evidence {
 
     private static UikaException walkError(String root, String at, String io) {
         return new UikaException(
-                "cannot read class-load log directory " + root + ": IO error for operation on " + at + ": " + io + ": " + io);
+                "cannot read class-load log directory " + root + ": IO error for operation on " + at + ": " + io);
     }
 
     private static void parseFile(String display, Path path, Map<String, LoadRecord> loaded) {
@@ -586,10 +582,14 @@ final class Evidence {
      * draft from an earlier run for a human to review.
      */
     static void createDraftPlaceholder(String path) {
+        // Path drops a trailing slash, so "new/" would otherwise become a regular file named new.
+        if (path.endsWith("/")) {
+            throw new UikaException("cannot write draft exclude file " + path + ": Is a directory");
+        }
         Path file = Path.of(path);
         // Content, not path identity. The caller's real-path comparison misses a HARD LINK to
         // the exclude file.
-        String existing = readUtf8OrNull(file);
+        String existing = existingText(file, path);
         if (existing != null) {
             int newline = existing.indexOf('\n');
             String first = newline < 0 ? existing : existing.substring(0, newline);
@@ -611,28 +611,26 @@ final class Evidence {
         write(path, "# uika --draft-exclude-file: the check did not complete; no rules were drafted.\n");
     }
 
-    private static String readUtf8OrNull(Path file) {
+    /** The file's text, or null when no file is there. */
+    private static String existingText(Path file, String path) {
+        byte[] bytes;
         try {
-            return StandardCharsets.UTF_8
-                    .newDecoder()
-                    .onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .decode(ByteBuffer.wrap(Files.readAllBytes(file)))
-                    .toString();
-        } catch (CharacterCodingException e) {
-            return null;
+            bytes = Files.readAllBytes(file);
         } catch (IOException e) {
+            // A file it cannot read cannot be shown to be ours. A directory is left for the write to name.
+            if (Files.isRegularFile(file)) {
+                throw new UikaException("cannot read draft exclude file " + path, e);
+            }
             return null;
         }
+        // Lenient on purpose. A byte that is not UTF-8 decodes to U+FFFD, which is neither
+        // blank nor the marker, so such a file is refused.
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     /** The path as spelled minus its last name, or null when nothing is left to create. */
     private static String parentOf(String path) {
-        int end = path.length();
-        while (end > 1 && path.charAt(end - 1) == '/') {
-            end--;
-        }
-        int slash = path.lastIndexOf('/', end - 1);
+        int slash = path.lastIndexOf('/');
         if (slash < 0) {
             return null;
         }
@@ -647,7 +645,7 @@ final class Evidence {
             Files.writeString(Path.of(path), content, StandardCharsets.UTF_8);
         } catch (IOException e) {
             if (Files.isDirectory(Path.of(path))) {
-                throw new UikaException("cannot write draft exclude file " + path + ": Is a directory (os error 21)");
+                throw new UikaException("cannot write draft exclude file " + path + ": Is a directory");
             }
             throw new UikaException("cannot write draft exclude file " + path, e);
         }

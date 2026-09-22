@@ -17,10 +17,16 @@ final class UikaException extends RuntimeException {
             return cause.getMessage();
         }
         if (cause instanceof java.nio.file.NoSuchFileException) {
-            return "No such file or directory (os error 2)";
+            return "No such file or directory";
         }
         if (cause instanceof java.nio.file.AccessDeniedException) {
-            return "Permission denied (os error 13)";
+            return "Permission denied";
+        }
+        if (cause instanceof java.nio.file.FileAlreadyExistsException) {
+            return "File exists";
+        }
+        if (cause instanceof java.nio.file.FileSystemException f && "Not a directory".equals(f.getReason())) {
+            return "Not a directory";
         }
         String message = cause.getMessage();
         return message == null ? cause.getClass().getSimpleName() : message;
