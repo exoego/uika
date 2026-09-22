@@ -494,8 +494,9 @@ class ClassParserTest {
         assertEquals("caf\u00e9/\u65e5\u672c", rc.utf8(1));
         assertEquals("a\u0000b", rc.utf8(2));
         assertEquals(new String(Character.toChars(0x1F600)), rc.utf8(3));
-        ClassParser.FormatException e = assertThrows(ClassParser.FormatException.class, () -> rc.utf8(4));
-        assertEquals("could not convert CESU-8 data to UTF-8", e.getMessage());
+        // JVMS 4.4.7 allows a lone surrogate. Its symbol keeps the three bytes, and only the String shows U+FFFD.
+        assertArrayEquals(new byte[] {'x', (byte) 0xED, (byte) 0xA0, (byte) 0xBD}, Intern.bytes(rc.internUtf8(null, 4)));
+        assertEquals("x\uFFFD", rc.utf8(4));
         ClassParser.FormatException notUtf8 = assertThrows(ClassParser.FormatException.class, () -> rc.utf8(0));
         assertEquals("constant pool #0 is not Utf8", notUtf8.getMessage());
         ClassParser.FormatException notClass = assertThrows(ClassParser.FormatException.class, () -> rc.internClassName(null, 1));

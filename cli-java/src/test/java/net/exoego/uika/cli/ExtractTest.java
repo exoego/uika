@@ -693,7 +693,8 @@ class ExtractTest {
         b.utf8(new ClassFileBytes().raw('(', 'L').raw(pair).raw(';', ')', 'V').toByteArray()); // #32
         b.nameAndType(5, 32); // #33
         b.memberRef(10, 4, 33); // #34 a descriptor holding a surrogate pair
-        b.utf8(new byte[] {'g', 'o', (byte) 0xED, (byte) 0xA0, (byte) 0xBD}); // #35
+        byte[] loneSurrogate = {'g', 'o', (byte) 0xED, (byte) 0xA0, (byte) 0xBD};
+        b.utf8(loneSurrogate); // #35
         b.nameAndType(35, 6); // #36
         b.memberRef(10, 4, 36); // #37 a name holding a lone surrogate
         b.memberRef(10, 4, 7); // #38
@@ -708,6 +709,7 @@ class ExtractTest {
             MemberKey.of("call", "(Lcaf\u00e9;)V"),
             MemberKey.of("go" + smiley, "()V"),
             MemberKey.of("call", "(L" + smiley + ";)V"),
+            MemberKey.of(Intern.intern(null, loneSurrogate, 0, loneSurrogate.length), Intern.intern("()V")),
         });
         IntBuf out = new IntBuf();
         Extract.invocationEvidence(out, p, scratch, probe);
@@ -718,6 +720,7 @@ class ExtractTest {
                         "lib/Owner.call:(Lcaf\u00e9;)V",
                         "lib/Owner.go" + smiley + ":()V",
                         "lib/Owner.call:(L" + smiley + ";)V",
+                        "lib/Owner.go\uFFFD:()V",
                         "lib/Owner.call:()V"),
                 evidenceOf(out));
     }

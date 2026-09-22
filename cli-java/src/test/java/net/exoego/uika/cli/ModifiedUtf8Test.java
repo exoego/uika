@@ -93,14 +93,40 @@ class ModifiedUtf8Test {
         assertRejected(0xC0, 0x80, 0xF0, 0x9F, 0x98, 0x80);
     }
 
-    /** A lone surrogate is legal Modified UTF-8 but has no UTF-8 form. */
+    private static void assertDecodesTo(int[] expected, int... raw) throws ClassParser.FormatException {
+        byte[] b = bytes(raw);
+        byte[] want = bytes(expected);
+        assertArrayEquals(want, ModifiedUtf8.toUtf8(b, 0, b.length), Arrays.toString(raw));
+        assertEquals(Intern.intern(null, want, 0, want.length), ModifiedUtf8.intern(new Scratch(), b, 0, b.length), Arrays.toString(raw));
+    }
+
+    private static void assertKept(int... raw) throws ClassParser.FormatException {
+        assertDecodesTo(raw, raw);
+    }
+
+    /** A lone surrogate is legal Modified UTF-8 (JVMS 4.4.7), and HotSpot loads names holding one. */
     @Test
-    void rejectsSurrogatesThatDoNotPair() {
-        assertRejected(0xED, 0xB0, 0x80); // a low surrogate first
-        assertRejected(0xED, 0xA0, 0xBD, 'x', 0x80, 0x80); // a high surrogate followed by a character
-        assertRejected(0xED, 0xA0, 0xBD, 0xED, 0xA0, 0x80); // two high surrogates
-        assertRejected(0xED, 0xA0, 0xBD, 0xED, 0x41, 0x80);
+    void keepsSurrogatesThatDoNotPair() throws Exception {
+        assertKept(0xED, 0xA0, 0x80); // U+D800
+        assertKept(0xED, 0xB0, 0x80); // U+DC00, a low surrogate first
+        assertKept('m', 0xED, 0xAF, 0xBF, 'x'); // U+DBFF followed by a character
+        assertKept(0xED, 0xB0, 0x80, 0xED, 0xA0, 0x80); // low then high is no pair
+        assertKept(0xED, 0xA0, 0xBD, 0xED, 0xA0, 0x80); // two high surrogates
+        assertDecodesTo(
+                new int[] {0xED, 0xA0, 0xBD, 0xF0, 0x9F, 0x98, 0x80},
+                0xED, 0xA0, 0xBD, 0xED, 0xA0, 0xBD, 0xED, 0xB8, 0x80); // a high surrogate, then U+1F600
+        assertDecodesTo(
+                new int[] {0xF0, 0x9F, 0x98, 0x80, 0xED, 0xB8, 0x80},
+                0xED, 0xA0, 0xBD, 0xED, 0xB8, 0x80, 0xED, 0xB8, 0x80); // U+1F600, then a low surrogate
+        assertDecodesTo(new int[] {'a', 0x00, 0xED, 0xA0, 0x80}, 'a', 0xC0, 0x80, 0xED, 0xA0, 0x80);
+    }
+
+    @Test
+    void rejectsMalformedBytesNextToALoneSurrogate() {
+        assertRejected(0xED, 0xA0); // a surrogate cut short
         assertRejected(0xED, 0xA0, 0xBD, 0xED, 0xB8); // a low surrogate cut short
+        assertRejected(0xED, 0xA0, 0xBD, 0xED, 0x41, 0x80);
+        assertRejected(0xED, 0xA0, 0xBD, 'x', 0x80, 0x80); // continuation bytes with no lead
     }
 
     /** RFC 3629 and Unicode Table 3-7: no overlong forms, no surrogates, nothing above U+10FFFF. */
