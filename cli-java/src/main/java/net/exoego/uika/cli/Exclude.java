@@ -30,8 +30,8 @@ import java.util.List;
 final class Exclude {
     private Exclude() {}
 
-    private static final String[] FILE_FIELDS = {"exclude"};
     private static final String[] ENTRY_FIELDS = {"owner", "member", "descriptor", "kind", "reason"};
+    private static final String ENTRY_SHAPE = "a table with owner, member, descriptor, kind or reason";
 
     /**
      * Unknown keys are rejected, not ignored. Every scoping field is optional, so a
@@ -107,59 +107,55 @@ final class Exclude {
 
     record Stats(int suppressed, List<String> unused) {}
 
-    /** Parse one exclude file's TOML content into rules. */
+    /**
+     * Parse one exclude file's TOML content into rules. Throws {@link Toml.Error} for a file
+     * that is not TOML or not shaped like an exclude file, and {@link UikaException} for a
+     * rule that does not make sense.
+     */
     static List<Rule> parse(String content) {
-        List<RawEntry> entries;
-        try {
-            entries = read(Toml.parse(content));
-        } catch (Toml.Error e) {
-            throw new UikaException("invalid TOML", e);
-        }
         List<Rule> rules = new ArrayList<>();
-        for (RawEntry entry : entries) {
+        for (RawEntry entry : read(Toml.parse(content))) {
             rules.add(compile(entry));
         }
         return rules;
     }
 
-    // Keys are visited in the table's own order, and the first problem ends the read, so
-    // which of two mistakes gets reported matches the Rust deserializer.
+    // Keys are visited in the table's own order, and the first problem ends the read.
     private static List<RawEntry> read(Toml.Table file) {
         List<RawEntry> entries = new ArrayList<>();
         for (Toml.Entry top : file.entries()) {
             if (!top.key().equals("exclude")) {
-                throw top.unknownField(FILE_FIELDS);
+                throw top.error("unknown key " + Json.quote(top.key()) + ", expected exclude");
             }
-            for (Toml.Value item : top.value().asArray()) {
+            List<Toml.Value> items = expect(top.value(), Toml.Kind.ARRAY, "exclude", "an array of tables").asArray();
+            for (int i = 0; i < items.size(); i++) {
+                Toml.Value item = items.get(i);
+                String path = "exclude[" + i + "]";
+                Toml.Table table = expect(item, Toml.Kind.TABLE, path, ENTRY_SHAPE).asTable();
                 String[] values = new String[ENTRY_FIELDS.length];
-                if (item.kind() == Toml.Kind.ARRAY) {
-                    // A serde struct also reads from a sequence, field by field, and the
-                    // toml crate never looks for leftovers. Kept so one file loads or fails
-                    // the same way under both implementations.
-                    List<Toml.Value> positional = item.asArray();
-                    for (int i = 0; i < values.length; i++) {
-                        if (i >= positional.size()) {
-                            throw item.invalidLength(i, "struct RawEntry with 5 elements");
-                        }
-                        values[i] = positional.get(i).asString();
-                    }
-                    entries.add(new RawEntry(values[0], values[1], values[2], values[3], values[4]));
-                    continue;
-                }
-                for (Toml.Entry field : item.asTable("struct RawEntry").entries()) {
+                for (Toml.Entry field : table.entries()) {
                     int index = List.of(ENTRY_FIELDS).indexOf(field.key());
                     if (index < 0) {
-                        throw field.unknownField(ENTRY_FIELDS);
+                        throw field.error(path + ": unknown key " + Json.quote(field.key()) + ", expected one of "
+                                + String.join(", ", ENTRY_FIELDS));
                     }
-                    values[index] = field.value().asString();
+                    values[index] = expect(field.value(), Toml.Kind.STRING, path + "." + field.key(), "a string")
+                            .asString();
                 }
                 if (values[4] == null) {
-                    throw item.missingField("reason");
+                    throw item.error(path + ": missing required key \"reason\"");
                 }
                 entries.add(new RawEntry(values[0], values[1], values[2], values[3], values[4]));
             }
         }
         return entries;
+    }
+
+    private static Toml.Value expect(Toml.Value value, Toml.Kind kind, String path, String expected) {
+        if (value.kind() != kind) {
+            throw value.error(path + ": expected " + expected + ", found " + value.describe());
+        }
+        return value;
     }
 
     private static Rule compile(RawEntry entry) {
@@ -190,7 +186,7 @@ final class Exclude {
                     valid.add(reason.configText());
                 }
                 throw new UikaException("exclude rule \"" + label + "\": unknown kind \"" + entry.kind
-                        + "\"; valid kinds: " + String.join(", ", valid));
+                        + "\", expected one of " + String.join(", ", valid));
             }
         }
         OwnerPattern owner = null;
@@ -226,10 +222,13 @@ final class Exclude {
                 }
                 throw new UikaException("cannot read exclude file " + path, e);
             }
+            String subject = "invalid exclude file " + path;
             try {
                 rules.addAll(parse(content));
+            } catch (Toml.Error e) {
+                throw new UikaException(e.render(subject));
             } catch (UikaException e) {
-                throw new UikaException("invalid exclude file " + path, e);
+                throw new UikaException(subject, e);
             }
         }
         return rules;

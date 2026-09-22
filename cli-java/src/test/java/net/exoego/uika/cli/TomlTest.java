@@ -9,17 +9,14 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-/**
- * Every expected message here was printed by the Rust binary for the same input (toml 1.1.5),
- * so a change that alters one is a change in what users see, not a refactor.
- */
+/** A change that alters an expected message here is a change in what users see, not a refactor. */
 class TomlTest {
     private static String error(String input) {
-        return assertThrows(Toml.Error.class, () -> Toml.parse(input)).getMessage();
+        return assertThrows(Toml.Error.class, () -> Toml.parse(input)).render("e.toml");
     }
 
     private static String description(String input) {
-        return assertThrows(Toml.Error.class, () -> Toml.parse(input)).description;
+        return assertThrows(Toml.Error.class, () -> Toml.parse(input)).getMessage();
     }
 
     private static String string(Toml.Table table, String key) {
@@ -34,10 +31,9 @@ class TomlTest {
         return keys;
     }
 
-    /** A number or a boolean as a type error names it, the one place a user sees it. */
+    /** A number or a boolean as a schema error names it, the one place a user sees it. */
     private static String shown(Toml.Value value) {
-        String description = assertThrows(Toml.Error.class, value::asString).description;
-        return description.substring("invalid type: ".length(), description.indexOf(", expected"));
+        return value.describe();
     }
 
     @Test
@@ -65,7 +61,7 @@ class TomlTest {
         assertNull(t.get("missing"));
     }
 
-    /** The crate's map is a BTreeMap, and that order decides which schema error comes first. */
+    /** This order decides which of two schema errors comes first. */
     @Test
     void tablesIterateInKeyByteOrder() {
         Toml.Table t = Toml.parse("b = 1\n\"é\" = 1\nB = 1\na = 1\n\"𝄞\" = 1\n\"\uFFFF\" = 1\n");
@@ -125,17 +121,17 @@ class TomlTest {
                 yes = true
                 no = false
                 """);
-        assertEquals("integer `1000`", shown(t.get("dec").value()));
-        assertEquals("integer `-17`", shown(t.get("neg").value()));
-        assertEquals("integer `5`", shown(t.get("plus").value()));
-        assertEquals("integer `0`", shown(t.get("zero").value()));
-        assertEquals("integer `3735928559`", shown(t.get("hex").value()));
-        assertEquals("integer `15`", shown(t.get("oct").value()));
-        assertEquals("integer `10`", shown(t.get("bin").value()));
-        assertEquals("integer `9223372036854775807`", shown(t.get("max").value()));
-        assertEquals("integer `-9223372036854775808`", shown(t.get("min").value()));
-        assertEquals("boolean `true`", shown(t.get("yes").value()));
-        assertEquals("boolean `false`", shown(t.get("no").value()));
+        assertEquals("the integer 1_000", shown(t.get("dec").value()));
+        assertEquals("the integer -17", shown(t.get("neg").value()));
+        assertEquals("the integer +5", shown(t.get("plus").value()));
+        assertEquals("the integer 0", shown(t.get("zero").value()));
+        assertEquals("the integer 0xDEAD_beef", shown(t.get("hex").value()));
+        assertEquals("the integer 0o17", shown(t.get("oct").value()));
+        assertEquals("the integer 0b1010", shown(t.get("bin").value()));
+        assertEquals("the integer 9223372036854775807", shown(t.get("max").value()));
+        assertEquals("the integer -9223372036854775808", shown(t.get("min").value()));
+        assertEquals("the boolean true", shown(t.get("yes").value()));
+        assertEquals("the boolean false", shown(t.get("no").value()));
         assertEquals(Toml.Kind.INTEGER, t.get("dec").value().kind());
         assertEquals(Toml.Kind.BOOLEAN, t.get("yes").value().kind());
     }
@@ -195,14 +191,14 @@ class TomlTest {
                 k = "v"
                 """);
         assertEquals("root", string(t, "top"));
-        Toml.Table ab = t.get("a").value().asTable("a map").get("b").value().asTable("a map");
+        Toml.Table ab = t.get("a").value().asTable().get("b").value().asTable();
         assertEquals("dotted", string(ab, "c"));
         assertEquals("spaced dots", string(ab, "d"));
-        Toml.Table server = t.get("server").value().asTable("a map");
+        Toml.Table server = t.get("server").value().asTable();
         assertEquals("h", string(server, "host"));
-        assertEquals("boolean `true`", shown(server.get("opts").value().asTable("a map").get("retry").value()));
-        assertEquals("c", string(server.get("tls").value().asTable("a map"), "cert"));
-        assertEquals("v", string(t.get("quoted").value().asTable("a map").get("table").value().asTable("a map"), "k"));
+        assertEquals("the boolean true", shown(server.get("opts").value().asTable().get("retry").value()));
+        assertEquals("c", string(server.get("tls").value().asTable(), "cert"));
+        assertEquals("v", string(t.get("quoted").value().asTable().get("table").value().asTable(), "k"));
     }
 
     @Test
@@ -220,13 +216,13 @@ class TomlTest {
                 """);
         List<Toml.Value> items = t.get("exclude").value().asArray();
         assertEquals(3, items.size());
-        assertEquals("first", string(items.get(0).asTable("t"), "owner"));
-        Toml.Table second = items.get(1).asTable("t");
-        assertEquals("under the second", string(second.get("sub").value().asTable("t"), "x"));
-        assertTrue(items.get(2).asTable("t").isEmpty());
+        assertEquals("first", string(items.get(0).asTable(), "owner"));
+        Toml.Table second = items.get(1).asTable();
+        assertEquals("under the second", string(second.get("sub").value().asTable(), "x"));
+        assertTrue(items.get(2).asTable().isEmpty());
     }
 
-    /** TOML 1.1 lets an inline table span lines and end with a comma, and the crate follows it. */
+    /** TOML 1.1 lets an inline table span lines and end with a comma. */
     @Test
     void inlineTables() {
         Toml.Table t = Toml.parse("""
@@ -239,73 +235,68 @@ class TomlTest {
                 none = {}
                 """);
         List<Toml.Value> items = t.get("exclude").value().asArray();
-        assertEquals("a", string(items.get(0).asTable("t"), "owner"));
-        assertEquals("x", string(items.get(1).asTable("t"), "reason"));
-        Toml.Table point = t.get("point").value().asTable("t");
-        assertEquals("dotted inside", string(point.get("x").value().asTable("t"), "y"));
-        assertEquals("er", string(point.get("z").value().asTable("t"), "deep"));
-        assertEquals(List.of("a", "b"), keys(t.get("wrapped").value().asTable("t")));
-        assertTrue(t.get("none").value().asTable("t").isEmpty());
+        assertEquals("a", string(items.get(0).asTable(), "owner"));
+        assertEquals("x", string(items.get(1).asTable(), "reason"));
+        Toml.Table point = t.get("point").value().asTable();
+        assertEquals("dotted inside", string(point.get("x").value().asTable(), "y"));
+        assertEquals("er", string(point.get("z").value().asTable(), "deep"));
+        assertEquals(List.of("a", "b"), keys(t.get("wrapped").value().asTable()));
+        assertTrue(t.get("none").value().asTable().isEmpty());
     }
 
     @Test
     void aByteOrderMarkAndCrlfAreAccepted() {
         Toml.Table t = Toml.parse("\uFEFF[[exclude]]\r\nowner = \"a\"\r\n");
-        assertEquals("a", string(t.get("exclude").value().asArray().get(0).asTable("t"), "owner"));
+        assertEquals("a", string(t.get("exclude").value().asArray().get(0).asTable(), "owner"));
     }
 
     @Test
     void theRenderingQuotesTheLineAndPointsAtTheSpan() {
         assertEquals(
                 """
-                TOML parse error at line 3, column 1
+                e.toml: TOML parse error at line 3, column 1
                   |
                 3 | owner = "b"
                   | ^^^^^
-                duplicate key
-                """,
+                duplicate key""",
                 error("[[exclude]]\nowner = \"a\"\nowner = \"b\"\nreason = \"x\"\n"));
         assertEquals(
                 """
-                TOML parse error at line 2, column 11
+                e.toml: TOML parse error at line 2, column 11
                   |
                 2 | owner = "a
                   |           ^
-                invalid basic string, expected `"`
-                """,
+                invalid basic string, expected `"`""",
                 error("[[exclude]]\nowner = \"a\nreason = \"x\"\n"));
         // The gutter grows with the line number.
         assertEquals(
                 """
-                TOML parse error at line 11, column 5
+                e.toml: TOML parse error at line 11, column 5
                    |
                 11 | b = = 2
                    |     ^
-                extra `=`, expected nothing
-                """,
+                extra `=`, expected nothing""",
                 error("a = 1\n\n\n\n\n\n\n\n\n\nb = = 2"));
     }
 
-    /** The column counts characters and the caret run counts bytes, as the crate does. */
+    /** The column counts characters and the caret run counts bytes. */
     @Test
-    void nonAsciiLinesKeepTheCratesColumnArithmetic() {
+    void nonAsciiLinesCountTheColumnInCharactersAndTheCaretInBytes() {
         assertEquals(
                 """
-                TOML parse error at line 2, column 15
+                e.toml: TOML parse error at line 2, column 15
                   |
                 2 | owner = "日本語" junk
                   |               ^
-                unexpected key or value, expected newline, `#`
-                """,
+                unexpected key or value, expected newline, `#`""",
                 error("[[exclude]]\nowner = \"日本語\" junk\nreason = \"r\""));
         assertEquals(
                 """
-                TOML parse error at line 2, column 1
+                e.toml: TOML parse error at line 2, column 1
                   |
                 2 | 日本語 = "a"
                   | ^^^^^^^^^
-                invalid unquoted key, expected letters, numbers, `-`, `_`
-                """,
+                invalid unquoted key, expected letters, numbers, `-`, `_`""",
                 error("[[exclude]]\n日本語 = \"a\"\nreason = \"r\""));
     }
 
@@ -425,122 +416,94 @@ class TomlTest {
         assertEquals("invalid comment character, expected printable characters", description("# bad \u0001 comment\n"));
         assertEquals("carriage return must be followed by newline, expected newline", description("a = 1\rb = 2"));
         // The one error with no position, so it is rendered without the excerpt.
-        assertEquals("recursion limit\n", error(".".repeat(0) + "k" + ".k".repeat(80) + " = 1"));
+        assertEquals(
+                "e.toml: TOML parse error: recursion limit", error(".".repeat(0) + "k" + ".k".repeat(80) + " = 1"));
     }
 
-    /** The serde side. What a wrongly typed value is called, and where the caret goes. */
+    /** A value is named in TOML terms and, when it is short, as the file spells it. */
     @Test
-    void typeErrorsNameTheValueTheWaySerdeDoes() {
+    void schemaErrorsNameTheValueInTomlTerms() {
+        assertEquals("a string", shown(value("\"quo\\\"te \\n\"")));
+        assertEquals("the integer 0x1F", shown(value("0x1F")));
         assertEquals(
-                """
-                TOML parse error at line 2, column 9
-                  |
-                2 | owner = 5
-                  |         ^
-                invalid type: integer `5`, expected a string
-                """,
-                assertThrows(Toml.Error.class, () -> Toml.parse("[[exclude]]\nowner = 5\n")
-                                .get("exclude")
-                                .value()
-                                .asArray()
-                                .get(0)
-                                .asTable("struct RawEntry")
-                                .get("owner")
-                                .value()
-                                .asString())
-                        .getMessage());
-        assertEquals("invalid type: integer `31`, expected a string", stringError("0x1F"));
-        assertEquals("invalid type: integer `18446744073709551615`, expected a string", stringError("18446744073709551615"));
-        assertEquals(
-                "invalid type: integer `18446744073709551616` as i128, expected a string",
-                stringError("18446744073709551616"));
-        assertEquals(
-                "invalid type: integer `340282366920938463463374607431768211455` as u128, expected a string",
-                stringError("340282366920938463463374607431768211455"));
-        assertEquals("integer number overflowed", stringError("340282366920938463463374607431768211456"));
-        assertEquals("invalid type: floating point `1.5`, expected a string", stringError("1.5"));
-        assertEquals("invalid type: floating point `10000000000.0`, expected a string", stringError("1e10"));
-        assertEquals("invalid type: floating point `0.0000001`, expected a string", stringError("1e-7"));
-        assertEquals("invalid type: floating point `-0.0`, expected a string", stringError("-0.0"));
-        assertEquals("invalid type: floating point `inf`, expected a string", stringError("+inf"));
-        assertEquals("invalid type: floating point `NaN`, expected a string", stringError("-nan"));
-        assertEquals("floating-point number overflowed", stringError("1e400"));
-        assertEquals("invalid type: boolean `true`, expected a string", stringError("true"));
-        assertEquals("invalid type: sequence, expected a string", stringError("[\"a\"]"));
-        assertEquals("invalid type: map, expected a string", stringError("{a = 1}"));
-        assertEquals("invalid type: map, expected a string", stringError("1979-05-27"));
-
-        Toml.Value text = Toml.parse("v = \"quo\\\"te \\\\ \\n \\u0001 é\"").get("v").value();
-        assertEquals(
-                "invalid type: string \"quo\\\"te \\\\ \\n \\u{1} é\", expected a sequence",
-                assertThrows(Toml.Error.class, text::asArray).description);
-        assertEquals(
-                "invalid type: string \"quo\\\"te \\\\ \\n \\u{1} é\", expected struct RawEntry",
-                assertThrows(Toml.Error.class, () -> text.asTable("struct RawEntry")).description);
+                "the integer 340282366920938463463374607431768211456",
+                shown(value("340282366920938463463374607431768211456")));
+        assertEquals("the float 1e400", shown(value("1e400")));
+        assertEquals("the float -nan", shown(value("-nan")));
+        assertEquals("the boolean true", shown(value("true")));
+        assertEquals("the date-time 1979-05-27 07:32:00Z", shown(value("1979-05-27 07:32:00Z")));
+        assertEquals("an array", shown(value("[\"a\"]")));
+        assertEquals("a table", shown(value("{a = 1}")));
+        assertEquals("an array of tables", shown(Toml.parse("[[v]]").get("v").value()));
     }
 
-    private static String stringError(String value) {
-        Toml.Value v = Toml.parse("v = " + value).get("v").value();
-        return assertThrows(Toml.Error.class, v::asString).description;
-    }
-
+    /** The file is valid TOML, so the header does not call it a parse error. */
     @Test
-    void schemaErrorsPointAtTheKeyOrTheTable() {
-        Toml.Table t = Toml.parse("[[exclude]]\nonwer = \"x\"\n");
+    void schemaErrorsPointAtTheKeyOrTheValue() {
+        Toml.Table t = Toml.parse("[[exclude]]\nonwer = 5\n");
         Toml.Value item = t.get("exclude").value().asArray().get(0);
-        Toml.Entry field = item.asTable("struct RawEntry").get("onwer");
+        Toml.Entry field = item.asTable().get("onwer");
         assertEquals(
                 """
-                TOML parse error at line 2, column 1
+                e.toml at line 2, column 1
                   |
-                2 | onwer = "x"
+                2 | onwer = 5
                   | ^^^^^
-                unknown field `onwer`, expected one of `owner`, `member`, `descriptor`, `kind`, `reason`
-                """,
-                field.unknownField("owner", "member", "descriptor", "kind", "reason").getMessage());
-        assertEquals("unknown field `onwer`, expected `exclude`", field.unknownField("exclude").description);
-        assertEquals("unknown field `onwer`, expected `a` or `b`", field.unknownField("a", "b").description);
-        assertEquals("unknown field `onwer`, there are no fields", field.unknownField().description);
+                a key problem""",
+                field.error("a key problem").render("e.toml"));
         assertEquals(
                 """
-                TOML parse error at line 1, column 1
+                e.toml at line 2, column 9
+                  |
+                2 | onwer = 5
+                  |         ^
+                a value problem""",
+                field.value().error("a value problem").render("e.toml"));
+        assertEquals(
+                """
+                e.toml at line 1, column 1
                   |
                 1 | [[exclude]]
                   | ^^^^^^^^^^^
-                missing field `reason`
-                """,
-                item.missingField("reason").getMessage());
-        assertEquals(
-                "invalid length 2, expected struct RawEntry with 5 elements",
-                item.invalidLength(2, "struct RawEntry with 5 elements").description);
+                a table problem""",
+                item.error("a table problem").render("e.toml"));
     }
 
-    /** Through the real schema, so the key order rule and the sequence form are pinned too. */
+    /** Through the real schema, so the key paths and the key order rule are pinned too. */
     @Test
-    void excludeFilesAreRejectedLikeTheRustDeserializer() {
-        assertEquals("unknown field `other`, expected `exclude`", excludeError("other = 1\n"));
-        assertEquals("unknown field `other`, expected `exclude`", excludeError("[other]\nx = 1\n"));
-        assertEquals("invalid type: map, expected a sequence", excludeError("[exclude]\nowner = \"a\"\n"));
-        assertEquals("invalid type: string \"x\", expected struct RawEntry", excludeError("exclude = [\"x\"]"));
-        assertEquals("missing field `reason`", excludeError("[[exclude]]\nowner = \"a\"\n"));
+    void excludeFilesAreRejectedWithTheKeyPath() {
+        assertEquals("unknown key \"other\", expected exclude", excludeError("other = 1\n"));
+        assertEquals("unknown key \"other\", expected exclude", excludeError("[other]\nx = 1\n"));
+        assertEquals(
+                "exclude: expected an array of tables, found a table", excludeError("[exclude]\nowner = \"a\"\n"));
+        assertEquals("exclude: expected an array of tables, found a string", excludeError("exclude = \"x\""));
+        assertEquals(
+                "exclude[0]: expected a table with owner, member, descriptor, kind or reason, found a string",
+                excludeError("exclude = [\"x\"]"));
+        assertEquals("exclude[0]: missing required key \"reason\"", excludeError("[[exclude]]\nowner = \"a\"\n"));
+        assertEquals(
+                "exclude[1].kind: expected a string, found the integer 5",
+                excludeError("[[exclude]]\nowner = \"a\"\nreason = \"r\"\n[[exclude]]\nkind = 5\nreason = \"r\"\n"));
         // "owner" sorts before "reason" and after "onwer", whatever the file order is.
         assertEquals(
-                "invalid type: integer `2`, expected a string", excludeError("[[exclude]]\nreason = 2\nzzz = 1\n"));
-        assertTrue(excludeError("[[exclude]]\nowner = 1\nonwer = \"x\"\n").startsWith("unknown field `onwer`"));
-        assertTrue(excludeError("[[exclude]]\nreason = 2\naaa = 1\n").startsWith("unknown field `aaa`"));
-        // A serde struct also reads from a sequence, and leftovers go unchecked.
-        assertEquals("invalid length 2, expected struct RawEntry with 5 elements", excludeError("exclude = [[\"a\", \"m\"]]"));
+                "exclude[0].reason: expected a string, found the integer 2",
+                excludeError("[[exclude]]\nreason = 2\nzzz = 1\n"));
         assertEquals(
-                1,
-                Exclude.parse("exclude = [[\"a\", \"m\", \"()V\", \"method_removed\", \"r\", \"ignored\"]]")
-                        .size());
+                "exclude[0]: unknown key \"onwer\", expected one of owner, member, descriptor, kind, reason",
+                excludeError("[[exclude]]\nowner = 1\nonwer = \"x\"\n"));
+        assertTrue(excludeError("[[exclude]]\nreason = 2\naaa = 1\n").startsWith("exclude[0]: unknown key \"aaa\""));
+        // A list in place of an entry is rejected like any other value that is not a table.
+        assertEquals(
+                "exclude[0]: expected a table with owner, member, descriptor, kind or reason, found an array",
+                excludeError("exclude = [[\"a\", \"m\", \"()V\", \"method_removed\", \"r\"]]"));
+        // A quoted key is escaped, so the message stays on one line.
+        assertEquals(
+                "exclude[0]: unknown key \"a\\nb\", expected one of owner, member, descriptor, kind, reason",
+                excludeError("[[exclude]]\n\"a\\nb\" = \"x\"\nreason = \"r\"\n"));
     }
 
     private static String excludeError(String toml) {
-        UikaException e = assertThrows(UikaException.class, () -> Exclude.parse(toml));
-        assertTrue(e.getMessage().startsWith("invalid TOML: TOML parse error at line "), e.getMessage());
-        String[] lines = e.getMessage().split("\n");
-        return lines[lines.length - 1];
+        return assertThrows(Toml.Error.class, () -> Exclude.parse(toml)).getMessage();
     }
 
     private static Toml.Value value(String toml) {
@@ -549,27 +512,27 @@ class TomlTest {
 
     @Test
     void valuesRightBeforeTheEndOfTheInput() {
-        assertEquals("integer `1`", shown(value("1 ")));
-        assertEquals("integer `1`", shown(value("1\t")));
-        assertEquals("integer `1`", shown(value("1 # c")));
+        assertEquals("the integer 1", shown(value("1 ")));
+        assertEquals("the integer 1", shown(value("1\t")));
+        assertEquals("the integer 1", shown(value("1 # c")));
         assertEquals("x", value("'''x'''").asString());
         // At most two extra quotes join a multi-line string.
         assertEquals("x''", value("'''x'''''").asString());
         assertEquals("x\\", value("\"\"\"x\\\\\"\"\"").asString());
         assertTrue(Toml.parse("\uFEFF").isEmpty());
-        assertEquals("integer `1`", shown(Toml.parse("\uFEFFa = 1").get("a").value()));
+        assertEquals("the integer 1", shown(Toml.parse("\uFEFFa = 1").get("a").value()));
         Toml.Table t = Toml.parse("a = \"x\" # c\n[b] # c\nc = 2");
         assertEquals("x", string(t, "a"));
-        assertEquals("integer `2`", shown(t.get("b").value().asTable("t").get("c").value()));
+        assertEquals("the integer 2", shown(t.get("b").value().asTable().get("c").value()));
     }
 
     @Test
     void keyValuePairsWithoutSpaces() {
         Toml.Table t = Toml.parse("a=1\nb =2\nc= 3\nd.e=4");
-        assertEquals("integer `1`", shown(t.get("a").value()));
-        assertEquals("integer `2`", shown(t.get("b").value()));
-        assertEquals("integer `3`", shown(t.get("c").value()));
-        assertEquals("integer `4`", shown(t.get("d").value().asTable("t").get("e").value()));
+        assertEquals("the integer 1", shown(t.get("a").value()));
+        assertEquals("the integer 2", shown(t.get("b").value()));
+        assertEquals("the integer 3", shown(t.get("c").value()));
+        assertEquals("the integer 4", shown(t.get("d").value().asTable().get("e").value()));
     }
 
     @Test
@@ -591,31 +554,27 @@ class TomlTest {
 
     @Test
     void dottedKeysInsideInlineTablesAndArraysOfTables() {
-        Toml.Table b = value("{b.c = 1, b.d = 2, e = [1]}").asTable("t");
-        assertEquals(List.of("c", "d"), keys(b.get("b").value().asTable("t")));
-        assertEquals("integer `1`", shown(b.get("e").value().asArray().get(0)));
+        Toml.Table b = value("{b.c = 1, b.d = 2, e = [1]}").asTable();
+        assertEquals(List.of("c", "d"), keys(b.get("b").value().asTable()));
+        assertEquals("the integer 1", shown(b.get("e").value().asArray().get(0)));
 
-        Toml.Table first = Toml.parse("[[a]]\na.b = 1").get("a").value().asArray().get(0).asTable("t");
-        assertEquals("integer `1`", shown(first.get("a").value().asTable("t").get("b").value()));
+        Toml.Table first = Toml.parse("[[a]]\na.b = 1").get("a").value().asArray().get(0).asTable();
+        assertEquals("the integer 1", shown(first.get("a").value().asTable().get("b").value()));
 
         List<Toml.Value> items = Toml.parse("[[a]]\n[a.b]\nc = 1\n[[a]]\n[a.b]\nc = 2")
                 .get("a")
                 .value()
                 .asArray();
         assertEquals(2, items.size());
-        Toml.Table second = items.get(1).asTable("t").get("b").value().asTable("t");
-        assertEquals("integer `2`", shown(second.get("c").value()));
+        Toml.Table second = items.get(1).asTable().get("b").value().asTable();
+        assertEquals("the integer 2", shown(second.get("c").value()));
     }
 
     @Test
     void bareNumbersInEveryAcceptedSpelling() {
-        assertEquals("integer `171`", shown(value("0xa_b")));
-        assertEquals("integer `171`", shown(value("0xA_B")));
-        assertEquals("integer `2097151`", shown(value("0x1F_ffFF")));
-        assertEquals("integer `63`", shown(value("0o7_7")));
-        assertEquals("integer `2`", shown(value("0b1_0")));
-        assertEquals("integer `0`", shown(value("+0")));
-        assertEquals("integer `0`", shown(value("-0")));
+        for (String number : List.of("0xa_b", "0xA_B", "0x1F_ffFF", "0o7_7", "0b1_0", "+0", "-0")) {
+            assertEquals("the integer " + number, shown(value(number)), number);
+        }
         for (String number : List.of("inf", "nan", "+nan", "-nan", "1E5", "1e+5", "1_000.0", "0.0e0", "0e0", "1.0_1",
                 "1.00", "1e05", "1.5e-0_5")) {
             assertEquals(Toml.Kind.FLOAT, value(number).kind(), number);
@@ -648,55 +607,14 @@ class TomlTest {
         assertEquals(Toml.Kind.DATETIME, value("1979-05-27 \n").kind());
     }
 
+    /**
+     * The crate took any hex digit beside `_` and no digit after a radix, and this reader still
+     * does. No exclude key takes an integer, so such a value still fails, as the wrong type.
+     */
     @Test
-    void integersBeyondI64AreNamedByTheirWidestType() {
-        assertEquals(
-                "invalid type: integer `-9223372036854775809` as i128, expected a string",
-                stringError("-9223372036854775809"));
-        assertEquals(
-                "invalid type: integer `-170141183460469231731687303715884105728` as i128, expected a string",
-                stringError("-170141183460469231731687303715884105728"));
-        assertEquals(
-                "invalid type: integer `170141183460469231731687303715884105728` as u128, expected a string",
-                stringError("170141183460469231731687303715884105728"));
-        assertEquals("integer number overflowed", stringError("-170141183460469231731687303715884105729"));
-    }
-
-    /** The crate accepts any hex digit beside `_` and no digit after a radix, and only reading fails. */
-    @Test
-    void integersWithoutValidDigitsFailOnlyWhenRead() {
+    void integersWithoutValidDigitsAreStillIntegers() {
         for (String number : List.of("1_a", "1_A", "0x", "0o", "0b")) {
-            assertEquals(Toml.Kind.INTEGER, value(number).kind(), number);
-            assertEquals("integer number overflowed", stringError(number), number);
+            assertEquals("the integer " + number, shown(value(number)), number);
         }
-    }
-
-    @Test
-    void floatsPrintWithTheShortestDigitsThatReadBack() {
-        assertEquals("invalid type: floating point `-inf`, expected a string", stringError("-inf"));
-        assertEquals("invalid type: floating point `0.0`, expected a string", stringError("0.0"));
-        assertEquals("invalid type: floating point `0.0`, expected a string", stringError("1e-400"));
-        assertEquals("invalid type: floating point `0.1`, expected a string", stringError("0.1"));
-        assertEquals(
-                "invalid type: floating point `123456789012345680000.0`, expected a string",
-                stringError("123456789012345680000.0"));
-        assertEquals(
-                "invalid type: floating point `0." + "0".repeat(323) + "5`, expected a string",
-                stringError("5e-324"));
-        assertEquals(
-                "invalid type: floating point `17976931348623157" + "0".repeat(292) + ".0`, expected a string",
-                stringError("1.7976931348623157e308"));
-    }
-
-    @Test
-    void stringsAreQuotedWithTheCratesEscapes() {
-        assertEquals("\"a\\rb\\tc\\0d\"", Toml.debugQuote("a\rb\tc\u0000d"));
-        assertEquals("\"del\\u{7f} c1\\u{85}\"", Toml.debugQuote("del\u007f c1\u0085"));
-        assertEquals("\"nbsp\\u{a0} ideographic\\u{3000}\"", Toml.debugQuote("nbsp\u00A0 ideographic\u3000"));
-        assertEquals("\"ls\\u{2028} ps\\u{2029}\"", Toml.debugQuote("ls\u2028 ps\u2029"));
-        assertEquals("\"zwsp\\u{200b} pua\\u{e000}\"", Toml.debugQuote("zwsp\u200B pua\uE000"));
-        assertEquals("\"unassigned\\u{378}\"", Toml.debugQuote("unassigned\u0378"));
-        assertEquals("\"acute\\u{301} enclosing\\u{20dd}\"", Toml.debugQuote("acute\u0301 enclosing\u20DD"));
-        assertEquals("\"emoji😀\"", Toml.debugQuote("emoji😀"));
     }
 }
