@@ -352,6 +352,70 @@ final class CheckSelectionTest {
         assertFalse(Check.newlyFinalMethods(oldReal, newReal).isEmpty());
     }
 
+    private static final String OBJECT_ARG = "(Ljava/lang/Object;)V";
+    private static final String STRING_ARG = "(Ljava/lang/String;)V";
+    private static final int BRIDGE = Acc.PUBLIC | Acc.BRIDGE | Acc.SYNTHETIC;
+
+    private static ClassApi handler() {
+        return amvClass("lib/Handler", JAVA_LANG_OBJECT, Acc.PUBLIC | Acc.ABSTRACT, m("handle", OBJECT_ARG, Acc.PUBLIC | Acc.ABSTRACT));
+    }
+
+    /** javac's {@code LoggingHandler extends Handler<String>} with handle(String), before it was generified. */
+    private static ApiIndex specializedHandler() {
+        return index(
+                handler(),
+                amvClass("lib/LoggingHandler", "lib/Handler", Acc.PUBLIC, m("handle", STRING_ARG, Acc.PUBLIC), m("handle", OBJECT_ARG, BRIDGE)));
+    }
+
+    @Test
+    void concreteBridgeTurnedRealAbstractIsReported() {
+        // Flags javac emits when LoggingHandler extends Handler<String> { handle(String) } becomes
+        // LoggingHandler<T> extends Handler<T> { abstract handle(T) }. On a real JVM the subclass
+        // that inherited the bridge throws AbstractMethodError, while the one overriding
+        // handle(String) got its own bridge from javac and still runs.
+        ApiIndex newLib = index(
+                handler(),
+                amvClass("lib/LoggingHandler", "lib/Handler", Acc.PUBLIC | Acc.ABSTRACT, m("handle", OBJECT_ARG, Acc.PUBLIC | Acc.ABSTRACT)));
+        ApiIndex fetched = index(
+                amvClass("app/Audit", "lib/LoggingHandler", Acc.PUBLIC),
+                amvClass("app/Upper", "lib/LoggingHandler", Acc.PUBLIC, m("handle", STRING_ARG, Acc.PUBLIC), m("handle", OBJECT_ARG, BRIDGE)));
+        ClassGraph graph = scannedGraph("app/Audit", "lib/LoggingHandler", "app/Upper", "lib/LoggingHandler");
+        List<Violation> v = abstractViolations(specializedHandler(), newLib, fetched, graph);
+        assertEquals(1, v.size());
+        assertEquals(Reason.METHOD_BECAME_ABSTRACT, v.get(0).reason);
+        assertEquals("app/Audit", Intern.str(v.get(0).sourceClass));
+        assertEquals("lib/LoggingHandler", Intern.str(v.get(0).reference.owner()));
+    }
+
+    @Test
+    void bridgeTurnedRealFinalIsNewlyFinal() {
+        // The same generification with a final handle(T). A subclass that overrode handle(String)
+        // carries its own bridge handle(Object), which the JVM now rejects as overriding a final
+        // method.
+        ApiIndex newLib = index(
+                handler(), amvClass("lib/LoggingHandler", "lib/Handler", Acc.PUBLIC, m("handle", OBJECT_ARG, Acc.PUBLIC | Acc.FINAL)));
+        LongSet finals = Check.newlyFinalMethods(specializedHandler(), newLib).get(intern("lib/LoggingHandler"));
+        assertEquals(1, finals.toArray().length);
+        assertTrue(finals.contains(MemberKey.of("handle", OBJECT_ARG)));
+    }
+
+    @Test
+    void realMethodTurnedKotlinFinalBridgeIsNewlyFinal() {
+        // Flags kotlinc emits when a Java `Items extends AbstractList<String>` with size() is ported
+        // to an open Kotlin class with `override val size`. size() becomes a final bridge, and the
+        // JVM rejects a Java subclass that overrides it with IncompatibleClassChangeError.
+        ApiIndex oldLib = index(amvClass("lib/Items", "java/util/AbstractList", Acc.PUBLIC, m("size", "()I", Acc.PUBLIC)));
+        ApiIndex newLib = index(amvClass(
+                "lib/Items",
+                "java/util/AbstractList",
+                Acc.PUBLIC,
+                m("getSize", "()I", Acc.PUBLIC),
+                m("size", "()I", Acc.PUBLIC | Acc.FINAL | Acc.BRIDGE)));
+        LongSet finals = Check.newlyFinalMethods(oldLib, newLib).get(intern("lib/Items"));
+        assertEquals(1, finals.toArray().length);
+        assertTrue(finals.contains(MemberKey.of("size", "()I")));
+    }
+
     // ---- shape 2, an interface gains an abstract method ----
 
     @Test

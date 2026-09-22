@@ -326,15 +326,20 @@ pass-2 classes are typically below 0.1% of the scan.
     `--fail-on reachable` passes. The swallowed errors here (unreadable jar,
     undecodable pool) are tolerated only because such a class warned elsewhere.
   - Per-module merging folds `true` as dominant, like `reachableRank`.
-- Bridge/synthetic guard: `ACC_BRIDGE`/`ACC_SYNTHETIC` methods are excluded as
-  the SUBJECT of the library-side `became abstract`/`became final` inferences
-  (`methodsNewlyAbstract`/`newlyFinalMethods`), since a generic-signature
-  edit can add or reshape a bridge without a source-visible API change. The
-  guard is one-sided: a consumer's explicit Methodref to such a member is still
-  resolved and reported, and such a method still counts as a concrete
-  implementation in `implementationStatus` (so it correctly suppresses an
-  AbstractMethodError). Applied to the inference only, never to reference
-  verdicts, so it removes false positives without adding false negatives.
+- Bridge/synthetic guard: a method that is `ACC_BRIDGE`/`ACC_SYNTHETIC` on every
+  side where it exists is not the SUBJECT of the library-side `became abstract` and
+  `became final` inferences (`Check.compilerGeneratedOnly`), because a generic-signature
+  edit can add or reshape a bridge without a source-visible API change. A real method on
+  EITHER side keeps the inference, since three JVM-confirmed breaks go through a bridge.
+  Generifying `LoggingHandler extends Handler<String>` to `LoggingHandler<T>` with
+  `abstract handle(T)` makes a subclass that inherited the old javac bridge throw
+  AbstractMethodError. The same edit with `final handle(T)` rejects a subclass whose own
+  bridge now overrides a final method. Porting a Java `AbstractList` subclass to Kotlin
+  makes `size()` a final kotlinc bridge, which rejects a Java subclass overriding it. The
+  guard can still hide a method that is a bridge on both sides and final in new. javac
+  never emits a final or abstract bridge, so only kotlinc's final bridges reach that. The
+  guard never touches reference verdicts, and a bridge still counts as a concrete
+  implementation in `implementationStatus`.
 - Version lag from the upgraded artifacts themselves: classes scanned from
   new-version JARs get an extra check — newly extending a class that is final
   on the runtime classpath is `extends final class`
