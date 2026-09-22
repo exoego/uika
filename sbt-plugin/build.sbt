@@ -58,7 +58,9 @@ lazy val root = (project in file("."))
         agent <- sys.env.get("UIKA_JACOCO_AGENT").filter(_.nonEmpty)
         exec <- sys.env.get("UIKA_JACOCO_EXEC").filter(_.nonEmpty)
       } yield s"-javaagent:$agent=destfile=$exec,append=true,includes=net.exoego.uika.*"
-      inherited ++ jacoco :+ s"-Dplugin.version=${version.value}"
+      val stubSource = baseDirectory.value.getParentFile / "jvm-plugin-core" / "src" / "test" / "java" /
+        "net" / "exoego" / "uika" / "plugin" / "core" / "StubCli.java"
+      inherited ++ jacoco :+ s"-Dplugin.version=${version.value}" :+ s"-Duika.stub.source=$stubSource"
     },
     checkClassFileVersions := {
       val maxMajor = 61 // JDK 17

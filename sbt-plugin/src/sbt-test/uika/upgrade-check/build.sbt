@@ -52,34 +52,40 @@ checkCliErrorIsNotAFinding := {
   }
 }
 
-lazy val prepareStubRepo = taskKey[Unit]("Writes stub uika-cli ZIPs into the file-based test repository")
+lazy val prepareStubRepo = taskKey[Unit]("Writes stub uika-cli jars into the file-based test repository")
 
 prepareStubRepo := {
-  import java.util.zip.{ZipEntry, ZipOutputStream}
-  val classifier = net.exoego.uika.plugin.core.UikaCli.platformClassifier()
-  def publish(version: String, script: String): Unit = {
+  // StubCli is the core test suite's stub, compiled into this meta-build by
+  // project/plugins.sbt.
+  import net.exoego.uika.plugin.core.StubCli
+  def publish(version: String, line: String, exit: Int): Unit = {
     val dir = baseDirectory.value / "repo" / "net" / "exoego" / "uika" / "uika-cli" / version
     IO.createDirectory(dir)
     IO.write(
       dir / s"uika-cli-$version.pom",
       s"""<project><modelVersion>4.0.0</modelVersion><groupId>net.exoego.uika</groupId><artifactId>uika-cli</artifactId><version>$version</version><packaging>pom</packaging></project>"""
     )
-    val out = new ZipOutputStream(new java.io.FileOutputStream(dir / s"uika-cli-$version-$classifier.zip"))
-    try {
-      out.putNextEntry(new ZipEntry(s"uika-$version-$classifier/uika"))
-      out.write(script.getBytes("UTF-8"))
-      out.closeEntry()
-    } finally out.close()
+    StubCli.writeJar((dir / s"uika-cli-$version-jvm.jar").toPath, line, exit)
   }
-  // The stub leaves a marker next to the --before argument ($3) to prove it ran and records
-  // its full argument list ($3.args) so checkFailOnPassed can assert the flags; the echoed
-  // line must surface through the task logger (checked by checkCliOutputLogged).
-  publish("9.9.9", "#!/bin/sh\necho ran > \"$3.marker\"\necho \"$@\" > \"$3.args\"\necho \"uika-stub: dependency changes: 0\"\nexit 0\n")
-  publish("9.9.8", "#!/bin/sh\nexit 1\n")
+  // The stub leaves a marker next to the --before argument to prove it ran and records its
+  // full argument list (.args) so checkFailOnPassed can assert the flags; the printed line
+  // must surface through the task logger (checked by checkCliOutputLogged).
+  publish("9.9.9", "uika-stub: dependency changes: 0", 0)
+  publish("9.9.8", "uika-stub: 1 broken reference", 1)
   // Exit 2 is the CLI could not RUN, not a finding, and the two failures must not read
   // alike: calling an unreadable dump "broken references" sends the reader looking for a
   // break that was never found.
-  publish("9.9.7", "#!/bin/sh\necho \"error: cannot open before.json\"\nexit 2\n")
+  publish("9.9.7", "error: cannot open before.json", 2)
+}
+
+lazy val checkStartedAsChild = taskKey[Unit]("Asserts the CLI jar was started with -Duika.child=true")
+
+// Without the property the real jar starts a second JVM for its flags, and the one this
+// task started idles for the whole check.
+checkStartedAsChild := {
+  val child = IO.read(baseDirectory.value / "before.json.child").trim
+  if (child != "true")
+    sys.error(s"the CLI jar was not started with -Duika.child=true: $child")
 }
 
 lazy val checkFailOnPassed = taskKey[Unit]("Asserts the uikaFailOn setting reached the CLI as --fail-on")

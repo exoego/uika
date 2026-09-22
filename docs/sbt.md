@@ -25,6 +25,11 @@ subproject contributes. Only `uikaDumpClasspath` writes a file, and it is
 defined for the build rather than per project, so every spelling of it runs the
 one whole-build merge.
 
+`uikaUpgradeCheck` fetches the CLI as the `jvm` jar of
+`net.exoego.uika:uika-cli:<version>` and runs it on the JVM that runs sbt. So it
+works wherever that JVM does,
+including platforms uika ships no native binary for.
+
 ## PR gate on GitHub Actions
 
 The `linkage-check` job dumps a baseline from the PR's base branch and the
@@ -189,10 +194,11 @@ degrading to a warning. The cache save and restore close that gap.
   that directory that is not a recording is passed on unchanged, so
   `-Xlog:class+load` output and a classlist mix with the recordings. There is
   no separate key.
-- `UIKA_CLI_PATH` runs a binary you already have instead of resolving one, so a
-  build can run air-gapped or against a locally built CLI. It wins over the CLI
-  version, nothing is downloaded, and a value that is not an executable file
-  fails naming the variable.
+- `UIKA_CLI_PATH` runs a CLI you already have instead of resolving one, so a
+  build can run air-gapped or against a locally built CLI. It takes the jar or a
+  native binary. It wins over the CLI version, nothing is downloaded, and a value
+  that is not a file, or a native binary that is not executable, fails naming
+  the variable.
 
 ## Runtime load evidence (JFR)
 

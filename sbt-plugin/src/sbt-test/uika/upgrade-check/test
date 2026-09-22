@@ -6,6 +6,7 @@ $ mkdir load-logs
 > prepareJfr
 > uikaUpgradeCheck before.json after.json
 $ exists before.json.marker
+> checkStartedAsChild
 > checkCliOutputLogged
 > checkFailOnPassed
 > checkExcludeFilesPassed
