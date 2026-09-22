@@ -168,7 +168,10 @@ pass-2 classes are typically below 0.1% of the scan.
 - Beyond removals: access narrowing is judged against the referencing class
   (protected needs a subclass, package-private the same package),
   static↔instance mismatches use the opcode-derived expectation, and a write to
-  a newly-final field is a violation.
+  a newly-final field is a violation. A class itself is only public or
+  package-private (`Visibility.ofClass`, in check and diff alike). The JVM ignores
+  ACC_PROTECTED and ACC_PRIVATE in a class's own access_flags (JVMS 4.1, confirmed
+  on HotSpot 21). javac and kotlinc never set them there.
 - Access narrowing is old-relative, like the static/final checks: report only
   when the access level decreased versus old resolution (private <
   package-private < protected < public). Equally inaccessible on both sides is

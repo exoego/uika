@@ -856,6 +856,46 @@ final class CheckTest {
         assertOk(v);
     }
 
+    private static ClassApi classWithOwnFlags(int access) {
+        ClassApi c = classApi("lib/C");
+        c.access = access;
+        return c;
+    }
+
+    @Test
+    void protectedClassFlagDoesNotGrantSubclassAccess() {
+        // JVMS 4.1 ignores ACC_PROTECTED on a class, so it is package-private (JVMS 5.4.4). HotSpot throws IllegalAccessError.
+        ClassGraph graph = new ClassGraph();
+        insert(graph, "app/Sub", intern("lib/C"), new int[0], Intern.NONE, "app.jar");
+        Check.Verdict v = verdict(
+                classRef("lib/C"), "app/Sub", new Scope(index(classApi("lib/C"))), new Scope(index(classWithOwnFlags(Acc.PROTECTED))), graph);
+        assertEquals(Reason.CLASS_ACCESS_NARROWED, broken(v).reason());
+    }
+
+    @Test
+    void privateClassFlagDoesNotDenySamePackageAccess() {
+        // JVMS 4.1 ignores ACC_PRIVATE on a class, so it is package-private (JVMS 5.4.4). HotSpot links it.
+        Check.Verdict v = verdict(
+                classRef("lib/C"),
+                "lib/Other",
+                new Scope(index(classApi("lib/C"))),
+                new Scope(index(classWithOwnFlags(Acc.PRIVATE))),
+                new ClassGraph());
+        assertOk(v);
+    }
+
+    @Test
+    void protectedClassFlagInOldIsNotWiderThanPackagePrivate() {
+        // JVMS 4.1 ignores ACC_PROTECTED on a class, so old was already package-private and the break is pre-existing.
+        Check.Verdict v = verdict(
+                classRef("lib/C"),
+                "app/Use",
+                new Scope(index(classWithOwnFlags(Acc.PROTECTED))),
+                new Scope(index(packagePrivateClass())),
+                new ClassGraph());
+        assertOk(v);
+    }
+
     @Test
     void staticMismatchIsBrokenOnlyWhenOldMatchedBytecode() {
         ApiIndex oldLib = index(classWithMethodAccess("lib/C", m("m", "()V", Acc.PUBLIC | Acc.STATIC)));

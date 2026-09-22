@@ -577,27 +577,18 @@ final class Check {
             }
             return (oldAccess & (Acc.ABSTRACT | Acc.INTERFACE)) == 0 ? Reason.CLASS_BECAME_ABSTRACT.ordinal() : OK;
         }
-        if (member == MemberKey.NONE && ownerAccess >= 0) {
-            int accessible = isAccessible(ownerAccess, owner, sourceClass, runtime, graph, hosts);
-            if (accessible == MAYBE) {
+        if (member == MemberKey.NONE) {
+            // Only public or the same run-time package (JVMS 5.4.4). No subclass or nestmate rule.
+            if (ownerAccess < 0 || Visibility.ofClass(ownerAccess) == Visibility.PUBLIC || Intern.samePackage(owner, sourceClass)) {
+                return OK;
+            }
+            // Narrowing is relative to old: a reference equally inaccessible before the
+            // change is pre-existing.
+            int oldAccess = oldScope.classAccess(owner);
+            if (oldAccess < 0) {
                 return UNKNOWN;
             }
-            if (accessible == NO) {
-                // Narrowing is relative to old: a reference equally inaccessible before the
-                // change is pre-existing. Levels are compared instead of re-running
-                // isAccessible against old, because the subclass walk only sees scanned
-                // classes and would demote real narrowing.
-                int oldAccess = oldScope.classAccess(owner);
-                if (oldAccess < 0) {
-                    return UNKNOWN;
-                }
-                return Visibility.of(ownerAccess).compareTo(Visibility.of(oldAccess)) < 0
-                        ? Reason.CLASS_ACCESS_NARROWED.ordinal()
-                        : OK;
-            }
-        }
-        if (member == MemberKey.NONE) {
-            return OK;
+            return Visibility.ofClass(oldAccess) == Visibility.PUBLIC ? Reason.CLASS_ACCESS_NARROWED.ordinal() : OK;
         }
         RefKind refKind = SymbolRef.kindOf(meta);
         Scope.MemberKind kind = refKind == RefKind.FIELD ? Scope.MemberKind.FIELD : Scope.MemberKind.METHOD;
@@ -652,6 +643,8 @@ final class Check {
             return UNKNOWN;
         }
         if (accessible == NO) {
+            // Levels are compared instead of re-running isAccessible against old, because the
+            // subclass walk only sees scanned classes and would demote real narrowing.
             long oldFound = oldScope.resolveMember(owner, member, kind);
             if (oldFound == Scope.UNKNOWN) {
                 return UNKNOWN;

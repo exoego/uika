@@ -31,8 +31,10 @@ final class Diff {
             }
             int oldAccess = oldIndex.accessOf(entry);
             int newAccess = newIndex.accessOf(newEntry);
-            if (accessNarrowed(oldAccess, newAccess)) {
-                changes.add(BreakingChange.classNarrowed(name, Visibility.of(oldAccess), Visibility.of(newAccess)));
+            Visibility oldLevel = Visibility.ofClass(oldAccess);
+            Visibility newLevel = Visibility.ofClass(newAccess);
+            if (newLevel.compareTo(oldLevel) < 0) {
+                changes.add(BreakingChange.classNarrowed(name, oldLevel, newLevel));
             }
             if ((oldAccess & Acc.FINAL) == 0 && (newAccess & Acc.FINAL) != 0) {
                 changes.add(BreakingChange.ofClass(BreakingChange.Kind.CLASS_BECAME_FINAL, name));

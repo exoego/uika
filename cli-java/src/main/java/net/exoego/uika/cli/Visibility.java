@@ -16,7 +16,16 @@ enum Visibility {
         this.text = text;
     }
 
-    /** Mutually exclusive per JVMS 4.1. The order only matters for a malformed class file. */
+    /**
+     * A class's own access_flags. The JVM ignores ACC_PROTECTED and ACC_PRIVATE there (JVMS 4.1),
+     * so a class is public or package-private (JVMS 5.4.4). javac writes a nested class's source
+     * level to InnerClasses, which linkage never reads.
+     */
+    static Visibility ofClass(int access) {
+        return (access & Acc.PUBLIC) != 0 ? PUBLIC : PACKAGE_PRIVATE;
+    }
+
+    /** A member's access_flags. Mutually exclusive per JVMS 4.1. The order only matters for a malformed class file. */
     static Visibility of(int access) {
         if ((access & Acc.PUBLIC) != 0) {
             return PUBLIC;

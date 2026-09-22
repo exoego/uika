@@ -226,6 +226,20 @@ class DiffTest {
                 show(Diff.diff(ApiIndex.build(oldApis), ApiIndex.build(newApis))));
     }
 
+    @Test
+    void classAccessIsOnlyPublicOrPackagePrivate() {
+        // JVMS 4.1 ignores ACC_PROTECTED and ACC_PRIVATE on a class, so both read as package-private (JVMS 5.4.4).
+        List<ClassApi> oldApis = List.of(
+                withAccess(classOf("c/Narrowed", JAVA_LANG_OBJECT), Acc.PUBLIC),
+                withAccess(classOf("c/Unchanged", JAVA_LANG_OBJECT), Acc.PROTECTED));
+        List<ClassApi> newApis = List.of(
+                withAccess(classOf("c/Narrowed", JAVA_LANG_OBJECT), Acc.PROTECTED),
+                withAccess(classOf("c/Unchanged", JAVA_LANG_OBJECT), Acc.PRIVATE));
+        assertEquals(
+                List.of("class_access_narrowed c/Narrowed public->package-private"),
+                show(Diff.diff(ApiIndex.build(oldApis), ApiIndex.build(newApis))));
+    }
+
     /** One member can change in several ways at once, and each is listed in the Rust order. */
     @Test
     void oneMemberCanCarrySeveralChanges() {
