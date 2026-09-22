@@ -10,6 +10,8 @@ semantics, then what only matters on the JVM.
   behaviour the Rust crate had when it was retired: stdout, JSON, the verdicts stream and
   exit codes are byte-identical to what it printed. Treat a change in any of them as a
   detection change to argue for, never as a port detail.
+- Stderr wording is not pinned. Write errors and warnings for a Java user in JSON, TOML
+  and JVM terms. Wording copied from a Rust library, or a Rust type name, is a bug.
 - `GoldenTest` runs with `cli-java/` as the working directory, because a violation's
   `source` is the path string as given (`tests/fixtures/x.jar`) and the goldens pin it.
   `make java-cli-bless` rewrites them.
