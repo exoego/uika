@@ -28,6 +28,9 @@ final class ClassSource {
     /** Uncompressed size the central directory claims; a hint, never trusted as a bound. */
     int expected;
 
+    /** A deflate stream expands at most 1032:1 (a 258-byte match costs at least two bits). */
+    static final int MAX_DEFLATE_RATIO = 1032;
+
     private final Inflate inflate = new Inflate();
     private boolean deflated;
 
@@ -54,8 +57,11 @@ final class ClassSource {
      */
     void ofDeflate(ByteBuffer input, int dataStart, int compressed, long expectedSize) {
         expected = (int) Math.min(expectedSize, 64L * 1024 * 1024);
-        // Room for the decoder's overshoot, so the usual entry never grows the buffer.
-        reserve(expected + 320);
+        // Room for the decoder's overshoot, so the usual entry never grows the buffer. The
+        // claim is capped by what the compressed bytes can possibly inflate to, so a corrupt
+        // directory cannot make every thread reserve 64 MiB for a class of a few kilobytes.
+        long bound = (long) compressed * MAX_DEFLATE_RATIO;
+        reserve((int) Math.min(expected, bound) + 320);
         inflate.reset(input, dataStart, dataStart + compressed, bytes);
         available = 0;
         complete = false;
