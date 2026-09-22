@@ -1,9 +1,6 @@
 package net.exoego.uika.cli;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -208,14 +205,7 @@ final class Exclude {
         for (String path : paths) {
             String content;
             try {
-                content = StandardCharsets.UTF_8
-                        .newDecoder()
-                        .onMalformedInput(CodingErrorAction.REPORT)
-                        .onUnmappableCharacter(CodingErrorAction.REPORT)
-                        .decode(ByteBuffer.wrap(Files.readAllBytes(Path.of(path))))
-                        .toString();
-            } catch (CharacterCodingException e) {
-                throw new UikaException("cannot read exclude file " + path + ": stream did not contain valid UTF-8");
+                content = Files.readString(Path.of(path), StandardCharsets.UTF_8);
             } catch (IOException e) {
                 if (Files.isDirectory(Path.of(path))) {
                     throw new UikaException("cannot read exclude file " + path + ": Is a directory");

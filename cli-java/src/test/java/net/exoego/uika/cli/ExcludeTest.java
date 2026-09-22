@@ -433,7 +433,7 @@ class ExcludeTest {
         Path latin1 = dir.resolve("latin1.toml");
         Files.write(latin1, "# café\n".getBytes(StandardCharsets.ISO_8859_1));
         assertEquals(
-                "cannot read exclude file " + latin1 + ": stream did not contain valid UTF-8",
+                "cannot read exclude file " + latin1 + ": not valid UTF-8",
                 assertThrows(UikaException.class, () -> Exclude.load(List.of(latin1.toString()))).getMessage());
     }
 
