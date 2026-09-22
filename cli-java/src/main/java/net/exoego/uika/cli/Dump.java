@@ -160,7 +160,7 @@ final class Dump {
         }
         boolean v2 = value instanceof Map<?, ?> map && Long.valueOf(2).equals(map.get("version"));
         try {
-            return v2 ? fromV2(object(value, "struct DumpV2")) : fromV1(object(value, "struct ClasspathDump"));
+            return v2 ? fromV2(object(value, "")) : fromV1(object(value, ""));
         } catch (Shape e) {
             throw new UikaException("invalid " + (v2 ? "v2" : "v1") + " classpath dump " + path + ": " + e.getMessage());
         }
@@ -170,37 +170,43 @@ final class Dump {
     private static final class Shape extends Exception {
         private static final long serialVersionUID = 1L;
 
-        Shape(String message) {
-            super(message, null, false, false);
+        /** @param at JSON path of the offending value, empty for the whole document */
+        Shape(String at, String message) {
+            super(at.isEmpty() ? message : at + ": " + message, null, false, false);
         }
     }
 
     private static Universe fromV1(Map<String, Object> dump) throws Shape {
         Universe universe = new Universe();
-        universe.jdkRelease = release(dump);
-        for (Object item : list(required(dump, "modules"), "modules")) {
-            Map<String, Object> module = object(item, "struct ModuleDump");
-            String name = string(required(module, "module"), "module");
+        universe.jdkRelease = release(dump, "");
+        List<Object> modules = list(dump, "", "modules");
+        for (int m = 0; m < modules.size(); m++) {
+            String at = "modules[" + m + "]";
+            Map<String, Object> module = object(modules.get(m), at);
+            String name = string(module, at, "module");
             List<Artifact> artifacts = new ArrayList<>();
-            for (Object a : optionalList(module, "artifacts")) {
-                Map<String, Object> artifact = object(a, "struct ArtifactDump");
-                String file = path(required(artifact, "file"));
+            List<Object> entries = optionalList(module, at, "artifacts");
+            for (int i = 0; i < entries.size(); i++) {
+                String entryAt = at + ".artifacts[" + i + "]";
+                Map<String, Object> artifact = object(entries.get(i), entryAt);
+                String file = string(artifact, entryAt, "file");
                 universe.addTarget(file);
                 artifacts.add(universe.artifactEntry(
-                        optionalString(artifact, "group"),
-                        optionalString(artifact, "name"),
-                        optionalString(artifact, "version"),
+                        optionalString(artifact, entryAt, "group"),
+                        optionalString(artifact, entryAt, "name"),
+                        optionalString(artifact, entryAt, "version"),
                         file,
-                        optionalString(artifact, "project")));
+                        optionalString(artifact, entryAt, "project")));
             }
             List<String> classesDirs = new ArrayList<>();
-            for (Object dir : optionalList(module, "classesDirs")) {
-                String d = path(dir);
+            List<Object> dirs = optionalList(module, at, "classesDirs");
+            for (int i = 0; i < dirs.size(); i++) {
+                String d = string(dirs.get(i), at + ".classesDirs[" + i + "]");
                 classesDirs.add(d);
                 universe.appRoots.add(d);
                 universe.addTarget(d);
             }
-            Integer release = release(module);
+            Integer release = release(module, at);
             universe.modules.add(new Module(name, classesDirs, artifacts, release != null ? release : universe.jdkRelease));
         }
         return universe;
@@ -209,51 +215,54 @@ final class Dump {
     /** v2: a deduplicated artifact table plus a root table for path prefixes (DumpFormat in jvm-plugin-core). */
     private static Universe fromV2(Map<String, Object> dump) throws Shape {
         List<String> roots = new ArrayList<>();
-        for (Object root : list(required(dump, "roots"), "roots")) {
-            roots.add(string(root, "roots"));
+        List<Object> rootEntries = list(dump, "", "roots");
+        for (int i = 0; i < rootEntries.size(); i++) {
+            roots.add(string(rootEntries.get(i), "roots[" + i + "]"));
         }
         Universe universe = new Universe();
-        universe.jdkRelease = release(dump);
+        universe.jdkRelease = release(dump, "");
         // The table is deduplicated, so first-seen order is table order.
         List<Artifact> table = new ArrayList<>();
-        for (Object a : list(required(dump, "artifacts"), "artifacts")) {
-            Map<String, Object> artifact = object(a, "struct ArtifactV2");
-            String file = rooted(roots, index(required(artifact, "root"), "root"), string(required(artifact, "path"), "path"));
+        List<Object> entries = list(dump, "", "artifacts");
+        for (int i = 0; i < entries.size(); i++) {
+            String at = "artifacts[" + i + "]";
+            Map<String, Object> artifact = object(entries.get(i), at);
+            String file = rooted(roots, artifact, at);
             universe.addTarget(file);
             table.add(universe.artifactEntry(
-                    optionalString(artifact, "group"),
-                    optionalString(artifact, "name"),
-                    optionalString(artifact, "version"),
+                    optionalString(artifact, at, "group"),
+                    optionalString(artifact, at, "name"),
+                    optionalString(artifact, at, "version"),
                     file,
-                    optionalString(artifact, "project")));
+                    optionalString(artifact, at, "project")));
         }
         boolean unnamedModule = false;
-        for (Object item : optionalList(dump, "modules")) {
-            Map<String, Object> module = object(item, "struct ModuleV2");
+        List<Object> modules = optionalList(dump, "", "modules");
+        for (int m = 0; m < modules.size(); m++) {
+            String at = "modules[" + m + "]";
+            Map<String, Object> module = object(modules.get(m), at);
             List<String> classesDirs = new ArrayList<>();
-            for (Object d : optionalList(module, "classesDirs")) {
-                Map<String, Object> dir = object(d, "struct RootedPath");
-                String file = rooted(roots, index(required(dir, "root"), "root"), string(required(dir, "path"), "path"));
+            List<Object> dirs = optionalList(module, at, "classesDirs");
+            for (int i = 0; i < dirs.size(); i++) {
+                String dirAt = at + ".classesDirs[" + i + "]";
+                String file = rooted(roots, object(dirs.get(i), dirAt), dirAt);
                 universe.appRoots.add(file);
                 universe.addTarget(file);
                 classesDirs.add(file);
             }
             List<Artifact> artifacts = new ArrayList<>();
-            for (Object ref : optionalList(module, "artifactRefs")) {
-                int idx = index(ref, "artifactRefs");
-                if (idx >= table.size()) {
-                    throw new UikaException("artifact ref " + idx + " out of range");
-                }
-                artifacts.add(table.get(idx));
+            List<Object> refs = optionalList(module, at, "artifactRefs");
+            for (int i = 0; i < refs.size(); i++) {
+                artifacts.add(table.get(index(refs.get(i), at + ".artifactRefs[" + i + "]", table.size(), "artifacts")));
             }
             // A dump without a module name cannot be paired by name, and positional pairing
             // would diff unrelated modules. The caller falls back to the merged universe.
-            String name = optionalString(module, "module");
+            String name = optionalString(module, at, "module");
             if (name == null) {
                 unnamedModule = true;
                 continue;
             }
-            Integer release = release(module);
+            Integer release = release(module, at);
             universe.modules.add(new Module(name, classesDirs, artifacts, release != null ? release : universe.jdkRelease));
         }
         if (unnamedModule) {
@@ -262,103 +271,116 @@ final class Dump {
         return universe;
     }
 
-    /** An index out of range is not a shape error. Rust reports it bare, without the dump's path. */
-    private static String rooted(List<String> roots, int root, String suffix) {
-        if (root >= roots.size()) {
-            throw new UikaException("root index " + root + " out of range");
-        }
-        return roots.get(root) + suffix;
+    private static String rooted(List<String> roots, Map<String, Object> entry, String at) throws Shape {
+        int root = index(required(entry, at, "root"), child(at, "root"), roots.size(), "roots");
+        return roots.get(root) + string(entry, at, "path");
     }
 
     // ---- shape helpers ----
+    // `at` is the JSON path of the value, or of the object that holds `field`.
+
+    private static String child(String at, String field) {
+        return at.isEmpty() ? field : at + "." + field;
+    }
+
+    private static Object required(Map<String, Object> object, String at, String field) throws Shape {
+        if (!object.containsKey(field)) {
+            throw new Shape(at, "missing field \"" + field + "\"");
+        }
+        return object.get(field);
+    }
+
+    private static String string(Map<String, Object> object, String at, String field) throws Shape {
+        return string(required(object, at, field), child(at, field));
+    }
+
+    private static String optionalString(Map<String, Object> object, String at, String field) throws Shape {
+        Object value = object.get(field);
+        return value == null ? null : string(value, child(at, field));
+    }
+
+    private static List<Object> list(Map<String, Object> object, String at, String field) throws Shape {
+        return list(required(object, at, field), child(at, field));
+    }
+
+    /** Absent reads as empty, but an explicit null is still not an array. */
+    private static List<Object> optionalList(Map<String, Object> object, String at, String field) throws Shape {
+        return object.containsKey(field) ? list(object.get(field), child(at, field)) : List.of();
+    }
 
     @SuppressWarnings("unchecked")
-    private static Map<String, Object> object(Object value, String expected) throws Shape {
+    private static Map<String, Object> object(Object value, String at) throws Shape {
         if (value instanceof Map<?, ?> map) {
             return (Map<String, Object>) map;
         }
-        throw new Shape("invalid type: " + describe(value) + ", expected " + expected);
+        throw mismatch(at, "an object", value);
     }
 
     @SuppressWarnings("unchecked")
-    private static List<Object> list(Object value, String field) throws Shape {
+    private static List<Object> list(Object value, String at) throws Shape {
         if (value instanceof List<?> list) {
             return (List<Object>) list;
         }
-        throw new Shape("invalid type: " + describe(value) + ", expected a sequence");
+        throw mismatch(at, "an array", value);
     }
 
-    private static List<Object> optionalList(Map<String, Object> map, String field) throws Shape {
-        Object value = map.get(field);
-        return value == null && !map.containsKey(field) ? List.of() : list(value, field);
-    }
-
-    private static Object required(Map<String, Object> map, String field) throws Shape {
-        if (!map.containsKey(field)) {
-            throw new Shape("missing field `" + field + "`");
-        }
-        return map.get(field);
-    }
-
-    private static String string(Object value, String field) throws Shape {
+    private static String string(Object value, String at) throws Shape {
         if (value instanceof String s) {
             return s;
         }
-        throw new Shape("invalid type: " + describe(value) + ", expected a string");
+        throw mismatch(at, "a string", value);
     }
 
-    /** A v1 file or directory, which serde reads as a PathBuf and names as such. */
-    private static String path(Object value) throws Shape {
-        if (value instanceof String s) {
-            return s;
+    /** A position in {@code table}, which has {@code size} entries. */
+    private static int index(Object value, String at, int size, String table) throws Shape {
+        long n = wholeNumber(value, at);
+        if (n < 0) {
+            throw new Shape(at, "expected a whole number of 0 or more, found " + n);
         }
-        throw new Shape("invalid type: " + describe(value) + ", expected path string");
-    }
-
-    private static String optionalString(Map<String, Object> map, String field) throws Shape {
-        Object value = map.get(field);
-        return value == null ? null : string(value, field);
-    }
-
-    private static int index(Object value, String field) throws Shape {
-        if (value instanceof Long n && n >= 0 && n <= Integer.MAX_VALUE) {
-            return n.intValue();
+        if (n >= size) {
+            String entries = size == 1 ? "1 entry" : size + " entries";
+            throw new Shape(at, "index " + n + " is out of range because " + table + " has " + entries);
         }
-        throw outOfShape(value, "usize");
+        return (int) n;
     }
 
-    private static Integer release(Map<String, Object> map) throws Shape {
-        Object value = map.get("jdkRelease");
+    private static Integer release(Map<String, Object> object, String at) throws Shape {
+        Object value = object.get("jdkRelease");
         if (value == null) {
             return null;
         }
-        if (value instanceof Long n && n >= 0 && n <= 0xffffffffL) {
-            return (int) Math.min(n, Integer.MAX_VALUE);
+        String releaseAt = child(at, "jdkRelease");
+        long n = wholeNumber(value, releaseAt);
+        // Earlier releases accepted up to 2^32 - 1, so this still does.
+        if (n < 0 || n > 0xffffffffL) {
+            throw new Shape(releaseAt, "expected a whole number from 0 to 4294967295, found " + n);
         }
-        throw outOfShape(value, "u32");
+        return (int) Math.min(n, Integer.MAX_VALUE);
     }
 
-    /** serde calls an integer outside the target's range an invalid value, and anything else an invalid type. */
-    private static Shape outOfShape(Object value, String expected) {
-        String kind = value instanceof Long ? "invalid value" : "invalid type";
-        return new Shape(kind + ": " + describe(value) + ", expected " + expected);
+    private static long wholeNumber(Object value, String at) throws Shape {
+        if (value instanceof Long n) {
+            return n;
+        }
+        throw mismatch(at, "a whole number", value);
     }
+
+    private static Shape mismatch(String at, String expected, Object found) {
+        return new Shape(at, "expected " + expected + ", found " + describe(found));
+    }
+
+    private static final int SHOWN_CODE_POINTS = 40;
 
     private static String describe(Object value) {
-        if (value == null) {
-            return "null";
-        } else if (value instanceof String s) {
-            return "string " + Json.quote(s);
-        } else if (value instanceof Long n) {
-            return "integer `" + n + "`";
-        } else if (value instanceof Double d) {
-            return "floating point `" + d + "`";
-        } else if (value instanceof Boolean b) {
-            return "boolean `" + b + "`";
+        if (value instanceof String s) {
+            boolean cut = s.codePointCount(0, s.length()) > SHOWN_CODE_POINTS;
+            return "the string " + Json.quote(cut ? s.substring(0, s.offsetByCodePoints(0, SHOWN_CODE_POINTS)) + "..." : s);
         } else if (value instanceof List<?>) {
-            return "sequence";
+            return "an array";
+        } else if (value instanceof Map<?, ?>) {
+            return "an object";
         }
-        return "map";
+        return String.valueOf(value);
     }
 
     // ---- diff ----

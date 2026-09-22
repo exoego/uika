@@ -310,62 +310,29 @@ class DumpTest {
 
         String noModules = write("no-modules.json", "{}");
         assertEquals(
-                "invalid v1 classpath dump " + noModules + ": missing field `modules`",
+                "invalid v1 classpath dump " + noModules + ": missing field \"modules\"",
                 assertThrows(UikaException.class, () -> Dump.loadDump(noModules)).getMessage());
 
         String noRoots = write("no-roots.json", "{\"version\":2,\"artifacts\":[]}");
         assertEquals(
-                "invalid v2 classpath dump " + noRoots + ": missing field `roots`",
+                "invalid v2 classpath dump " + noRoots + ": missing field \"roots\"",
                 assertThrows(UikaException.class, () -> Dump.loadDump(noRoots)).getMessage());
 
         String badRoot = write("bad-root.json", "{\"version\":2,\"roots\":[\"/r/\"],\"artifacts\":[{\"root\":3,\"path\":\"x.jar\"}]}");
-        assertEquals("root index 3 out of range", assertThrows(UikaException.class, () -> Dump.loadDump(badRoot)).getMessage());
+        assertEquals(
+                "invalid v2 classpath dump " + badRoot + ": artifacts[0].root: index 3 is out of range because roots has 1 entry",
+                assertThrows(UikaException.class, () -> Dump.loadDump(badRoot)).getMessage());
 
         String badRef = write(
                 "bad-ref.json",
                 "{\"version\":2,\"roots\":[\"/r/\"],\"artifacts\":[],\"modules\":[{\"module\":\":a\",\"artifactRefs\":[5]}]}");
-        assertEquals("artifact ref 5 out of range", assertThrows(UikaException.class, () -> Dump.loadDump(badRef)).getMessage());
+        assertEquals(
+                "invalid v2 classpath dump " + badRef + ": modules[0].artifactRefs[0]: index 5 is out of range because artifacts has 0 entries",
+                assertThrows(UikaException.class, () -> Dump.loadDump(badRef)).getMessage());
     }
 
-    /** The shape errors are serde's words: a struct by name, a PathBuf as a path string, a range miss as an invalid value. */
-    @Test
-    void shapeErrorsAreWordedLikeSerde() throws Exception {
-        String text = write("text.json", "\"x\"");
-        assertEquals(
-                "invalid v1 classpath dump " + text + ": invalid type: string \"x\", expected struct ClasspathDump",
-                assertThrows(UikaException.class, () -> Dump.loadDump(text)).getMessage());
-
-        String file = write("file.json", "{\"modules\":[{\"module\":\"a\",\"artifacts\":[{\"file\":5}]}]}");
-        assertEquals(
-                "invalid v1 classpath dump " + file + ": invalid type: integer `5`, expected path string",
-                assertThrows(UikaException.class, () -> Dump.loadDump(file)).getMessage());
-
-        String negative = write("negative.json", "{\"version\":2,\"roots\":[],\"artifacts\":[],\"jdkRelease\":-1}");
-        assertEquals(
-                "invalid v2 classpath dump " + negative + ": invalid value: integer `-1`, expected u32",
-                assertThrows(UikaException.class, () -> Dump.loadDump(negative)).getMessage());
-
-        String fraction = write("fraction.json", "{\"version\":2,\"roots\":[],\"artifacts\":[{\"root\":0.5,\"path\":\"x\"}]}");
-        assertEquals(
-                "invalid v2 classpath dump " + fraction + ": invalid type: floating point `0.5`, expected usize",
-                assertThrows(UikaException.class, () -> Dump.loadDump(fraction)).getMessage());
-    }
-
-    /** A value of the wrong type is named by its JSON kind, and an explicit null is not an absent field. */
-    @Test
-    void shapeErrorsNameEveryJsonKind() throws Exception {
-        String[][] cases = {
-            {"{\"modules\":true}", "invalid v1 classpath dump %s: invalid type: boolean `true`, expected a sequence"},
-            {"{\"modules\":[{\"module\":\":a\",\"artifacts\":null}]}", "invalid v1 classpath dump %s: invalid type: null, expected a sequence"},
-            {"{\"modules\":[{\"module\":[]}]}", "invalid v1 classpath dump %s: invalid type: sequence, expected a string"},
-            {"{\"version\":2,\"roots\":{},\"artifacts\":[]}", "invalid v2 classpath dump %s: invalid type: map, expected a sequence"},
-            {"{\"version\":2,\"roots\":[\"/r/\"],\"artifacts\":[{\"root\":-1,\"path\":\"x.jar\"}]}",
-                "invalid v2 classpath dump %s: invalid value: integer `-1`, expected usize"},
-            {"{\"version\":2,\"roots\":[],\"artifacts\":[],\"jdkRelease\":4294967296}",
-                "invalid v2 classpath dump %s: invalid value: integer `4294967296`, expected u32"},
-            {"{\"modules\":[{\"module\":\":a\",\"jdkRelease\":\"17\"}]}",
-                "invalid v1 classpath dump %s: invalid type: string \"17\", expected u32"},
-        };
+    /** Each case is {dump, message}, with %s standing for the dump's file path. */
+    private void assertShapeErrors(String[][] cases) throws Exception {
         for (int i = 0; i < cases.length; i++) {
             String path = write("shape-" + i + ".json", cases[i][0]);
             assertEquals(
@@ -373,6 +340,86 @@ class DumpTest {
                     assertThrows(UikaException.class, () -> Dump.loadDump(path)).getMessage(),
                     cases[i][0]);
         }
+    }
+
+    /** A value of the wrong type is named by its JSON kind, and an explicit null is not an absent field. */
+    @Test
+    void shapeErrorsNameEveryJsonKind() throws Exception {
+        assertShapeErrors(new String[][] {
+            {"\"x\"", "invalid v1 classpath dump %s: expected an object, found the string \"x\""},
+            {"{\"modules\":true}", "invalid v1 classpath dump %s: modules: expected an array, found true"},
+            {"{\"modules\":[{\"module\":\":a\",\"artifacts\":null}]}",
+                "invalid v1 classpath dump %s: modules[0].artifacts: expected an array, found null"},
+            {"{\"modules\":[{\"module\":[]}]}", "invalid v1 classpath dump %s: modules[0].module: expected a string, found an array"},
+            {"{\"modules\":[{\"module\":\":a\",\"artifacts\":[{\"file\":5}]}]}",
+                "invalid v1 classpath dump %s: modules[0].artifacts[0].file: expected a string, found 5"},
+            {"{\"version\":2,\"roots\":{},\"artifacts\":[]}", "invalid v2 classpath dump %s: roots: expected an array, found an object"},
+            {"{\"version\":2,\"roots\":[\"/r/\"],\"artifacts\":[{\"root\":0.5,\"path\":\"x\"}]}",
+                "invalid v2 classpath dump %s: artifacts[0].root: expected a whole number, found 0.5"},
+        });
+    }
+
+    /** A whole number outside what the field takes names the accepted range. */
+    @Test
+    void numberErrorsNameTheAcceptedRange() throws Exception {
+        assertShapeErrors(new String[][] {
+            {"{\"version\":2,\"roots\":[\"/r/\"],\"artifacts\":[{\"root\":-1,\"path\":\"x.jar\"}]}",
+                "invalid v2 classpath dump %s: artifacts[0].root: expected a whole number of 0 or more, found -1"},
+            {"{\"version\":2,\"roots\":[\"/r/\"],\"artifacts\":[{\"root\":3000000000,\"path\":\"x.jar\"}]}",
+                "invalid v2 classpath dump %s: artifacts[0].root: index 3000000000 is out of range because roots has 1 entry"},
+            {"{\"version\":2,\"roots\":[],\"artifacts\":[{\"root\":0,\"path\":\"x.jar\"}]}",
+                "invalid v2 classpath dump %s: artifacts[0].root: index 0 is out of range because roots has 0 entries"},
+            {"{\"version\":2,\"roots\":[],\"artifacts\":[],\"jdkRelease\":-1}",
+                "invalid v2 classpath dump %s: jdkRelease: expected a whole number from 0 to 4294967295, found -1"},
+            {"{\"version\":2,\"roots\":[],\"artifacts\":[],\"jdkRelease\":4294967296}",
+                "invalid v2 classpath dump %s: jdkRelease: expected a whole number from 0 to 4294967295, found 4294967296"},
+            {"{\"version\":2,\"jdkRelease\":\"17\",\"roots\":[],\"artifacts\":[]}",
+                "invalid v2 classpath dump %s: jdkRelease: expected a whole number, found the string \"17\""},
+        });
+    }
+
+    /** The path runs from the top of the file down to the entry of a nested array. */
+    @Test
+    void shapeErrorsNameWhereTheValueIs() throws Exception {
+        String v2 = "{\"version\":2,\"roots\":[\"/r/\"],\"artifacts\":[{\"root\":0,\"path\":\"a.jar\"}],\"modules\":[%s]}";
+        assertShapeErrors(new String[][] {
+            {"{\"modules\":[{\"module\":\":a\"},{\"artifacts\":[]}]}", "invalid v1 classpath dump %s: modules[1]: missing field \"module\""},
+            {"{\"modules\":[{\"module\":\":a\",\"artifacts\":[{\"file\":\"/a.jar\"},{\"group\":\"g\"}]}]}",
+                "invalid v1 classpath dump %s: modules[0].artifacts[1]: missing field \"file\""},
+            {"{\"modules\":[{\"module\":\":a\",\"artifacts\":[{\"file\":\"/a.jar\",\"group\":false}]}]}",
+                "invalid v1 classpath dump %s: modules[0].artifacts[0].group: expected a string, found false"},
+            {"{\"modules\":[{\"module\":\":a\",\"classesDirs\":[\"/c\",null]}]}",
+                "invalid v1 classpath dump %s: modules[0].classesDirs[1]: expected a string, found null"},
+            {"{\"modules\":[{\"module\":\":a\"},{\"module\":\":b\",\"jdkRelease\":\"17\"}]}",
+                "invalid v1 classpath dump %s: modules[1].jdkRelease: expected a whole number, found the string \"17\""},
+            {"{\"version\":2,\"roots\":[\"/r/\",true],\"artifacts\":[]}", "invalid v2 classpath dump %s: roots[1]: expected a string, found true"},
+            {"{\"version\":2,\"roots\":[\"/r/\"],\"artifacts\":[{\"root\":0,\"path\":\"a.jar\"},{\"root\":0}]}",
+                "invalid v2 classpath dump %s: artifacts[1]: missing field \"path\""},
+            {v2.formatted("{\"module\":\":a\"},[]"), "invalid v2 classpath dump %s: modules[1]: expected an object, found an array"},
+            {v2.formatted("{\"module\":1}"), "invalid v2 classpath dump %s: modules[0].module: expected a string, found 1"},
+            {v2.formatted("{\"module\":\":a\",\"classesDirs\":[\"/r/c\"]}"),
+                "invalid v2 classpath dump %s: modules[0].classesDirs[0]: expected an object, found the string \"/r/c\""},
+            {v2.formatted("{\"module\":\":a\",\"classesDirs\":[{\"root\":0}]}"),
+                "invalid v2 classpath dump %s: modules[0].classesDirs[0]: missing field \"path\""},
+            {v2.formatted("{\"module\":\":a\"},{\"module\":\":b\",\"classesDirs\":[{\"root\":\"0\",\"path\":\"c\"}]}"),
+                "invalid v2 classpath dump %s: modules[1].classesDirs[0].root: expected a whole number, found the string \"0\""},
+            {v2.formatted("{\"module\":\":a\",\"artifactRefs\":[0,\"0\"]}"),
+                "invalid v2 classpath dump %s: modules[0].artifactRefs[1]: expected a whole number, found the string \"0\""},
+            {v2.formatted("{\"module\":\":a\",\"jdkRelease\":4294967296}"),
+                "invalid v2 classpath dump %s: modules[0].jdkRelease: expected a whole number from 0 to 4294967295, found 4294967296"},
+        });
+    }
+
+    /** A long string is cut short, and escaping keeps a line break in it from breaking the message. */
+    @Test
+    void aShownStringStaysShortAndOnOneLine() throws Exception {
+        assertShapeErrors(new String[][] {
+            {"{\"modules\":[{\"module\":\":a\",\"jdkRelease\":\"line one\\nline two, and then enough words to be long\"}]}",
+                "invalid v1 classpath dump %s: modules[0].jdkRelease: expected a whole number, found the string \"line one\\nline two, and then enough words...\""},
+            {"{\"modules\":[{\"module\":\":a\",\"jdkRelease\":\"" + "😀".repeat(41) + "\"}]}",
+                "invalid v1 classpath dump %s: modules[0].jdkRelease: expected a whole number, found the string \""
+                        + "😀".repeat(40) + "...\""},
+        });
     }
 
     @Test
