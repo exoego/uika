@@ -228,7 +228,7 @@ final class Commands {
         Exclude.Stats stats = Exclude.filter(report.violations, excludeRules);
         report.suppressed = stats.suppressed();
         for (String unused : stats.unused()) {
-            report.warnings.add("exclude rule matched nothing: " + unused);
+            Out.warn("exclude rule matched nothing: " + unused);
         }
     }
 
@@ -341,8 +341,8 @@ final class Commands {
         Check.Report result = Check.checkScanned(
                 scanned, oldIndex, newIndex, upgradedSources, jdk, reach, new Check.SpiServices(oldServices, newServices), verdicts);
         result.scanTargets = paths.size();
-        applyExcludes(result, excludeRules);
         Out.warnAll(result.warnings);
+        applyExcludes(result, excludeRules);
         return result;
     }
 
@@ -408,21 +408,24 @@ final class Commands {
             }
 
             Verdicts.Writer verdicts = args.verdictsJson() == null ? null : Verdicts.Writer.create(args.verdictsJson());
-            // Scan target = the full after runtime classpath + build outputs.
-            Check.Report result = finishVerdicts(
-                    verdicts,
-                    () -> runCheck(changes.oldJars(), changes.newJars(), after.scanTargets, after.appRoots, excludeRules, jdk.indexer, verdicts));
-            // The JDK moved too (or only the JDK did), so its removals are checked over the
-            // same universe and folded in.
-            if (jdkPair != null) {
-                ApiIndex[] pair = jdkReleasePair(jdkPair);
-                Check.Report jdkResult = runCheckWithIndexes(
-                        pair[0], pair[1], List.of(), List.of(), after.scanTargets, after.appRoots, excludeRules, null, null);
-                result.violations.addAll(jdkResult.violations);
-                result.warnings.addAll(jdkResult.warnings);
-                result.suppressed += jdkResult.suppressed;
-                result.unknownRefs += jdkResult.unknownRefs;
-            }
+            // Scan target = the full after runtime classpath + build outputs. Exclude rules
+            // filter the combined set once, as in per-module mode.
+            Check.Report result = finishVerdicts(verdicts, () -> {
+                Check.Report combined =
+                        runCheck(changes.oldJars(), changes.newJars(), after.scanTargets, after.appRoots, List.of(), jdk.indexer, verdicts);
+                // The JDK moved too (or only the JDK did), so its removals are checked over the
+                // same universe and folded in.
+                if (jdkPair != null) {
+                    ApiIndex[] pair = jdkReleasePair(jdkPair);
+                    Check.Report jdkResult = runCheckWithIndexes(
+                            pair[0], pair[1], List.of(), List.of(), after.scanTargets, after.appRoots, List.of(), null, verdicts);
+                    combined.violations.addAll(jdkResult.violations);
+                    combined.violations.sort(Violation::compare);
+                    combined.unknownRefs += jdkResult.unknownRefs;
+                }
+                return combined;
+            });
+            applyExcludes(result, excludeRules);
             Suggest.annotate(result.violations, before, after, changes.changes());
             applyEvidenceAndDraft(result.violations, result.appRootsMatched, evidence, args.draftExcludeFile());
             printUpgrade(args.json(), changes.changes(), result, null);
@@ -777,7 +780,6 @@ final class Commands {
         });
 
         applyExcludes(merged, excludeRules);
-        Out.warnAll(merged.warnings);
         // Drafting gets the FALSE-dominating fold of the per-run roots states, never
         // merged.appRootsMatched (which stays null): a module whose roots matched nothing
         // stamps meaningless reachable=false on its violations, and drafting those would
