@@ -883,7 +883,7 @@ final class Toml {
         private void onArray(int open) {
             open(E_ARRAY_OPEN, open);
             boolean needsValue = true;
-            while (pos < tk.n) {
+            while (true) {
                 int t = pos++;
                 int at = ts.a[t];
                 int kind = tk.a[t];
@@ -921,7 +921,6 @@ final class Toml {
                     }
                 }
             }
-            throw new IllegalStateException("token stream without EOF");
         }
 
         private static final int NEEDS_KEY = 0;
@@ -941,7 +940,7 @@ final class Toml {
         private void onInlineTable(int open) {
             open(E_INLINE_TABLE_OPEN, open);
             int state = NEEDS_KEY;
-            while (pos < tk.n) {
+            while (true) {
                 int t = pos++;
                 int at = ts.a[t];
                 int kind = tk.a[t];
@@ -1024,7 +1023,6 @@ final class Toml {
                     }
                 }
             }
-            throw new IllegalStateException("token stream without EOF");
         }
 
         private void wsCommentNewline() {
@@ -1057,10 +1055,10 @@ final class Toml {
                 }
             }
             event(E_COMMENT, comment);
-            // The lexer ends a comment at a line break or at the end, so a newline or EOF follows.
-            int t = pos++;
-            if (tk.a[t] == T_NEWLINE) {
-                newline(t);
+            // The lexer ends a comment at a line break or at the end. The end stays for the caller,
+            // which may still have an array or inline table to report as unclosed.
+            if (tk.a[pos] == T_NEWLINE) {
+                newline(pos++);
             }
         }
 
