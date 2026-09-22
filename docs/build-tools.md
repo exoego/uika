@@ -48,6 +48,47 @@ whole build: `-PuikaFailOn` and `-Duika.failOn` carry it, while the Gradle task
 property, the Maven POM element, and every Mill, Leiningen, Clojure and Bazel
 spelling already sit inside something uika owns and do not.
 
+One row per option, one column per tool. A cell is how that tool spells the
+option; the Gradle task property and the Maven POM element are the spelling a
+build script uses, and the `-P` and `-D` forms are the command line.
+
+| Option | Gradle | sbt | Maven | Mill | Clojure CLI | Leiningen | Bazel |
+|---|---|---|---|---|---|---|---|
+| Gate threshold | `-PuikaFailOn` / `failOn` | `uikaFailOn` | `-Duika.failOn` / `<failOn>` | `--failOn` | `:fail-on` | `:fail-on` | `fail_on` |
+| Exclude files | `-PuikaExcludeFile` / `excludeFiles` | `uikaExcludeFiles` | `-Duika.excludeFiles` / `<excludeFiles>` | `--excludeFile` | `:exclude-file` | `:exclude-files` | `exclude_files` |
+| JDK API release | `-PuikaJdkRelease` / `jdkRelease` | `uikaJdkRelease` | `-Duika.jdkRelease` / `<jdkRelease>` | `--jdkRelease` | `:jdk-release` | `:jdk-release` | `jdk_release` |
+| Merged classpath | `-PuikaMergedClasspath` / `mergedClasspath` | `uikaMergedClasspath` | `-Duika.mergedClasspath` / `<mergedClasspath>` | `--mergedClasspath` | `:merged-classpath` | `:merged-classpath` | `merged_classpath` |
+| Runtime evidence (JFR) | `-PuikaJfr` | `uikaJfr` | `-Duika.jfr` / `<jfr>` | `--jfr` | `:jfr` | `:jfr` | `--jfr` |
+| Draft exclude file | `-PuikaDraftExcludeFile` / `draftExcludeFile` | `uikaDraftExcludeFile` | `-Duika.draftExcludeFile` / `<draftExcludeFile>` | `--draftExcludeFile` | `:draft-exclude-file` | `:draft-exclude-file` | `--draftExcludeFile` |
+| CLI version | `-PuikaCliVersion` / `cliVersion` | `uikaCliVersion` | `-Duika.cliVersion` / `<cliVersion>` | `--cliVersion` | `:cli-version` | `:cli-version` | `uika.cli(version)` |
+| CLI to run instead | `UIKA_CLI_PATH` | `UIKA_CLI_PATH` | `UIKA_CLI_PATH` | `UIKA_CLI_PATH` | `:cli-path`, `UIKA_CLI_PATH` | `:cli-path`, `UIKA_CLI_PATH` | `UIKA_CLI_PATH` |
+| Dump output | `-PuikaOutput` | `uikaOutput` | `-Duika.output` | `--output` | `:output` | positional | `--output` |
+
+Some knobs exist in one tool only, each for a reason its page gives, and a
+tool lacking one of them is not behind:
+
+- Gradle: `-PuikaConfiguration` picks the configuration the dump resolves, and
+  `-PuikaBuildOutputs=false` skips building outputs. Only Gradle both resolves a
+  named configuration and builds outputs as part of the dump.
+- Gradle and Bazel take text class-load logs directly (`classLoadLogs`,
+  `--classLoadLog`). Everywhere else they ride in the JFR directory.
+- sbt: `uikaModuleClasspath` answers what one subproject contributes, since the
+  dump is a whole-build merge.
+- Maven: the JFR collection flag is an `argLine` written by hand. No mojo can
+  inject into surefire.
+- Mill: `UIKA_JFR` is the environment fallback for `--jfr`, since a Mill command
+  has no build-wide setting to read.
+- Clojure CLI and Leiningen: `UIKA_CLI_URL` overrides where the jar is
+  downloaded from, because these two fetch it themselves rather than through a
+  resolver. The Clojure CLI also takes `:dir`, `:aliases` and `:class-dir` to
+  describe another project's basis.
+- Bazel: `--materialize` rehydrates a baseline dump from the repository cache,
+  and the `uika.cli` tag pins the jar's checksum.
+
+`DocPageContractTest` in `jvm-plugin-core` holds each page to the same section
+order and checks that every knob scraped from a tool's source is named on its
+page, so a knob added to a build fails the build until it is documented.
+
 Two CLI flags are deliberately not exposed anywhere.
 [`--json`](cli.md) swaps the report for JSON on stdout, and every tool prints the
 CLI's output through its own logger, so it would arrive with `[INFO]` on every

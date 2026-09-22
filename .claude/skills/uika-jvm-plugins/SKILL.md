@@ -364,6 +364,13 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
 - Every user-facing knob of a tool appears on its page. That includes the ones a build
   script reaches rather than the command line, which is how sbt's `uikaModuleClasspath` sat
   in `autoImport` undocumented through two audits.
+- Both rules are enforced by `jvm-plugin-core`'s `DocPageContractTest` (run by the Gradle
+  and the Maven build): the section order on all seven pages, and every knob scraped from
+  each tool's source (Gradle property lookups, sbt keys, Maven `@Parameter` properties,
+  Mill command parameters, the two Clojure key sets, the Bazel macro parameters) named on
+  its page. A new knob fails that test until its page names it. The tool-by-option table
+  and the "one tool only" list in `docs/build-tools.md` are the parity contract the audits
+  used to reconstruct by hand; keep them current when a knob is added or renamed.
 
 ## Mill Plugin Notes
 
