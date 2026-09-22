@@ -122,12 +122,6 @@ final class Json {
             return this;
         }
 
-        Writer nullValue() {
-            beforeValue();
-            out.append("null");
-            return this;
-        }
-
         /** The symbol's text. */
         Writer sym(int sym) {
             return value(Intern.str(sym));
@@ -390,16 +384,14 @@ final class Json {
                 pos++;
                 return out;
             }
-            boolean first = true;
             while (true) {
                 skipWhitespace();
                 if (pos >= text.length()) {
                     throw error("EOF while parsing an object");
                 }
-                if (text.charAt(pos) == '}' && !first) {
+                if (text.charAt(pos) == '}') {
                     throw error("trailing comma");
                 }
-                first = false;
                 if (text.charAt(pos) != '"') {
                     throw error("key must be a string");
                 }
