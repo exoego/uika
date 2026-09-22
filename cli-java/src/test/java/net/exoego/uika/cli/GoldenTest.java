@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
 class GoldenTest {
     static String fixture(String jarName) {
         Path path = Path.of("tests/fixtures").resolve(jarName);
-        assertTrue(Files.exists(path), "fixture not found: " + path + " (tests must run from the cli/ crate root)");
+        assertTrue(Files.exists(path), "fixture not found: " + path + " (tests run with cli-java/ as the working directory)");
         return "tests/fixtures/" + jarName;
     }
 

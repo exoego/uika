@@ -24,7 +24,7 @@ relearned by experiment.
   that sort, graph-walk violations surface in hash order and the goldens would
   go flaky at two or more became-final violations.
 - The scenario table (name, old, new, consumer, probe-only extra classpath) is
-  single-sourced in `cli/tests/scenarios.tsv`, read by both `GoldenTest` and
+  single-sourced in `cli-java/tests/scenarios.tsv`, read by both `GoldenTest` and
   `tools/jvm-probe/run-fixtures.sh`. Add scenarios there, plus a named golden
   test and a blessed golden file.
 - `check --verdicts-json <path>` (also on upgrade-check) streams every
@@ -156,10 +156,10 @@ relearned by experiment.
   `Scan.scanTargetPaths`), `UIKA_FILE_LANES` (concurrent openers of loose class
   files; 4 on macOS, one per worker elsewhere), `UIKA_NO_RELAUNCH` (stay in the
   JVM that was started).
-- `cli/Cargo.toml` stays at the `0.0.0-dev` placeholder; released binaries get
-  their version from the `UIKA_VERSION` env var embedded at compile time
-  (`option_env!` in `cli/src/cli.rs`). Never bump the placeholder for a
-  release or compare it against tags.
+- `cli-java/build.gradle.kts` stays at the `0.0.0-dev` placeholder; a release
+  passes the tag version as `-PuikaVersion`, which the jar's manifest carries
+  into `uika --version`. Never bump the placeholder for a release or compare it
+  against tags.
 
 ## Memory and Speed Rules
 

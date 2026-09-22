@@ -6,7 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Command-line parsing. The surface and its help text are the ones the native CLI shipped with. */
+/** Command-line parsing. The surface and its help text are the ones the Rust CLI shipped with. */
 final class Cli {
     private Cli() {}
 

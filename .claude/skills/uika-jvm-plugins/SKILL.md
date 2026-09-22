@@ -87,8 +87,7 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   demands a sources and a javadoc jar for any other packaging, so a main jar would cost
   twelve files per release against four. Do not "tidy" it into the main artifact. The
   stub repositories write `<packaging>pom</packaging>` too, so the suites resolve the
-  shape a release really has. The coordinate also carries the native ZIPs as classifiers,
-  but no integration reads them: they serve `UIKA_CLI_PATH` users and the standalone CLI.
+  shape a release really has.
   The CLI version must keep
   defaulting to the plugin's own version — Implementation-Version manifest
   attribute in the Gradle/sbt jars, `${plugin.version}` in Maven — so one
@@ -234,7 +233,7 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   the draft property for exactly that reason).
 - Recordings are converted PLUGIN-side
   (`JfrEvidence` in core, `jdk.jfr.consumer.RecordingFile`), never CLI-side:
-  the CLI is JVM-free and must not read binary JFR. The converter emits the
+  the CLI must not read binary JFR. The converter emits the
   CLI's own trusted text shapes (`[class,load] name` per stackless event, a
   `Java stack when loading X:` block per stacked one), so the whole evidence
   pipeline including trigger composition is reused unchanged — and unlike
@@ -300,7 +299,7 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   and the `uika.child` property next to the `--before` file. An edited stub is shadowed
   by the it-repo `uika-cli` entry (Maven never re-fetches a cached release version),
   which the upgrade-check prebuild purges. The `UIKA_CLI_PATH` tests keep shell stubs on
-  purpose: they stand in for a native binary.
+  purpose: they stand in for an executable.
 - Where each build's UNIT tests live, and why sbt has none. Gradle and Maven mount
   `jvm-plugin-core/src/test/java` alongside the main sources, so one copy of the shared
   logic's tests runs in both. Maven adds `maven-plugin/src/test/java` for `JdkReleases`,
@@ -530,7 +529,7 @@ hold lives here.
   `uika.cli` tag's `sha256` closes.
 - The pin is ONE string, not a classifier map: one jar serves every host. `UIKA_CLI_PATH`
   at fetch time is symlinked under a name that keeps a `.jar` suffix, because the suffix
-  is how `UikaCli` tells the jar from a native binary.
+  is how `UikaCli` tells the jar from an executable.
 - Bazel says NOTHING about an unpinned `download`. The familiar "canonical
   reproducible form" note comes from `http_archive`, which reports it by hand, so a bare
   repository rule that stays quiet leaves the download silently unverified. That is why

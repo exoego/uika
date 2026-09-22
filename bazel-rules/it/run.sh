@@ -28,10 +28,10 @@ cp -R "$RULES/it/test-workspace/." "$WS/"
 sed "s|@UIKA_RULES@|$RULES|" "$WS/MODULE.bazel.template" > "$WS/MODULE.bazel"
 rm "$WS/MODULE.bazel.template"
 
-# The guava pair and its consumer are the guava-selenium row of cli/tests/scenarios.tsv, so
+# The guava pair and its consumer are the guava-selenium row of cli-java/tests/scenarios.tsv, so
 # the breaks this test expects are the ones the golden files already document.
 for jar in guava-22.0.jar guava-23.0-rc1.jar selenium-remote-driver-3.4.0.jar; do
-  cp "$REPO/cli/tests/fixtures/$jar" "$WS/vendor/$jar"
+  cp "$REPO/cli-java/tests/fixtures/$jar" "$WS/vendor/$jar"
 done
 
 # Coverage, when the Makefile asks for it. Every `bazel run` here launches a java_binary,
@@ -207,7 +207,7 @@ fi
 python3 "$RULES/it/assert_jfr.py" "$OUT/jfr-report.txt"
 
 # A recording handed to --classLoadLog must be converted exactly like a --jfr value:
-# the CLI is JVM-free and skips .jfr names silently, so forwarding it raw loses the
+# the CLI skips .jfr names silently, so forwarding it raw loses the
 # evidence with no symptom at all.
 rec="$(find "$JFR" -name '*.jfr' | head -1)"
 set +e

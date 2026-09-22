@@ -4,7 +4,7 @@
 # The copy is made with -L because the four jvm-plugin-core sources under java/ are
 # committed symlinks pointing out of the module root, which is fine in this repository and
 # useless to a consumer. The version and the CLI checksum are stamped into the COPY, so
-# git keeps the placeholders, the same arrangement cli/Cargo.toml has with UIKA_VERSION.
+# git keeps the placeholders, the same arrangement cli-java/build.gradle.kts has with UIKA_VERSION.
 set -eu
 
 version=${1:?usage: stage.sh <version> <rules-dir> <stage-dir> <cli-jar>}

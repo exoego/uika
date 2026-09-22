@@ -44,10 +44,9 @@ val coverageEnabled = providers.gradleProperty("uikaCoverage").map(String::toBoo
 tasks.test {
     useJUnitPlatform()
     extensions.getByType<JacocoTaskExtension>().isEnabled = coverageEnabled
-    // Fixtures, goldens and scenarios.tsv are shared with the Rust crate. Tests address them
-    // as tests/fixtures/x.jar: that string is interned as a violation's source, and the
-    // goldens pin it byte for byte.
-    workingDir = rootDir.resolve("../cli")
+    // Tests address fixtures as tests/fixtures/x.jar: that string is interned as a violation's
+    // source, and the goldens pin it byte for byte.
+    workingDir = rootDir
     maxHeapSize = "1g"
     // -PuikaBless=true makes GoldenTest rewrite the goldens instead of comparing.
     systemProperty("uika.bless", providers.gradleProperty("uikaBless").getOrElse("false"))
@@ -62,54 +61,22 @@ tasks.jacocoTestReport {
     }
 }
 
-val nativeClassifiers = listOf(
-    "linux-x86_64",
-    "macos-aarch64",
-    "macos-x86_64",
-    "windows-x86_64"
-)
-val nativeDist = layout.projectDirectory.dir("../dist/native")
-val nativeZips = nativeClassifiers.associateWith { classifier ->
-    nativeDist.file("$classifier/uika-$version-$classifier.zip").asFile
-}
-val stagedNativeZips = nativeZips.filterValues { it.isFile }
-val missingNativeZips = if (stagedNativeZips.isEmpty()) emptyList() else (nativeZips.keys - stagedNativeZips.keys).toList()
-val nativeDistPath = nativeDist.asFile.path
-
-// All four or none. A partial set would publish a release that one platform cannot resolve,
-// and a Central deployment cannot be amended afterwards.
-tasks.withType<AbstractPublishToMaven>().configureEach {
-    doFirst {
-        if (missingNativeZips.isNotEmpty()) {
-            throw GradleException(
-                "native CLI ZIPs are incomplete under $nativeDistPath: missing " + missingNativeZips.joinToString(", ")
-            )
-        }
-    }
-}
-
 publishing {
     publications {
         create<MavenPublication>("uikaCli") {
             artifactId = "uika-cli"
-            // The jar is a classified artifact like the ZIPs, not the main one, so the POM
-            // can keep "pom" packaging. Central demands a sources and a javadoc jar for any
+            // The jar is a classified artifact, not the main one, so the POM can keep "pom"
+            // packaging. Central demands a sources and a javadoc jar for any
             // other packaging, and each would be four more files per release: twelve for a
             // main jar against four for this one. Nothing in the jar is public API, so
             // nobody needs it as a plain dependency. See PUBLISHING.md.
             artifact(tasks.jar) {
                 classifier = "jvm"
             }
-            stagedNativeZips.forEach { (classifier, file) ->
-                artifact(file) {
-                    extension = "zip"
-                    this.classifier = classifier
-                }
-            }
             pom {
                 packaging = "pom"
                 name.set("uika-cli")
-                description.set("uika command-line interface: a runnable jar (classifier jvm), plus native binaries as classified ZIPs")
+                description.set("uika command-line interface, a runnable jar (classifier jvm)")
                 url.set("https://github.com/exoego/uika")
                 licenses {
                     license {

@@ -29,7 +29,7 @@ event-settings syntax), so leave the option off for an older test leg.
 ## What a promoted violation looks like
 
 The plugins convert recordings with the JDK's own JFR reader before invoking
-the CLI, which stays JVM-free and never reads binary recordings. A
+the CLI, which never reads binary recordings. A
 [⚠️ violation](../README.md#violation-tiers-and-the-failon-threshold) whose
 referencing class appears in the evidence is promoted out of the tier and
 marked, trigger included: `⚡ observed loading at runtime (via

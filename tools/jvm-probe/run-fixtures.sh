@@ -6,7 +6,7 @@
 # verdicts that fail on the new side but link on the old side are listed as
 # false-negative candidates for triage.
 #
-# Scenarios come from cli/tests/scenarios.tsv, shared with cli/tests/golden.rs.
+# Scenarios come from cli-java/tests/scenarios.tsv, shared with GoldenTest.
 # Graph-walk violations (koin's "method became final", pact's "class became
 # final") never enter the verdict stream, so those scenarios' actual breaking
 # change is NOT answer-checked here; the probe covers their reference verdicts
@@ -15,9 +15,9 @@ set -eu
 
 UIKA=${UIKA:-java -jar cli-java/build/libs/uika-cli-0.0.0-dev.jar}
 JAVA=${JAVA:-java}
-FIX=cli/tests/fixtures
+FIX=cli-java/tests/fixtures
 OUT=${OUT:-target/probe}
-SCENARIOS=cli/tests/scenarios.tsv
+SCENARIOS=cli-java/tests/scenarios.tsv
 TAB=$(printf '\t')
 mkdir -p "$OUT"
 

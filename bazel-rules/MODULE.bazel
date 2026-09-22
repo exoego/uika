@@ -1,5 +1,5 @@
 # The version stays at the placeholder in git and is stamped at release, the same rule
-# cli/Cargo.toml follows. private/version.bzl carries the same value and is what the
+# cli-java/build.gradle.kts follows. private/version.bzl carries the same value and is what the
 # uika-cli download defaults to, so the two are stamped together.
 module(
     name = "uika",

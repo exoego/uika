@@ -25,7 +25,7 @@ new File(basedir, "after.json").text = "{}"
 // return: a Groovy script's return ends it, so a statement after one never runs.
 new File(basedir, "load-logs").mkdirs()
 // A REAL recording inside the log directory: the mojo must convert it (JfrEvidence)
-// instead of handing binary JFR to the JVM-free CLI. Whatever classes load during the
+// instead of handing binary JFR to the CLI. Whatever classes load during the
 // window (JFR internals at least) give it content; verify.groovy asserts plumbing only.
 def rec = new jdk.jfr.Recording()
 rec.enable("jdk.ClassLoad").withStackTrace().withoutThreshold()
