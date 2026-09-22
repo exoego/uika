@@ -5,9 +5,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class ExcludeTest {
     private static Violation classViolation(String owner) {
@@ -387,6 +392,60 @@ class ExcludeTest {
                 stats.unused().stream()
                         .anyMatch(u -> u.contains("kind \"class_became_interface\" or \"interface_became_class\"")),
                 stats.unused().toString());
+    }
+
+    /** An unused owner rule is echoed as written, wildcard included, so it can be found in the file. */
+    @Test
+    void unusedRulesEchoTheirOwnerPatternAndMember() {
+        List<Exclude.Rule> rules = Exclude.parse("""
+                [[exclude]]
+                owner = "org/apache/commons/logging/*"
+                reason = "reflection-based discovery"
+
+                [[exclude]]
+                owner = "lib/C"
+                member = "m"
+                reason = "every overload is reflective"
+                """);
+        Exclude.Stats stats = Exclude.filter(violations(classViolation("lib/Other")), rules);
+        assertEquals(
+                List.of(
+                        "org/apache/commons/logging/* (reflection-based discovery)",
+                        "lib/C#m (every overload is reflective)"),
+                stats.unused());
+    }
+
+    @Test
+    void anExcludeFileThatCannotBeReadIsNamed(@TempDir Path dir) throws IOException {
+        String missing = dir.resolve("missing.toml").toString();
+        assertEquals(
+                "cannot read exclude file " + missing + ": No such file or directory (os error 2)",
+                assertThrows(UikaException.class, () -> Exclude.load(List.of(missing))).getMessage());
+
+        String directory = dir.toString();
+        assertEquals(
+                "cannot read exclude file " + directory + ": Is a directory (os error 21)",
+                assertThrows(UikaException.class, () -> Exclude.load(List.of(directory))).getMessage());
+
+        Path latin1 = dir.resolve("latin1.toml");
+        Files.write(latin1, "# café\n".getBytes(StandardCharsets.ISO_8859_1));
+        assertEquals(
+                "cannot read exclude file " + latin1 + ": stream did not contain valid UTF-8",
+                assertThrows(UikaException.class, () -> Exclude.load(List.of(latin1.toString()))).getMessage());
+    }
+
+    @Test
+    void anInvalidRuleNamesTheFileItCameFrom(@TempDir Path dir) throws IOException {
+        Path good = dir.resolve("good.toml");
+        Files.writeString(good, "[[exclude]]\nowner = \"lib/A\"\nreason = \"fine\"\n");
+        Path bad = dir.resolve("bad.toml");
+        Files.writeString(bad, "[[exclude]]\nowner = \"lib/C\"\nreason = \"\"\n");
+        assertEquals(
+                "invalid exclude file " + bad + ": exclude rule \"lib/C\" is missing a reason"
+                        + " (reason must explain why the violation is a known false positive)",
+                assertThrows(UikaException.class, () -> Exclude.load(List.of(good.toString(), bad.toString())))
+                        .getMessage());
+        assertEquals(1, Exclude.load(List.of(good.toString())).size());
     }
 
     @Test
