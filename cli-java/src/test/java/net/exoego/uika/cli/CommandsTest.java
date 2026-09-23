@@ -388,6 +388,28 @@ class CommandsTest {
         assertEquals(GoldenTest.scenarioJson("guava-selenium") + "\n", json.stdout());
     }
 
+    /** A library path that is gone excludes and marks nothing. The index build names it. */
+    @Test
+    void aLibraryPathThatIsGoneMatchesNoScanTarget(@TempDir Path dir) {
+        String missing = dir.resolve("missing.jar").toString();
+        Commands.ScanTargets scan = Commands.scanTargets(List.of(missing), List.of(missing), List.of(CONSUMER));
+        assertEquals(List.of(CONSUMER), scan.paths());
+        assertTrue(scan.upgradedSources().isEmpty());
+    }
+
+    /** One release on both sides reads jmods twice, so neither side has internals the other lacks. */
+    @Test
+    void theRunningReleaseOnBothSidesIsNotWarnedAbout(@TempDir Path dir) throws Exception {
+        Path home = Files.createDirectories(dir.resolve("home"));
+        Files.writeString(home.resolve("release"), "JAVA_VERSION=\"21\"\n", StandardCharsets.UTF_8);
+        Files.createDirectories(home.resolve("jmods"));
+        Env.override("UIKA_JDK", home.toString());
+        ApiIndex[][] pair = new ApiIndex[1][];
+        assertEquals("", stderrOf(() -> pair[0] = Commands.jdkReleasePair(new int[] {21, 21})));
+        assertEquals(0, pair[0][0].classCount());
+        assertEquals(0, pair[0][1].classCount());
+    }
+
     /**
      * The JDK layer can only conclude references that escaped into the JDK. It never invents a
      * violation, since the same index sits under both sides.
