@@ -330,6 +330,27 @@ final class JfrEvidenceTest {
                 () -> JfrEvidence.rewrite(List.of(logsDir), dir.resolve("work"), line -> {}));
     }
 
+    /// A file that cannot be opened is not a recording, whatever its bytes: the directory
+    /// walk keeps it as a text log for the CLI to report by path, instead of failing every
+    /// intact recording next to it on a permission the user can see for themselves.
+    @Test
+    void anUnreadableFileIsNotARecording() throws Exception {
+        Path logsDir = Files.createDirectories(dir.resolve("load-logs"));
+        Path locked = Files.write(logsDir.resolve("locked.log"), new byte[] {'F', 'L', 'R', 0});
+        try {
+            Files.setPosixFilePermissions(locked, java.util.Set.of());
+        } catch (UnsupportedOperationException e) {
+            org.junit.jupiter.api.Assumptions.abort("POSIX permissions unsupported: " + e);
+        }
+        org.junit.jupiter.api.Assumptions.assumeFalse(Files.isReadable(locked),
+                "the permission does not bind this user (root), so nothing is unreadable");
+
+        assertFalse(JfrEvidence.isRecording(locked), "an unreadable file must not count as a recording");
+        assertEquals(List.of(logsDir),
+                JfrEvidence.rewrite(List.of(logsDir), dir.resolve("work"), line -> {}),
+                "nothing in the directory converts, so it passes through as it is");
+    }
+
     @Test
     void aKnobValueNamesARecordingByItsSuffixUnlessItIsADirectory() throws Exception {
         // The check may create or download the recording after the value is read.
