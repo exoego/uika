@@ -58,6 +58,23 @@ warm JVM runs the 100-jar check in about 0.15s. The runtime matters a little (JD
 1.65s, 21 1.55s, 25 1.53s on the stress row); the bytecode target does not
 (`--release 21` measured the same as 17).
 
+After the 2026-09-23 round (one quiet session, alternating pairs, medians; the
+class-dir row was not re-measured; the `--app` row uses `cli-java/build/classes/java/main`
+as the root, enough to turn edges on):
+
+| Workload | Before | After |
+|---|---|---|
+| Stress: 2,800 jars, 1.95M classes | 1.59s, 335MB | 1.38s, 250MB |
+| Stress with `--app` (reachability on) | 2.06s, 358MB | 1.60s, 283MB |
+| 100 jars, 62K classes | 0.34s, 139MB | 0.27s, 116MB |
+| 3 jars | 0.07s, 61MB | 0.07s, 64MB |
+
+Where the stress run's 250MB goes now, from NMT and a heap histogram: young generation
+32MB, tenured 55MB (the int pool's columns and leaves, class buffers, intern shard
+tables), direct buffers 67MB (intern 15MB, graph and dedup arenas 24MB, span buffers
+22MB), the C2 arena chunk pool up to 39MB at exit, code cache 10MB, CDS 13MB, and the
+JVM's own text and malloc.
+
 Pass 1 dominates the stress workload. On a real classpath most scanned classes are
 byte-identical duplicates bundled across JARs (about 60% on the stress workload), so
 `Dedup` picks one entry per (name, CRC-32) from the central directories in path order
@@ -69,10 +86,33 @@ of the whole classpath. Absolute broken/unverified counts are classpath-order
 sensitive (duplicate-class first-wins), so compare same-input diffs, not the table's
 approximate counts.
 
-Knobs: `UIKA_THREADS` (worker count), `UIKA_CHUNK` (paths processed concurrently in
-pass 1, default 16x threads, rationale in `Scan.scanTargetPaths`), `UIKA_FILE_LANES`
-(concurrent openers of loose class files, 4 on macOS, one per worker elsewhere),
-`UIKA_NO_RELAUNCH` (run in the JVM that was started, for debugging).
+Knobs: `UIKA_THREADS` (worker count), `UIKA_CHUNK` (paths in flight in pass 1, from
+central-directory read to merge, default 8x threads, rationale in `Scan.window`),
+`UIKA_FILE_LANES` (concurrent openers of loose class files, 4 on macOS, one per worker
+elsewhere), `UIKA_NO_RELAUNCH` (run in the JVM that was started, for debugging).
+
+## Measuring on this machine
+
+The run-to-run noise is larger than most single optimizations, for three reasons that
+were each mistaken for a result before they were understood:
+
+- The JIT lottery. Which hot method reaches C2 when depends on the compile queue, and a
+  run where `parseHeader` stayed in C1 longer profiled 10% more CPU in it with no code
+  change. A cold run of the stress check is 1.3-1.6s; the same check in a warm JVM
+  (`Main.run` called four times in one process) is 0.85s, so about a third of a cold run
+  is warm-up: C1 execution, C2 compile threads competing for the 12 cores (12% of CPU),
+  class loading. Page faults are not it (18K minor faults, about 30ms).
+- User time swings 20% between identical runs because the scheduler moves workers
+  between performance and efficiency cores. Do not read a user-time delta under 20%
+  from single runs.
+- Other processes. A Maven build in another project doubled the baseline for an hour.
+  Check `uptime` before trusting a session.
+
+So: compare two jars only in tight alternating pairs (`A B A B ...`, at least five),
+report medians, and treat anything under 5% as noise unless the profile explains it.
+Never compare against a number from another session. Sample counts from async-profiler
+(`total` of a collapsed profile) are steadier than wall for CPU-only changes, and the
+warm harness isolates steady-state work from warm-up.
 
 Traps already hit in this repository:
 
@@ -106,6 +146,45 @@ stress workload unless noted:
 | Tiered compilation profiles every method before C2 compiles it, never paid back on a few jars | `-XX:TieredStopAtLevel=1` below ~800 targets: 3-jar check 0.17s to 0.08s, 100-jar 0.45s to 0.28s. C2 wins from roughly a thousand jars (1.6s against 1.9s at 2,800). |
 | Boxed `Integer[]` sorts and per-node boxing in the graph walks | Primitive sorts with binary search; shared visitors and reusable seen-sets in `Check`. |
 
+The 2026-09-23 round (stress workload, 1.62s/320MB to 1.32s/235MB in one quiet session's
+alternating pairs; the profile that found each is described under "Measuring"):
+
+| Measured problem | Solution |
+|---|---|
+| Huffman table build was 11% of CPU: one strided write per table slot, once per class since a class is one deflate block | Fill by doubling: one write per symbol, then a block copy of the finished prefix (`Inflate.build`); payloads per symbol are static tables. |
+| Central-directory names were 9% of CPU in the interner and 3% in monitor waits: every lookup took a shard lock | Lock-free lookups (release/acquire on the slot), per-thread arena slabs and id blocks. Monitor waits 4.1% to 1.5%. |
+| Per-thread directory columns re-grown by doubling from 256 for every large jar on every worker: 113MB of allocation | Parse into pooled columns sized by the end record's count; compact when the jar is mostly resources. |
+| Three `realpath` walks per scan target before the scan started, 60ms single-threaded on 2,800 targets | One attribute read per target: the file key (device and inode), real path only where a file system reports none. |
+| Span buffers: 12 workers holding 2 MiB spans, 24MB | 1 MiB spans. |
+| Dedup's (name, CRC) hash set: 8MB live plus as much promoted garbage from doubling | Per-name linked lists in two chunked arenas, 4MB, never copied. |
+| The chunk barrier: merge after the whole chunk, on one thread, with every leaf held; workers parked on the chunk's slowest jar | Cursors over one path list: reads a window ahead, dedup and fork as they land, join and merge the next path while executing other tasks. RSS 282MB to 260MB, wall the same, window 96 = 192 and 48 costs 4%. Workers read the graph while it grows: `contains` over release/acquire chunks. |
+| `collectAbstractWanted` walked every scanned class's supertype closure from scratch: 49ms on the main thread | Memoize per type whether the closure holds a probed owner; walk only the classes it says yes to. 49ms to 25ms, `collectFinalWanted` 19ms to 10ms. |
+| Both index builds on one thread with the pool idle, 110ms of cold code | Both are pool tasks; the first window's directory reads queue behind them. |
+| Three sweeps over every constant-pool entry per class, and the header parser's `VarHandle` reads running as calls in C1 code for the first 200-700ms | The pool walk records the Class, String and member-reference entries (`ClassParser.tagged`) and steps over an entry from its size; the sweeps iterate the record; u2/u4 reads are byte arithmetic. Wall 1.52s to 1.32s in five pairs, warm JVM unchanged: the gain is all warm-up. |
+| Class names 30MB of intern strings | Prefix through the last '/' stored once as a symbol, tail per class: 13MB. Costs 3% of user time; as three metadata columns it cost 8% of wall, as one 16-byte record it is within noise. |
+| Graph rows carried two edge columns a bare classpath check never reads | Six-int rows when edges are off: 4MB. |
+
+Measured and rejected in the same round: warming the pass-1 path on this tool's own jar
+while the indexes build (the hot C2 compiles arrived later, not earlier, because more
+methods reached the saturated queue at once); `-XX:CompileThresholdScaling`,
+`-XX:Tier4*` thresholds, `-XX:PerMethodTrapLimit`, more compiler threads (all within
+noise); `-XX:-BackgroundCompilation` (30% slower); `-XX:CICompilerCount=3` (RSS 21MB
+lower from a smaller C2 arena chunk pool, wall 2% slower, and the ergonomic count is 12
+on a 16-core machine, so a fixed 3 would starve the queue there); `-Xmn16m` (RSS 18MB
+lower, wall 3% slower); 10 workers instead of 12 (the same wall, so the scan is not
+purely worker-bound); the directory parser's record body as a method invoked once per
+record so it compiles early (neutral: the reads run ahead of the merge and are off the
+critical path); a smaller first inflate slice (the parser already resumes; not measured
+worth the noise).
+
+Where the remaining time is, for the next round: inflate is half of worker CPU
+(`decodeHuffman` 36%, the per-block table build and code-length decode 13%); C2
+compilation is 12% of CPU and a 39MB arena chunk pool at exit; the JVM start, index
+build and check tail are 20% of the wall on cold code. Skipping the inflate of the 125K
+first-wins losers (16% of inflated classes) is possible only when the member probe is
+empty, since they are inflated for invocation evidence, and misnamed entries would need
+a rule; not done.
+
 Rules that fall out of this are in `cli-java/AGENTS.md`. The one that is easiest to
 break by accident: path-level code must not keep `Scratch` state across a fork or
 join, because a worker that waits may run another path's task on the same thread.
@@ -126,7 +205,7 @@ workload. The lessons transfer, since the Java port keeps the design:
 | Per-JAR sequential inflate underused the CPU | Inflate entries in parallel. |
 | Interning every constant-pool owner just to reject it serialized pass 1 on the intern lock | Test owners by raw name against the old index's name set (`NameSet`); intern only the few matches. |
 | ~60% of scanned classes are byte-identical duplicates, all inflated and parsed only to lose first-wins | One entry per (name, CRC) from central directories in path order; the scan inflates only those. Name-only dedup was rejected: a losing duplicate's distinct bytecode can carry invocation evidence, and CRC-keyed skipping is safe only because byte-identical copies carry identical evidence. |
-| One barrier per pass-1 chunk parked workers where paths finished unevenly | `UIKA_CHUNK` default raised to 16x thread count: ~8% less wall, ~12% more peak RSS, output byte-identical across chunk sizes. No knee. A profile's parked-thread share overstated the reclaimable wall; trust the wall-clock diff. |
+| One barrier per pass-1 chunk parked workers where paths finished unevenly | `UIKA_CHUNK` default raised to 16x thread count: ~8% less wall, ~12% more peak RSS, output byte-identical across chunk sizes. No knee. A profile's parked-thread share overstated the reclaimable wall; trust the wall-clock diff. (Superseded on the Java side by the barrier-free window, above.) |
 
 Rejected there, and still not worth retrying here: whole-file mmap (every touched
 page stayed resident, `madvise` did not reduce file-backed RSS peaks, span reads won on
