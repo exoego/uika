@@ -63,6 +63,23 @@ final class Inflate {
     private static final int[] DIST_EXTRA = {0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
     private static final int[] PRECODE_ORDER = {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
 
+    // Entry payloads per symbol, so the table build is one lookup per symbol.
+    private static final int[] LITLEN_PAYLOAD = new int[288];
+    private static final int[] DIST_PAYLOAD = new int[32];
+    private static final int[] PRECODE_PAYLOAD = new int[19];
+
+    static {
+        for (int s = 0; s < 288; s++) {
+            LITLEN_PAYLOAD[s] = entryFor(s, true, false);
+        }
+        for (int s = 0; s < 32; s++) {
+            DIST_PAYLOAD[s] = entryFor(s, false, false);
+        }
+        for (int s = 0; s < 19; s++) {
+            PRECODE_PAYLOAD[s] = entryFor(s, false, true);
+        }
+    }
+
     private static final int[] FIXED_LITLEN = new int[LITLEN_ENOUGH];
     private static final int[] FIXED_DIST = new int[DIST_ENOUGH];
 
@@ -359,23 +376,21 @@ final class Inflate {
         int subBits = 0;
         // Slots [0, region) hold every code written so far, replicated to that length.
         int region = 1;
-        boolean precode = table == precodeTable;
+        int[] payloads = table == precodeTable ? PRECODE_PAYLOAD : litlenKind ? LITLEN_PAYLOAD : DIST_PAYLOAD;
         for (int len = 1; len <= maxLen; len++) {
             int n = cnt[len];
             if (len <= primaryBits) {
                 System.arraycopy(table, 0, table, region, region);
                 region <<= 1;
                 for (int k = 0; k < n; k++, index++) {
-                    int symbol = order[index];
-                    table[Integer.reverse(code) >>> (32 - len)] = entryFor(symbol, litlenKind, precode) | len;
+                    table[Integer.reverse(code) >>> (32 - len)] = payloads[order[index]] | len;
                     code++;
                 }
                 code <<= 1;
                 continue;
             }
             for (int k = 0; k < n; k++, index++) {
-                int symbol = order[index];
-                int payload = entryFor(symbol, litlenKind, precode);
+                int payload = payloads[order[index]];
                 int reversed = Integer.reverse(code) >>> (32 - len);
                 int prefix = reversed & (primarySize - 1);
                 if (prefix != subPrefix) {
