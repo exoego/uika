@@ -289,30 +289,26 @@ final class Commands {
         boolean reachability = !appRoots.isEmpty();
 
         // Old-version libraries mixed into the scan targets are skipped: after the upgrade
-        // they are no longer on the runtime classpath. The new versions stay scanned.
-        Set<Path> excluded = canonical(oldJars);
+        // they are no longer on the runtime classpath. The new versions stay scanned, and
+        // get the extra version-lag check, keyed by the string a class's source is interned as.
+        Set<Object> excluded = identities(oldJars);
+        Set<Object> upgraded = identities(newJars);
         Set<Path> seen = new HashSet<>();
         List<String> paths = new ArrayList<>();
+        IntSet upgradedSources = new IntSet();
         for (String target : targets) {
             Path path = Path.of(target);
-            if (!Files.exists(path)) {
+            Object identity = identity(path);
+            if (identity == null) {
                 Out.warn("scan target not found, skipping: " + target);
                 continue;
             }
-            Path real = realPath(path);
-            if ((real == null || !excluded.contains(real)) && seen.add(path)) {
-                paths.add(target);
+            if (excluded.contains(identity) || !seen.add(path)) {
+                continue;
             }
-        }
-
-        // Scan targets that are new versions of the checked libraries get the extra
-        // version-lag check. Interned as the string a class's source is interned as.
-        Set<Path> newCanonical = canonical(newJars);
-        IntSet upgradedSources = new IntSet();
-        for (String p : paths) {
-            Path real = realPath(Path.of(p));
-            if (real != null && newCanonical.contains(real)) {
-                upgradedSources.add(Intern.intern(p));
+            paths.add(target);
+            if (upgraded.contains(identity)) {
+                upgradedSources.add(Intern.intern(target));
             }
         }
 
@@ -346,19 +342,30 @@ final class Commands {
         return result;
     }
 
-    private static Set<Path> canonical(List<String> paths) {
-        Set<Path> out = new HashSet<>();
+    private static Set<Object> identities(List<String> paths) {
+        Set<Object> out = new HashSet<>();
         for (String p : paths) {
-            Path real = realPath(Path.of(p));
-            if (real != null) {
-                out.add(real);
+            Object identity = identity(Path.of(p));
+            if (identity != null) {
+                out.add(identity);
             }
         }
         return out;
     }
 
-    private static Path realPath(Path path) {
+    /**
+     * What makes two spellings of one file equal: its file key (device and inode, so links of
+     * every kind resolve) where the file system reports one, else its real path. One attribute
+     * read per path, where resolving the real path walks every component; on a few thousand
+     * scan targets that walk was a visible slice of the wall before the scan started. Null
+     * when the file cannot be read at all.
+     */
+    private static Object identity(Path path) {
         try {
+            Object key = Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class).fileKey();
+            if (key != null) {
+                return key;
+            }
             return path.toRealPath();
         } catch (IOException | RuntimeException e) {
             return null;
