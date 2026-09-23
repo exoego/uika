@@ -23,6 +23,15 @@ codecov:
 flag_management:
   default_rules:
     carryforward: true
+  # The Rust CLI's flag. CI stopped sending it in #278-#281, but carryforward copies the
+  # parent commit's session of every flag the YAML allows, so it lived on in every report.
+  # Two things do not end that. `ignore` runs only while an upload is processed, never on
+  # a copied session, which is why the `cli/**` entry #346 added left the crate's 11106
+  # lines in main. Deleting the flag in the Codecov UI is a soft delete the worker never
+  # reads. Only a rule here ends it.
+  individual_flags:
+    - name: rust
+      carryforward: false
 
 # The per-front-end split. Driven by paths rather than flag_regexes, so it can say what
 # the flags cannot: jvm-plugin-core is compiled into both the Gradle and the Maven
@@ -94,9 +103,6 @@ comment:
   require_changes: false
 
 ignore:
-  # The Rust CLI, removed in #278-#281. Carryforward keeps its last `rust` upload in
-  # every report, so without this its 842 missed lines count against the total.
-  - "cli/**"
   # Committed symlinks into jvm-plugin-core. The Gradle and Maven reports name those
   # sources by package path alone, so every symlink is a second candidate that would
   # split one file's coverage, and now also charge it to the wrong component.
