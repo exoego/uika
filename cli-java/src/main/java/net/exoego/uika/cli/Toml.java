@@ -559,8 +559,9 @@ final class Toml {
             event(kind, token);
         }
 
+        // The end token is consumed only on the way back to document(), which peeks no further.
         private int peek() {
-            return pos < tk.n ? tk.a[pos] : -1;
+            return tk.a[pos];
         }
 
         private void optWhitespace() {
