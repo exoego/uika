@@ -8,6 +8,13 @@ local_path_override(
     path = "@UIKA_RULES@",
 )
 
+# This workspace is a root of its own, so the ruleset's protobuf override (see its
+# MODULE.bazel) does not reach it and is repeated here.
+single_version_override(
+    module_name = "protobuf",
+    version = "36.2",
+)
+
 maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
 
 # selenium-remote-driver 3.4.0 asks for guava with an OPEN-ENDED range, so resolution ran
