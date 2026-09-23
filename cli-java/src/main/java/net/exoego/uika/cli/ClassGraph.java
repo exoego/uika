@@ -16,7 +16,6 @@ final class ClassGraph {
      */
     static final int NEST_HOST_UNREAD = -2;
 
-    private static final int STRIDE = 8;
     private static final int NAME = 0;
     private static final int SUPER = 1;
     private static final int NEST_HOST = 2;
@@ -32,7 +31,20 @@ final class ClassGraph {
     private final IntArena interfaces = new IntArena();
     /** Class-load edges for reachability. Empty unless edge collection is on. */
     private final IntArena refs = new IntArena();
+    /** Whether rows carry the two edge columns; without them a row is six ints, not eight. */
+    private final boolean edges;
+    private final int stride;
     private int nodeCount;
+
+    ClassGraph() {
+        this(true);
+    }
+
+    /** @param edges whether class-load edges are stored; a graph without them saves two ints per node */
+    ClassGraph(boolean edges) {
+        this.edges = edges;
+        this.stride = edges ? 8 : 6;
+    }
 
     /**
      * First-wins insert from a packed record. Returns true if inserted.
@@ -47,15 +59,17 @@ final class ClassGraph {
         }
         nodeOf.ensureSize(Math.max(name + 1, Intern.tableLen()));
         int interfaceStart = interfaces.addAll(data, interfacesAt, interfaceCount);
-        int refStart = refs.addAll(data, refsAt, refCount);
         rows.add(name);
         rows.add(superName);
         rows.add(nestHost);
         rows.add(source);
         rows.add(interfaceStart);
         rows.add(interfaceCount);
-        rows.add(refStart);
-        rows.add(refCount);
+        if (edges) {
+            int refStart = refs.addAll(data, refsAt, refCount);
+            rows.add(refStart);
+            rows.add(refCount);
+        }
         nodeOf.set(name, ++nodeCount);
         return true;
     }
@@ -86,36 +100,37 @@ final class ClassGraph {
     }
 
     int nameOf(int node) {
-        return rows.get(node * STRIDE + NAME);
+        return rows.get(node * stride + NAME);
     }
 
     /** {@link Intern#NONE} when the class has no superclass. */
     int superOf(int node) {
-        return rows.get(node * STRIDE + SUPER);
+        return rows.get(node * stride + SUPER);
     }
 
     int nestHostOf(int node) {
-        return rows.get(node * STRIDE + NEST_HOST);
+        return rows.get(node * stride + NEST_HOST);
     }
 
     /** Origin selected by first-wins: where pass 2 re-reads the class. */
     int sourceOf(int node) {
-        return rows.get(node * STRIDE + SOURCE);
+        return rows.get(node * stride + SOURCE);
     }
 
     int interfaceCount(int node) {
-        return rows.get(node * STRIDE + IFACE_LEN);
+        return rows.get(node * stride + IFACE_LEN);
     }
 
     int interfaceAt(int node, int k) {
-        return interfaces.get(rows.get(node * STRIDE + IFACE_START) + k);
+        return interfaces.get(rows.get(node * stride + IFACE_START) + k);
     }
 
+    /** Zero for every node of a graph built without edges. */
     int refCount(int node) {
-        return rows.get(node * STRIDE + REFS_LEN);
+        return edges ? rows.get(node * stride + REFS_LEN) : 0;
     }
 
     int refAt(int node, int k) {
-        return refs.get(rows.get(node * STRIDE + REFS_START) + k);
+        return refs.get(rows.get(node * stride + REFS_START) + k);
     }
 }

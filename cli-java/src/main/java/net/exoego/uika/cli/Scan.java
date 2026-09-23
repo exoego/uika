@@ -15,7 +15,7 @@ import java.util.concurrent.RecursiveAction;
 final class Scan {
     /** Aggregated pass-1 result. */
     static final class Result {
-        final ClassGraph graph = new ClassGraph();
+        final ClassGraph graph;
         /** Records {@code source, className, refCount, (meta, owner, name, descriptor)...}, only for classes with references. */
         final IntArena records = new IntArena();
         int recordCount;
@@ -28,6 +28,15 @@ final class Scan {
         /** META-INF/services provider files of the scan targets, in path order. Only with edges on. */
         final List<Reach.ServiceFile> services = new ArrayList<>();
         final List<String> serviceWarnings = new ArrayList<>();
+
+        Result() {
+            this(true);
+        }
+
+        /** @param edges whether the graph stores class-load edges, which only reachability reads */
+        Result(boolean edges) {
+            graph = new ClassGraph(edges);
+        }
 
         /** Folds one leaf in; duplicate class names are first-wins, which is classpath order. */
         void merge(Extract.ScanLeaf leaf) {
@@ -233,7 +242,7 @@ final class Scan {
      * @param ahead the first window's directory reads if they were started early, else null
      */
     static Result scanTargetPaths(List<String> paths, ApiIndex oldIndex, MemberProbe probe, boolean collectEdges, Ahead ahead) {
-        Result result = new Result();
+        Result result = new Result(collectEdges);
         NameSet oldNames = oldIndex.classNameSet();
         boolean useAhead = ahead != null && ahead.paths.equals(paths) && ahead.collectEdges == collectEdges;
         Input.onPool(() -> {
