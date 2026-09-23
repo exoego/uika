@@ -266,9 +266,14 @@ final class Commands {
             List<Exclude.Rule> excludeRules,
             Jdk.Indexer jdk,
             Verdicts.Writer verdicts) {
+        ScanTargets scan = scanTargets(oldJars, newJars, targets);
+        // The first chunk's central-directory reads need no index, so they run on the pool
+        // while the indexes build here, and the JIT meets the directory parser and the
+        // interner before pass 1 starts.
+        Scan.Ahead ahead = Scan.prepareAhead(scan.paths(), !appRoots.isEmpty());
         ApiIndex oldIndex = buildIndex(oldJars);
         ApiIndex newIndex = buildIndex(newJars);
-        return runCheckWithIndexes(oldIndex, newIndex, oldJars, newJars, targets, appRoots, excludeRules, jdk, verdicts);
+        return runCheckWithIndexes(oldIndex, newIndex, scan, appRoots, excludeRules, jdk, verdicts, ahead);
     }
 
     /**
@@ -286,11 +291,21 @@ final class Commands {
             List<Exclude.Rule> excludeRules,
             Jdk.Indexer jdk,
             Verdicts.Writer verdicts) {
-        boolean reachability = !appRoots.isEmpty();
+        return runCheckWithIndexes(oldIndex, newIndex, scanTargets(oldJars, newJars, targets), appRoots, excludeRules, jdk, verdicts, null);
+    }
 
-        // Old-version libraries mixed into the scan targets are skipped: after the upgrade
-        // they are no longer on the runtime classpath. The new versions stay scanned, and
-        // get the extra version-lag check, keyed by the string a class's source is interned as.
+    /**
+     * The scan targets minus the old library versions, and the symbols of those that are the
+     * new versions.
+     */
+    record ScanTargets(List<String> oldJars, List<String> newJars, List<String> paths, IntSet upgradedSources) {}
+
+    /**
+     * Old-version libraries mixed into the scan targets are skipped: after the upgrade they
+     * are no longer on the runtime classpath. The new versions stay scanned, and get the
+     * extra version-lag check, keyed by the string a class's source is interned as.
+     */
+    static ScanTargets scanTargets(List<String> oldJars, List<String> newJars, List<String> targets) {
         Set<Object> excluded = identities(oldJars);
         Set<Object> upgraded = identities(newJars);
         Set<Path> seen = new HashSet<>();
@@ -311,11 +326,28 @@ final class Commands {
                 upgradedSources.add(Intern.intern(target));
             }
         }
+        return new ScanTargets(oldJars, newJars, paths, upgradedSources);
+    }
+
+    private static Check.Report runCheckWithIndexes(
+            ApiIndex oldIndex,
+            ApiIndex newIndex,
+            ScanTargets scan,
+            List<String> appRoots,
+            List<Exclude.Rule> excludeRules,
+            Jdk.Indexer jdk,
+            Verdicts.Writer verdicts,
+            Scan.Ahead ahead) {
+        boolean reachability = !appRoots.isEmpty();
+        List<String> paths = scan.paths();
+        List<String> oldJars = scan.oldJars();
+        List<String> newJars = scan.newJars();
+        IntSet upgradedSources = scan.upgradedSources();
 
         MemberProbe probe = Check.selectionMemberProbe(oldIndex, newIndex);
         // With reachability on, pass 1 also collects class-load edges and the scan targets'
         // provider files.
-        Scan.Result scanned = Scan.scanTargetPaths(paths, oldIndex, probe, reachability);
+        Scan.Result scanned = Scan.scanTargetPaths(paths, oldIndex, probe, reachability, ahead);
         Reach.Inputs reach = null;
         if (reachability) {
             Out.warnAll(scanned.serviceWarnings);
