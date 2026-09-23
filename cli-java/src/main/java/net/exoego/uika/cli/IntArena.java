@@ -19,7 +19,11 @@ final class IntArena {
     private static final int CHUNK = 1 << BITS;
     private static final int MASK = CHUNK - 1;
 
-    private IntBuffer[] chunks = new IntBuffer[4];
+    private static final java.lang.invoke.VarHandle ELEMENT =
+            java.lang.invoke.MethodHandles.arrayElementVarHandle(IntBuffer[].class);
+
+    /** Volatile so a reader that races the writer sees a grown array whole; the read is cheap next to the buffer access it guards. */
+    private volatile IntBuffer[] chunks = new IntBuffer[4];
     private int chunkCount;
     private int size;
 
@@ -29,6 +33,21 @@ final class IntArena {
 
     int get(int index) {
         return chunks[index >>> BITS].get(index & MASK);
+    }
+
+    /**
+     * A read that may race with the writer: a chunk is published with a release store once
+     * allocated, so a slot the writer has not reached yet reads as zero rather than failing.
+     * Zero is what an unwritten slot holds anyway, chunks being zero-filled.
+     */
+    int getOrZero(int index) {
+        IntBuffer[] c = chunks;
+        int chunk = index >>> BITS;
+        if (chunk >= c.length) {
+            return 0;
+        }
+        IntBuffer b = (IntBuffer) ELEMENT.getAcquire(c, chunk);
+        return b == null ? 0 : b.get(index & MASK);
     }
 
     void set(int index, int value) {
@@ -66,14 +85,18 @@ final class IntArena {
     }
 
     private void grow() {
-        if (chunkCount == chunks.length) {
-            IntBuffer[] bigger = new IntBuffer[chunks.length * 2];
-            System.arraycopy(chunks, 0, bigger, 0, chunkCount);
-            chunks = bigger;
-        }
-        chunks[chunkCount] = ByteBuffer.allocateDirect(CHUNK * Integer.BYTES)
+        IntBuffer chunk = ByteBuffer.allocateDirect(CHUNK * Integer.BYTES)
                 .order(ByteOrder.nativeOrder())
                 .asIntBuffer();
+        IntBuffer[] c = chunks;
+        if (chunkCount == c.length) {
+            IntBuffer[] bigger = new IntBuffer[c.length * 2];
+            System.arraycopy(c, 0, bigger, 0, chunkCount);
+            bigger[chunkCount] = chunk;
+            chunks = bigger;
+        } else {
+            ELEMENT.setRelease(c, chunkCount, chunk);
+        }
         chunkCount++;
     }
 }
