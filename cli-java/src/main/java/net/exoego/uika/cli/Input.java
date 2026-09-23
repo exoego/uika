@@ -505,10 +505,6 @@ final class Input {
             this.lanes = fileLanes();
         }
 
-        boolean isEmpty() {
-            return roots.isEmpty();
-        }
-
         /** Registers a directory. Its leaves are appended to {@code out} by {@link #finish}. */
         Root<L> add(String path, List<L> out) {
             Root<L> root = new Root<>(out);
@@ -747,7 +743,7 @@ final class Input {
      */
     static int readFile(Path file, Scratch scratch) throws IOException {
         try (FileChannel channel = FileChannel.open(file, NO_FOLLOW_READ)) {
-            return readChannel(channel, scratch, file);
+            return readChannel(channel, scratch);
         }
     }
 
@@ -756,7 +752,7 @@ final class Input {
      * is not that end: FUSE and network file systems answer short before it, and a regular
      * file's end costs one more read that returns nothing.
      */
-    static int readChannel(ReadableByteChannel channel, Scratch scratch, Path file) throws IOException {
+    static int readChannel(ReadableByteChannel channel, Scratch scratch) throws IOException {
         ByteBuffer staging = scratch.fileBuffer;
         int n = 0;
         while (true) {
@@ -765,11 +761,7 @@ final class Input {
             if (read <= 0) {
                 return n;
             }
-            byte[] buf = classBytes(scratch, n + read);
-            if (buf.length < n + read) {
-                throw new IOException("file too large: " + file);
-            }
-            staging.get(0, buf, n, read);
+            staging.get(0, classBytes(scratch, n + read), n, read);
             n += read;
         }
     }

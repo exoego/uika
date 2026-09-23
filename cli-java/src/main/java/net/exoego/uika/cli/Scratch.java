@@ -62,21 +62,13 @@ final class Scratch {
         }
     }
 
-    private static volatile ForkJoinPool pool;
+    private static final class PoolHolder {
+        static final ForkJoinPool POOL = new ForkJoinPool(threads(), Worker::new, null, false);
+    }
 
-    /** The shared pool: one worker per hardware thread, like rayon's default. */
+    /** The shared pool: one worker per hardware thread. */
     static ForkJoinPool pool() {
-        ForkJoinPool p = pool;
-        if (p == null) {
-            synchronized (Scratch.class) {
-                p = pool;
-                if (p == null) {
-                    p = new ForkJoinPool(threads(), Worker::new, null, false);
-                    pool = p;
-                }
-            }
-        }
-        return p;
+        return PoolHolder.POOL;
     }
 
     static int threads() {

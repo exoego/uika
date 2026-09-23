@@ -472,7 +472,7 @@ class InputTest {
         };
         Scratch scratch = Scratch.current();
 
-        int n = Input.readChannel(java.nio.channels.Channels.newChannel(trickle), scratch, Path.of("trickle"));
+        int n = Input.readChannel(java.nio.channels.Channels.newChannel(trickle), scratch);
 
         assertEquals(data.length, n);
         assertArrayEquals(data, java.util.Arrays.copyOf(Input.classBytes(scratch, n), n));
