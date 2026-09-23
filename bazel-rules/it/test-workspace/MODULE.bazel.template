@@ -6,3 +6,10 @@ local_path_override(
     module_name = "uika",
     path = "@UIKA_RULES@",
 )
+
+# This workspace is a root of its own, so the ruleset's protobuf override (see its
+# MODULE.bazel) does not reach it and is repeated here.
+single_version_override(
+    module_name = "protobuf",
+    version = "36.2",
+)

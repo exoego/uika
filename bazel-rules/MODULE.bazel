@@ -12,6 +12,19 @@ module(
 
 bazel_dep(name = "rules_java", version = "9.1.0")
 
+# rules_java resolves protobuf 33.4 (rules_cc asks for it), and every protobuf before 34.0
+# depends on rules_apple, which brings rules_swift. Its local_config repository runs the
+# host's swiftc during toolchain resolution, and GitHub's ubuntu runners ship one, so the
+# first Bazel command of every job spent about 22s there (Bazel profile, run 35821502199).
+# No rules_java release declares a newer protobuf, hence the override. Overrides are
+# honoured in the root module only, so this line does nothing in a consumer's build, and
+# it/*/MODULE.bazel.template carry their own. protobuf 35+ wants Bazel 8, which
+# .bazelversion satisfies.
+single_version_override(
+    module_name = "protobuf",
+    version = "36.2",
+)
+
 # Declared here so a build that only loads the rules gets a working uika_upgrade_check.
 # The repository is lazy at module resolution, but the binary rides in every check
 # target's data, so BUILDING one (a //... sweep included) fetches it; only a build that
