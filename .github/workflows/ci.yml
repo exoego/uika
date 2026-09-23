@@ -446,12 +446,12 @@ jobs:
             ~/.cache/bazel/_bazel_runner/cache/repos/v1
           key: ${{ steps.cache-bazel.outputs.cache-primary-key }}
 
-  # The repository ruleset requires a check named "Test and lint", which predates the split.
-  # This job carries that name and fails when any tool job did not pass. always() is what
-  # makes that hold. Without it a failed need skips this job, and a skipped job reports
-  # success to the ruleset.
-  check:
-    name: Test and lint
+  # The repository ruleset requires one check named "Quality Gate", so the tool jobs can be
+  # renamed or added without touching repository settings. This job carries that name and
+  # fails when any tool job did not pass. always() is what makes that hold. Without it a
+  # failed need skips this job, and a skipped job reports success to the ruleset.
+  gate:
+    name: Quality Gate
     if: always()
     needs: [cli, gradle, maven, sbt, mill, clojure, lein, bazel, bazel-maven]
     runs-on: ubuntu-latest
