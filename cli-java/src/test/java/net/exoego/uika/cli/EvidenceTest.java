@@ -103,6 +103,17 @@ class EvidenceTest {
         assertEquals(1, e.distinctClasses());
     }
 
+    /** A log shipper may put its own tag group in front of the JVM's. The class,load group still wins. */
+    @Test
+    void aClassLoadGroupIsTrustedBesideAForeignOne() {
+        Evidence.LoadEvidence e = parse("""
+                [app,worker] [0.1s][info][class,load] com.example.Shipped source: file:/app.jar
+                [app,worker] com.example.Dropped
+                """);
+        assertNotNull(e.observed("com/example/Shipped"));
+        assertEquals(1, e.distinctClasses());
+    }
+
     /**
      * A cause stack is reduced to its trigger, frame lines are never read as loaded classes,
      * and the first stack wins.
@@ -783,6 +794,17 @@ class EvidenceTest {
         assertEquals(
                 "cannot create directory " + file + "/sub for the draft exclude file: Not a directory",
                 assertThrows(UikaException.class, () -> Evidence.createDraftPlaceholder(deeper)).getMessage());
+    }
+
+    /** A draft at the file system root has "/" as its parent, however many slashes lead. */
+    @Test
+    void aDraftAtTheRootNeedsNoDirectoryCreated() {
+        // /usr is a directory on every Unix, so nothing is ever written there.
+        for (String path : List.of("/usr", "//usr")) {
+            assertEquals(
+                    "cannot write draft exclude file " + path + ": Is a directory",
+                    assertThrows(UikaException.class, () -> Evidence.createDraftPlaceholder(path)).getMessage());
+        }
     }
 
     @Test
