@@ -102,11 +102,29 @@ class ScanTest {
     }
 
     /**
-     * A chunk boundary is a barrier, not a semantic line: first-wins, duplicate skipping and
-     * the scanned count must come out the same wherever the boundaries fall.
+     * The scan takes an early directory read only for its own paths and edge setting. Any
+     * other is left to finish on its own and the scan reads for itself.
      */
     @Test
-    void oneChunkPerPathScansLikeOneChunkForAll() throws Exception {
+    void anEarlyDirectoryReadIsUsedOnlyForTheSamePathsAndEdges() throws Exception {
+        String first = writeJar(dir.resolve("first.jar"), "app/A.class", classFile("app/A", "lib/Base"));
+        String second = writeJar(dir.resolve("second.jar"), "app/B.class", classFile("app/B", "lib/Other"));
+        List<String> both = List.of(first, second);
+        ApiIndex lib = library("lib/Base", "lib/Other");
+        MemberProbe probe = new MemberProbe(new long[0]);
+        Map<String, String> expected = graphOf(scan(both, false));
+
+        assertEquals(expected, graphOf(Scan.scanTargetPaths(both, lib, probe, false, Scan.prepareAhead(both, false))));
+        assertEquals(expected, graphOf(Scan.scanTargetPaths(both, lib, probe, true, Scan.prepareAhead(both, false))));
+        assertEquals(expected, graphOf(Scan.scanTargetPaths(both, lib, probe, false, Scan.prepareAhead(List.of(first), false))));
+    }
+
+    /**
+     * The window is a memory bound, not a semantic line: first-wins, duplicate skipping and
+     * the scanned count must come out the same however many paths are in flight.
+     */
+    @Test
+    void oneWindowPerPathScansLikeOneWindowForAll() throws Exception {
         byte[] b = classFile("app/B", "java/lang/Object");
         String first = writeJar(
                 dir.resolve("first.jar"),

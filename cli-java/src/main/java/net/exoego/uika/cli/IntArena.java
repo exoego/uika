@@ -19,19 +19,11 @@ final class IntArena {
     private static final int CHUNK = 1 << BITS;
     private static final int MASK = CHUNK - 1;
 
-    private static final java.lang.invoke.VarHandle CHUNKS;
     private static final java.lang.invoke.VarHandle ELEMENT =
             java.lang.invoke.MethodHandles.arrayElementVarHandle(IntBuffer[].class);
 
-    static {
-        try {
-            CHUNKS = java.lang.invoke.MethodHandles.lookup().findVarHandle(IntArena.class, "chunks", IntBuffer[].class);
-        } catch (ReflectiveOperationException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-
-    private IntBuffer[] chunks = new IntBuffer[4];
+    /** Volatile so a reader that races the writer sees a grown array whole; the read is cheap next to the buffer access it guards. */
+    private volatile IntBuffer[] chunks = new IntBuffer[4];
     private int chunkCount;
     private int size;
 
@@ -49,7 +41,7 @@ final class IntArena {
      * Zero is what an unwritten slot holds anyway, chunks being zero-filled.
      */
     int getOrZero(int index) {
-        IntBuffer[] c = (IntBuffer[]) CHUNKS.getAcquire(this);
+        IntBuffer[] c = chunks;
         int chunk = index >>> BITS;
         if (chunk >= c.length) {
             return 0;
@@ -96,13 +88,14 @@ final class IntArena {
         IntBuffer chunk = ByteBuffer.allocateDirect(CHUNK * Integer.BYTES)
                 .order(ByteOrder.nativeOrder())
                 .asIntBuffer();
-        if (chunkCount == chunks.length) {
-            IntBuffer[] bigger = new IntBuffer[chunks.length * 2];
-            System.arraycopy(chunks, 0, bigger, 0, chunkCount);
+        IntBuffer[] c = chunks;
+        if (chunkCount == c.length) {
+            IntBuffer[] bigger = new IntBuffer[c.length * 2];
+            System.arraycopy(c, 0, bigger, 0, chunkCount);
             bigger[chunkCount] = chunk;
-            CHUNKS.setRelease(this, bigger);
+            chunks = bigger;
         } else {
-            ELEMENT.setRelease(chunks, chunkCount, chunk);
+            ELEMENT.setRelease(c, chunkCount, chunk);
         }
         chunkCount++;
     }

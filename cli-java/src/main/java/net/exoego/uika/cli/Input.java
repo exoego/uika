@@ -476,13 +476,16 @@ final class Input {
             int nextSequence;
             /** The walk plus the batches not yet run; the leaves are complete at zero. */
             final java.util.concurrent.atomic.AtomicInteger pending = new java.util.concurrent.atomic.AtomicInteger(1);
-            /** Completed at zero pending, exceptionally when an item of any root failed. Never run. */
+            /**
+             * Run to completion by the last item, which is what wakes a joiner; completed
+             * exceptionally instead when an item of any root failed.
+             */
             final RecursiveAction done = new RecursiveAction() {
                 private static final long serialVersionUID = 1L;
 
                 @Override
                 protected void compute() {
-                    // Completed by the items, never by running it.
+                    // The leaves are already in place; running this only marks them complete.
                 }
             };
 
@@ -492,7 +495,7 @@ final class Input {
 
             private void itemDone() {
                 if (pending.decrementAndGet() == 0) {
-                    done.quietlyComplete();
+                    done.quietlyInvoke();
                 }
             }
         }
