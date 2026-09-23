@@ -432,10 +432,7 @@ final class Check {
         java.util.Arrays.sort(sorted, Intern::compare);
         for (int name : sorted) {
             int node = scan.graph.node(name);
-            String entry = scan.entryOverrides.get(name);
-            if (entry == null) {
-                entry = Intern.str(name) + ".class";
-            }
+            String entry = entryName(scan.entryOverrides, name);
             bySource.computeIfAbsent(scan.graph.sourceOf(node), k -> new ArrayList<>()).add(new Input.Wanted(name, entry));
         }
 
@@ -484,6 +481,12 @@ final class Check {
             warnings.addAll(sourceWarnings[i]);
         }
         return index;
+    }
+
+    /** The entry pass 1 found a class under, which differs from its name inside BOOT-INF/classes and the like. */
+    private static String entryName(Map<Integer, String> entryOverrides, int className) {
+        String entry = entryOverrides.get(className);
+        return entry != null ? entry : Intern.str(className) + ".class";
     }
 
     // ---- the check ----
@@ -1628,10 +1631,7 @@ final class Check {
                 return cached - 1;
             }
             int[] found = {Intern.NONE};
-            String entry = entryOverrides.get(className);
-            if (entry == null) {
-                entry = Intern.str(className) + ".class";
-            }
+            String entry = entryName(entryOverrides, className);
             try {
                 Input.fetchEntries(Intern.str(graph.sourceOf(node)), List.of(new Input.Wanted(className, entry)), (name, bytes, length) -> {
                     Scratch scratch = Scratch.current();
