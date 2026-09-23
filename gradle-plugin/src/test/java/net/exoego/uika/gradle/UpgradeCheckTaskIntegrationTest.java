@@ -708,6 +708,201 @@ final class UpgradeCheckTaskIntegrationTest {
                 "the binary named by UIKA_CLI_PATH did not run");
     }
 
+    /// TestKit loads the plugin from its classes directory, which carries no manifest, so
+    /// there is no Implementation-Version to default the CLI version from and an absent
+    /// -PuikaCliVersion has to fail naming the knob. A repackaged plugin jar looks the same.
+    @Test
+    void anUnknownCliVersionIsReportedBeforeResolving() {
+        var result = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after)
+                .withPluginClasspath()
+                .forwardOutput()
+                .buildAndFail();
+
+        assertTrue(result.getOutput().contains(
+                        "uika-cli version is unknown; pass -PuikaCliVersion=<version>"),
+                () -> "an absent version was not reported with the knob to set:\n"
+                        + result.getOutput());
+    }
+
+    /// The jar's detached configuration is wired after evaluation from the version that is
+    /// final then. The task graph becoming ready is the one window left between that wiring
+    /// and execution, where a task property can still be set. A version arriving there is
+    /// present with no configuration behind it, and the action has to say which version it
+    /// could not resolve rather than fail on an empty file set.
+    @Test
+    void aVersionSetAfterWiringIsReportedAsUnresolved() throws Exception {
+        write(projectDir.resolve("build.gradle.kts"), """
+                import net.exoego.uika.gradle.UpgradeCheckTask
+
+                plugins {
+                    id("net.exoego.uika")
+                }
+
+                repositories {
+                    maven {
+                        url = uri("%s")
+                        metadataSources { artifact() }
+                    }
+                }
+
+                gradle.taskGraph.whenReady {
+                    tasks.withType<UpgradeCheckTask>().configureEach {
+                        cliVersion.set("%s")
+                    }
+                }
+                """.formatted(repoDir.toUri(), CLEAN_VERSION));
+
+        var result = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after)
+                .withPluginClasspath()
+                .forwardOutput()
+                .buildAndFail();
+
+        assertTrue(result.getOutput().contains(
+                        "uika-cli " + CLEAN_VERSION + " did not resolve to a jar"),
+                () -> "a late version was not reported as unresolved:\n" + result.getOutput());
+    }
+
+    /// The default CLI version is the plugin's own, read from the jar's Implementation-Version
+    /// so that one coordinate bump moves both. TestKit's classes directory has no manifest, so
+    /// this test alone loads the built jar, publishes a stub at whatever version its manifest
+    /// names, and runs the check with no -PuikaCliVersion.
+    @Test
+    void cliVersionDefaultsToThePluginsOwnVersion() throws Exception {
+        var jar = Path.of(System.getProperty("uika.plugin.jar"));
+        String own;
+        try (var jarFile = new java.util.jar.JarFile(jar.toFile())) {
+            own = jarFile.getManifest().getMainAttributes().getValue("Implementation-Version");
+        }
+        assertNotNull(own, "the plugin jar carries no Implementation-Version: " + jar);
+        publishStubCli(own, "uika-stub: running the plugin's own version", 0);
+
+        var result = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after)
+                .withPluginClasspath(List.of(jar.toFile()))
+                .forwardOutput()
+                .build();
+
+        assertEquals(TaskOutcome.SUCCESS,
+                Objects.requireNonNull(result.task(":uikaUpgradeCheck")).getOutcome());
+        assertTrue(result.getOutput().contains("uika-stub: running the plugin's own version"),
+                () -> "the stub published at " + own + " did not run:\n" + result.getOutput());
+    }
+
+    /// A regular file that is not a recording is refused while the plugin applies: handed
+    /// to JFR as a filename it would make every test JVM abort at startup with an error that
+    /// never mentions uika.
+    @Test
+    void aRegularFileThatIsNotARecordingIsRejectedAsTheJfrValue() throws Exception {
+        var notes = Files.writeString(projectDir.resolve("notes.txt"), "not a recording\n");
+
+        var result = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments("tasks", "-PuikaJfr=" + notes)
+                .withPluginClasspath()
+                .forwardOutput()
+                .buildAndFail();
+
+        assertTrue(result.getOutput().contains("-PuikaJfr must name a directory"),
+                () -> "a regular file was not refused as the JFR value:\n" + result.getOutput());
+        assertTrue(result.getOutput().contains(notes.toString()),
+                () -> "the refusal does not name the file:\n" + result.getOutput());
+    }
+
+    /// Under the build cache a Test task that recorded once would be served from the cache
+    /// on the next run, and an unchanged one would be up to date. Neither forks a JVM, so a
+    /// collect run would upload nothing with no symptom. The injected task therefore never
+    /// caches and never goes up to date: two runs under --build-cache both fork, and each
+    /// leaves its own recording in the directory.
+    @Test
+    void testJvmsRecordOnEveryRunUnderTheBuildCache() throws Exception {
+        var logDir = projectDir.resolve("load-logs");
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    java
+                    id("net.exoego.uika")
+                }
+
+                dependencies {
+                    testImplementation(files(%s))
+                }
+
+                tasks.test {
+                    useJUnitPlatform()
+                }
+                """.formatted(junitJarsLiteral()));
+        write(projectDir.resolve("src/test/java/example/ProbeTest.java"), """
+                package example;
+
+                import org.junit.jupiter.api.Test;
+
+                class ProbeTest {
+                    @Test
+                    void loads() {
+                        new Object();
+                    }
+                }
+                """);
+        String[] args = {"test", "--build-cache", "--stacktrace", "-PuikaJfr=" + logDir};
+
+        var first = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments(args)
+                .withPluginClasspath()
+                .forwardOutput()
+                .build();
+        assertEquals(TaskOutcome.SUCCESS, Objects.requireNonNull(first.task(":test")).getOutcome());
+        assertEquals(1, recordingsIn(logDir), "the test JVM did not record into " + logDir);
+
+        var second = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments(args)
+                .withPluginClasspath()
+                .forwardOutput()
+                .build();
+        assertEquals(TaskOutcome.SUCCESS, Objects.requireNonNull(second.task(":test")).getOutcome(),
+                "a cached or up-to-date test forks no JVM and records nothing");
+        assertEquals(2, recordingsIn(logDir), "the second run did not record into " + logDir);
+    }
+
+    /** The JUnit jars this test JVM runs on, as a Kotlin argument list for {@code files()}. */
+    private static String junitJarsLiteral() throws ClassNotFoundException {
+        var jars = new java.util.LinkedHashSet<String>();
+        for (String name : List.of(
+                "org.junit.jupiter.api.Test",
+                "org.junit.jupiter.engine.JupiterTestEngine",
+                "org.junit.platform.engine.TestEngine",
+                "org.junit.platform.launcher.Launcher",
+                "org.junit.platform.commons.JUnitException",
+                "org.opentest4j.AssertionFailedError")) {
+            var location = Class.forName(name).getProtectionDomain().getCodeSource().getLocation();
+            jars.add("\"" + Path.of(location.getPath()).toString().replace("\\", "\\\\") + "\"");
+        }
+        return String.join(", ", jars);
+    }
+
+    private static long recordingsIn(Path dir) throws IOException {
+        try (var files = Files.list(dir)) {
+            return files.filter(net.exoego.uika.plugin.core.JfrEvidence::isRecording).count();
+        }
+    }
+
     private GradleRunner runner(String cliVersion) {
         return GradleRunner.create()
                 .withProjectDir(projectDir.toFile())

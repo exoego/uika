@@ -312,6 +312,51 @@ final class UikaPluginIntegrationTest {
         }
     }
 
+    /// A resolvable non-default configuration passes the guard and is the one the dump reads:
+    /// asked for compileClasspath, the dump holds a compileOnly jar and not a runtimeOnly one,
+    /// the reverse of what the default runtimeClasspath gives.
+    @Test
+    void aResolvableConfigurationPropertySelectsWhatIsDumped() throws Exception {
+        write(projectDir.resolve("settings.gradle.kts"), """
+                rootProject.name = "dummy-uika-consumer"
+                include("app")
+                """);
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    id("net.exoego.uika")
+                }
+                """);
+        var appDir = projectDir.resolve("app");
+        write(appDir.resolve("build.gradle.kts"), """
+                plugins {
+                    java
+                }
+
+                dependencies {
+                    compileOnly(files("libs/compile-only.jar"))
+                    runtimeOnly(files("libs/runtime-only.jar"))
+                }
+                """);
+        Files.createDirectories(appDir.resolve("libs"));
+        Files.write(appDir.resolve("libs/compile-only.jar"), new byte[0]);
+        Files.write(appDir.resolve("libs/runtime-only.jar"), new byte[0]);
+        var output = projectDir.resolve("classpath.json");
+
+        runDump(output);
+        var byDefault = artifactPaths(output);
+        assertTrue(byDefault.stream().anyMatch(p -> p.endsWith("runtime-only.jar")),
+                "runtimeClasspath holds the runtimeOnly jar: " + byDefault);
+        assertFalse(byDefault.stream().anyMatch(p -> p.endsWith("compile-only.jar")),
+                "runtimeClasspath does not hold the compileOnly jar: " + byDefault);
+
+        runDump(output, "-PuikaConfiguration=compileClasspath");
+        var compile = artifactPaths(output);
+        assertTrue(compile.stream().anyMatch(p -> p.endsWith("compile-only.jar")),
+                "compileClasspath holds the compileOnly jar: " + compile);
+        assertFalse(compile.stream().anyMatch(p -> p.endsWith("runtime-only.jar")),
+                "compileClasspath does not hold the runtimeOnly jar: " + compile);
+    }
+
     /// The failure belongs to the dump, not to the build. This same file catches an
     /// unsupported platform while wiring for the same reason: the per-module task is
     /// realized by `gradle tasks` and by IDE sync, and a bad value for a dump-only property
@@ -437,6 +482,22 @@ final class UikaPluginIntegrationTest {
         assertAppAttributesLib(output);
     }
 
+    /// A producer without resources never creates build/resources/main. The built dump drops
+    /// the directory that is not there instead of naming a path the CLI cannot open, and
+    /// still lists the classes directory.
+    @Test
+    void aProjectDependencyWithoutResourcesIsDumpedAsItsClassesAlone() throws Exception {
+        var output = projectDir.resolve("classpath.json");
+        writeMultiModuleProject(false);
+
+        var result = runDump(output);
+        assertTaskSuccess(result, ":lib:compileJava");
+        assertTaskSuccess(result, ":app:uikaDumpModuleClasspath");
+        var libPaths = libPathsListedByApp(output);
+        assertEquals(1, libPaths.size(), ":app must list :lib's classes directory alone: " + libPaths);
+        assertTrue(libPaths.get(0).endsWith(classesDir("lib")), libPaths.get(0));
+    }
+
     /// -PuikaBuildOutputs=false keeps the old resolution-only dump: nothing is compiled,
     /// and the unbuilt project-dependency jar still appears in the dump with its project
     /// attribution, so the CLI can warn about (or substitute) the missing file instead of
@@ -559,24 +620,8 @@ final class UikaPluginIntegrationTest {
 
     /** The :app module's dump attributes the :lib project-dependency jar and lists built classesDirs. */
     private static void assertAppAttributesLib(Path output) throws IOException {
-        @SuppressWarnings("unchecked")
-        var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
-        @SuppressWarnings("unchecked")
-        var modules = (List<Map<String, Object>>) doc.get("modules");
-        var appModule = modules.stream()
-                .filter(module -> Objects.equals(":app", module.get("module")))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError(":app module is missing from " + modules));
-        @SuppressWarnings("unchecked")
-        var artifacts = (List<Map<String, Object>>) doc.get("artifacts");
-        @SuppressWarnings("unchecked")
-        var refs = (List<Number>) appModule.get("artifactRefs");
-        var libPaths = refs.stream()
-                .map(i -> artifacts.get(i.intValue()))
-                .filter(a -> Objects.equals(":lib", a.get("project")))
-                .map(a -> rootedPath(doc, a))
-                .toList();
-        assertEquals(2, libPaths.size(), ":app must list :lib's classes and resources directories in " + artifacts);
+        var libPaths = libPathsListedByApp(output);
+        assertEquals(2, libPaths.size(), ":app must list :lib's classes and resources directories: " + libPaths);
         // Classes first, then resources: the order the classpath has them.
         assertTrue(libPaths.get(0).endsWith(classesDir("lib")), libPaths.get(0));
         assertTrue(libPaths.get(1).endsWith(resourcesDir("lib")), libPaths.get(1));
@@ -587,8 +632,34 @@ final class UikaPluginIntegrationTest {
                 "the resources directory carries the service file the CLI reads providers from");
         @SuppressWarnings("unchecked")
         var classesDirs =
-                (List<Map<String, Object>>) appModule.get("classesDirs");
-        assertFalse(classesDirs.isEmpty(), ":app classesDirs is empty: " + appModule);
+                (List<Map<String, Object>>) appModule(output).get("classesDirs");
+        assertFalse(classesDirs.isEmpty(), ":app classesDirs is empty: " + appModule(output));
+    }
+
+    /** The paths :app's artifact list attributes to :lib, in the order the dump has them. */
+    private static List<String> libPathsListedByApp(Path output) throws IOException {
+        @SuppressWarnings("unchecked")
+        var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        @SuppressWarnings("unchecked")
+        var artifacts = (List<Map<String, Object>>) doc.get("artifacts");
+        @SuppressWarnings("unchecked")
+        var refs = (List<Number>) appModule(output).get("artifactRefs");
+        return refs.stream()
+                .map(i -> artifacts.get(i.intValue()))
+                .filter(a -> Objects.equals(":lib", a.get("project")))
+                .map(a -> rootedPath(doc, a))
+                .toList();
+    }
+
+    private static Map<String, Object> appModule(Path output) throws IOException {
+        @SuppressWarnings("unchecked")
+        var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        @SuppressWarnings("unchecked")
+        var modules = (List<Map<String, Object>>) doc.get("modules");
+        return modules.stream()
+                .filter(module -> Objects.equals(":app", module.get("module")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(":app module is missing from " + modules));
     }
 
     /** Single app module with a second file dependency toggled by -PuikaTestExtraJar. */
@@ -621,6 +692,10 @@ final class UikaPluginIntegrationTest {
     }
 
     private void writeMultiModuleProject() throws IOException {
+        writeMultiModuleProject(true);
+    }
+
+    private void writeMultiModuleProject(boolean libHasResources) throws IOException {
         write(projectDir.resolve("settings.gradle.kts"), """
                 rootProject.name = "dummy-uika-consumer"
                 include("app")
@@ -649,8 +724,10 @@ final class UikaPluginIntegrationTest {
                     }
                 }
                 """);
-        // A resource, so :lib's resources directory exists and the dump can be seen to list it.
-        write(projectDir.resolve("lib/src/main/resources/META-INF/services/example.Spi"), "example.Lib\n");
+        if (libHasResources) {
+            // A resource, so :lib's resources directory exists and the dump can be seen to list it.
+            write(projectDir.resolve("lib/src/main/resources/META-INF/services/example.Spi"), "example.Lib\n");
+        }
         write(projectDir.resolve("app/build.gradle.kts"), """
                 plugins {
                     java

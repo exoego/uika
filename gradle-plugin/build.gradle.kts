@@ -84,6 +84,12 @@ val testKitExec = layout.buildDirectory.file("jacoco/testKit.exec")
 
 tasks.test {
     useJUnitPlatform()
+    // TestKit loads the plugin from its classes directory, which has no manifest. The one
+    // test of the CLI version's default loads the built jar instead, since that default is
+    // the jar's Implementation-Version.
+    val pluginJar = tasks.jar.flatMap { it.archiveFile }
+    inputs.file(pluginJar)
+    doFirst { systemProperty("uika.plugin.jar", pluginJar.get().asFile.absolutePath) }
     // The jacoco plugin instruments every Test task by default, so `make gradle-check` would
     // pay for coverage it never reports.
     extensions.getByType<JacocoTaskExtension>().isEnabled = coverageEnabled
