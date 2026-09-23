@@ -215,12 +215,9 @@ final class Intern {
      * own and the accessors read one level, never a chain.
      */
     private static int prefixLength(byte[] buf, int off, int len) {
-        if (len == 0 || buf[off + len - 1] == '/') {
-            return 0;
-        }
         for (int i = off + len - 2; i >= off; i--) {
             if (buf[i] == '/') {
-                return i + 1 - off;
+                return buf[off + len - 1] == '/' ? 0 : i + 1 - off;
             }
         }
         return 0;
@@ -280,16 +277,16 @@ final class Intern {
 
     /** A range of {@code len} arena bytes inside one chunk; the skipped tail of a chunk is never used. */
     private static long claim(int len) {
-        while (true) {
-            long top = STR_TOP.get();
-            long pos = top;
-            if ((pos & STR_MASK) + len > STR_CHUNK) {
-                pos = (pos + STR_CHUNK) & ~(long) STR_MASK;
-            }
-            if (STR_TOP.compareAndSet(top, pos + len)) {
-                return pos;
-            }
+        return STR_TOP.accumulateAndGet(len, Intern::advance) - len;
+    }
+
+    /** The arena top after a claim of {@code len} bytes at {@code top}, skipping a chunk's tail the claim would straddle. */
+    private static long advance(long top, long len) {
+        long pos = top;
+        if ((pos & STR_MASK) + len > STR_CHUNK) {
+            pos = (pos + STR_CHUNK) & ~(long) STR_MASK;
         }
+        return pos + len;
     }
 
     /** The first of {@code n} fresh consecutive ids. */

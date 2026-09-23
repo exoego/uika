@@ -207,6 +207,25 @@ class InternTest {
         assertTrue(stats[1] > 0);
     }
 
+    /**
+     * A name ending in '/' is stored whole, so it can be another name's prefix: the classes
+     * under it share a package with each other, and the name itself is in no package of theirs.
+     */
+    @Test
+    void aNameEndingInASlashIsItsOwnWholeString() {
+        String directory = "trailing/slash-" + System.nanoTime() + "/";
+        int dir = Intern.intern(directory);
+        int a = Intern.intern(directory + "A");
+        int b = Intern.intern(directory + "B");
+        assertEquals(directory, Intern.str(dir));
+        assertEquals(directory.length(), Intern.length(dir));
+        assertEquals(directory + "A", Intern.str(a));
+        assertTrue(Intern.samePackage(a, b));
+        assertFalse(Intern.samePackage(dir, a));
+        assertTrue(Intern.startsWith(a, directory));
+        assertEquals(dir, Intern.intern(directory));
+    }
+
     /** A string longer than a thread's slab takes the shared arena path from the cached side too, and comes back whole. */
     @Test
     void aStringLongerThanASlabInternsThroughAThreadCache() {
