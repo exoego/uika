@@ -10,23 +10,37 @@ on:
 permissions:
   contents: read
 
-jobs:
-  check:
-    name: Test and lint
-    runs-on: ubuntu-latest
+concurrency:
+  group: ci-${{ github.ref }}
+  # Superseded PR pushes are pointless to finish. Every main commit still runs to the end.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# One job per build tool, so the tools run side by side. Each job runs the instrumented
+# target, which is the same suite its plain target runs with an agent attached, so every
+# suite runs once. The Clojure tool and the Leiningen plugin are the exception. Cloverage
+# rewrites forms rather than riding an agent, and lein-coverage leaves out it/run.sh, so
+# those two jobs run both targets.
+#
+# Every cache restores on pull requests and saves only on main. A PR-saved cache is scoped
+# to its branch yet still evicts the entries every branch shares. Each key has exactly one
+# job that saves it, the job whose build fills it, so parallel jobs never race to save the
+# same key. A job that needs another job's cache restores it read-only. The setup-java
+# steps are a cache layer only. mise owns the build JDK, and set-default keeps theirs off
+# JAVA_HOME and PATH. cache-dependency-path is what splits the keys. setup-java hashes the
+# listed files into the key, so two jobs listing different files own different entries.
+jobs:
+  cli:
+    name: CLI
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Every cache in this job restores on pull requests and saves only on
-      # main. A PR-saved cache is scoped to its branch yet still evicts the
-      # entries every branch shares.
+      # Every job installs the same tools, so this job alone saves the one mise cache.
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           cache_save: ${{ github.ref == 'refs/heads/main' }}
 
-      # The setup-java steps are a cache layer only. mise owns the build JDK,
-      # and set-default keeps this one off JAVA_HOME and PATH.
+      # Also restored by the clojure, lein and bazel jobs, which build the CLI jar.
       - name: Cache Gradle
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
@@ -35,7 +49,113 @@ jobs:
           set-default: false
           cache: gradle
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          cache-dependency-path: cli-java/*.gradle.kts
 
+      - name: Check version placeholders
+        run: make placeholder-check
+
+      - name: Test with coverage
+        run: make java-cli-coverage
+
+      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: cli-java/build/reports/jacoco/test/jacocoTestReport.xml
+          flags: java-cli
+          disable_search: true
+          fail_ci_if_error: true
+
+      - name: Probe fixture verdicts against a real JVM
+        run: make probe
+
+  gradle:
+    name: Gradle plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          cache_save: false
+
+      - name: Cache Gradle
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+          set-default: false
+          cache: gradle
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          cache-dependency-path: |
+            gradle-plugin/*.gradle.kts
+            tools/openrewrite/rewrite.gradle
+
+      - name: OpenRewrite dry run
+        run: make rewrite-check
+
+      - name: Check with coverage
+        run: make gradle-check-coverage
+
+      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: gradle-plugin/build/reports/jacoco/test/jacocoTestReport.xml
+          flags: gradle
+          disable_search: true
+          fail_ci_if_error: true
+
+  maven:
+    name: Maven plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          cache_save: false
+
+      # The invoker ITs resolve into target/it-repo, which ~/.m2 never covered, and
+      # refetching it cold every run is what tripped a 429 once a third IT was added.
+      - name: Cache Maven
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+          set-default: false
+          cache: maven
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          cache-path: |
+            ~/.m2/repository
+            maven-plugin/target/it-repo
+          cache-dependency-path: |
+            maven-plugin/pom.xml
+            maven-plugin/src/it/**/*.xml
+
+      # The coverage profile keeps the invoker ITs and hands them the agent through
+      # mavenOpts, so this is the whole of maven-verify.
+      - name: Verify with coverage
+        run: make maven-coverage
+
+      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: maven-plugin/target/site/jacoco/jacoco.xml,maven-plugin/target/site/jacoco-it/jacoco.xml
+          flags: maven
+          disable_search: true
+          fail_ci_if_error: true
+
+  sbt:
+    name: sbt plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          cache_save: false
+
+      # The Makefile redirects every sbt directory to /tmp/uika-sbt, so the default sbt
+      # paths would cache nothing.
       - name: Cache sbt and coursier
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
@@ -44,16 +164,135 @@ jobs:
           set-default: false
           cache: sbt
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
-          # The Makefile redirects every sbt directory to /tmp/uika-sbt, so
-          # the default sbt paths would cache nothing. Mill shares
-          # ~/.cache/coursier, hence build.mill in the hashed files.
           cache-path: |
             /tmp/uika-sbt
             ~/.cache/coursier
           cache-dependency-path: |
             sbt-plugin/build.sbt
             sbt-plugin/project/build.properties
-            mill-plugin/build.mill
+
+      # Runs checkClassFileVersions too, in the same sbt as the first scripted group.
+      - name: Scripted tests with coverage
+        run: make sbt-coverage
+
+      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: sbt-plugin/target/jacoco/jacoco.xml
+          flags: sbt
+          disable_search: true
+          fail_ci_if_error: true
+
+  mill:
+    name: Mill plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          cache_save: false
+
+      # Mill has no setup-java cache id, so it keeps a hand-rolled entry with the save
+      # step at the end of the job. Mill resolves through coursier, hence that directory.
+      - name: Restore Mill cache
+        id: cache-mill
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/mill
+            ~/.cache/coursier
+          key: mill-coursier-${{ runner.os }}-${{ hashFiles('mill-plugin/build.mill', 'mill-plugin/mill') }}
+          restore-keys: |
+            mill-coursier-${{ runner.os }}-
+
+      - name: Test with coverage
+        run: make mill-coverage
+
+      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: mill-plugin/out/jacoco/jacoco.xml
+          flags: mill
+          disable_search: true
+          fail_ci_if_error: true
+
+      - name: Save Mill cache
+        if: github.ref == 'refs/heads/main' && steps.cache-mill.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/mill
+            ~/.cache/coursier
+          key: ${{ steps.cache-mill.outputs.cache-primary-key }}
+
+  clojure:
+    name: Clojure tool
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          cache_save: false
+
+      - name: Cache Gradle
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+          set-default: false
+          cache: gradle
+          cache-read-only: true
+          cache-dependency-path: cli-java/*.gradle.kts
+
+      # ~/.gitlibs holds the Clojure CLI's git deps.
+      - name: Cache Maven and gitlibs
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+          set-default: false
+          cache: maven
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          cache-path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          cache-dependency-path: clojure-tool/deps.edn
+
+      - name: Test
+        run: make clojure-test
+
+      - name: Test with coverage
+        run: make clojure-coverage
+
+      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: clojure-tool/target/coverage/lcov.info
+          flags: clojure
+          disable_search: true
+          fail_ci_if_error: true
+
+  lein:
+    name: Leiningen plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          cache_save: false
+
+      - name: Cache Gradle
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+          set-default: false
+          cache: gradle
+          cache-read-only: true
+          cache-dependency-path: cli-java/*.gradle.kts
 
       - name: Cache Maven
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -63,46 +302,10 @@ jobs:
           set-default: false
           cache: maven
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
-          # ~/.m2 also serves Leiningen and the Clojure CLI, and ~/.gitlibs
-          # holds the Clojure CLI's git deps. The invoker ITs resolve into
-          # target/it-repo, which ~/.m2 never covered, and refetching it cold
-          # every run is what tripped a 429 once a third IT was added.
-          cache-path: |
-            ~/.m2/repository
-            ~/.gitlibs
-            maven-plugin/target/it-repo
-          cache-dependency-path: |
-            maven-plugin/pom.xml
-            maven-plugin/src/it/**/*.xml
-            clojure-tool/deps.edn
-            lein-plugin/project.clj
+          cache-path: ~/.m2/repository
+          cache-dependency-path: lein-plugin/project.clj
 
-      # Mill and Bazel have no setup-java cache id, so they keep hand-rolled
-      # entries with the save steps at the end of the job.
-      - name: Restore Mill cache
-        id: cache-mill
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/mill
-          key: mill-${{ runner.os }}-${{ hashFiles('mill-plugin/build.mill', 'mill-plugin/mill') }}
-          restore-keys: |
-            mill-${{ runner.os }}-
-
-      - name: Restore Bazel cache
-        id: cache-bazel
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          # The output base is deliberately not cached. The integration test
-          # cleans it on purpose (bazel-rules/it/run.sh explains why), so
-          # storing it would cost gigabytes the run discards.
-          path: |
-            ~/.cache/bazelisk
-            ~/.cache/bazel/_bazel_runner/cache/repos/v1
-          key: bazel-${{ runner.os }}-${{ hashFiles('bazel-rules/MODULE.bazel', 'bazel-rules/it/**/MODULE.bazel.template', 'bazel-rules/it/maven-workspace/maven_install-*.json', 'bazel-rules/.bazelversion') }}
-          restore-keys: |
-            bazel-${{ runner.os }}-
-
-      - name: Check
+      - name: Test
         # UIKA_IT_ALT_JAVA gives the lein integration test a second JDK, so it can
         # prove jdkRelease follows the project's :java-cmd and not lein's own JVM.
         # mise pins temurin-21 for the build, so any OTHER release the runner ships
@@ -117,17 +320,75 @@ jobs:
           done
           test -n "$alt" || { echo "no alternate JDK on this runner; JAVA_HOME_* are: $(env | grep -c '^JAVA_HOME_')" >&2; exit 1; }
           echo "alternate JVM for the lein probe: $alt"
-          make check UIKA_IT_ALT_JAVA="$alt"
+          make lein-test UIKA_IT_ALT_JAVA="$alt"
 
-      - name: Probe fixture verdicts against a real JVM
-        run: make probe
+      # No java-cli-build dependency, unlike clojure-coverage: the unit suite stubs the CLI
+      # with a shell script, and the real-CLI round trip stays in it/run.sh.
+      - name: Test with coverage
+        run: make lein-coverage
 
-      - name: Save Mill cache
-        if: github.ref == 'refs/heads/main' && steps.cache-mill.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
         with:
-          path: ~/.cache/mill
-          key: ${{ steps.cache-mill.outputs.cache-primary-key }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lein-plugin/target/coverage/lcov.info
+          flags: lein
+          disable_search: true
+          fail_ci_if_error: true
+
+  bazel:
+    name: Bazel rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          cache_save: false
+
+      - name: Cache Gradle
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+          set-default: false
+          cache: gradle
+          cache-read-only: true
+          cache-dependency-path: cli-java/*.gradle.kts
+
+      # Bazel has no setup-java cache id, so it keeps a hand-rolled entry with the save
+      # step at the end of the job.
+      - name: Restore Bazel cache
+        id: cache-bazel
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          # The output base is deliberately not cached. The integration test
+          # cleans it on purpose (bazel-rules/it/run.sh explains why), so
+          # storing it would cost gigabytes the run discards.
+          path: |
+            ~/.cache/bazelisk
+            ~/.cache/bazel/_bazel_runner/cache/repos/v1
+          key: bazel-${{ runner.os }}-${{ hashFiles('bazel-rules/MODULE.bazel', 'bazel-rules/it/**/MODULE.bazel.template', 'bazel-rules/it/maven-workspace/maven_install-*.json', 'bazel-rules/.bazelversion') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-
+
+      # `bazel coverage` runs //java:manifest_test, and the integration test runs with the
+      # agent attached, so this is the whole of bazel-test.
+      - name: Test with coverage
+        run: make bazel-coverage
+
+      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          # Two reports, because no one tool sees both halves: bazel.lcov is `bazel
+          # coverage` over //java:manifest_test, bazel-it.xml is the JaCoCo agent riding
+          # the integration test's `bazel run` invocations, which that number cannot see.
+          files: target/coverage/bazel.lcov,target/coverage/bazel-it.xml
+          flags: bazel
+          disable_search: true
+          fail_ci_if_error: true
+
+      - name: Test against Maven artifacts
+        run: make bazel-maven-test
 
       - name: Save Bazel cache
         if: github.ref == 'refs/heads/main' && steps.cache-bazel.outputs.cache-hit != 'true'
@@ -137,6 +398,24 @@ jobs:
             ~/.cache/bazelisk
             ~/.cache/bazel/_bazel_runner/cache/repos/v1
           key: ${{ steps.cache-bazel.outputs.cache-primary-key }}
+
+  # The repository ruleset requires a check named "Test and lint", which predates the split.
+  # This job carries that name and fails when any tool job did not pass. always() is what
+  # makes that hold. Without it a failed need skips this job, and a skipped job reports
+  # success to the ruleset.
+  check:
+    name: Test and lint
+    if: always()
+    needs: [cli, gradle, maven, sbt, mill, clojure, lein, bazel]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every tool job to pass
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS"
+          exit 1
 
   stage:
     name: Stage release artifacts
@@ -148,7 +427,7 @@ jobs:
       # No ~/.m2 restore on purpose. The cold local repo IS what this job tests:
       # v0.9.0's publish died in lein-stage because leiningen's javac subprocess had to
       # fetch lein's own clojure through the emptied :repositories, and every machine
-      # that has built the plugin once, the check job included, hides that. mise is
+      # that has built the plugin once, the lein job included, hides that. mise is
       # still restored, since the release runner restores the same tool cache.
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
@@ -220,163 +499,3 @@ jobs:
           assert re.fullmatch("[0-9a-f]{64}", pin), "stage.sh left the CLI jar unpinned: %r" % pin
           PY
 
-  coverage:
-    name: Coverage
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # The check job owns every cache this job shares a key with, so this one only
-      # restores.
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
-        with:
-          cache_save: false
-
-      - name: Cache Gradle
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
-        with:
-          distribution: temurin
-          java-version: 21
-          set-default: false
-          cache: gradle
-          cache-read-only: true
-
-      - name: Cache Maven
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
-        with:
-          distribution: temurin
-          java-version: 21
-          set-default: false
-          cache: maven
-          cache-read-only: true
-          cache-path: |
-            ~/.m2/repository
-            ~/.gitlibs
-            maven-plugin/target/it-repo
-          cache-dependency-path: |
-            maven-plugin/pom.xml
-            maven-plugin/src/it/**/*.xml
-            clojure-tool/deps.edn
-            lein-plugin/project.clj
-
-      - name: Cache sbt and coursier
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
-        with:
-          distribution: temurin
-          java-version: 21
-          set-default: false
-          cache: sbt
-          cache-read-only: true
-          cache-path: |
-            /tmp/uika-sbt
-            ~/.cache/coursier
-          cache-dependency-path: |
-            sbt-plugin/build.sbt
-            sbt-plugin/project/build.properties
-            mill-plugin/build.mill
-
-      - name: Restore Mill cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/mill
-          key: mill-${{ runner.os }}-${{ hashFiles('mill-plugin/build.mill', 'mill-plugin/mill') }}
-          restore-keys: |
-            mill-${{ runner.os }}-
-
-      - name: Restore Bazel cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cache/bazelisk
-            ~/.cache/bazel/_bazel_runner/cache/repos/v1
-          key: bazel-${{ runner.os }}-${{ hashFiles('bazel-rules/MODULE.bazel', 'bazel-rules/it/**/MODULE.bazel.template', 'bazel-rules/it/maven-workspace/maven_install-*.json', 'bazel-rules/.bazelversion') }}
-          restore-keys: |
-            bazel-${{ runner.os }}-
-
-      # Uploaded per target rather than in one batch, so a later target failing still
-      # publishes what the earlier ones measured.
-      - name: Java CLI coverage
-        run: make java-cli-coverage
-      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: cli-java/build/reports/jacoco/test/jacocoTestReport.xml
-          flags: java-cli
-          disable_search: true
-          fail_ci_if_error: true
-
-      - name: Gradle plugin coverage
-        run: make gradle-coverage
-      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: gradle-plugin/build/reports/jacoco/test/jacocoTestReport.xml
-          flags: gradle
-          disable_search: true
-          fail_ci_if_error: true
-
-      - name: Maven plugin coverage
-        run: make maven-coverage
-      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: maven-plugin/target/site/jacoco/jacoco.xml,maven-plugin/target/site/jacoco-it/jacoco.xml
-          flags: maven
-          disable_search: true
-          fail_ci_if_error: true
-
-      - name: Clojure tool coverage
-        run: make clojure-coverage
-      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: clojure-tool/target/coverage/lcov.info
-          flags: clojure
-          disable_search: true
-          fail_ci_if_error: true
-
-      # No java-cli-build dependency, unlike clojure-coverage: the unit suite stubs the CLI
-      # with a shell script, and the real-CLI round trip stays in it/run.sh.
-      - name: Leiningen plugin coverage
-        run: make lein-coverage
-      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: lein-plugin/target/coverage/lcov.info
-          flags: lein
-          disable_search: true
-          fail_ci_if_error: true
-
-      - name: sbt plugin coverage
-        run: make sbt-coverage
-      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: sbt-plugin/target/jacoco/jacoco.xml
-          flags: sbt
-          disable_search: true
-          fail_ci_if_error: true
-
-      - name: Mill plugin coverage
-        run: make mill-coverage
-      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: mill-plugin/out/jacoco/jacoco.xml
-          flags: mill
-          disable_search: true
-          fail_ci_if_error: true
-
-      - name: Bazel rules coverage
-        run: make bazel-coverage
-      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          # Two reports, because no one tool sees both halves: bazel.lcov is `bazel
-          # coverage` over //java:manifest_test, bazel-it.xml is the JaCoCo agent riding
-          # the integration test's `bazel run` invocations, which that number cannot see.
-          files: target/coverage/bazel.lcov,target/coverage/bazel-it.xml
-          flags: bazel
-          disable_search: true
-          fail_ci_if_error: true

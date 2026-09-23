@@ -20,7 +20,7 @@ ThisBuild / scalacOptions ++= Seq(
 // Guards the javacOptions floor below. sbt-plugin has no unit-test source set --
 // its tests are scripted builds -- and a scripted test could only see the version
 // of a jar it resolved, so the check reads the compile output directly. `make
-// sbt-scripted` runs it before scripted.
+// sbt-scripted` and `make sbt-coverage` run it before scripted.
 lazy val checkClassFileVersions = taskKey[Unit](
   "Fails when any compiled class needs a newer JVM than the release floor")
 
