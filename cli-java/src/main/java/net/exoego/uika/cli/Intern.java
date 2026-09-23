@@ -199,7 +199,8 @@ final class Intern {
         } else {
             long pos;
             if (cache != null && len <= SLAB) {
-                if (cache.internSlabEnd - cache.internSlabPos < len) {
+                // The null check covers the empty string, which fits any slab, even none.
+                if (cache.internSlabChunk == null || cache.internSlabEnd - cache.internSlabPos < len) {
                     cache.internSlabPos = claim(SLAB);
                     cache.internSlabEnd = cache.internSlabPos + SLAB;
                     cache.internSlabChunk = strChunk((int) (cache.internSlabPos >>> STR_BITS));
