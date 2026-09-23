@@ -221,8 +221,7 @@ class ReachTest {
         assertEquals("com/example/Spi", Intern.str(services.get(1).iface()));
         assertArrayEquals(syms("com/example/JarImpl"), services.get(1).impls());
         assertEquals(jar.toString(), Intern.str(services.get(1).source()));
-        // Rust prints this warning with `{e}`, which is the outermost context only, not the chain.
-        assertEquals(List.of(missing + ": cannot open " + missing), warnings);
+        assertEquals(List.of(missing + ": cannot open " + missing + ": No such file or directory"), warnings);
     }
 
     /** A symbol interned after the pass is simply unmarked, never out of bounds. */
@@ -332,7 +331,7 @@ class ReachTest {
         String missing = dir.resolve("gone.jar").toString();
         Object[] result = Reach.servicesOrWarning(missing);
         assertEquals(List.of(), result[0]);
-        assertEquals(missing + ": cannot open " + missing, result[1]);
+        assertEquals(missing + ": cannot open " + missing + ": No such file or directory", result[1]);
     }
 
     @Test

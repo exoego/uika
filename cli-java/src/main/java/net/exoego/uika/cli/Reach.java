@@ -68,7 +68,7 @@ final class Reach {
                         perPath[index] = servicesOf(path);
                     } catch (UikaException e) {
                         perPath[index] = List.of();
-                        failures[index] = path + ": " + outermost(e);
+                        failures[index] = path + ": " + e.getMessage();
                     } catch (IOException e) {
                         perPath[index] = List.of();
                         failures[index] = path + ": " + UikaException.describe(e);
@@ -85,18 +85,6 @@ final class Reach {
             }
         }
         return services;
-    }
-
-    /** Rust formats this warning with `{e}`, which prints the outermost context and not the chain. */
-    private static String outermost(UikaException e) {
-        String message = e.getMessage();
-        if (e.getCause() != null) {
-            String chained = ": " + UikaException.describe(e.getCause());
-            if (message.endsWith(chained)) {
-                return message.substring(0, message.length() - chained.length());
-            }
-        }
-        return message;
     }
 
     /**
@@ -162,7 +150,7 @@ final class Reach {
         try {
             return new Object[] {servicesOf(path), null};
         } catch (UikaException e) {
-            return new Object[] {List.of(), path + ": " + outermost(e)};
+            return new Object[] {List.of(), path + ": " + e.getMessage()};
         } catch (IOException e) {
             return new Object[] {List.of(), path + ": " + UikaException.describe(e)};
         }
