@@ -246,9 +246,13 @@ final class Inflate {
 
         int total = hlit + hdist;
         int i = 0;
+        // A code-length symbol needs at most 7 + 7 bits, so the refill is conditional, and the
+        // overrun check waits for the end of this bounded loop: reading past the entry only
+        // reaches the span's slack or the next entry, and the buffer bounds catch the rest.
         while (i < total) {
-            refill();
-            checkOverrun();
+            if (bitcnt < 14) {
+                refill();
+            }
             int entry = precodeTable[(int) (bitbuf & ((1 << PRECODE_BITS) - 1))];
             if (entry == INVALID) {
                 throw new FormatException("invalid code lengths set");
@@ -278,6 +282,7 @@ final class Inflate {
             Arrays.fill(l, i, i + repeat, value);
             i += repeat;
         }
+        checkOverrun();
         if (l[256] == 0) {
             throw new FormatException("invalid code -- missing end-of-block");
         }
@@ -293,6 +298,12 @@ final class Inflate {
      * Builds a decode table from canonical code lengths. A code no longer than
      * {@code primaryBits} is replicated across the primary table, so a lookup is one index. A
      * longer one goes through a subtable reached from its primary prefix.
+     *
+     * <p>The primary table is filled by doubling, not by one strided write per slot: after the
+     * codes of length {@code len} are written once each, the first {@code 2^len} slots are the
+     * period of everything so far, so the next half is a block copy. Nearly every class file is
+     * one dynamic block, so this build runs once per class and used to cost as much as the
+     * decode that followed it.
      */
     private void build(byte[] lengths, int at, int symbols, int[] table, int primaryBits, boolean litlenKind) throws FormatException {
         int[] cnt = count;
@@ -346,47 +357,59 @@ final class Inflate {
         int subPrefix = -1;
         int subStart = 0;
         int subBits = 0;
+        // Slots [0, region) hold every code written so far, replicated to that length.
+        int region = 1;
+        boolean precode = table == precodeTable;
         for (int len = 1; len <= maxLen; len++) {
             int n = cnt[len];
+            if (len <= primaryBits) {
+                System.arraycopy(table, 0, table, region, region);
+                region <<= 1;
+                for (int k = 0; k < n; k++, index++) {
+                    int symbol = order[index];
+                    table[Integer.reverse(code) >>> (32 - len)] = entryFor(symbol, litlenKind, precode) | len;
+                    code++;
+                }
+                code <<= 1;
+                continue;
+            }
             for (int k = 0; k < n; k++, index++) {
                 int symbol = order[index];
-                int payload = entryFor(symbol, litlenKind, table == precodeTable);
+                int payload = entryFor(symbol, litlenKind, precode);
                 int reversed = Integer.reverse(code) >>> (32 - len);
-                if (len <= primaryBits) {
-                    int entry = payload | len;
-                    for (int slot = reversed; slot < primarySize; slot += 1 << len) {
-                        table[slot] = entry;
+                int prefix = reversed & (primarySize - 1);
+                if (prefix != subPrefix) {
+                    // Codes arrive in canonical order, so every code sharing this prefix
+                    // follows contiguously. Size the subtable for the longest of them.
+                    subPrefix = prefix;
+                    subStart = next;
+                    subBits = len - primaryBits;
+                    int remaining = (1 << subBits) - (n - k);
+                    int l2 = len;
+                    while (remaining > 0 && l2 < maxLen) {
+                        l2++;
+                        subBits++;
+                        remaining = (remaining << 1) - cnt[l2];
                     }
-                } else {
-                    int prefix = reversed & (primarySize - 1);
-                    if (prefix != subPrefix) {
-                        // Codes arrive in canonical order, so every code sharing this prefix
-                        // follows contiguously. Size the subtable for the longest of them.
-                        subPrefix = prefix;
-                        subStart = next;
-                        subBits = len - primaryBits;
-                        int remaining = (1 << subBits) - (n - k);
-                        int l2 = len;
-                        while (remaining > 0 && l2 < maxLen) {
-                            l2++;
-                            subBits++;
-                            remaining = (remaining << 1) - cnt[l2];
-                        }
-                        next += 1 << subBits;
-                        if (next > table.length) {
-                            throw new FormatException("code table overflow");
-                        }
-                        table[prefix] = SUBTABLE | subStart << 16 | subBits << 8 | primaryBits;
+                    next += 1 << subBits;
+                    if (next > table.length) {
+                        throw new FormatException("code table overflow");
                     }
-                    int entry = payload | (len - primaryBits);
-                    int step = 1 << (len - primaryBits);
-                    for (int slot = reversed >>> primaryBits; slot < (1 << subBits); slot += step) {
-                        table[subStart + slot] = entry;
-                    }
+                    table[prefix] = SUBTABLE | subStart << 16 | subBits << 8 | primaryBits;
+                }
+                int entry = payload | (len - primaryBits);
+                int step = 1 << (len - primaryBits);
+                for (int slot = reversed >>> primaryBits; slot < (1 << subBits); slot += step) {
+                    table[subStart + slot] = entry;
                 }
                 code++;
             }
             code <<= 1;
+        }
+        // Codes shorter than the primary width leave the doubling unfinished.
+        while (region < primarySize) {
+            System.arraycopy(table, 0, table, region, region);
+            region <<= 1;
         }
     }
 
