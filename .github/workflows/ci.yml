@@ -367,7 +367,7 @@ jobs:
           path: |
             ~/.cache/bazelisk
             ~/.cache/bazel/_bazel_runner/cache/repos/v1
-          key: bazel-${{ runner.os }}-${{ hashFiles('bazel-rules/MODULE.bazel', 'bazel-rules/it/**/MODULE.bazel.template', 'bazel-rules/it/maven-workspace/maven_install-*.json', 'bazel-rules/.bazelversion') }}
+          key: bazel-${{ runner.os }}-${{ hashFiles('bazel-rules/MODULE.bazel', 'bazel-rules/it/test-workspace/MODULE.bazel.template', 'bazel-rules/.bazelversion') }}
           restore-keys: |
             bazel-${{ runner.os }}-
 
@@ -386,6 +386,51 @@ jobs:
           flags: bazel
           disable_search: true
           fail_ci_if_error: true
+
+      - name: Save Bazel cache
+        if: github.ref == 'refs/heads/main' && steps.cache-bazel.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/bazelisk
+            ~/.cache/bazel/_bazel_runner/cache/repos/v1
+          key: ${{ steps.cache-bazel.outputs.cache-primary-key }}
+
+  # Split from the bazel job because it was the critical path by about 50 seconds. Its own
+  # key, since the artifacts it fetches are the ones the lock files pin and the bazel job
+  # never touches them.
+  bazel-maven:
+    name: Bazel rules with Maven artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          cache_save: false
+
+      - name: Cache Gradle
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+          set-default: false
+          cache: gradle
+          cache-read-only: true
+          cache-dependency-path: cli-java/*.gradle.kts
+
+      - name: Restore Bazel cache
+        id: cache-bazel
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          # Not the output base, for the reason the bazel job gives.
+          path: |
+            ~/.cache/bazelisk
+            ~/.cache/bazel/_bazel_runner/cache/repos/v1
+          key: bazel-maven-${{ runner.os }}-${{ hashFiles('bazel-rules/MODULE.bazel', 'bazel-rules/it/maven-workspace/MODULE.bazel.template', 'bazel-rules/it/maven-workspace/maven_install-*.json', 'bazel-rules/.bazelversion') }}
+          restore-keys: |
+            bazel-maven-${{ runner.os }}-
+            bazel-${{ runner.os }}-
 
       - name: Test against Maven artifacts
         run: make bazel-maven-test
@@ -406,7 +451,7 @@ jobs:
   check:
     name: Test and lint
     if: always()
-    needs: [cli, gradle, maven, sbt, mill, clojure, lein, bazel]
+    needs: [cli, gradle, maven, sbt, mill, clojure, lein, bazel, bazel-maven]
     runs-on: ubuntu-latest
     steps:
       - name: Require every tool job to pass
