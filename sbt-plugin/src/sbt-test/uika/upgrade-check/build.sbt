@@ -192,6 +192,16 @@ checkTestJavaOptionsInjected := {
     sys.error(s"uikaJfr did not inject Test/javaOptions: $opts")
 }
 
+lazy val checkRecordingValueSkipsInjection = taskKey[Unit]("Asserts a .jfr uikaJfr value injects nothing into Test/javaOptions")
+
+// A .jfr value is consumption-only: a test JVM cannot record into an existing recording,
+// so the flag must stay out of Test/javaOptions while the check side still converts it.
+checkRecordingValueSkipsInjection := {
+  val opts = (Test / javaOptions).value
+  if (opts.exists(_.startsWith("-XX:StartFlightRecording")))
+    sys.error(s"a .jfr uikaJfr value must not make forked test JVMs record: $opts")
+}
+
 lazy val checkSubprojectTestJavaOptionsInjected = taskKey[Unit]("Asserts a root-project-scoped uikaJfr reaches subproject test JVMs")
 
 // A bare `uikaJfr := Some(...)` in build.sbt is root-project-scoped, and its directory has

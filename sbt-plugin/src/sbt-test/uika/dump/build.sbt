@@ -144,3 +144,13 @@ checkDumpRanOnce := {
   if (writers != 1)
     sys.error(s"expected exactly one uikaDumpClasspath writer, found $writers")
 }
+
+lazy val checkTestJavaOptionsUntouched = taskKey[Unit]("Asserts test JVMs are left alone without uikaJfr")
+
+// Nothing sets uikaJfr in this build, so the injection has to add nothing: a test JVM
+// told to record without being asked would write recordings nobody collects.
+checkTestJavaOptionsUntouched := {
+  val opts = (app / Test / javaOptions).value
+  if (opts.exists(_.startsWith("-XX:StartFlightRecording")))
+    sys.error(s"test JVMs must stay untouched without uikaJfr: $opts")
+}

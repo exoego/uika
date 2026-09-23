@@ -31,6 +31,15 @@ $ exists before.json.marker
 > set uikaJfr := None
 > set ThisBuild / uikaJfr := Some(baseDirectory.value / "load-logs")
 
+# A .jfr value: forked test JVMs are not told to record into it, and the check converts
+# it before the CLI sees it, the same as a recording found inside a directory. Root
+# scope, since the None set above shadows ThisBuild for the check's LocalRootProject read.
+> set uikaJfr := Some(baseDirectory.value / "load-logs" / "rec.jfr")
+> checkRecordingValueSkipsInjection
+> uikaUpgradeCheck before.json after.json
+> checkJfrConverted
+> set uikaJfr := None
+
 # With the override removed, the release is derived from what the subprojects compile for.
 > set ThisBuild / uikaJdkRelease := -1
 > uikaUpgradeCheck before.json after.json

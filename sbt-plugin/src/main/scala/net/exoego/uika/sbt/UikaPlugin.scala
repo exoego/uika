@@ -133,8 +133,11 @@ object UikaPlugin extends AutoPlugin {
         (LocalRootProject / uikaDraftExcludeFile).value.map(_.getAbsoluteFile.toPath).orNull
       UikaCli.runUpgradeCheck(binary, file(args.head).toPath, file(args(1)).toPath, (LocalRootProject / uikaFailOn).value, excludeFiles, jdkRelease, jdk, classLoadLogs, draftExcludeFile, (LocalRootProject / uikaMergedClasspath).value, (line: String) => log.info(line)) match {
         case 0 => ()
-        case 1 => sys.error("uika upgrade-check found broken references (see output above)")
-        case n => sys.error(s"uika upgrade-check failed with exit code $n")
+        // MessageOnlyException, not sys.error: the CLI already printed the finding, and
+        // sbt would otherwise offer a stack trace for it.
+        case 1 =>
+          throw new MessageOnlyException("uika upgrade-check found broken references (see output above)")
+        case n => throw new MessageOnlyException(s"uika upgrade-check failed with exit code $n")
       }
     },
     // Defined at the BUILD level so the whole-build merge exists ONCE. A projectSettings
