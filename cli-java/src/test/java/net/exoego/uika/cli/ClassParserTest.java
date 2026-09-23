@@ -292,6 +292,33 @@ class ClassParserTest {
         }
     }
 
+    /**
+     * A pool cut inside an entry fails at the offset the reader stands at, for every entry
+     * kind: the sized step over whole entries leaves a cut entry to the reader, whose checks
+     * pin the offsets. A member reference or NameAndType cut after its first u16 reports the
+     * second one's offset, as the Rust reader did.
+     */
+    @Test
+    void aPoolCutInsideAnEntryFailsAtTheReadersOffsetForEveryEntryKind() {
+        // Entry #2's tag byte sits at offset 16, its first operand at 17.
+        for (int tag : new int[] {7, 8, 16, 19, 20, 9, 10, 11, 12}) {
+            ClassFileBytes b = ClassFileBytes.header(52, 3);
+            b.utf8("a/B"); // #1
+            b.u8(tag); // #2, cut after the tag
+            byte[] bytes = b.toByteArray();
+            ClassParser.FormatException e = assertThrows(ClassParser.FormatException.class, () -> parse(bytes));
+            assertEquals("truncated class file at offset 17", e.getMessage(), "tag " + tag);
+        }
+        for (int tag : new int[] {9, 10, 11, 12}) {
+            ClassFileBytes b = ClassFileBytes.header(52, 3);
+            b.utf8("a/B"); // #1
+            b.u8(tag).u16(1); // #2, cut after the first u16
+            byte[] bytes = b.toByteArray();
+            ClassParser.FormatException e = assertThrows(ClassParser.FormatException.class, () -> parse(bytes));
+            assertEquals("truncated class file at offset 19", e.getMessage(), "tag " + tag);
+        }
+    }
+
     /** A class whose only field carries a Code attribute with the given body. */
     private static byte[] fieldWithCode(int... body) {
         ClassFileBytes b = ClassFileBytes.header(52, 6);
