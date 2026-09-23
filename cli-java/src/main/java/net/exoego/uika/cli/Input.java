@@ -468,14 +468,32 @@ final class Input {
         private final List<Root<L>> roots = new ArrayList<>();
         private final int lanes;
 
-        private static final class Root<L> {
+        /** One registered directory. */
+        static final class Root<L> {
             final List<L> out;
             /** Filled leaves by batch sequence, so they come back in walk order. */
             final java.util.TreeMap<Integer, L> leaves = new java.util.TreeMap<>();
             int nextSequence;
+            /** The walk plus the batches not yet run; the leaves are complete at zero. */
+            final java.util.concurrent.atomic.AtomicInteger pending = new java.util.concurrent.atomic.AtomicInteger(1);
+            /** Completed at zero pending, exceptionally when an item of any root failed. Never run. */
+            final RecursiveAction done = new RecursiveAction() {
+                private static final long serialVersionUID = 1L;
+
+                @Override
+                protected void compute() {
+                    // Completed by the items, never by running it.
+                }
+            };
 
             Root(List<L> out) {
                 this.out = out;
+            }
+
+            private void itemDone() {
+                if (pending.decrementAndGet() == 0) {
+                    done.quietlyComplete();
+                }
             }
         }
 
@@ -489,12 +507,21 @@ final class Input {
         }
 
         /** Registers a directory. Its leaves are appended to {@code out} by {@link #finish}. */
-        void add(String path, List<L> out) {
+        Root<L> add(String path, List<L> out) {
             Root<L> root = new Root<>(out);
-            roots.add(root);
+            synchronized (roots) {
+                roots.add(root);
+            }
             int source = Intern.intern(path);
             Path dir = Path.of(path);
-            submit(() -> walkRoot(root, dir, source));
+            submit(root, () -> walkRoot(root, dir, source));
+            return root;
+        }
+
+        /** Starts the lanes now. Only from inside the pool; the alternative is {@link #laneTask}. */
+        void start() {
+            started = true;
+            spawnLanes();
         }
 
         /** The task that starts the lanes and ends when every queued item has run. Runs in the region. */
@@ -504,8 +531,7 @@ final class Input {
 
                 @Override
                 protected void compute() {
-                    started = true;
-                    spawnLanes();
+                    start();
                     completion.join();
                 }
             };
@@ -513,15 +539,39 @@ final class Input {
 
         /** Hands every directory's leaves over, in walk order. Call after {@link #laneTask} has joined. */
         void finish() {
-            for (Root<L> root : roots) {
-                root.out.addAll(root.leaves.values());
+            synchronized (roots) {
+                for (Root<L> root : roots) {
+                    root.out.addAll(root.leaves.values());
+                }
             }
         }
 
-        private void submit(Runnable item) {
+        /** Waits for one directory's walk and batches, then hands its leaves over in walk order. */
+        void finish(Root<L> root) {
+            root.done.join();
+            root.out.addAll(root.leaves.values());
+        }
+
+        private void failAll(Throwable t) {
+            completion.completeExceptionally(t);
+            synchronized (roots) {
+                for (Root<L> root : roots) {
+                    root.done.completeExceptionally(t);
+                }
+            }
+        }
+
+        /** Queues one of a root's items: its walk, or a batch of its files. */
+        private void submit(Root<L> root, Runnable item) {
             outstanding.incrementAndGet();
             queued.incrementAndGet();
-            queue.add(item);
+            queue.add(() -> {
+                try {
+                    item.run();
+                } finally {
+                    root.itemDone();
+                }
+            });
             if (started) {
                 spawnLanes();
             }
@@ -552,8 +602,8 @@ final class Input {
                         try {
                             item.run();
                         } catch (Throwable t) {
-                            // Surfaces through the region task's join; the other lanes stop.
-                            completion.completeExceptionally(t);
+                            // Surfaces through whichever completion is joined; the other lanes stop.
+                            failAll(t);
                             return;
                         }
                         if (outstanding.decrementAndGet() == 0) {
@@ -626,7 +676,8 @@ final class Input {
             if (queued.get() > lanes * 4) {
                 batch.run();
             } else {
-                submit(batch);
+                root.pending.incrementAndGet();
+                submit(root, batch);
             }
         }
 
