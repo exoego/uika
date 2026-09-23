@@ -327,25 +327,23 @@ lein-stage:
 bazel-unit-test:
 	cd $(BAZEL_RULES_DIR) && $(BAZELISK) test --symlink_prefix=/ //java:manifest_test
 
-# TWO measurements, because no one tool sees both halves. Bazel's own JaCoCo covers
-# //java:manifest_test and nothing else: every other entry point in this ruleset runs under
-# `bazel run` in the integration test's throwaway workspace, which `bazel coverage` has no
-# view of. So the ITs are instrumented by hand, the way sbt and Mill are and for the same
-# reason, with the agent reaching each java_binary through a --jvmopt line the IT writes
-# into the workspace .bazelrc. One check invocation alone takes UpgradeCheckMain from 13/69
-# to 37/69, so leaving them out was not a rounding difference.
+# ONE measurement, a JaCoCo agent riding every JVM the integration test starts, the way sbt
+# and Mill are measured and for the same reason: every entry point but the unit suite runs
+# under `bazel run` in the IT's throwaway workspace, which `bazel coverage` has no view of.
+# The agent reaches each java_binary through a --jvmopt line the IT writes into the
+# workspace .bazelrc, and the IT runs the unit suite in that workspace too, unsandboxed,
+# so it lands in the same exec file.
 #
-# Both reports land outside the module because stage.sh cuts the release archive with
-# `cp -RL` and would carry them along. ci.yml uploads the pair under one flag and Codecov
-# takes the union, the same shape the Maven plugin's surefire and invoker reports use.
+# It used to be two, `bazel coverage` over //java:manifest_test as lcov plus the IT's XML,
+# and Codecov's merge of the pair turned every branch line the IT covered only partly
+# into a MISS (the lcov names the line's branches as untaken, the XML only counts them).
+# UpgradeCheckMain read 57/73 while the XML alone had 63/73. One exec file, one report.
+#
+# The report lands outside the module because stage.sh cuts the release archive with
+# `cp -RL` and would carry it along.
 BAZEL_IT_JACOCO = $(CURDIR)/$(COVERAGE_DIR)/bazel-it.exec
 bazel-coverage: jacoco-tools java-cli-build
 	mkdir -p $(COVERAGE_DIR)
-	cd $(BAZEL_RULES_DIR) && $(BAZELISK) coverage --symlink_prefix=/ \
-		--combined_report=lcov //java:manifest_test
-	sed 's|^SF:|SF:$(BAZEL_RULES_DIR)/|' \
-		"`cd $(BAZEL_RULES_DIR) && $(BAZELISK) info --symlink_prefix=/ output_path`/_coverage/_coverage_report.dat" \
-		> $(COVERAGE_DIR)/bazel.lcov
 	UIKA_BIN=$(JAVA_CLI_JAR) UIKA_JACOCO_AGENT=$(JACOCO_AGENT) \
 		UIKA_JACOCO_EXEC=$(BAZEL_IT_JACOCO) mise exec -- sh $(BAZEL_RULES_DIR)/it/run.sh
 	mise exec -- sh $(BAZEL_RULES_DIR)/it/jacoco-report.sh $(JACOCO_CLI) \

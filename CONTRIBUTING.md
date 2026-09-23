@@ -23,15 +23,14 @@ $ make coverage   # writes the reports CI uploads to Codecov
 ```
 
 All eight front ends are instrumented. The Clojure tool and the Leiningen plugin
-use cloverage, the Bazel rules use `bazel coverage`, and the rest, the CLI
-included, use JaCoCo.
+use cloverage, and the rest, the CLI and the Bazel rules included, use JaCoCo.
 
 Every JVM front end runs its tests in a second JVM, so every one of them has to
 pass an agent into it. The Gradle build writes a `gradle.properties` in the
 TestKit dir, which doubles as the daemon's Gradle user home. The Maven build
-hands the invoker ITs a `mavenOpts`. sbt and Mill take the agent path from
-`UIKA_JACOCO_AGENT`, which `make jacoco-tools` fetches, because neither has a
-JaCoCo binding of its own. Coverage stays opt-in everywhere, so `make check`
+hands the invoker ITs a `mavenOpts`. sbt, Mill and the Bazel integration test
+take the agent path from `UIKA_JACOCO_AGENT`, which `make jacoco-tools`
+fetches, because none of them has a JaCoCo binding of its own. Coverage stays opt-in everywhere, so `make check`
 runs uninstrumented. CI runs the instrumented targets instead, one job per build
 tool, so each suite runs once there.
 

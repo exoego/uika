@@ -42,7 +42,8 @@ done
 # This is the only way these mains get measured at all: `bazel coverage` covers
 # //java:manifest_test, and everything else in this ruleset runs under `bazel run` in this
 # throwaway workspace, which that number cannot see. One check invocation alone takes
-# UpgradeCheckMain from 13/69 to 37/69.
+# UpgradeCheckMain from 13/69 to 37/69. The unit suite is run under the same agent at the
+# end of this script, so one exec file carries everything.
 if [ -n "${UIKA_JACOCO_AGENT:-}" ]; then
   : "${UIKA_JACOCO_EXEC:?UIKA_JACOCO_AGENT needs UIKA_JACOCO_EXEC}"
   rm -f "$UIKA_JACOCO_EXEC"
@@ -495,6 +496,18 @@ if ! grep -q "carries a comma" "$OUT/comma-guard.txt"; then
   echo "expected the uika comma message:" >&2
   cat "$OUT/comma-guard.txt" >&2
   exit 1
+fi
+
+if [ -n "${UIKA_JACOCO_AGENT:-}" ]; then
+  echo "--- unit suite, measured into the same exec file"
+  # In THIS workspace rather than the ruleset's own, so the classes it exercises are the
+  # very jars the report reads: JaCoCo matches execution data to a class by a hash of its
+  # bytes, and a jar compiled in another workspace would be silently dropped.
+  # --spawn_strategy=local because the agent jar lives outside the sandbox, where a
+  # sandboxed JVM cannot read it and dies before main. --nocache_test_results because a
+  # cached test forks no JVM and records nothing, with no symptom.
+  "$BAZEL" test @uika//java:manifest_test --spawn_strategy=local --nocache_test_results \
+    --test_output=errors "--jvmopt=$agent"
 fi
 
 echo "bazel integration test passed"
