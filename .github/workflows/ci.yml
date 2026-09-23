@@ -373,6 +373,15 @@ jobs:
           restore-keys: |
             bazel-${{ runner.os }}-
 
+      # The runner image ships Swift. rules_java pulls in rules_swift through rules_apple, and
+      # its toolchain autoconfiguration runs swiftc when a workspace first loads its
+      # toolchains. The first run on a fresh runner stalled analysis for 20 to 60 seconds.
+      # With no swiftc on PATH the autoconfiguration skips.
+      - name: Hide swiftc from Bazel
+        run: |
+          for f in $(which -a swiftc); do sudo rm -f "$f"; done
+          ! command -v swiftc
+
       # `bazel coverage` runs //java:manifest_test, and the integration test runs with the
       # agent attached, so this is the whole of bazel-test.
       - name: Test with coverage
@@ -433,6 +442,12 @@ jobs:
           restore-keys: |
             bazel-maven-${{ runner.os }}-
             bazel-${{ runner.os }}-
+
+      # For the reason the bazel job gives.
+      - name: Hide swiftc from Bazel
+        run: |
+          for f in $(which -a swiftc); do sudo rm -f "$f"; done
+          ! command -v swiftc
 
       - name: Test against Maven artifacts
         run: make bazel-maven-test
