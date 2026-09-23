@@ -541,6 +541,28 @@ final class CheckScannedTest {
     }
 
     /**
+     * The new lib/C inherits x from lib/Base, whose file is cut off after the interface table.
+     * Pass 1 reads that far and leaves the NestHost unread. The JVM would throw ClassFormatError
+     * loading lib/Base. Here the failed re-read makes it host itself, like the unreadable-jar case.
+     */
+    @Test
+    void aNestHostThatFailsToParseInPassTwoHostsItself() throws Exception {
+        String libNew = jar("lib-new.jar", "lib/Base.class", new ClassWriter("lib/Base", JAVA_LANG_OBJECT).headerOnly());
+        String app = jar("app.jar", "app/Use.class", readingFields("app/Use", "lib/C", "x").bytes());
+        ApiIndex oldLib = index(classWithFields("lib/C", m("x", "I", Acc.PUBLIC)));
+        ApiIndex newLib = index(classApi("lib/C", "lib/Base", Acc.PUBLIC), classWithFields("lib/Base", m("x", "I", Acc.PRIVATE)));
+
+        Check.Report report = Check.check(List.of(libNew, app), oldLib, newLib, List.of());
+
+        assertEquals(List.of(), report.warnings);
+        assertEquals(1, report.violations.size());
+        Violation v = report.violations.get(0);
+        assertEquals("app/Use", Intern.str(v.sourceClass));
+        assertEquals(Reason.FIELD_ACCESS_NARROWED, v.reason);
+        assertEquals(fieldRead("lib/C", "x", "I"), v.reference);
+    }
+
+    /**
      * JVMS 4.4.7 allows a lone surrogate in a name, and HotSpot 21 links a call through one,
      * so these removals throw NoSuchMethodError.
      */
@@ -582,6 +604,36 @@ final class CheckScannedTest {
         // A String cannot hold the surrogate's bytes, so the report shows U+FFFD in its place.
         assertEquals("lib/Odd\uFFFD", Intern.str(odd.reference.owner()));
         assertEquals(0, report.unknownRefs);
+    }
+
+    /**
+     * An abstract base class turned into an interface, the kind flip kotlinx.coroutines made to
+     * CancelHandler. app/C calls m through a lib/A receiver, so the call site's kind flip and the
+     * selection walk's newly abstract m land on the same class and reference. One violation
+     * stands for both, and the call site, found first, names it.
+     */
+    @Test
+    void aCallSiteKindFlipAndANewlyAbstractMethodReportOnce() throws Exception {
+        ClassWriter c = new ClassWriter("app/C", "lib/A");
+        int ref = c.memberRef(10, "lib/A", "m", "()V");
+        c.method(Acc.PUBLIC, "call", "()V", ACONST_NULL, INVOKEVIRTUAL, ref >>> 8, ref & 0xff, RETURN);
+        String app = jar("app.jar", "app/C.class", c.bytes());
+        ClassApi oldA = classWithMethodAccess("lib/A", m("m", "()V", Acc.PUBLIC));
+        oldA.access = Acc.PUBLIC | Acc.ABSTRACT;
+        ClassApi newA = classWithMethodAccess("lib/A", m("m", "()V", Acc.PUBLIC | Acc.ABSTRACT));
+        newA.access = Acc.PUBLIC | Acc.INTERFACE | Acc.ABSTRACT;
+
+        Check.Report report = Check.check(List.of(app), index(oldA), index(newA), List.of());
+
+        assertEquals(List.of(), report.warnings);
+        SymbolRef call = new SymbolRef(RefKind.METHOD, intern("lib/A"), MemberKey.of("m", "()V"), Boolean.FALSE, null, null);
+        List<SymbolRef> references = new ArrayList<>();
+        for (Violation v : report.violations) {
+            assertEquals("app/C", Intern.str(v.sourceClass));
+            assertEquals(Reason.CLASS_BECAME_INTERFACE, v.reason);
+            references.add(v.reference);
+        }
+        assertEquals(List.of(SymbolRef.ofClass(intern("lib/A")), call), references);
     }
 
     /** An unreadable jar or class yields no evidence; whatever else was read still counts. */
