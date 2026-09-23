@@ -15,6 +15,12 @@ final class Scratch {
 
     final int[] internCacheSym = new int[INTERN_CACHE_SIZE];
     final int[] internCacheHash = new int[INTERN_CACHE_SIZE];
+    /** This thread's unused range of the intern string arena, the chunk holding it, and its range of the id space. */
+    long internSlabPos;
+    long internSlabEnd;
+    java.nio.ByteBuffer internSlabChunk;
+    int internIdNext;
+    int internIdEnd;
     final ClassParser parser = new ClassParser();
     /** The class being parsed, inflated on demand. */
     final ClassSource classSource = new ClassSource();
