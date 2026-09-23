@@ -36,11 +36,12 @@ final class Input {
     static final int BATCH = 512;
 
     /**
-     * One positioned read per span. 2 MiB rather than more: a span is held for as long as its
-     * entries are being inflated, one per active path, so this bounds the read memory, and the
-     * read count it costs is a rounding error next to inflate.
+     * One positioned read per span. 1 MiB rather than more: a span is held for as long as its
+     * entries are being inflated, about one per worker at any time, so this bounds the read
+     * memory (12 MiB at 12 workers, half of what 2 MiB spans held), and the read count it
+     * costs is a rounding error next to inflate.
      */
-    private static final long SPAN_MAX = 2L * 1024 * 1024;
+    private static final long SPAN_MAX = 1024 * 1024;
     private static final long GAP_MAX = 1024 * 1024;
     /** Entries handled by one task. Small enough to balance, large enough to amortize the fork. */
     private static final int LEAF = 16;
