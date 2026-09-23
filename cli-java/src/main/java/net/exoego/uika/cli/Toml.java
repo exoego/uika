@@ -203,41 +203,38 @@ final class Toml {
         }
 
         Error error(String message, int start, int end, boolean syntax) {
-            int index = start;
+            // Empty input parses to an empty table, so there is always a last byte here.
+            int index = Math.min(start, bytes.length - 1);
+            int columnOffset = start - index;
             int line = 0;
             int lineStart = 0;
-            int column = index;
-            if (bytes.length > 0) {
-                int safe = Math.min(index, bytes.length - 1);
-                int columnOffset = index - safe;
-                index = safe;
-                for (int i = index - 1; i >= 0; i--) {
-                    if (bytes[i] == '\n') {
-                        lineStart = i + 1;
-                        break;
-                    }
+            for (int i = index - 1; i >= 0; i--) {
+                if (bytes[i] == '\n') {
+                    lineStart = i + 1;
+                    break;
                 }
-                for (int i = 0; i < lineStart; i++) {
-                    if (bytes[i] == '\n') {
-                        line++;
-                    }
-                }
-                // A slice that ends inside a character is not UTF-8, and the crate then
-                // falls back to the byte distance.
-                boolean wholeChars = index + 1 >= bytes.length || (bytes[index + 1] & 0xC0) != 0x80;
-                if (wholeChars) {
-                    int chars = 0;
-                    for (int i = lineStart; i <= index; i++) {
-                        if ((bytes[i] & 0xC0) != 0x80) {
-                            chars++;
-                        }
-                    }
-                    column = chars - 1;
-                } else {
-                    column = index - lineStart;
-                }
-                column += columnOffset;
             }
+            for (int i = 0; i < lineStart; i++) {
+                if (bytes[i] == '\n') {
+                    line++;
+                }
+            }
+            // A slice that ends inside a character is not UTF-8, and the crate then
+            // falls back to the byte distance.
+            boolean wholeChars = index + 1 >= bytes.length || (bytes[index + 1] & 0xC0) != 0x80;
+            int column;
+            if (wholeChars) {
+                int chars = 0;
+                for (int i = lineStart; i <= index; i++) {
+                    if ((bytes[i] & 0xC0) != 0x80) {
+                        chars++;
+                    }
+                }
+                column = chars - 1;
+            } else {
+                column = index - lineStart;
+            }
+            column += columnOffset;
             int lineEnd = lineStart;
             while (lineEnd < bytes.length && bytes[lineEnd] != '\n') {
                 lineEnd++;
