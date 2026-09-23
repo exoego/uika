@@ -187,7 +187,7 @@ public final class UpgradeCheckMain {
      * round trip, fails here naming the variable instead of inside ProcessBuilder with no
      * cause in sight. The four JVM plugins already go through it.
      */
-    private static Path cliBinary() {
+    static Path cliBinary() {
         Path override = UikaCli.binaryOverride();
         if (override != null) {
             return override;

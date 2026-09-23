@@ -4,6 +4,7 @@ import net.exoego.uika.plugin.core.ClasspathDump.Artifact;
 import net.exoego.uika.plugin.core.ClasspathDump.Module;
 import net.exoego.uika.plugin.core.DumpFormat;
 import net.exoego.uika.plugin.core.JfrEvidence;
+import net.exoego.uika.plugin.core.UikaCli;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -47,11 +48,13 @@ public final class ManifestSelfTest {
         materializeCopiesEveryJarOnce();
         materializeRefusesWhatItCannotCopy();
         materializeReplacesAStaleCopy();
+        materializeCopiesWhereItCannotLink();
+        theMainsRefuseToRunWithoutTheirRuleProperties();
 
         // A floor, not a total: `failures` counts only what FAILED, so a deleted call in
         // main or an early return inside a method would otherwise be a silent pass. The
         // class-file floor guard next door fails on an empty sweep for the same reason.
-        var expected = 74;
+        var expected = 81;
         if (checks < expected) {
             System.err.println("only " + checks + " checks ran, expected at least " + expected);
             System.exit(1);
@@ -433,6 +436,58 @@ public final class ManifestSelfTest {
         } finally {
             deleteTree(tmp);
         }
+    }
+
+    /**
+     * The hard link is an optimization the destination may not support. A zip file system
+     * answers createLink with the same UnsupportedOperationException a foreign file system
+     * gives, and it is the one such destination a test can build without a second mount, so
+     * it is what reaches the copy fallback.
+     */
+    private static void materializeCopiesWhereItCannotLink() throws IOException {
+        Path tmp = Files.createTempDirectory("uika-materialize");
+        try {
+            Path dep = write(tmp.resolve("bazel-out/dep.jar"), "dep");
+            var modules = List.of(new Module("//app:app", List.of(),
+                    List.of(new Artifact("g", "dep", "1", dep.toString()))));
+            Path zip = tmp.resolve("baseline.zip");
+            try (var zipFs = java.nio.file.FileSystems.newFileSystem(
+                    java.net.URI.create("jar:" + zip.toUri()), java.util.Map.of("create", "true"))) {
+                Path out = zipFs.getPath("/baseline");
+
+                List<Module> moved = Materialize.into(modules, out);
+
+                String copied = moved.get(0).artifacts().get(0).file();
+                check(copied.equals(out.resolve("dep.jar").toString()),
+                        "the artifact should point at the copy: " + copied);
+                check("dep".equals(Files.readString(zipFs.getPath(copied))),
+                        "the copy should carry the source's bytes");
+            }
+        } finally {
+            deleteTree(tmp);
+        }
+    }
+
+    /**
+     * The rules start the mains with the properties they need, and a launcher run by hand
+     * has none of them. Each main has to name the missing property and the rule that sets
+     * it, rather than fail on a null path. Bazel scrubs the test environment, so no
+     * UIKA_CLI_PATH stands in front of the check main's guard.
+     */
+    private static void theMainsRefuseToRunWithoutTheirRuleProperties() {
+        check(System.getenv(UikaCli.CLI_PATH_ENV) == null,
+                "the self test must run without UIKA_CLI_PATH; Bazel scrubs the test environment");
+        System.clearProperty("uika.cli");
+        Exception noCli = expectFailure("a check main without -Duika.cli",
+                IllegalStateException.class, UpgradeCheckMain::cliBinary);
+        check(noCli != null && noCli.getMessage().contains("missing -Duika.cli")
+                        && noCli.getMessage().contains("uika_upgrade_check"),
+                "the missing property and its rule should be named: " + noCli);
+        Exception noManifest = expectFailure("a dump main without -Duika.manifest",
+                IllegalStateException.class, () -> DumpMain.required("uika.manifest"));
+        check(noManifest != null && noManifest.getMessage().contains("missing -Duika.manifest")
+                        && noManifest.getMessage().contains("uika_dump"),
+                "the missing property and its rule should be named: " + noManifest);
     }
 
     private static List<Module> parse(String manifest, Integer override) throws IOException {

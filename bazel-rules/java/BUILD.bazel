@@ -89,6 +89,7 @@ java_test(
         # see, so anything wanting to be measured has to be reachable from here.
         ":check",
         ":core",
+        ":dump",
         ":manifest",
     ],
 )
