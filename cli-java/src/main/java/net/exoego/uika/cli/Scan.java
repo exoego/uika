@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ForkJoinTask;
 import java.util.concurrent.RecursiveAction;
 
 /**
@@ -81,7 +80,7 @@ final class Scan {
      * @param superName {@link Intern#NONE} for none
      * @param nestHost {@link Intern#NONE} for none
      * @param entryOverride entry name when it is not "{className}.class", else null
-     * @param hierarchy false for a class the graph already held before its chunk (a
+     * @param hierarchy false for a class the graph already held when it was parsed (a
      *     guaranteed first-wins loser), which contributes nothing but evidence
      */
     record Target(
@@ -181,9 +180,9 @@ final class Scan {
                 // fall through to the default
             }
         }
-        // 16x the thread count, not 1x: every chunk boundary is a barrier for the next
-        // chunk's `known` snapshot, so a 1x chunk parks workers whenever its paths finish
-        // unevenly, which real classpaths do constantly.
+        // 16x the thread count, not 1x: every chunk boundary is a barrier where the next
+        // chunk's directories are deduplicated, so a 1x chunk parks workers whenever its
+        // paths finish unevenly, which real classpaths do constantly.
         return Scratch.threads() * 16;
     }
 
@@ -200,15 +199,19 @@ final class Scan {
             for (int base = -chunkSize; base < n; base += chunkSize) {
                 int scanEnd = Math.min(n, base + chunkSize);
                 int nextEnd = Math.min(n, scanEnd + chunkSize);
-                // The graph is immutable while a chunk parses, so workers read it lock-free.
+                int first = Math.max(base, 0);
+                int count = scanEnd - first;
+                // Workers read the graph while this thread grows it: `contains` is the one
+                // read, and a class not yet merged reads as absent.
                 Extract.ScanSink sink = new Extract.ScanSink(oldNames, result.graph, collectEdges, probe);
-                List<List<Extract.ScanLeaf>> perPath = new ArrayList<>();
-                List<RecursiveAction> tasks = new ArrayList<>();
+                @SuppressWarnings("unchecked")
+                List<Extract.ScanLeaf>[] perPath = new List[count];
+                RecursiveAction[] scans = new RecursiveAction[count];
                 // Directories share a few lanes instead of getting a task each.
                 Input.DirectoryScan<Extract.ScanLeaf> directories = new Input.DirectoryScan<>(sink);
-                for (int i = Math.max(base, 0); i < scanEnd; i++) {
+                for (int i = first; i < scanEnd; i++) {
                     List<Extract.ScanLeaf> leaves = new ArrayList<>();
-                    perPath.add(leaves);
+                    perPath[i - first] = leaves;
                     String path = paths.get(i);
                     Input.Prepared ready = prepared[i];
                     prepared[i] = null;
@@ -216,18 +219,19 @@ final class Scan {
                         directories.add(path, leaves);
                         continue;
                     }
-                    tasks.add(new RecursiveAction() {
+                    scans[i - first] = new RecursiveAction() {
                         private static final long serialVersionUID = 1L;
 
                         @Override
                         protected void compute() {
                             Input.forEachClass(path, ready, sink, leaves);
                         }
-                    });
+                    };
                 }
+                List<RecursiveAction> prepares = new ArrayList<>();
                 for (int i = Math.max(scanEnd, 0); i < nextEnd; i++) {
                     int index = i;
-                    tasks.add(new RecursiveAction() {
+                    prepares.add(new RecursiveAction() {
                         private static final long serialVersionUID = 1L;
 
                         @Override
@@ -236,16 +240,40 @@ final class Scan {
                         }
                     });
                 }
-                if (!directories.isEmpty()) {
-                    tasks.add(directories.laneTask());
+                RecursiveAction lanes = directories.isEmpty() ? null : directories.laneTask();
+                // Scans first, so other workers steal them in path order; the directory reads
+                // last, so this thread runs them while it waits for the path it merges next.
+                for (RecursiveAction scan : scans) {
+                    if (scan != null) {
+                        scan.fork();
+                    }
                 }
-                ForkJoinTask.invokeAll(tasks);
-                directories.finish();
-                // Merged in path order, so duplicate-class winners are deterministic.
-                for (List<Extract.ScanLeaf> leaves : perPath) {
-                    for (Extract.ScanLeaf leaf : leaves) {
+                if (lanes != null) {
+                    lanes.fork();
+                }
+                for (RecursiveAction prepare : prepares) {
+                    prepare.fork();
+                }
+                // Merged in path order as each path completes, so duplicate-class winners are
+                // deterministic and a finished path's leaves go back to the pool while the
+                // rest of the chunk is still scanning. Directories complete together, at the
+                // first one's position.
+                boolean directoriesDone = false;
+                for (int i = 0; i < count; i++) {
+                    if (scans[i] != null) {
+                        scans[i].join();
+                    } else if (!directoriesDone) {
+                        lanes.join();
+                        directories.finish();
+                        directoriesDone = true;
+                    }
+                    for (Extract.ScanLeaf leaf : perPath[i]) {
                         result.merge(leaf);
                     }
+                    perPath[i] = null;
+                }
+                for (RecursiveAction prepare : prepares) {
+                    prepare.join();
                 }
                 for (int i = Math.max(scanEnd, 0); i < nextEnd; i++) {
                     if (prepared[i].entries != null) {

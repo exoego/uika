@@ -68,9 +68,12 @@ final class ClassGraph {
         return insertIfAbsent(name, superName, nestHost, source, data, 0, interfaceNames.length, interfaceNames.length, refNames.length);
     }
 
-    /** Safe to call from workers while no insert is running. */
+    /**
+     * Safe to call from workers while the merge thread inserts: a class the merge has not
+     * published yet reads as absent, which is the conservative answer for the scan.
+     */
     boolean contains(int name) {
-        return name < nodeOf.size() && nodeOf.get(name) != 0;
+        return nodeOf.getOrZero(name) != 0;
     }
 
     /** Node handle, or -1. Nodes are numbered 0..size in insertion order. */
