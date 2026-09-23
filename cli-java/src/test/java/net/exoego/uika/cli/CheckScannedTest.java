@@ -541,6 +541,28 @@ final class CheckScannedTest {
     }
 
     /**
+     * The new lib/C inherits x from lib/Base, whose file is cut off after the interface table.
+     * Pass 1 reads that far and leaves the NestHost unread. The JVM would throw ClassFormatError
+     * loading lib/Base. Here the failed re-read makes it host itself, like the unreadable-jar case.
+     */
+    @Test
+    void aNestHostThatFailsToParseInPassTwoHostsItself() throws Exception {
+        String libNew = jar("lib-new.jar", "lib/Base.class", new ClassWriter("lib/Base", JAVA_LANG_OBJECT).headerOnly());
+        String app = jar("app.jar", "app/Use.class", readingFields("app/Use", "lib/C", "x").bytes());
+        ApiIndex oldLib = index(classWithFields("lib/C", m("x", "I", Acc.PUBLIC)));
+        ApiIndex newLib = index(classApi("lib/C", "lib/Base", Acc.PUBLIC), classWithFields("lib/Base", m("x", "I", Acc.PRIVATE)));
+
+        Check.Report report = Check.check(List.of(libNew, app), oldLib, newLib, List.of());
+
+        assertEquals(List.of(), report.warnings);
+        assertEquals(1, report.violations.size());
+        Violation v = report.violations.get(0);
+        assertEquals("app/Use", Intern.str(v.sourceClass));
+        assertEquals(Reason.FIELD_ACCESS_NARROWED, v.reason);
+        assertEquals(fieldRead("lib/C", "x", "I"), v.reference);
+    }
+
+    /**
      * JVMS 4.4.7 allows a lone surrogate in a name, and HotSpot 21 links a call through one,
      * so these removals throw NoSuchMethodError.
      */
