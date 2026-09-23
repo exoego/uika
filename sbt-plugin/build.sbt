@@ -87,6 +87,10 @@ lazy val root = (project in file("."))
       log.info(s"class-file versions: all ${((Compile / classDirectory).value ** "*.class").get.size} classes <= $maxMajor")
     },
     scriptedBufferLog := false,
+    // The uika group's tests run side by side, each in an sbt of its own. sbt parallelizes
+    // scripted only in batch mode.
+    scriptedBatchExecution := true,
+    scriptedParallelInstances := 2,
     // Central requires the doc jar to exist, not to have content. Scaladoc put
     // 1.18 MB on every release, 19% of the whole deployment: 1.9 MB of bundled
     // fonts and jQuery plus a 498 KB index of the entire sbt API, against only
