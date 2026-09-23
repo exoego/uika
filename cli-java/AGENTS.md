@@ -22,7 +22,7 @@ semantics, then what only matters on the JVM.
 old/new JARs (--old / --new, both repeatable; merged first-wins per side)
   -> ApiIndex x2 (full member tables; library JARs are small enough to hold)
 
-pass 1: stream --classpath / --app / --classpath-file targets in parallel chunks
+pass 1: stream --classpath / --app / --classpath-file targets through a window of paths
   (old JARs found among targets are excluded as stale; new JARs stay in — they
   are runtime code, and their classes feed the version-lag check)
   -> ClassGraph: class name -> superclass, interfaces, origin
@@ -149,7 +149,7 @@ pass-2 classes are typically below 0.1% of the scan.
 - References that did not resolve against old are pre-existing inconsistency,
   not breakage introduced by the upgrade.
 - Duplicate class names are first-wins in input path order (JVM classpath
-  semantics); chunks are merged in path order to keep this deterministic.
+  semantics); paths are merged in path order to keep this deterministic.
   A losing duplicate definition is dropped whole — hierarchy, entry location,
   and its reference records — because the JVM never loads that copy. Judging a
   shadowed copy's bytecode against the winner's hierarchy produced false
@@ -321,8 +321,8 @@ pass-2 classes are typically below 0.1% of the scan.
     a probed signature is common, gated only on "something became abstract" —
     weaker than the `collectEdges` gate on reachability edges.
   - Evidence is deliberately NOT filtered by first-wins: the duplicate fast path
-    still sweeps. Filtering there would tie `invocationFound` to whether two
-    copies landed in the same chunk, and chunk size scales with the thread count.
+    still sweeps. Filtering there would tie `invocationFound` to how far the merge
+    had got when a copy was parsed, and the window scales with the thread count.
   - `onDispatchChain` restricts evidence to the broken class's dispatch chain,
     otherwise one `close ()V` call anywhere suppresses every latent case. Escapes
     force "related", except into `java/*` (`Escapes`) — the JVM reserves that
@@ -610,17 +610,47 @@ pass-2 classes are typically below 0.1% of the scan.
   nothing collects the old generation in a run this short.
 - Path-level code must not keep `Scratch` state across a fork or join. A worker that waits
   may run another path's task on the same thread.
-- `Intern` takes a shard lock per call. The per-thread lookup cache in `Scratch` exists
-  because `java/lang/Object` would otherwise serialize every worker on one shard.
+- `Intern` lookups take no lock: a slot is published with a release store and probed with
+  an acquire load, and only a new symbol serializes on its shard. New symbols take arena
+  bytes and ids in per-thread blocks (`Scratch`). The per-thread lookup cache in `Scratch`
+  answers `java/lang/Object` and the other names every class repeats without touching the
+  shared table. A symbol stores its prefix through the last '/' as another symbol and only
+  its tail, so a package's classes share one copy of the package (30MB of class names
+  became 13MB on the stress workload); a string ending in '/' is always stored whole, so
+  the accessors read one level. Per-symbol metadata is one 16-byte record, not three
+  columns: as columns the split cost 8% of wall, as a record it is within noise.
+- Workers read the class graph while the merge thread grows it. `ClassGraph.contains` is
+  the one read, over `IntArena.getOrZero`, which publishes chunks with release stores and
+  reads them with acquire loads; a class the merge has not reached reads as absent, the
+  conservative answer. Any other graph read during the scan needs the same care.
+- The hot methods run as C1 code until C2 gets to them, which on the stress workload is
+  200 to 700ms into a 1.3s run because the C2 queue is saturated. C1 does not inline
+  `VarHandle` views: a `(short) U16.get(bytes, at)` is a call chain there and showed as
+  `Unsafe.getShortUnaligned` at 3% of CPU. On a method that runs long before C2, read u2/u4
+  fields with byte arithmetic (`ClassParser.be16`), which both tiers compile well; keep the
+  word-at-a-time `VarHandle` loops (`Intern.hash`, `ModifiedUtf8.isAscii`) since those small
+  methods reach C2 within milliseconds. Warming the pass-1 path on this tool's own jar
+  during the index build made the hot compiles arrive LATER, not earlier: more methods
+  reached the queue at once. Raised or scaled compile thresholds and more compiler threads
+  measured within noise; `-XX:-BackgroundCompilation` is 30% slower.
+- `ClassParser.parseHeader` records the Class, String and member-reference entries as it
+  walks the pool (`tagged`), and the reference, edge and evidence sweeps iterate that,
+  a third of the pool, instead of every entry.
 - Inflate is `Inflate.java`, not `java.util.zip`. The JDK bundles a plain C zlib and does
   not use the system one. `InflateTest` pins it against the JDK on every fixture entry plus
   fuzzed input. It needs `Inflate.SLACK` readable bytes after the stream.
 - Partial inflate: `ClassSource` inflates on demand and `ClassParser.parseHeader` resumes.
   NestHost is at the end of the file, so an unread class carries
   `ClassGraph.NEST_HOST_UNREAD` and `Check.NestHosts` reads it lazily.
-- The central directory is streamed once per jar (`Jar.readEntries`). Dedup, the scan and
-  the next chunk's directory reads share one parallel region (`Scan.scanTargetPaths`).
-  Provider files come out of the same pass when reachability is on.
+- The central directory is streamed once per jar (`Jar.readEntries`), straight into pooled
+  columns sized by the record count the end record declares. Pass 1 has no barrier
+  (`Scan.scanTargetPaths`): directory reads run up to a window ahead of the merge, each
+  read that is in is deduplicated and its scan forked, and the path merged next is joined
+  while the merge thread executes other forked tasks. A merged path's leaves go back to the
+  pool at once, so the window (`UIKA_CHUNK`, 8x threads) is what pass 1 holds in memory.
+  Provider files come out of the same pass when reachability is on. The scan target list
+  is computed before the library indexes build, so the first window's reads and both index
+  builds share the pool while the main thread waits.
 - Loose class files go through `Input.DirectoryScan` lanes, 4 on macOS. Opening small files
   from 12 threads took 3.2s and 26s of system time there, against 1.7s and 4.5s on 4.
 - `Launcher` re-runs the command in a child JVM with `-XX:+UseSerialGC -Xmn32m`, plus
@@ -643,6 +673,20 @@ The Rust column is the binary the jar replaced, measured in the same session on
 The last two rows are the JVM floor: about 25ms to reach `main`, then cold code. A warm JVM
 runs the 100-jar check in about 0.15s. File-heavy rows move by 30% with the file cache, so
 compare back-to-back runs only.
+
+After the 2026-09-23 round (the same session, alternating pairs, medians; the class-dir
+row was not re-measured). The `--app` row uses this module's own classes directory as the
+root, which turns edges on without a large project:
+
+| Workload | Before | After |
+|---|---|---|
+| Stress: 2,800 jars, 1.95M classes | 1.59s, 335MB | 1.38s, 250MB |
+| Stress with `--app` (reachability on) | 2.06s, 358MB | 1.60s, 283MB |
+| 100 jars, 62K classes | 0.34s, 139MB | 0.27s, 116MB |
+| 3 jars | 0.07s, 61MB | 0.07s, 64MB |
+
+The 3-jar floor rose 3MB: the interner's metadata record and the dedup arenas are
+fixed-size chunks that a tiny run touches once.
 
 Bytecode target does not matter: `--release 21` measured the same as 17. The runtime does a
 little (JDK 17 1.65s, 21 1.55s, 25 1.53s on the stress row). FFM is final only in 22, so it
