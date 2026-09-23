@@ -76,6 +76,13 @@ object UikaTests extends TestSuite {
     lazy val millDiscover: Discover = Discover[this.type]
   }
 
+  // No JavaModule at all. The CLI is resolved through a module's own resolver so that the
+  // build's mirrors and credentials apply, which leaves a build with none nothing to
+  // resolve it with.
+  object noJavaBuild extends TestRootModule {
+    lazy val millDiscover: Discover = Discover[this.type]
+  }
+
   // Minus UIKA_JFR: upgradeCheck falls back to that variable, so a developer's exported
   // collection directory must not leak into stub runs. Tests that want it add it back.
   private val systemEnv: Map[String, String] = System.getenv().asScala.toMap - "UIKA_JFR"
@@ -498,6 +505,37 @@ object UikaTests extends TestSuite {
         os.remove.all(jfrDir)
         evaluate()
         assert(os.isDir(jfrDir))
+      }
+    }
+
+    test("the CLI version is demanded only once a binary has to be resolved") {
+      // Neither --cliVersion nor UIKA_CLI_PATH, and the classes directory the suite runs
+      // the plugin from carries no Implementation-Version, so nothing names a version and
+      // the command has to say which option would.
+      Using.resource(
+        UnitTester(stubCliBuild, null, env = systemEnv - UikaCli.CLI_PATH_ENV)
+      ) { tester =>
+        val before = os.temp("{}", suffix = ".json")
+        val after = os.temp("{}", suffix = ".json")
+        val failed = tester(Uika.upgradeCheck(tester.evaluator, before.toString, after.toString))
+        assert(failed.isLeft)
+        assert(failed.fold(
+          _.toString.contains("uika-cli version is unknown; pass --cliVersion"),
+          _ => false
+        ))
+      }
+    }
+
+    test("a build without a JavaModule cannot resolve the CLI") {
+      Using.resource(
+        UnitTester(noJavaBuild, null, env = systemEnv - UikaCli.CLI_PATH_ENV)
+      ) { tester =>
+        val before = os.temp("{}", suffix = ".json")
+        val after = os.temp("{}", suffix = ".json")
+        val failed = tester(Uika.upgradeCheck(
+          tester.evaluator, before.toString, after.toString, cliVersion = "9.9.9"))
+        assert(failed.isLeft)
+        assert(failed.fold(_.toString.contains("no JavaModule found in this build"), _ => false))
       }
     }
   }
