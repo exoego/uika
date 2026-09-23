@@ -32,7 +32,8 @@ TestKit dir, which doubles as the daemon's Gradle user home. The Maven build
 hands the invoker ITs a `mavenOpts`. sbt and Mill take the agent path from
 `UIKA_JACOCO_AGENT`, which `make jacoco-tools` fetches, because neither has a
 JaCoCo binding of its own. Coverage stays opt-in everywhere, so `make check`
-runs uninstrumented.
+runs uninstrumented. CI runs the instrumented targets instead, one job per build
+tool, so each suite runs once there.
 
 Three numbers are over less than the whole component.
 

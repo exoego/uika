@@ -2,7 +2,7 @@
 	rewrite rewrite-check coverage \
 	java-cli-coverage gradle-coverage maven-coverage clojure-coverage \
 	lein-coverage sbt-coverage mill-coverage bazel-coverage jacoco-tools \
-	gradle-build gradle-check gradle-test gradle-clean \
+	gradle-build gradle-check gradle-check-coverage gradle-test gradle-clean \
 	java-cli-build java-cli-test java-cli-bless java-cli-clean \
 	sbt-compile sbt-scripted sbt-clean \
 	maven-verify maven-clean \
@@ -162,6 +162,11 @@ gradle-clean:
 gradle-coverage:
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) jacocoTestReport -PuikaCoverage=true
 
+# gradle-check and gradle-coverage in one invocation, so the instrumented tests run once and
+# the rest of check still runs. This is what ci.yml runs.
+gradle-check-coverage:
+	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) check jacocoTestReport -PuikaCoverage=true
+
 # The binary the uika-cli-path scripted group points UIKA_CLI_PATH at. It only has to be
 # an executable file that records its argv: the group asserts acquisition was skipped, not
 # what a real check reports.
@@ -194,7 +199,8 @@ sbt-coverage: jacoco-tools $(SBT_CLI_STUB)
 	rm -rf $(SBT_JACOCO_DIR)
 	mkdir -p $(SBT_JACOCO_DIR)
 	cd $(SBT_PLUGIN_DIR) && UIKA_JACOCO_AGENT=$(JACOCO_AGENT) \
-		UIKA_JACOCO_EXEC=$(CURDIR)/$(SBT_JACOCO_DIR)/scripted.exec $(SBT) $(SBT_FLAGS) 'scripted uika/*'
+		UIKA_JACOCO_EXEC=$(CURDIR)/$(SBT_JACOCO_DIR)/scripted.exec $(SBT) $(SBT_FLAGS) \
+		checkClassFileVersions 'scripted uika/*'
 	cd $(SBT_PLUGIN_DIR) && UIKA_JACOCO_AGENT=$(JACOCO_AGENT) UIKA_CLI_PATH=$(SBT_CLI_STUB) \
 		UIKA_JACOCO_EXEC=$(CURDIR)/$(SBT_JACOCO_DIR)/scripted.exec $(SBT) $(SBT_FLAGS) 'scripted uika-cli-path/*'
 	$(JAVA) -jar $(JACOCO_CLI) report $(SBT_JACOCO_DIR)/scripted.exec \

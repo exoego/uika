@@ -9,9 +9,17 @@ coverage:
         # Informational while the numbers settle. Flip to a target once they are known.
         informational: true
 
+# Each build tool uploads from its own CI job, eight uploads per commit that finish in no
+# fixed order. wait_for_ci holds the status and the comment until every CI check on the
+# commit is done, so neither goes out on a partial set. It is the default, and is written
+# out because the parallel jobs now depend on it.
+codecov:
+  notify:
+    wait_for_ci: true
+
 # Flags stay, but only as the upload identity. Carryforward is a property of an upload,
-# so it has no component equivalent: every upload comes from one job, and a step
-# failing halfway would report the later ones as a drop to zero rather than as missing.
+# so it has no component equivalent. A tool job that fails before its upload would
+# otherwise read as that flag dropping to zero rather than as missing.
 flag_management:
   default_rules:
     carryforward: true
