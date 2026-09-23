@@ -398,6 +398,21 @@ class InflateTest {
                 assertThrows(Inflate.FormatException.class, () -> inflate(stream)).getMessage());
     }
 
+    /**
+     * The code lengths of a dynamic header are read before any end check, so a header cut
+     * off there reads past the buffer.
+     */
+    @Test
+    void aDynamicHeaderCutOffInItsCodeLengthsIsAnError() {
+        Bits b = new Bits().put(1, 1).put(2, 2).put(286 - 257, 5).put(30 - 1, 5).put(19 - 4, 4);
+        for (int symbol : PRECODE_ORDER) {
+            b.put(symbol < 16 ? 4 : 0, 3);
+        }
+        assertEquals(
+                "unexpected end of deflate stream",
+                assertThrows(Inflate.FormatException.class, () -> inflate(b.toByteArray())).getMessage());
+    }
+
     /** A precode with no codes at all builds an empty table, and the first length it decodes hits it. */
     @Test
     void aPrecodeWithoutCodesIsRejected() {
