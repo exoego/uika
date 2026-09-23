@@ -472,6 +472,14 @@ class TomlTest {
                 item.error("a table problem").render("e.toml"));
     }
 
+    /** A reader checks the kind first, so a mismatch here is a bug in the reader, not bad input. */
+    @Test
+    void readingAValueAsAnotherKindFailsLoudly() {
+        Toml.Value number = Toml.parse("a = 1").get("a").value();
+        IllegalStateException e = assertThrows(IllegalStateException.class, number::asString);
+        assertEquals("INTEGER read as STRING", e.getMessage());
+    }
+
     /** Through the real schema, so the key paths and the key order rule are pinned too. */
     @Test
     void excludeFilesAreRejectedWithTheKeyPath() {
