@@ -122,18 +122,12 @@ final class Manifest {
      * the next build.
      */
     static Path resolveRunfile(String path) {
-        for (Path base : runfilesBases()) {
-            var candidate = base.resolve(path).normalize();
-            if (Files.exists(candidate)) {
-                try {
-                    return candidate.toRealPath();
-                } catch (IOException e) {
-                    throw new UncheckedIOException(e);
-                }
-            }
+        Path found = firstExisting(runfilesBases(), path);
+        if (found == null) {
+            throw new IllegalStateException("cannot find " + path + " in the runfiles of this"
+                    + " target; run it with `bazel run`, not by executing the launcher directly");
         }
-        throw new IllegalStateException("cannot find " + path + " in the runfiles of this target;"
-                + " run it with `bazel run`, not by executing the launcher directly");
+        return found;
     }
 
     private static List<Path> runfilesBases() {
@@ -159,7 +153,11 @@ final class Manifest {
      * file somewhere the next build is free to delete.
      */
     static Path workspacePath(String path) {
-        String workspace = System.getenv("BUILD_WORKSPACE_DIRECTORY");
+        return workspacePath(path, System.getenv("BUILD_WORKSPACE_DIRECTORY"));
+    }
+
+    /** {@code workspace} is what {@code bazel run} exports, null outside one. */
+    static Path workspacePath(String path, String workspace) {
         Path resolved = Paths.get(path);
         if (resolved.isAbsolute() || workspace == null) {
             return resolved.toAbsolutePath();
@@ -188,7 +186,18 @@ final class Manifest {
      * workspace produces a bare {@code external/} path, so neither can reach this.
      */
     static Path resolveExecroot(Path execroot, String path) {
-        for (Path base : executionBases(execroot)) {
+        Path found = firstExisting(executionBases(execroot), path);
+        if (found == null) {
+            throw new IllegalStateException("cannot find " + path + " under " + execroot
+                    + "; build the sweep and run the merge against the same output base, and"
+                    + " pass every configuration flag the sweep build used to `bazel info`");
+        }
+        return found;
+    }
+
+    /** The real path of {@code path} under the first base that has it, else null. */
+    private static Path firstExisting(List<Path> bases, String path) {
+        for (Path base : bases) {
             var candidate = base.resolve(path).normalize();
             if (Files.exists(candidate)) {
                 try {
@@ -198,9 +207,7 @@ final class Manifest {
                 }
             }
         }
-        throw new IllegalStateException("cannot find " + path + " under " + execroot
-                + "; build the sweep and run the merge against the same output base, and"
-                + " pass every configuration flag the sweep build used to `bazel info`");
+        return null;
     }
 
     private static List<Path> executionBases(Path execroot) {
@@ -239,6 +246,13 @@ final class Manifest {
      * perfectly good relative path that would silently resolve every entry against the
      * working directory.
      */
+    static String flagValue(String[] args, int index) {
+        if (index >= args.length || args[index].isEmpty()) {
+            throw new IllegalArgumentException("missing value for " + args[index - 1]);
+        }
+        return args[index];
+    }
+
     /**
      * Like {@link #flagValue}, but answers null for an empty value instead of rejecting it.
      * For a flag whose empty spelling means "unset" everywhere else -- {@code --failOn},
@@ -251,13 +265,6 @@ final class Manifest {
             throw new IllegalArgumentException("missing value for " + args[index - 1]);
         }
         return args[index].isEmpty() ? null : args[index];
-    }
-
-    static String flagValue(String[] args, int index) {
-        if (index >= args.length || args[index].isEmpty()) {
-            throw new IllegalArgumentException("missing value for " + args[index - 1]);
-        }
-        return args[index];
     }
 
     /** The {@code --jdkRelease} value, named in the error rather than left to {@code valueOf}. */

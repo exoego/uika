@@ -89,6 +89,29 @@ echo "--- before dump, materialized"
 echo "--- after dump (guava 22.0 -> 23.0-rc1)"
 "$BAZEL" run --define guava=23 //:dump -- --output "$OUT/after.json"
 
+echo "--- dump flags"
+# --jdkRelease states the runtime for the whole build, so it replaces what every module
+# derived (11 for //app, the toolchain's for //lib) and the dump-level value with it.
+# -o is --output's short spelling, taken here so it is used somewhere.
+"$BAZEL" run //:dump -- -o "$OUT/override.json" --jdkRelease 17
+python3 - "$OUT/override.json" <<'EOF'
+import json, sys
+dump = json.load(open(sys.argv[1], encoding="utf-8"))
+releases = {m["module"]: m.get("jdkRelease") for m in dump["modules"]}
+if dump.get("jdkRelease") != 17 or set(releases.values()) != {17}:
+    sys.exit("--jdkRelease 17 should reach the dump and every module, got {} / {}".format(
+        dump.get("jdkRelease"), releases))
+EOF
+set +e
+"$BAZEL" run //:dump -- --output "$OUT/never.json" --bogus > "$OUT/dump-guard.txt" 2>&1
+dump_guard_status=$?
+set -e
+if [ "$dump_guard_status" -eq 0 ] || ! grep -q "unknown argument: --bogus" "$OUT/dump-guard.txt"; then
+  echo "the dump should reject a flag it does not have:" >&2
+  cat "$OUT/dump-guard.txt" >&2
+  exit 1
+fi
+
 echo "--- upgrade-check"
 set +e
 "$BAZEL" run //:check -- --before "$OUT/before.json" --after "$OUT/after.json" \
@@ -131,6 +154,27 @@ set -e
 if [ "$materialized_status" -ne 1 ]; then
   echo "expected exit 1 from the materialized baseline, got $materialized_status" >&2
   cat "$OUT/materialized-report.txt" >&2
+  exit 1
+fi
+
+echo "--- the CLI the rule wires in, with no UIKA_CLI_PATH at run time"
+# Every check so far took the CLI from UIKA_CLI_PATH, so the -Duika.cli runfile the rule
+# declares was never read. --repo_env hands the variable to the repository rule alone, which
+# keeps this off the network (it symlinks the jar instead of downloading one), while the
+# binary's own environment has it blank and falls through to the @uika_cli jar.
+set +e
+UIKA_CLI_PATH= "$BAZEL" run --repo_env=UIKA_CLI_PATH="$UIKA_BIN" //:check -- \
+  --before "$OUT/before.json" --after "$OUT/after.json" > "$OUT/repo-cli-report.txt" 2>&1
+repo_cli_status=$?
+set -e
+if [ "$repo_cli_status" -ne 1 ]; then
+  echo "expected exit 1 from the @uika_cli jar, got $repo_cli_status" >&2
+  cat "$OUT/repo-cli-report.txt" >&2
+  exit 1
+fi
+if ! grep -q "TimeLimiter.callWithTimeout" "$OUT/repo-cli-report.txt"; then
+  echo "the @uika_cli jar should report the same break:" >&2
+  cat "$OUT/repo-cli-report.txt" >&2
   exit 1
 fi
 
@@ -188,6 +232,18 @@ JFR=$OUT/jfr
 # cannot drift from the format the converter expects. Printing it also creates the
 # directory, which JFR needs in place before any test JVM starts.
 jvmopt=$("$BAZEL" run //:check -- jfr-jvmopt "$JFR")
+# Without a directory the recipe's default, uika/jfr under the workspace, is created too.
+case "$("$BAZEL" run //:check -- jfr-jvmopt)" in
+  --jvmopt=*uika/jfr*) ;;
+  *)
+    echo "jfr-jvmopt without a directory should record into uika/jfr" >&2
+    exit 1
+    ;;
+esac
+if [ ! -d "$WS/uika/jfr" ]; then
+  echo "jfr-jvmopt should create its default directory" >&2
+  exit 1
+fi
 # --nocache_test_results because a cached test forks no JVM and would record nothing,
 # with no symptom at all. --sandbox_writable_path because the recording lands outside the
 # sandbox on purpose, so the check can read it afterwards.
@@ -260,10 +316,71 @@ if [ -d "$BIN" ]; then
 fi
 "$BAZEL" build //... --aspects=@uika//:defs.bzl%uika_classpath_aspect \
   --output_groups=uika_dump
+EXECROOT=$("$BAZEL" info execution_root)
+# Two --fragments roots that overlap, so //app's fragment is found twice. The merge has
+# to keep one module per name, since that name is what upgrade-check pairs on.
 "$BAZEL" run @uika//:merge -- --output "$OUT/sweep.json" \
-  --execroot "$("$BAZEL" info execution_root)" --fragments "$BIN"
+  --execroot "$EXECROOT" --fragments "$BIN" --fragments "$BIN/app"
 
 python3 "$RULES/it/assert_sweep.py" "$OUT/sweep.json" "$OUT/before.json"
+
+# The merge takes the same -o, --materialize and --jdkRelease the rule-based dump does.
+"$BAZEL" run @uika//:merge -- -o "$OUT/sweep-materialized.json" \
+  --execroot "$EXECROOT" --fragments "$BIN" \
+  --materialize "$OUT/sweep-jars" --jdkRelease 17
+python3 - "$OUT/sweep-materialized.json" "$OUT/sweep-jars" <<'EOF'
+import json, os, sys
+dump = json.load(open(sys.argv[1], encoding="utf-8"))
+jars = os.path.realpath(sys.argv[2])
+releases = {m["module"]: m.get("jdkRelease") for m in dump["modules"]}
+if dump.get("jdkRelease") != 17 or set(releases.values()) != {17}:
+    sys.exit("--jdkRelease 17 should reach every swept module, got {}".format(releases))
+files = [dump["roots"][a["root"]] + a["path"] for a in dump["artifacts"]]
+for m in dump["modules"]:
+    files.extend(dump["roots"][d["root"]] + d["path"] for d in m["classesDirs"])
+if not files:
+    sys.exit("the materialized sweep names no files")
+for path in files:
+    if os.path.dirname(os.path.realpath(path)) != jars or not os.path.exists(path):
+        sys.exit("{} was not materialized into {}".format(path, jars))
+EOF
+
+# The merge's own guards. No --execroot or no --fragments is a usage error, a --fragments
+# root with no fragments under it (or none at all) is a sweep that was never run, named as
+# such, and a flag it does not have is named like the dump and the check name theirs.
+set +e
+"$BAZEL" run @uika//:merge > "$OUT/merge-usage.txt" 2>&1
+merge_usage_status=$?
+"$BAZEL" run @uika//:merge -- --execroot "$EXECROOT" > "$OUT/merge-usage-fragments.txt" 2>&1
+merge_usage_fragments_status=$?
+"$BAZEL" run @uika//:merge -- --execroot "$EXECROOT" --fragments "$OUT/no-such-dir" \
+  --fragments "$OUT" > "$OUT/merge-empty.txt" 2>&1
+merge_empty_status=$?
+"$BAZEL" run @uika//:merge -- --execroot "$EXECROOT" --fragments "$BIN" --bogus \
+  > "$OUT/merge-bogus.txt" 2>&1
+merge_bogus_status=$?
+set -e
+for usage in merge-usage merge-usage-fragments; do
+  if ! grep -q "usage: --execroot" "$OUT/$usage.txt"; then
+    echo "the merge should print its usage ($usage):" >&2
+    cat "$OUT/$usage.txt" >&2
+    exit 1
+  fi
+done
+if [ "$merge_usage_status" -eq 0 ] || [ "$merge_usage_fragments_status" -eq 0 ]; then
+  echo "the merge should fail without --execroot or without --fragments" >&2
+  exit 1
+fi
+if [ "$merge_empty_status" -eq 0 ] || ! grep -q "fragments under" "$OUT/merge-empty.txt"; then
+  echo "the merge should name the roots it found no fragments under:" >&2
+  cat "$OUT/merge-empty.txt" >&2
+  exit 1
+fi
+if [ "$merge_bogus_status" -eq 0 ] || ! grep -q "unknown argument: --bogus" "$OUT/merge-bogus.txt"; then
+  echo "the merge should reject a flag it does not have:" >&2
+  cat "$OUT/merge-bogus.txt" >&2
+  exit 1
+fi
 
 python3 "$RULES/it/assert_dump.py" "$OUT/before.json" "$OUT/after.json" \
   "$OUT/resolution.json" "$OUT/report.txt" \
@@ -276,7 +393,8 @@ echo "--- upgrade-check argument guards"
 # failing, so the CLI got handed a directory where a dump belongs.
 assert_check_rejects() {
   what=$1
-  shift
+  expected=$2
+  shift 2
   set +e
   UIKA_CLI_PATH=$STUB "$BAZEL" run //:check -- "$@" > "$OUT/arg-guard.txt" 2>&1
   guard_status=$?
@@ -286,19 +404,24 @@ assert_check_rejects() {
     cat "$OUT/arg-guard.txt" >&2
     exit 1
   fi
-  if ! grep -qE "missing value for|wants a whole number" "$OUT/arg-guard.txt"; then
-    echo "expected a named argument error for $what, got:" >&2
+  if ! grep -q "$expected" "$OUT/arg-guard.txt"; then
+    echo "expected '$expected' for $what, got:" >&2
     cat "$OUT/arg-guard.txt" >&2
     exit 1
   fi
 }
 
-assert_check_rejects "an empty --before" \
+assert_check_rejects "an empty --before" "missing value for" \
   --before "" --after "$OUT/after.json"
-assert_check_rejects "a trailing --after" \
+assert_check_rejects "a trailing --after" "missing value for" \
   --before "$OUT/before.json" --after
-assert_check_rejects "a non-numeric --jdkRelease" \
+assert_check_rejects "a non-numeric --jdkRelease" "wants a whole number" \
   --before "$OUT/before.json" --after "$OUT/after.json" --jdkRelease abc
+assert_check_rejects "a flag this binary does not have" "unknown argument: --bogus" \
+  --before "$OUT/before.json" --after "$OUT/after.json" --bogus
+assert_check_rejects "a run without --after" "usage:" \
+  --before "$OUT/before.json"
+assert_check_rejects "a run without any argument" "usage:"
 
 # ...but a blank --failOn is UNSET, not an error. Every other integration drops it, and so
 # does this binary's own rule-attribute path, so rejecting it would make Bazel the one tool
@@ -376,21 +499,28 @@ echo "--- exclude_files reaches the CLI"
 : > "$WS/excludes-a.toml"
 : > "$WS/excludes-b.toml"
 : > "$WS/excludes-c.toml"
+# --draftExcludeFile rides along: the other relative file knob, resolved the same way.
 UIKA_STUB_ARGS=$OUT/stub-args-excludes.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check_with_excludes -- \
-  --before "$OUT/before.json" --after "$OUT/after.json" --excludeFile excludes-c.toml
-for toml in excludes-a excludes-b excludes-c; do
+  --before "$OUT/before.json" --after "$OUT/after.json" --excludeFile excludes-c.toml \
+  --draftExcludeFile draft-excludes.toml
+for toml in excludes-a excludes-b excludes-c draft-excludes; do
   # Anchored on an ABSOLUTE path ending in the file name, which is the promise: a relative
   # attribute value resolves against the workspace root, never against the runfiles tree.
   # Not compared to "$WS/..." literally, because BUILD_WORKSPACE_DIRECTORY is the resolved
   # path and macOS puts /private in front of a $TMPDIR one.
   if ! grep -qE "^/.*/$toml\.toml$" "$OUT/stub-args-excludes.txt"; then
-    echo "$toml.toml did not reach the CLI as an --exclude-file value:" >&2
+    echo "$toml.toml did not reach the CLI as a file value:" >&2
     cat "$OUT/stub-args-excludes.txt" >&2
     exit 1
   fi
 done
 if [ "$(grep -c -x -- "--exclude-file" "$OUT/stub-args-excludes.txt")" -ne 3 ]; then
   echo "expected exactly three --exclude-file flags:" >&2
+  cat "$OUT/stub-args-excludes.txt" >&2
+  exit 1
+fi
+if ! grep -qx -- "--draft-exclude-file" "$OUT/stub-args-excludes.txt"; then
+  echo "--draftExcludeFile did not reach the CLI:" >&2
   cat "$OUT/stub-args-excludes.txt" >&2
   exit 1
 fi

@@ -1,5 +1,6 @@
 package net.exoego.uika.bazel;
 
+import net.exoego.uika.plugin.core.ClasspathDump.Artifact;
 import net.exoego.uika.plugin.core.ClasspathDump.Module;
 import net.exoego.uika.plugin.core.DumpFormat;
 import net.exoego.uika.plugin.core.JfrEvidence;
@@ -8,11 +9,13 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
 import java.util.function.Function;
 
 /**
- * Unit tests for the manifest parser and the argument guards, run as a plain {@code main}.
+ * Unit tests for the ruleset's Java side, run as a plain {@code main}: the manifest parser,
+ * the two path resolvers, the argument guards and the materializer.
  *
  * <p>No JUnit, and so no {@code maven.install}: the ruleset's only dependency is
  * {@code rules_java}, and adding a test framework would put a network fetch in front of a
@@ -30,18 +33,25 @@ public final class ManifestSelfTest {
     public static void main(String[] args) throws IOException {
         parsesModulesWithReleasesAndDeps();
         overrideReplacesEveryModulesRelease();
+        emptyManifestIsNoModules();
         rejectsMalformedLines();
+        runfilesResolveThroughEitherConvention();
+        execrootEntriesFallBackToTheOutputBase();
+        relativePathsResolveAgainstTheWorkspace();
         flagValueRejectsMissingAndEmptyValues();
+        flagOptionalDropsABlankButNotATrailingValue();
         flagReleaseNamesTheFlagOnGarbage();
-        flagValueIsUsedByTheBinariesThatHaveIt();
         excludeFilesAreSplitTrimmedAndBlankDropped();
         conversionsLandInsideTheEvidenceLocation();
         aNonNegativeReleaseSkipsTheDerivation();
+        materializeCopiesEveryJarOnce();
+        materializeRefusesWhatItCannotCopy();
+        materializeReplacesAStaleCopy();
 
         // A floor, not a total: `failures` counts only what FAILED, so a deleted call in
         // main or an early return inside a method would otherwise be a silent pass. The
         // class-file floor guard next door fails on an empty sweep for the same reason.
-        var expected = 39;
+        var expected = 74;
         if (checks < expected) {
             System.err.println("only " + checks + " checks ran, expected at least " + expected);
             System.exit(1);
@@ -111,12 +121,108 @@ public final class ManifestSelfTest {
                 "the override did not reach every module");
     }
 
+    /**
+     * A {@code uika_dump} with no targets writes one empty line, which has to read as no
+     * modules rather than as a record before any module.
+     */
+    private static void emptyManifestIsNoModules() throws IOException {
+        check(parse("\n", null).isEmpty(), "an empty manifest should be no modules");
+
+        List<Module> modules = parse("module\t//app:app\n\ntoolchain\t21\n", null);
+        check(modules.size() == 1 && Integer.valueOf(21).equals(modules.get(0).jdkRelease()),
+                "a blank line should not cut the module before it short");
+    }
+
     private static void rejectsMalformedLines() throws IOException {
         // An unknown line kind means the writer and this parser disagree, and a record before
         // any module means the manifest is truncated. Both would otherwise be absorbed into a
         // dump that looks fine and names the wrong things.
         expectFailure("unknown line kind", () -> parse("module\t//a:a\nnonsense\tvalue\n", null));
         expectFailure("record before any module", () -> parse("toolchain\t21\n", null));
+    }
+
+    /**
+     * The test's own source rides in its runfiles, named by the BUILD file through
+     * {@code $(rlocationpath)}, which is the form a {@code jvm_flags} entry carries. The
+     * other form, a Starlark {@code short_path}, is derived from it the way Bazel spells the
+     * two, so the check holds whether this suite runs with the ruleset as the main
+     * repository or as the external module the integration workspace loads it as.
+     */
+    private static void runfilesResolveThroughEitherConvention() {
+        String rlocation = System.getProperty("uika.selftest.runfile");
+        check(rlocation != null && !rlocation.isEmpty(),
+                "the BUILD file should pass -Duika.selftest.runfile");
+
+        Path resolved = Manifest.resolveRunfile(rlocation);
+        check(resolved.isAbsolute() && Files.isRegularFile(resolved),
+                "the rlocationpath should resolve to a file, got " + resolved);
+        // The runfiles entry is a symlink that the next build is free to replant. Only its
+        // target is worth writing into a dump.
+        check(!resolved.toString().contains(".runfiles"),
+                "the runfiles symlink should be followed to its target, got " + resolved);
+
+        String shortPath = rlocation.startsWith("_main/")
+                ? rlocation.substring("_main/".length())
+                : "../" + rlocation;
+        check(resolved.equals(Manifest.resolveRunfile(shortPath)),
+                "short_path and rlocationpath should name the same file");
+
+        Exception missing = expectFailure("an entry outside the runfiles",
+                IllegalStateException.class, () -> Manifest.resolveRunfile("no/such/entry.jar"));
+        check(missing != null && missing.getMessage().contains("bazel run"),
+                "the error should say how the binary has to be started");
+    }
+
+    /**
+     * A sweep fragment names execution-root-relative paths, and the execution root's
+     * external/ forest is replanted on every invocation, so a jar that is a source file of
+     * an external module may only exist in the output base two levels up.
+     */
+    private static void execrootEntriesFallBackToTheOutputBase() throws IOException {
+        Path outputBase = Files.createTempDirectory("uika-output-base");
+        try {
+            Path execroot = Files.createDirectories(outputBase.resolve("execroot/_main"));
+            Path built = write(execroot.resolve("bazel-out/bin/app/app.jar"), "built");
+            Path pruned = write(outputBase.resolve("external/vendored+/dep.jar"), "vendored");
+
+            check(built.toRealPath().equals(Manifest.resolveExecroot(execroot, "bazel-out/bin/app/app.jar")),
+                    "a build output should resolve under the execution root");
+            check(pruned.toRealPath().equals(Manifest.resolveExecroot(execroot, "external/vendored+/dep.jar")),
+                    "an external source file should be found in the output base");
+
+            Exception missing = expectFailure("a jar under neither base",
+                    IllegalStateException.class,
+                    () -> Manifest.resolveExecroot(execroot, "external/gone+/dep.jar"));
+            check(missing != null && missing.getMessage().contains(execroot.toString()),
+                    "the error should name the execution root it looked under");
+        } finally {
+            deleteTree(outputBase);
+        }
+
+        // An execution root without two parents has no output base above it, and the
+        // lookup must fall through to the error rather than walk off the top of the tree.
+        Path root = Path.of("/");
+        expectFailure("a root execution root", IllegalStateException.class,
+                () -> Manifest.resolveExecroot(root, "dep.jar"));
+        expectFailure("an execution root directly under the root", IllegalStateException.class,
+                () -> Manifest.resolveExecroot(root.resolve("uika-no-such-execroot"), "dep.jar"));
+    }
+
+    /**
+     * {@code bazel run} starts a binary inside its runfiles tree with the workspace root in
+     * BUILD_WORKSPACE_DIRECTORY, and a relative {@code --output} has to land in the
+     * workspace rather than in a tree the next build is free to delete. {@code bazel test}
+     * exports no such variable, so the value goes in by hand.
+     */
+    private static void relativePathsResolveAgainstTheWorkspace() {
+        check(Path.of("/ws/uika/out.json").equals(Manifest.workspacePath("uika/out.json", "/ws")),
+                "a relative path should resolve against the workspace");
+        check(Path.of("/elsewhere/out.json").equals(Manifest.workspacePath("/elsewhere/out.json", "/ws")),
+                "an absolute path should be left alone");
+        check(Path.of("uika/out.json").toAbsolutePath().equals(Manifest.workspacePath("uika/out.json", null)),
+                "outside bazel run, a relative path resolves against the working directory");
+        check(Path.of("/elsewhere/out.json").equals(Manifest.workspacePath("/elsewhere/out.json")),
+                "the environment-reading form should agree on an absolute path");
     }
 
     private static void flagValueRejectsMissingAndEmptyValues() {
@@ -131,30 +237,31 @@ public final class ManifestSelfTest {
         check("dump.json".equals(Manifest.flagValue(good, 1)), "flagValue dropped a real value");
     }
 
+    /**
+     * {@code --failOn} is the one flag whose empty spelling means "unset", the way every
+     * other integration reads it, so an unset CI variable must not fail the build. A trailing
+     * flag is still a mistake.
+     */
+    private static void flagOptionalDropsABlankButNotATrailingValue() {
+        String[] trailing = {"--failOn"};
+        expectFailure("a trailing --failOn", () -> Manifest.flagOptional(trailing, 1));
+
+        String[] blank = {"--failOn", ""};
+        check(Manifest.flagOptional(blank, 1) == null, "a blank --failOn should read as unset");
+
+        String[] set = {"--failOn", "never"};
+        check("never".equals(Manifest.flagOptional(set, 1)), "flagOptional dropped a real value");
+    }
+
     private static void flagReleaseNamesTheFlagOnGarbage() {
         String[] garbage = {"--jdkRelease", "seventeen"};
-        try {
-            Manifest.flagRelease(garbage, 1);
-            check(false, "flagRelease accepted a non-number");
-        } catch (IllegalArgumentException expected) {
-            check(expected.getMessage().contains("--jdkRelease"),
-                    "the error does not name the flag: " + expected.getMessage());
-        }
+        Exception rejected = expectFailure("a non-numeric --jdkRelease",
+                IllegalArgumentException.class, () -> Manifest.flagRelease(garbage, 1));
+        check(rejected != null && rejected.getMessage().contains("--jdkRelease"),
+                "the error does not name the flag: " + rejected);
 
         String[] good = {"--jdkRelease", "17"};
         check(Integer.valueOf(17).equals(Manifest.flagRelease(good, 1)), "flagRelease misparsed");
-    }
-
-    /// Deliberately NOT a workspacePath test. Both of its branches return an absolute
-    /// argument unchanged -- `Path.resolve` answers `other` verbatim when `other` is
-    /// absolute -- so an absolute-path assertion holds even with the isAbsolute check
-    /// deleted. The branch worth testing is a RELATIVE path resolving against
-    /// BUILD_WORKSPACE_DIRECTORY, which `bazel test` does not set and which the method
-    /// reads straight from System.getenv, so it needs a seam this class does not have.
-    private static void flagValueIsUsedByTheBinariesThatHaveIt() {
-        String[] args = {"--output", "dump.json", "--jdkRelease", "17"};
-        check("dump.json".equals(Manifest.flagValue(args, 1)), "flagValue dropped a value");
-        check(Integer.valueOf(17).equals(Manifest.flagRelease(args, 3)), "flagRelease misparsed");
     }
 
     /**
@@ -223,6 +330,111 @@ public final class ManifestSelfTest {
                 "with nothing to read from, the derivation is the build JVM");
     }
 
+    /**
+     * Two classpath entries can share a file name (one jar at two versions, or a build
+     * output named like a dependency) and must not overwrite each other, while one entry
+     * reached from two modules is copied once and both modules point at that copy.
+     */
+    private static void materializeCopiesEveryJarOnce() throws IOException {
+        Path tmp = Files.createTempDirectory("uika-materialize");
+        try {
+            Path lib = write(tmp.resolve("bin/lib/lib.jar"), "lib");
+            Path app = write(tmp.resolve("bin/app/app.jar"), "app");
+            Path guava22 = write(tmp.resolve("22/guava.jar"), "22");
+            Path guava23 = write(tmp.resolve("23/guava.jar"), "23");
+            var v22 = new Artifact("com.google.guava", "guava", "22.0", guava22.toString());
+            var v23 = new Artifact("com.google.guava", "guava", "23.0", guava23.toString());
+            var libDep = new Artifact(null, null, null, lib.toString(), "//lib:lib");
+            List<Module> modules = List.of(
+                    new Module("//lib:lib", List.of(lib.toString()), List.of(v22, v23), 11),
+                    new Module("//app:app", List.of(app.toString()), List.of(v22, libDep), 17));
+            Path out = tmp.resolve("baseline-jars");
+
+            List<Module> moved = Materialize.into(modules, out);
+
+            Module movedLib = moved.get(0);
+            check("//lib:lib".equals(movedLib.path()) && Integer.valueOf(11).equals(movedLib.jdkRelease()),
+                    "module name and release should survive: " + movedLib.path());
+            check(movedLib.classesDirs().equals(List.of(out.resolve("lib.jar").toString())),
+                    "the module's own jar should move too: " + movedLib.classesDirs());
+            var first = movedLib.artifacts().get(0);
+            var second = movedLib.artifacts().get(1);
+            check(out.resolve("guava.jar").toString().equals(first.file()),
+                    "the first guava should keep its name: " + first.file());
+            check(out.resolve("2-guava.jar").toString().equals(second.file()),
+                    "the second guava must not overwrite the first: " + second.file());
+            check("22".equals(Files.readString(out.resolve("guava.jar")))
+                            && "23".equals(Files.readString(out.resolve("2-guava.jar"))),
+                    "each copy should carry its own bytes");
+            check("com.google.guava".equals(second.group()) && "23.0".equals(second.version()),
+                    "coordinates should survive the move");
+
+            Module movedApp = moved.get(1);
+            check(first.file().equals(movedApp.artifacts().get(0).file()),
+                    "one source reached from two modules should point at the one copy");
+            check("//lib:lib".equals(movedApp.artifacts().get(1).project())
+                            && movedLib.classesDirs().get(0).equals(movedApp.artifacts().get(1).file()),
+                    "a project dependency keeps its attribution and shares its module's copy");
+            try (var copies = Files.list(out)) {
+                check(copies.count() == 4, "four distinct files, copied once each");
+            }
+        } finally {
+            deleteTree(tmp);
+        }
+    }
+
+    /**
+     * {@code Files.copy} on a directory produces an EMPTY one and reports success, and
+     * copying over a jar the dump itself names destroys the bytes about to be copied. The
+     * second is easy to reach with {@code --materialize} pointed at a vendor directory: a
+     * same-named jar from elsewhere on the classpath claims the name first, so comparing
+     * the destination against the entry being copied is not enough.
+     */
+    private static void materializeRefusesWhatItCannotCopy() throws IOException {
+        Path tmp = Files.createTempDirectory("uika-materialize");
+        try {
+            Path classes = Files.createDirectories(tmp.resolve("classes"));
+            var directory = List.of(new Module("//app:app", List.of(classes.toString()), List.of()));
+            Exception refused = expectFailure("a directory entry", IOException.class,
+                    () -> Materialize.into(directory, tmp.resolve("out")));
+            check(refused != null && refused.getMessage().contains(classes.toString()),
+                    "the refusal should name the directory: " + refused);
+
+            Path vendored = write(tmp.resolve("vendor/dep.jar"), "vendored");
+            Path cached = write(tmp.resolve("cache/dep.jar"), "cached");
+            var deps = List.of(new Module("//app:app", List.of(), List.of(
+                    new Artifact("g", "dep", "2", cached.toString()),
+                    new Artifact("g", "dep", "1", vendored.toString()))));
+            refused = expectFailure("a destination the dump names", IOException.class,
+                    () -> Materialize.into(deps, tmp.resolve("vendor")));
+            check(refused != null && refused.getMessage().contains("itself on the classpath"),
+                    "the refusal should say why the directory is unusable: " + refused);
+            check("vendored".equals(Files.readString(vendored)),
+                    "the refusal has to come before anything is deleted");
+        } finally {
+            deleteTree(tmp);
+        }
+    }
+
+    /** A copy a previous run left in the destination is replaced, since the jar may have changed. */
+    private static void materializeReplacesAStaleCopy() throws IOException {
+        Path tmp = Files.createTempDirectory("uika-materialize");
+        try {
+            Path fresh = write(tmp.resolve("bazel-out/dep.jar"), "fresh");
+            Path out = tmp.resolve("out");
+            write(out.resolve("dep.jar"), "stale");
+            var modules = List.of(new Module("//app:app", List.of(),
+                    List.of(new Artifact("g", "dep", "1", fresh.toString()))));
+
+            Materialize.into(modules, out);
+
+            check("fresh".equals(Files.readString(out.resolve("dep.jar"))),
+                    "the stale copy should be replaced");
+        } finally {
+            deleteTree(tmp);
+        }
+    }
+
     private static List<Module> parse(String manifest, Integer override) throws IOException {
         Path file = Files.createTempFile("uika-manifest", ".tsv");
         Files.writeString(file, manifest, StandardCharsets.UTF_8);
@@ -234,21 +446,43 @@ public final class ManifestSelfTest {
         }
     }
 
+    private static Path write(Path file, String content) throws IOException {
+        Files.createDirectories(file.getParent());
+        return Files.writeString(file, content, StandardCharsets.UTF_8);
+    }
+
+    private static void deleteTree(Path root) throws IOException {
+        try (var walk = Files.walk(root)) {
+            for (Path path : walk.sorted(Comparator.reverseOrder()).toList()) {
+                Files.delete(path);
+            }
+        }
+    }
+
     private interface Thrower {
         void run() throws Exception;
     }
 
     private static void expectFailure(String what, Thrower body) {
+        expectFailure(what, IllegalArgumentException.class, body);
+    }
+
+    /** The exception {@code body} threw, for a check on its message, or null when it did not. */
+    private static Exception expectFailure(String what, Class<? extends Exception> expected,
+            Thrower body) {
         try {
             body.run();
             check(false, what + " was accepted");
-        } catch (IllegalArgumentException expected) {
-            // Counted, not just tolerated: the floor in main is only a floor if the
-            // passing path of every check registers.
-            check(true, what);
-        } catch (Exception unexpected) {
-            check(false, what + " threw " + unexpected);
+        } catch (Exception thrown) {
+            if (expected.isInstance(thrown)) {
+                // Counted, not just tolerated: the floor in main is only a floor if the
+                // passing path of every check registers.
+                check(true, what);
+                return thrown;
+            }
+            check(false, what + " threw " + thrown);
         }
+        return null;
     }
 
     private static void check(boolean condition, String message) {
