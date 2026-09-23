@@ -85,6 +85,13 @@ class TomlTest {
     }
 
     @Test
+    void literalStringsTakeNonAscii() {
+        Toml.Table t = Toml.parse("'kéy' = 'é 日本語 𝄞'\nml = '''\nü\n'''\n");
+        assertEquals("é 日本語 𝄞", string(t, "kéy"));
+        assertEquals("ü\n", string(t, "ml"));
+    }
+
+    @Test
     void multiLineBasicStrings() {
         Toml.Table t = Toml.parse("a = \"\"\"\nfirst newline is trimmed\nsecond stays\"\"\"\n"
                 + "b = \"\"\"line \\\n      continued \\  \n\n   here\"\"\"\n"
@@ -470,6 +477,14 @@ class TomlTest {
                   | ^^^^^^^^^^^
                 a table problem""",
                 item.error("a table problem").render("e.toml"));
+    }
+
+    /** A reader checks the kind first, so a mismatch here is a bug in the reader, not bad input. */
+    @Test
+    void readingAValueAsAnotherKindFailsLoudly() {
+        Toml.Value number = Toml.parse("a = 1").get("a").value();
+        IllegalStateException e = assertThrows(IllegalStateException.class, number::asString);
+        assertEquals("INTEGER read as STRING", e.getMessage());
     }
 
     /** Through the real schema, so the key paths and the key order rule are pinned too. */
