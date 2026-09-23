@@ -21,3 +21,16 @@ assert log.text.contains("MojoExecutionException") :
 // and the reason discarded into a pipe nobody reads.
 assert log.text.contains("[INFO] uika-stub: usage error") :
     "the CLI's stderr did not reach the mojo logger:\n${log.text}"
+
+// Invocation 2: nothing serves that version, so the resolver fails before any process
+// starts. The message names the full coordinate, classifier included, because the jar is a
+// classified artifact and a bare version would send the reader looking for the wrong file.
+assert log.text.contains("failed to resolve net.exoego.uika:uika-cli:jar:jvm:9.9.9-missing") :
+    "an unresolvable CLI version did not name what it looked for:\n${log.text}"
+
+// Invocation 3: the evidence directory's walk hits its own symlink loop before the CLI
+// starts. The converter unwraps the stream's UncheckedIOException, so this reaches the
+// mojo as an IOException and is reported as the run that failed, with the loop named.
+def loop = new File(basedir, "looped-logs/loop")
+assert log.text.contains("failed to run uika upgrade-check: ${loop.absolutePath}") :
+    "a looped evidence directory did not fail as a mojo error naming the loop:\n${log.text}"

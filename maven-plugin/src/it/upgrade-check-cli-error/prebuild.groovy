@@ -20,4 +20,10 @@ StubCli.writeJar(new File(dir, "uika-cli-${version}-jvm.jar").toPath(), "uika-st
 
 new File(basedir, "before.json").text = "{}"
 new File(basedir, "after.json").text = "{}"
+
+// An evidence directory whose walk cannot finish: the converter follows links, and this
+// one points back at its own parent.
+def looped = new File(basedir, "looped-logs")
+looped.mkdirs()
+java.nio.file.Files.createSymbolicLink(new File(looped, "loop").toPath(), looped.toPath())
 return true

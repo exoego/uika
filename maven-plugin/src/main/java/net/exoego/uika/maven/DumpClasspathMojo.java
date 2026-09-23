@@ -23,6 +23,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+// RUNTIME is the whole of the scope filtering. Maven resolves each project for this goal
+// afresh at the declared scope, right before it runs and whatever the lifecycle resolved
+// earlier, and getArtifacts() answers through a compile-plus-runtime filter from then on.
+// A test- or provided-scoped artifact never reaches execute(); the dump-classpath IT pins
+// that with one dependency of each scope.
 @Mojo(
         name = "dump-classpath",
         defaultPhase = LifecyclePhase.NONE,
@@ -105,7 +110,7 @@ public final class DumpClasspathMojo extends AbstractMojo {
      * projects share an artifactId. Per-module checking pairs and attributes modules by this
      * name, so a collision would silently drop the second module from the check.
      */
-    private static Map<MavenProject, String> moduleNames(List<MavenProject> reactorProjects) {
+    static Map<MavenProject, String> moduleNames(List<MavenProject> reactorProjects) {
         var artifactIdCounts = new HashMap<String, Integer>();
         for (MavenProject project : reactorProjects) {
             artifactIdCounts.merge(project.getArtifactId(), 1, Integer::sum);
@@ -136,9 +141,6 @@ public final class DumpClasspathMojo extends AbstractMojo {
         var artifacts = new ArrayList<ClasspathDump.Artifact>();
         Set<Artifact> projectArtifacts = reactorProject.getArtifacts();
         for (Artifact artifact : projectArtifacts) {
-            if (!isRuntimeVisible(artifact)) {
-                continue;
-            }
             var sibling = reactorByGav.get(
                     gav(artifact.getGroupId(), artifact.getArtifactId(), artifact.getVersion()));
             if (sibling != null) {
@@ -175,12 +177,5 @@ public final class DumpClasspathMojo extends AbstractMojo {
 
     private static String gav(String groupId, String artifactId, String version) {
         return groupId + ":" + artifactId + ":" + version;
-    }
-
-    private boolean isRuntimeVisible(Artifact artifact) {
-        var scope = artifact.getScope();
-        return scope == null
-                || Artifact.SCOPE_COMPILE.equals(scope)
-                || Artifact.SCOPE_RUNTIME.equals(scope);
     }
 }
