@@ -1,9 +1,5 @@
 package net.exoego.uika.cli;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
-import java.nio.ByteOrder;
-
 /**
  * Minimal class-file parser.
  *
@@ -30,10 +26,17 @@ final class ClassParser {
     static final int TAG_INTERFACE_METHODREF = 11;
     static final int TAG_NAME_AND_TYPE = 12;
 
-    private static final VarHandle U16 =
-            MethodHandles.byteArrayViewVarHandle(short[].class, ByteOrder.BIG_ENDIAN);
-    private static final VarHandle U32 =
-            MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.BIG_ENDIAN);
+    // Plain byte arithmetic rather than a VarHandle view: C1 code, which the parser runs as
+    // until C2 gets to it, calls through the VarHandle machinery per read and showed up in
+    // profiles as Unsafe.getShortUnaligned frames; C2 compiles both to the same load.
+    private static int be16(byte[] b, int at) {
+        return (b[at] & 0xff) << 8 | (b[at + 1] & 0xff);
+    }
+
+    private static int be32(byte[] b, int at) {
+        return (b[at] & 0xff) << 24 | (b[at + 1] & 0xff) << 16 | (b[at + 2] & 0xff) << 8 | (b[at + 3] & 0xff);
+    }
+
     private static final byte[] CODE = {'C', 'o', 'd', 'e'};
     private static final byte[] NEST_HOST = "NestHost".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
     private static final byte[] PERMITTED_SUBCLASSES =
@@ -66,6 +69,13 @@ final class ClassParser {
     /** Reference instructions of every method in order: {@code opcode << 16 | cpIndex}. */
     int[] codeRefs = new int[512];
     int codeRefCount;
+    /**
+     * The Class, String, Fieldref, Methodref and InterfaceMethodref entries in pool order, as
+     * {@code tag << 16 | index}: what the reference, edge and evidence sweeps look at, a third
+     * of the pool, recorded as the pool is walked so none of them walks it again.
+     */
+    int[] tagged = new int[512];
+    int taggedCount;
     /** Class index of the NestHost target, 0 when absent. */
     int nestHost;
     /** PermittedSubclasses class indexes; count -1 when the attribute is absent (unsealed). */
@@ -92,7 +102,15 @@ final class ClassParser {
         cpCount = -1;
         cpNext = 1;
         cpLen = 0;
+        taggedCount = 0;
         headerDone = false;
+    }
+
+    private void addTagged(int tag, int index) {
+        if (taggedCount == tagged.length) {
+            tagged = java.util.Arrays.copyOf(tagged, tagged.length * 2);
+        }
+        tagged[taggedCount++] = tag << 16 | index;
     }
 
     /** Bytes the header is known to need so far: a lower bound that grows as parsing advances. */
@@ -147,33 +165,43 @@ final class ClassParser {
         int n = cpNext;
         while (n < cpCount) {
             int tagPos = pos;
-            if (!last) {
-                // Resumable: never consume a partial entry.
-                if (tagPos + 3 > available) {
+            // An entry is stepped over from its size. One cut by the end of the buffer asks
+            // for more bytes (never a partial entry), or on the last call fails at the offset
+            // a reader of its fields would have reached, which the goldens pin.
+            if (tagPos + 3 > end) {
+                if (!last) {
                     cpNext = n;
                     headerNeed = tagPos + 3;
                     return false;
                 }
-                int size = entrySize(b[tagPos] & 0xff, tagPos);
-                if (size > 0 && tagPos + size > available) {
+                if (tagPos >= end) {
+                    throw truncatedAt(tagPos);
+                }
+                int tag = b[tagPos] & 0xff;
+                if (fixedSize(tag) == 0) {
+                    throw unknownTag(tag, tagPos + 1);
+                }
+                throw truncatedAt(cutOffset(tagPos));
+            }
+            int tag = b[tagPos] & 0xff;
+            int size = entrySize(tag, tagPos);
+            if (size == 0) {
+                throw unknownTag(tag, tagPos + 1);
+            }
+            if (tagPos + size > end) {
+                if (!last) {
                     cpNext = n;
                     headerNeed = tagPos + size;
                     return false;
                 }
+                throw truncatedAt(cutOffset(tagPos));
             }
-            int tag = u8();
-            switch (tag) {
-                case 1 -> skip(u16());
-                case 7, 8, 16, 19, 20 -> skip(2);
-                case 9, 10, 11, 12 -> skipTwoU16();
-                case 3, 4, 17, 18 -> skip(4);
-                case 5, 6 -> {
-                    skip(8);
-                    cp[n++] = tagPos;
-                    tagPos = 0;
-                }
-                case 15 -> skip(3);
-                default -> throw new FormatException("unknown constant pool tag " + tag + " at offset " + pos);
+            pos = tagPos + size;
+            if (tag == 5 || tag == 6) {
+                cp[n++] = tagPos;
+                tagPos = 0;
+            } else if (tag == 7 || tag == 8 || (tag >= 9 && tag <= 11)) {
+                addTagged(tag, n);
             }
             cp[n++] = tagPos;
         }
@@ -185,7 +213,7 @@ final class ClassParser {
                 headerNeed = pos + 8;
                 return false;
             }
-            int count = (short) U16.get(b, pos + 6) & 0xffff;
+            int count = be16(b, pos + 6);
             if (pos + 8 + 2 * count > available) {
                 headerNeed = pos + 8 + 2 * count;
                 return false;
@@ -209,14 +237,37 @@ final class ClassParser {
 
     /** Whole size of the entry whose tag sits at {@code tagPos}; 0 for an unknown tag. Needs 3 readable bytes. */
     private int entrySize(int tag, int tagPos) {
+        int size = fixedSize(tag);
+        return tag == 1 ? size + be16(bytes, tagPos + 1) : size;
+    }
+
+    /** Size of an entry of {@code tag} without a Utf8's bytes, so 3 for a Utf8's header; 0 for an unknown tag. */
+    private static int fixedSize(int tag) {
         return switch (tag) {
-            case 1 -> 3 + ((short) U16.get(bytes, tagPos + 1) & 0xffff);
-            case 7, 8, 16, 19, 20 -> 3;
+            case 1, 7, 8, 16, 19, 20 -> 3;
             case 9, 10, 11, 12, 3, 4, 17, 18 -> 5;
             case 5, 6 -> 9;
             case 15 -> 4;
             default -> 0;
         };
+    }
+
+    /**
+     * The offset a field-by-field reader of the entry at {@code tagPos} reports when the entry
+     * is cut short: past the tag, or past a first u16 that is still whole. The Rust reader
+     * read a Utf8's length, and the two u16 of a member reference or NameAndType, as
+     * separate reads, so a cut after the first one reports the second one's offset.
+     */
+    private int cutOffset(int tagPos) {
+        int p = tagPos + 1;
+        return switch (bytes[tagPos] & 0xff) {
+            case 1, 9, 10, 11, 12 -> p + 2 <= end ? p + 2 : p;
+            default -> p;
+        };
+    }
+
+    private static FormatException unknownTag(int tag, int offset) {
+        return new FormatException("unknown constant pool tag " + tag + " at offset " + offset);
     }
 
     /**
@@ -281,7 +332,7 @@ final class ClassParser {
         if (length < 8) {
             throw new FormatException("truncated class file at offset 4");
         }
-        long codeLength = (int) U32.get(bytes, body + 4) & 0xffffffffL;
+        long codeLength = be32(bytes, body + 4) & 0xffffffffL;
         if (8 + codeLength > length) {
             throw new FormatException("truncated class file at offset 8");
         }
@@ -306,8 +357,8 @@ final class ClassParser {
                 if (i + 12 > length) {
                     break;
                 }
-                int low = (int) U32.get(b, start + (int) i + 4);
-                int high = (int) U32.get(b, start + (int) i + 8);
+                int low = be32(b, start + (int) i + 4);
+                int high = be32(b, start + (int) i + 8);
                 long count = Math.max(0, saturating((long) saturating((long) high - low) + 1));
                 i += 12 + count * 4;
             } else if (op == 0xab) {
@@ -315,7 +366,7 @@ final class ClassParser {
                 if (i + 8 > length) {
                     break;
                 }
-                long pairs = Math.max(0, (int) U32.get(b, start + (int) i + 4));
+                long pairs = Math.max(0, be32(b, start + (int) i + 4));
                 i += 8 + pairs * 8;
             } else if (op == 0xc4) {
                 if (i + 1 >= length) {
@@ -372,7 +423,7 @@ final class ClassParser {
             int body = pos;
             skip(length);
             if (length == 2 && utf8Equals(nameIndex, NEST_HOST)) {
-                nestHost = (short) U16.get(bytes, body) & 0xffff;
+                nestHost = be16(bytes, body);
             } else if (utf8Equals(nameIndex, PERMITTED_SUBCLASSES)) {
                 readPermitted(body, (int) length);
             }
@@ -385,7 +436,7 @@ final class ClassParser {
             sealingUnknown = true;
             return;
         }
-        int count = (short) U16.get(bytes, body) & 0xffff;
+        int count = be16(bytes, body);
         if (length - 2 != count * 2) {
             sealingUnknown = true;
             return;
@@ -394,7 +445,7 @@ final class ClassParser {
             permitted = new int[count];
         }
         for (int i = 0; i < count; i++) {
-            permitted[i] = (short) U16.get(bytes, body + 2 + i * 2) & 0xffff;
+            permitted[i] = be16(bytes, body + 2 + i * 2);
         }
         permittedCount = count;
     }
@@ -404,7 +455,7 @@ final class ClassParser {
         if (at == 0 || bytes[at] != TAG_UTF8) {
             return false;
         }
-        int length = (short) U16.get(bytes, at + 1) & 0xffff;
+        int length = be16(bytes, at + 1);
         if (length != expected.length) {
             return false;
         }
@@ -426,12 +477,12 @@ final class ClassParser {
 
     /** First u2 operand of the entry (Class name, String utf8, ref class, NameAndType name). */
     int operand1(int index) {
-        return (short) U16.get(bytes, cpPos[index] + 1) & 0xffff;
+        return be16(bytes, cpPos[index] + 1);
     }
 
     /** Second u2 operand (ref name_and_type, NameAndType descriptor). */
     int operand2(int index) {
-        return (short) U16.get(bytes, cpPos[index] + 3) & 0xffff;
+        return be16(bytes, cpPos[index] + 3);
     }
 
     /** Byte offset of a Utf8 entry's data. */
@@ -443,7 +494,7 @@ final class ClassParser {
     }
 
     int utf8Length(int index) {
-        return (short) U16.get(bytes, cpPos[index] + 1) & 0xffff;
+        return be16(bytes, cpPos[index] + 1);
     }
 
     /** The Utf8 index naming a Class entry. */
@@ -477,50 +528,32 @@ final class ClassParser {
 
     // ---- reader ----
 
-    private int u8() throws FormatException {
-        if (pos + 1 > end) {
-            throw truncated();
-        }
-        return bytes[pos++] & 0xff;
-    }
-
     private int u16() throws FormatException {
         if (pos + 2 > end) {
-            throw truncated();
+            throw truncatedAt(pos);
         }
-        int value = (short) U16.get(bytes, pos) & 0xffff;
+        int value = be16(bytes, pos);
         pos += 2;
         return value;
     }
 
     private long u32() throws FormatException {
         if (pos + 4 > end) {
-            throw truncated();
+            throw truncatedAt(pos);
         }
-        long value = (int) U32.get(bytes, pos) & 0xffffffffL;
+        long value = be32(bytes, pos) & 0xffffffffL;
         pos += 4;
         return value;
     }
 
     private void skip(long n) throws FormatException {
         if (pos + n > end) {
-            throw truncated();
+            throw truncatedAt(pos);
         }
         pos += (int) n;
     }
 
-    /** The Rust reader takes these as two u16, so a cut after the first one reports the second one's offset. */
-    private void skipTwoU16() throws FormatException {
-        if (pos + 4 > end) {
-            if (pos + 2 <= end) {
-                pos += 2;
-            }
-            throw truncated();
-        }
-        pos += 4;
-    }
-
-    private FormatException truncated() {
-        return new FormatException("truncated class file at offset " + pos);
+    private static FormatException truncatedAt(int offset) {
+        return new FormatException("truncated class file at offset " + offset);
     }
 }
