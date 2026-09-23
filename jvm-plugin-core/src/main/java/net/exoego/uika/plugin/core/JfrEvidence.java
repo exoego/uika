@@ -118,9 +118,6 @@ public final class JfrEvidence {
                     continue;
                 }
                 RecordedClass loaded = event.getValue("loadedClass");
-                if (loaded == null) {
-                    continue;
-                }
                 events++;
                 var name = loaded.getName();
                 frames.clear();
@@ -130,9 +127,6 @@ public final class JfrEvidence {
                     // at the loading call site (no ClassLoader.defineClass machinery on
                     // top), so the CLI's trigger heuristics have less to skip, not more.
                     for (RecordedFrame frame : stack.getFrames()) {
-                        if (!frame.isJavaFrame()) {
-                            continue;
-                        }
                         var method = frame.getMethod();
                         frames.add("\tat " + method.getType().getName() + "."
                                 + method.getName() + "(line " + frame.getLineNumber()
