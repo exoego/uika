@@ -371,6 +371,33 @@ jobs:
           restore-keys: |
             bazel-${{ runner.os }}-
 
+      - name: DIAG snapshot after restore
+        run: |
+          R=~/.cache/bazel/_bazel_runner/cache/repos/v1
+          du -sh ~/.cache/bazelisk $R $R/* 2>/dev/null || true
+          ls -la $R/contents 2>/dev/null | head -100 || true
+          (cd $R && find . -maxdepth 2 -mindepth 1 | sort) > /tmp/diag-before.txt
+          wc -l /tmp/diag-before.txt
+
+      - name: DIAG first bazel command alone
+        run: |
+          cd bazel-rules && time mise exec -- bazelisk coverage --symlink_prefix=/ --combined_report=lcov \
+            --profile=/tmp/diag-profile.json.gz //java:manifest_test
+          mise exec -- bazelisk analyze-profile /tmp/diag-profile.json.gz 2>&1 | head -60 || true
+          R=~/.cache/bazel/_bazel_runner/cache/repos/v1
+          (cd $R && find . -maxdepth 2 -mindepth 1 | sort) > /tmp/diag-after.txt
+          echo "--- new entries in the repo cache after the first command"
+          comm -13 /tmp/diag-before.txt /tmp/diag-after.txt | while read -r e; do du -sh "$R/$e"; done
+          ls -la "$R/contents" | head -100
+          python3 - <<'PY'
+          import gzip, json
+          d = json.load(gzip.open('/tmp/diag-profile.json.gz'))
+          ev = [e for e in d['traceEvents'] if e.get('dur', 0) > 1_000_000]
+          ev.sort(key=lambda e: -e['dur'])
+          for e in ev[:40]:
+              print(round(e['dur'] / 1e6, 1), e.get('cat'), e.get('name'))
+          PY
+
       # `bazel coverage` runs //java:manifest_test, and the integration test runs with the
       # agent attached, so this is the whole of bazel-test.
       - name: Test with coverage
