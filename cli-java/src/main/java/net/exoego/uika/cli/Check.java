@@ -169,22 +169,20 @@ final class Check {
      * the same chains hundreds of thousands of times over. Answered by the same steps as
      * {@link #forEachSupertype}: the library index first, then the scan graph.
      */
-    private static final class Memo {
+    static final class Memo {
         private static final byte NO = 1;
         private static final byte YES = 2;
         /** Marks a type whose closure is being computed, so a cyclic hierarchy in corrupt input ends. */
         private static final byte OPEN = 3;
 
-        private byte[] state = new byte[Math.max(16, Intern.tableLen())];
+        /** Sized once: a walk interns nothing, so every type it meets already has an id. */
+        private final byte[] state = new byte[Intern.tableLen()];
 
         private byte get(int type) {
-            return type < state.length ? state[type] : 0;
+            return state[type];
         }
 
         private void set(int type, byte value) {
-            if (type >= state.length) {
-                state = java.util.Arrays.copyOf(state, Math.max(type + 1, state.length * 2));
-            }
             state[type] = value;
         }
 

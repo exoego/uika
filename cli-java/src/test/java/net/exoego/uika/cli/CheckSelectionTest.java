@@ -704,4 +704,99 @@ final class CheckSelectionTest {
         ClassGraph graph = scannedGraphFull(node("app/C", JAVA_LANG_OBJECT, "lib/A", "lib/B", "lib/D"));
         assertTrue(abstractViolations(oldLib, newLib, fetched, graph).isEmpty());
     }
+
+    // ---- the memoized supertype walks behind the wanted-class collection ----
+
+    private static IntSet owners(String... names) {
+        IntSet owners = new IntSet();
+        for (String name : names) {
+            owners.add(intern(name));
+        }
+        return owners;
+    }
+
+    /** A library type with no superclass at all, the shape of a root the index holds without java/lang/Object. */
+    private static ClassApi rootless(String name, int access, String... interfaces) {
+        ClassApi api = new ClassApi();
+        api.name = intern(name);
+        api.access = access;
+        api.superName = Intern.NONE;
+        api.interfaces = syms(interfaces);
+        CheckTest.setMembers(api, true);
+        return api;
+    }
+
+    /**
+     * The closure memo reaches an owner through either scope and either edge kind: a
+     * library superclass, a library root's interface (its superclass slot is empty, not
+     * java/lang/Object), a scanned class's superclass, and a scanned class's interface.
+     * java/lang/Object ends every walk, a type in no scope answers no, and an answer is
+     * remembered.
+     */
+    @Test
+    void closureMemoReachesOwnersThroughEitherScopeAndEitherEdge() {
+        ApiIndex lib = index(
+                amvClass("lib/Owner", JAVA_LANG_OBJECT, Acc.PUBLIC),
+                amvClass("lib/ViaSuper", "lib/Owner", Acc.PUBLIC),
+                rootless("lib/ViaIface", IFACE, "lib/Owner"),
+                amvClass("lib/Unrelated", JAVA_LANG_OBJECT, Acc.PUBLIC));
+        ClassGraph graph = scannedGraphFull(
+                node("app/ViaSuper", "lib/Owner"),
+                node("app/ViaIface", JAVA_LANG_OBJECT, "lib/Owner"),
+                node("app/Unrelated", JAVA_LANG_OBJECT));
+        graph.insertIfAbsent(intern("app/Rootless"), Intern.NONE, syms("lib/Owner"), new int[0], Intern.NONE, intern("consumer.jar"));
+        IntSet owners = owners("lib/Owner");
+        IntSet flipped = owners("app/Unrelated");
+        int nowhere = intern("nowhere/X");
+        // The memo is sized to the symbol table when built, and the walk interns nothing.
+        Check.Memo memo = new Check.Memo();
+        assertTrue(memo.closureHas(intern("lib/Owner"), lib, graph, owners));
+        assertTrue(memo.closureHas(intern("lib/ViaSuper"), lib, graph, owners));
+        assertTrue(memo.closureHas(intern("lib/ViaIface"), lib, graph, owners));
+        assertFalse(memo.closureHas(intern("lib/Unrelated"), lib, graph, owners));
+        assertTrue(memo.closureHas(intern("app/ViaSuper"), lib, graph, owners));
+        assertTrue(memo.closureHas(intern("app/ViaIface"), lib, graph, owners));
+        assertTrue(memo.closureHas(intern("app/Rootless"), lib, graph, owners));
+        assertFalse(memo.closureHas(intern("app/Unrelated"), lib, graph, owners));
+        assertFalse(memo.closureHas(intern(JAVA_LANG_OBJECT), lib, graph, owners));
+        assertFalse(memo.closureHas(nowhere, lib, graph, owners));
+        // Remembered: the same answers with an owner set that would now say otherwise.
+        assertTrue(memo.closureHas(intern("app/ViaSuper"), lib, graph, new IntSet()));
+        assertFalse(memo.closureHas(intern("app/Unrelated"), lib, graph, flipped));
+    }
+
+    /** A cyclic hierarchy in corrupt input ends the walk instead of recursing forever, answering no. */
+    @Test
+    void closureMemoEndsACyclicHierarchy() {
+        ClassGraph graph = scannedGraph("app/A", "app/B", "app/B", "app/A");
+        IntSet owners = owners("lib/Owner");
+        Check.Memo memo = new Check.Memo();
+        assertFalse(memo.closureHas(intern("app/A"), index(), graph, owners));
+        assertFalse(memo.superclassChainHas(intern("app/A"), index(), graph, owners));
+    }
+
+    /**
+     * The superclass-chain memo follows only superclasses, from the scan graph into the
+     * library index, and stops at a type with none.
+     */
+    @Test
+    void superclassChainMemoFollowsSuperclassesAcrossScopesOnly() {
+        ApiIndex lib = index(
+                amvClass("lib/Owner", JAVA_LANG_OBJECT, Acc.PUBLIC),
+                amvClass("lib/Mid", "lib/Owner", Acc.PUBLIC),
+                rootless("lib/Root", Acc.PUBLIC, "lib/Owner"));
+        ClassGraph graph = scannedGraphFull(
+                node("app/Deep", "lib/Mid"),
+                node("app/OnlyIface", JAVA_LANG_OBJECT, "lib/Owner"));
+        IntSet owners = owners("lib/Owner");
+        int nowhere = intern("nowhere/X");
+        Check.Memo memo = new Check.Memo();
+        assertTrue(memo.superclassChainHas(intern("lib/Owner"), lib, graph, owners));
+        assertTrue(memo.superclassChainHas(intern("app/Deep"), lib, graph, owners));
+        assertTrue(memo.superclassChainHas(intern("lib/Mid"), lib, graph, owners));
+        assertFalse(memo.superclassChainHas(intern("lib/Root"), lib, graph, owners), "an interface edge is not a superclass");
+        assertFalse(memo.superclassChainHas(intern("app/OnlyIface"), lib, graph, owners));
+        assertFalse(memo.superclassChainHas(nowhere, lib, graph, owners));
+        assertTrue(memo.superclassChainHas(intern("app/Deep"), lib, graph, new IntSet()), "remembered");
+    }
 }
