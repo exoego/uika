@@ -310,10 +310,6 @@ final class Check {
             return;
         }
         Walk walk = new Walk();
-        IntBuf scannedChain = new IntBuf();
-        boolean[] inherits = new boolean[1];
-        // Probed once per supertype of every scanned class, so the owners are an int set and
-        // the visitor is one object rather than a boxed key and a lambda per class.
         IntSet owners = new IntSet();
         for (int owner : abstractMethods.keySet()) {
             owners.add(owner);
@@ -321,26 +317,19 @@ final class Check {
         for (int owner : defaultMethods.keySet()) {
             owners.add(owner);
         }
+        // One visitor object rather than a lambda per class.
         TypeVisitor visitor = anc -> {
-            inherits[0] |= owners.contains(anc);
             if (graph.contains(anc)) {
-                scannedChain.add(anc);
+                wanted.add(anc);
             }
         };
         // The remembered answer decides which classes need the chain collected; the full walk
-        // then runs only for those, a small fraction of the graph.
+        // then runs only for those, a small fraction of the graph. It walks the same edges, so
+        // it always meets the owner the answer found.
         SupertypeReach reach = SupertypeReach.byClosure(owners, newIndex, graph);
         for (int node = 0; node < graph.size(); node++) {
-            if (!reach.reaches(graph.nameOf(node))) {
-                continue;
-            }
-            inherits[0] = false;
-            scannedChain.n = 0;
-            forEachSupertype(graph.nameOf(node), newIndex, graph, walk, visitor);
-            if (inherits[0]) {
-                for (int i = 0; i < scannedChain.n; i++) {
-                    wanted.add(scannedChain.a[i]);
-                }
+            if (reach.reaches(graph.nameOf(node))) {
+                forEachSupertype(graph.nameOf(node), newIndex, graph, walk, visitor);
             }
         }
     }
