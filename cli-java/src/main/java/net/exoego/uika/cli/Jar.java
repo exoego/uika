@@ -84,7 +84,7 @@ final class Jar {
          * columns several times its class count in the pool until the chunk is merged.
          */
         private void compact() {
-            if (count == 0 || count > name.length / 4) {
+            if (count == 0 || count > name.length / 2) {
                 return;
             }
             Entries tight = permuted(null);
