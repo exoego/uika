@@ -15,12 +15,17 @@ import java.util.BitSet;
 final class Dedup {
     /**
      * Most class names have exactly one CRC across the classpath, so the first one lives in a
-     * table indexed by symbol and only the second and later distinct CRCs go to a hash set.
-     * That is a fraction of the memory of hashing every (name, CRC) pair.
+     * table indexed by symbol. The second and later distinct CRCs of a name form a short
+     * linked list in two more arenas, which is a fraction of the memory of hashing every
+     * (name, CRC) pair. All three grow by chunks off-heap: a heap hash set of the pairs cost
+     * 8MB live plus as much again in promoted garbage from doubling on a large classpath.
      */
     private final IntArena firstCrc = new IntArena();
     private final BitSet hasFirst = new BitSet();
-    private final LongSet more = new LongSet();
+    /** Per name, the index + 1 of its list head in {@link #moreList}, 0 for none. */
+    private final IntArena moreHead = new IntArena();
+    /** (CRC, next index + 1) pairs. */
+    private final IntArena moreList = new IntArena();
     /** Entries dropped, so the scanned-class total still counts the whole classpath. */
     int skipped;
 
@@ -50,6 +55,16 @@ final class Dedup {
         if (firstCrc.get(name) == crc) {
             return false;
         }
-        return more.add((long) name << 32 | (crc & 0xffffffffL));
+        moreHead.ensureSize(name + 1);
+        int head = moreHead.get(name);
+        for (int at = head; at != 0; at = moreList.get(at)) {
+            if (moreList.get(at - 1) == crc) {
+                return false;
+            }
+        }
+        int index = moreList.add(crc);
+        moreList.add(head);
+        moreHead.set(name, index + 1);
+        return true;
     }
 }
