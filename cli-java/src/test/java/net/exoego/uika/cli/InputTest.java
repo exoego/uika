@@ -514,7 +514,7 @@ class InputTest {
         Input.Prepared absent = Input.prepare(missing, true);
         assertNull(absent.entries);
         assertEquals(List.of(), absent.services);
-        assertEquals(missing + ": cannot open " + missing, absent.serviceWarning);
+        assertEquals(missing + ": cannot open " + missing + ": No such file or directory", absent.serviceWarning);
     }
 
     private static byte[] randomClass(Random random, int size) {
