@@ -37,10 +37,22 @@ final class Intern {
 
     private static final VarHandle LONG_VIEW =
             MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.nativeOrder());
+    private static final VarHandle SLOT = MethodHandles.arrayElementVarHandle(int[].class);
 
+    /** Bytes a thread claims from the string arena at a time; a longer string takes the shared path. */
+    private static final int SLAB = 16 * 1024;
+    /** Ids a thread claims at a time. Unused ones at the end of a run are gaps, never reused. */
+    private static final int ID_BLOCK = 64;
+
+    /**
+     * Lookups take no lock: a slot is published with a release store after the symbol's bytes,
+     * location and hash are written, and read with an acquire load. Inserts still serialize on
+     * the shard, and a table replaced by {@link #rehash} is never written again, so a reader
+     * holding the old one sees a consistent, if stale, view and falls through to the lock.
+     */
     private static final class Shard {
         /** Open addressing, slot = id + 1, 0 = empty. */
-        int[] table = new int[512];
+        volatile int[] table = new int[512];
         int count;
     }
 
@@ -72,9 +84,9 @@ final class Intern {
     }
 
     /**
-     * Interns UTF-8 bytes. {@code cache} is the calling thread's private lookup cache, or
-     * null. It matters on the scan path: "java/lang/Object" is the superclass of most
-     * classes, so without it every worker serializes on that one shard's lock.
+     * Interns UTF-8 bytes. {@code cache} is the calling thread's private lookup cache and
+     * arena slabs, or null. The cache matters on the scan path: "java/lang/Object" is the
+     * superclass of most classes, so it answers without touching the shared table at all.
      */
     static int intern(Scratch cache, byte[] buf, int off, int len) {
         int hash = hash(buf, off, len);
@@ -88,16 +100,20 @@ final class Intern {
             if (cached != 0 && cache.internCacheHash[slot] == hash && equalsBytes(cached - 1, buf, off, len)) {
                 return cached - 1;
             }
-            int sym = internShared(buf, off, len, hash);
+            int sym = internShared(cache, buf, off, len, hash);
             cache.internCacheSym[slot] = sym + 1;
             cache.internCacheHash[slot] = hash;
             return sym;
         }
-        return internShared(buf, off, len, hash);
+        return internShared(null, buf, off, len, hash);
     }
 
-    private static int internShared(byte[] buf, int off, int len, int hash) {
+    private static int internShared(Scratch cache, byte[] buf, int off, int len, int hash) {
         Shard shard = SHARD[(hash >>> 26) & (SHARDS - 1)];
+        int found = probe(shard.table, buf, off, len, hash);
+        if (found != NONE) {
+            return found;
+        }
         synchronized (shard) {
             int[] table = shard.table;
             int mask = table.length - 1;
@@ -113,8 +129,8 @@ final class Intern {
                 }
                 slot = (slot + 1) & mask;
             }
-            int sym = store(buf, off, len, hash);
-            table[slot] = sym + 1;
+            int sym = store(cache, buf, off, len, hash);
+            SLOT.setRelease(table, slot, sym + 1);
             if (++shard.count * 2 > table.length) {
                 rehash(shard);
             }
@@ -122,25 +138,33 @@ final class Intern {
         }
     }
 
+    /** Lock-free lookup in one shard table. A miss is only final under the shard lock. */
+    private static int probe(int[] table, byte[] buf, int off, int len, int hash) {
+        int mask = table.length - 1;
+        int slot = hash & mask;
+        while (true) {
+            int entry = (int) SLOT.getAcquire(table, slot);
+            if (entry == 0) {
+                return NONE;
+            }
+            int sym = entry - 1;
+            if (hashOf(sym) == hash && equalsBytes(sym, buf, off, len)) {
+                return sym;
+            }
+            slot = (slot + 1) & mask;
+        }
+    }
+
     /** Looks a string up without inserting it. Returns {@link #NONE} when absent. */
     static int find(byte[] buf, int off, int len) {
         int hash = hash(buf, off, len);
         Shard shard = SHARD[(hash >>> 26) & (SHARDS - 1)];
+        int found = probe(shard.table, buf, off, len, hash);
+        if (found != NONE) {
+            return found;
+        }
         synchronized (shard) {
-            int[] table = shard.table;
-            int mask = table.length - 1;
-            int slot = hash & mask;
-            while (true) {
-                int entry = table[slot];
-                if (entry == 0) {
-                    return NONE;
-                }
-                int sym = entry - 1;
-                if (hashOf(sym) == hash && equalsBytes(sym, buf, off, len)) {
-                    return sym;
-                }
-                slot = (slot + 1) & mask;
-            }
+            return probe(shard.table, buf, off, len, hash);
         }
     }
 
@@ -165,7 +189,7 @@ final class Intern {
         shard.table = table;
     }
 
-    private static int store(byte[] buf, int off, int len, int hash) {
+    private static int store(Scratch cache, byte[] buf, int off, int len, int hash) {
         if (len > MAX_LEN) {
             throw new IllegalArgumentException("string too long to intern: " + len + " bytes");
         }
@@ -174,24 +198,30 @@ final class Intern {
             loc = storeBig(buf, off, len);
         } else {
             long pos;
-            while (true) {
-                long top = STR_TOP.get();
-                pos = top;
-                if ((pos & STR_MASK) + len > STR_CHUNK) {
-                    pos = (pos + STR_CHUNK) & ~(long) STR_MASK;
+            if (cache != null && len <= SLAB) {
+                if (cache.internSlabEnd - cache.internSlabPos < len) {
+                    cache.internSlabPos = claim(SLAB);
+                    cache.internSlabEnd = cache.internSlabPos + SLAB;
                 }
-                if (STR_TOP.compareAndSet(top, pos + len)) {
-                    break;
-                }
+                pos = cache.internSlabPos;
+                cache.internSlabPos += len;
+            } else {
+                pos = claim(len);
             }
             int chunkIndex = (int) (pos >>> STR_BITS);
             ByteBuffer chunk = strChunk(chunkIndex);
             chunk.put((int) (pos & STR_MASK), buf, off, len);
             loc = (pos << LEN_BITS) | len;
         }
-        int id = NEXT_ID.getAndIncrement();
-        if (id < 0) {
-            throw new IllegalStateException("intern table overflow");
+        int id;
+        if (cache != null) {
+            if (cache.internIdNext == cache.internIdEnd) {
+                cache.internIdNext = claimIds(ID_BLOCK);
+                cache.internIdEnd = cache.internIdNext + ID_BLOCK;
+            }
+            id = cache.internIdNext++;
+        } else {
+            id = claimIds(1);
         }
         int idChunk = id >>> ID_BITS;
         LongBuffer[] locs = locChunks;
@@ -200,6 +230,29 @@ final class Intern {
         }
         locChunks[idChunk].put(id & ID_MASK, loc);
         hashChunks[idChunk].put(id & ID_MASK, hash);
+        return id;
+    }
+
+    /** A range of {@code len} arena bytes inside one chunk; the skipped tail of a chunk is never used. */
+    private static long claim(int len) {
+        while (true) {
+            long top = STR_TOP.get();
+            long pos = top;
+            if ((pos & STR_MASK) + len > STR_CHUNK) {
+                pos = (pos + STR_CHUNK) & ~(long) STR_MASK;
+            }
+            if (STR_TOP.compareAndSet(top, pos + len)) {
+                return pos;
+            }
+        }
+    }
+
+    /** The first of {@code n} fresh consecutive ids. */
+    private static int claimIds(int n) {
+        int id = NEXT_ID.getAndAdd(n);
+        if (id < 0 || id + n < 0) {
+            throw new IllegalStateException("intern table overflow");
+        }
         return id;
     }
 
