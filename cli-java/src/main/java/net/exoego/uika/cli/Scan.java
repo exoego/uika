@@ -8,9 +8,9 @@ import java.util.concurrent.ForkJoinTask;
 import java.util.concurrent.RecursiveAction;
 
 /**
- * Pass 1: stream scan units (JAR / class directory) in parallel by chunk and fold them into
- * the hierarchy graph plus reference records. No member tables are kept, so peak memory is
- * the graph plus one chunk of temporaries.
+ * Pass 1: stream scan units (JAR / class directory) in parallel through a sliding window of
+ * paths and fold them into the hierarchy graph plus reference records. No member tables are
+ * kept, so peak memory is the graph plus one window of temporaries.
  */
 final class Scan {
     /** Aggregated pass-1 result. */
@@ -169,7 +169,12 @@ final class Scan {
 
     private Scan() {}
 
-    static int chunkSize() {
+    /**
+     * Paths in flight at once, from central-directory read to merge. Their directory columns
+     * and their leaves are what the window holds in memory, and the reads and scans it keeps
+     * forked ahead are what stops workers from parking while the path merged next is slow.
+     */
+    static int window() {
         String env = Env.get("UIKA_CHUNK");
         if (env != null) {
             try {
@@ -181,13 +186,10 @@ final class Scan {
                 // fall through to the default
             }
         }
-        // 16x the thread count, not 1x: every chunk boundary is a barrier where the next
-        // chunk's directories are deduplicated, so a 1x chunk parks workers whenever its
-        // paths finish unevenly, which real classpaths do constantly.
-        return Scratch.threads() * 16;
+        return Scratch.threads() * 8;
     }
 
-    /** The first chunk's central-directory reads, running on the pool ahead of the scan. */
+    /** The first window's central-directory reads, running on the pool ahead of the scan. */
     static final class Ahead {
         private final List<String> paths;
         private final boolean collectEdges;
@@ -202,12 +204,12 @@ final class Scan {
     }
 
     /**
-     * Starts the first chunk's central-directory reads now, for a {@link #scanTargetPaths}
+     * Starts the first window's central-directory reads now, for a {@link #scanTargetPaths}
      * over the same paths later. The reads need nothing the caller may still be building.
      */
     static Ahead prepareAhead(List<String> paths, boolean collectEdges) {
         Ahead ahead = new Ahead(paths, collectEdges);
-        int n = Math.min(paths.size(), chunkSize());
+        int n = Math.min(paths.size(), window());
         for (int i = 0; i < n; i++) {
             int index = i;
             ahead.tasks.add(Scratch.pool().submit(() -> ahead.prepared[index] = Input.prepare(paths.get(index), collectEdges)));
@@ -219,42 +221,80 @@ final class Scan {
         return scanTargetPaths(paths, oldIndex, probe, collectEdges, null);
     }
 
-    /** @param ahead the first chunk's directory reads if they were started early, else null */
+    /**
+     * Three cursors move through the paths in order, on this thread: central-directory reads
+     * are forked up to a window ahead of the merge; every read that is in is deduplicated and
+     * its scan forked; the scan merged next is joined. Nothing waits for a whole batch of
+     * paths, so a slow jar holds up its own merge and nothing else, and while a scan is
+     * joined this thread executes other forked tasks. Dedup and merge run in path order, so
+     * duplicate-class winners are the classpath's first, and a merged path's leaves go back
+     * to the pool at once.
+     *
+     * @param ahead the first window's directory reads if they were started early, else null
+     */
     static Result scanTargetPaths(List<String> paths, ApiIndex oldIndex, MemberProbe probe, boolean collectEdges, Ahead ahead) {
         Result result = new Result();
         NameSet oldNames = oldIndex.classNameSet();
         boolean useAhead = ahead != null && ahead.paths.equals(paths) && ahead.collectEdges == collectEdges;
         Input.onPool(() -> {
             Dedup dedup = new Dedup();
-            int chunkSize = chunkSize();
+            int window = window();
             int n = paths.size();
             Input.Prepared[] prepared = useAhead ? ahead.prepared : new Input.Prepared[n];
-            // Each round scans one chunk and, in the same parallel region, reads the central
-            // directories of the next, so dedup costs no barrier of its own.
-            for (int base = -chunkSize; base < n; base += chunkSize) {
-                int scanEnd = Math.min(n, base + chunkSize);
-                int nextEnd = Math.min(n, scanEnd + chunkSize);
-                int first = Math.max(base, 0);
-                int count = scanEnd - first;
-                // Workers read the graph while this thread grows it: `contains` is the one
-                // read, and a class not yet merged reads as absent.
-                Extract.ScanSink sink = new Extract.ScanSink(oldNames, result.graph, collectEdges, probe);
-                @SuppressWarnings("unchecked")
-                List<Extract.ScanLeaf>[] perPath = new List[count];
-                RecursiveAction[] scans = new RecursiveAction[count];
-                // Directories share a few lanes instead of getting a task each.
-                Input.DirectoryScan<Extract.ScanLeaf> directories = new Input.DirectoryScan<>(sink);
-                for (int i = first; i < scanEnd; i++) {
+            ForkJoinTask<?>[] prepares = new ForkJoinTask<?>[n];
+            ForkJoinTask<?>[] scans = new ForkJoinTask<?>[n];
+            @SuppressWarnings("unchecked")
+            Input.DirectoryScan.Root<Extract.ScanLeaf>[] roots = new Input.DirectoryScan.Root[n];
+            @SuppressWarnings("unchecked")
+            List<Extract.ScanLeaf>[] perPath = new List[n];
+            // Workers read the graph while this thread grows it: `contains` is the one read,
+            // and a class not yet merged reads as absent.
+            Extract.ScanSink sink = new Extract.ScanSink(oldNames, result.graph, collectEdges, probe);
+            // Directories share a few lanes instead of getting a task each.
+            Input.DirectoryScan<Extract.ScanLeaf> directories = new Input.DirectoryScan<>(sink);
+            directories.start();
+            int prepareNext = 0;
+            if (useAhead) {
+                for (ForkJoinTask<?> task : ahead.tasks) {
+                    prepares[prepareNext++] = task;
+                }
+            }
+            int dedupNext = 0;
+            for (int mergeNext = 0; mergeNext < n; mergeNext++) {
+                while (prepareNext < n && prepareNext < mergeNext + window) {
+                    int index = prepareNext++;
+                    RecursiveAction prepare = new RecursiveAction() {
+                        private static final long serialVersionUID = 1L;
+
+                        @Override
+                        protected void compute() {
+                            prepared[index] = Input.prepare(paths.get(index), collectEdges);
+                        }
+                    };
+                    prepare.fork();
+                    prepares[index] = prepare;
+                }
+                while (dedupNext < prepareNext) {
+                    int index = dedupNext++;
+                    prepares[index].join();
+                    prepares[index] = null;
+                    Input.Prepared ready = prepared[index];
+                    prepared[index] = null;
+                    if (ready.entries != null) {
+                        dedup.apply(ready.entries);
+                    }
+                    result.services.addAll(ready.services);
+                    if (ready.serviceWarning != null) {
+                        result.serviceWarnings.add(ready.serviceWarning);
+                    }
                     List<Extract.ScanLeaf> leaves = new ArrayList<>();
-                    perPath[i - first] = leaves;
-                    String path = paths.get(i);
-                    Input.Prepared ready = prepared[i];
-                    prepared[i] = null;
+                    perPath[index] = leaves;
+                    String path = paths.get(index);
                     if (ready.directory) {
-                        directories.add(path, leaves);
+                        roots[index] = directories.add(path, leaves);
                         continue;
                     }
-                    scans[i - first] = new RecursiveAction() {
+                    RecursiveAction scan = new RecursiveAction() {
                         private static final long serialVersionUID = 1L;
 
                         @Override
@@ -262,67 +302,20 @@ final class Scan {
                             Input.forEachClass(path, ready, sink, leaves);
                         }
                     };
+                    scan.fork();
+                    scans[index] = scan;
                 }
-                List<ForkJoinTask<?>> prepares = new ArrayList<>();
-                boolean aheadRound = useAhead && base < 0;
-                for (int i = Math.max(scanEnd, 0); i < nextEnd && !aheadRound; i++) {
-                    int index = i;
-                    prepares.add(new RecursiveAction() {
-                        private static final long serialVersionUID = 1L;
-
-                        @Override
-                        protected void compute() {
-                            prepared[index] = Input.prepare(paths.get(index), collectEdges);
-                        }
-                    });
+                if (scans[mergeNext] != null) {
+                    scans[mergeNext].join();
+                    scans[mergeNext] = null;
+                } else {
+                    directories.finish(roots[mergeNext]);
+                    roots[mergeNext] = null;
                 }
-                RecursiveAction lanes = directories.isEmpty() ? null : directories.laneTask();
-                // Scans first, so other workers steal them in path order; the directory reads
-                // last, so this thread runs them while it waits for the path it merges next.
-                for (RecursiveAction scan : scans) {
-                    if (scan != null) {
-                        scan.fork();
-                    }
+                for (Extract.ScanLeaf leaf : perPath[mergeNext]) {
+                    result.merge(leaf);
                 }
-                if (lanes != null) {
-                    lanes.fork();
-                }
-                for (ForkJoinTask<?> prepare : prepares) {
-                    prepare.fork();
-                }
-                if (aheadRound) {
-                    prepares.addAll(ahead.tasks);
-                }
-                // Merged in path order as each path completes, so duplicate-class winners are
-                // deterministic and a finished path's leaves go back to the pool while the
-                // rest of the chunk is still scanning. Directories complete together, at the
-                // first one's position.
-                boolean directoriesDone = false;
-                for (int i = 0; i < count; i++) {
-                    if (scans[i] != null) {
-                        scans[i].join();
-                    } else if (!directoriesDone) {
-                        lanes.join();
-                        directories.finish();
-                        directoriesDone = true;
-                    }
-                    for (Extract.ScanLeaf leaf : perPath[i]) {
-                        result.merge(leaf);
-                    }
-                    perPath[i] = null;
-                }
-                for (ForkJoinTask<?> prepare : prepares) {
-                    prepare.join();
-                }
-                for (int i = Math.max(scanEnd, 0); i < nextEnd; i++) {
-                    if (prepared[i].entries != null) {
-                        dedup.apply(prepared[i].entries);
-                    }
-                    result.services.addAll(prepared[i].services);
-                    if (prepared[i].serviceWarning != null) {
-                        result.serviceWarnings.add(prepared[i].serviceWarning);
-                    }
-                }
+                perPath[mergeNext] = null;
             }
             // The skipped byte-identical duplicates still count as scanned.
             result.scannedClasses += dedup.skipped;

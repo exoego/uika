@@ -89,16 +89,16 @@ class ScanTest {
     }
 
     @Test
-    void chunkSizeComesFromTheEnvironmentWhenPositive() {
+    void windowComesFromTheEnvironmentWhenPositive() {
         Env.override("UIKA_CHUNK", null);
-        int fallback = Scratch.threads() * 16;
-        assertEquals(fallback, Scan.chunkSize());
+        int fallback = Scratch.threads() * 8;
+        assertEquals(fallback, Scan.window());
         Env.override("UIKA_CHUNK", " 5 ");
-        assertEquals(5, Scan.chunkSize());
+        assertEquals(5, Scan.window());
         Env.override("UIKA_CHUNK", "0");
-        assertEquals(fallback, Scan.chunkSize());
+        assertEquals(fallback, Scan.window());
         Env.override("UIKA_CHUNK", "five");
-        assertEquals(fallback, Scan.chunkSize());
+        assertEquals(fallback, Scan.window());
     }
 
     /**
