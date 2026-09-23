@@ -140,9 +140,10 @@ final class Extract {
                 ClassParser p = scratch.parser;
                 parseHeader(p, bytes);
                 int className = p.internClassName(scratch, p.thisClass);
-                // A class already in the graph before this chunk is a guaranteed first-wins
-                // loser, so only evidence is swept: that must not depend on which chunk a
-                // copy landed in, and chunk size scales with the thread count.
+                // The graph only ever holds classes merged from earlier paths, so a class it
+                // already has is a guaranteed first-wins loser and only evidence is swept:
+                // that must not depend on how far the merge got, or on which chunk a copy
+                // landed in, since chunk size scales with the thread count.
                 if (!known.contains(className)) {
                     // Member references always go through a Class constant of the same pool,
                     // so a pool naming no checked-library class holds no reference at all and
