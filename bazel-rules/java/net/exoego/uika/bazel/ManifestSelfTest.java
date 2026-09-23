@@ -51,7 +51,7 @@ public final class ManifestSelfTest {
         // A floor, not a total: `failures` counts only what FAILED, so a deleted call in
         // main or an early return inside a method would otherwise be a silent pass. The
         // class-file floor guard next door fails on an empty sweep for the same reason.
-        var expected = 72;
+        var expected = 74;
         if (checks < expected) {
             System.err.println("only " + checks + " checks ran, expected at least " + expected);
             System.exit(1);
@@ -198,6 +198,14 @@ public final class ManifestSelfTest {
         } finally {
             deleteTree(outputBase);
         }
+
+        // An execution root without two parents has no output base above it, and the
+        // lookup must fall through to the error rather than walk off the top of the tree.
+        Path root = Path.of("/");
+        expectFailure("a root execution root", IllegalStateException.class,
+                () -> Manifest.resolveExecroot(root, "dep.jar"));
+        expectFailure("an execution root directly under the root", IllegalStateException.class,
+                () -> Manifest.resolveExecroot(root.resolve("uika-no-such-execroot"), "dep.jar"));
     }
 
     /**

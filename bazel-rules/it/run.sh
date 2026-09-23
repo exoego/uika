@@ -92,7 +92,8 @@ echo "--- after dump (guava 22.0 -> 23.0-rc1)"
 echo "--- dump flags"
 # --jdkRelease states the runtime for the whole build, so it replaces what every module
 # derived (11 for //app, the toolchain's for //lib) and the dump-level value with it.
-"$BAZEL" run //:dump -- --output "$OUT/override.json" --jdkRelease 17
+# -o is --output's short spelling, taken here so it is used somewhere.
+"$BAZEL" run //:dump -- -o "$OUT/override.json" --jdkRelease 17
 python3 - "$OUT/override.json" <<'EOF'
 import json, sys
 dump = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -323,8 +324,8 @@ EXECROOT=$("$BAZEL" info execution_root)
 
 python3 "$RULES/it/assert_sweep.py" "$OUT/sweep.json" "$OUT/before.json"
 
-# The merge takes the same --materialize and --jdkRelease the rule-based dump does.
-"$BAZEL" run @uika//:merge -- --output "$OUT/sweep-materialized.json" \
+# The merge takes the same -o, --materialize and --jdkRelease the rule-based dump does.
+"$BAZEL" run @uika//:merge -- -o "$OUT/sweep-materialized.json" \
   --execroot "$EXECROOT" --fragments "$BIN" \
   --materialize "$OUT/sweep-jars" --jdkRelease 17
 python3 - "$OUT/sweep-materialized.json" "$OUT/sweep-jars" <<'EOF'
@@ -344,12 +345,14 @@ for path in files:
         sys.exit("{} was not materialized into {}".format(path, jars))
 EOF
 
-# The merge's own guards. No --execroot is a usage error, a --fragments root with no
-# fragments under it (or none at all) is a sweep that was never run, named as such, and
-# a flag it does not have is named like the dump and the check name theirs.
+# The merge's own guards. No --execroot or no --fragments is a usage error, a --fragments
+# root with no fragments under it (or none at all) is a sweep that was never run, named as
+# such, and a flag it does not have is named like the dump and the check name theirs.
 set +e
 "$BAZEL" run @uika//:merge > "$OUT/merge-usage.txt" 2>&1
 merge_usage_status=$?
+"$BAZEL" run @uika//:merge -- --execroot "$EXECROOT" > "$OUT/merge-usage-fragments.txt" 2>&1
+merge_usage_fragments_status=$?
 "$BAZEL" run @uika//:merge -- --execroot "$EXECROOT" --fragments "$OUT/no-such-dir" \
   --fragments "$OUT" > "$OUT/merge-empty.txt" 2>&1
 merge_empty_status=$?
@@ -357,9 +360,15 @@ merge_empty_status=$?
   > "$OUT/merge-bogus.txt" 2>&1
 merge_bogus_status=$?
 set -e
-if [ "$merge_usage_status" -eq 0 ] || ! grep -q "usage: --execroot" "$OUT/merge-usage.txt"; then
-  echo "the merge should print its usage without --execroot:" >&2
-  cat "$OUT/merge-usage.txt" >&2
+for usage in merge-usage merge-usage-fragments; do
+  if ! grep -q "usage: --execroot" "$OUT/$usage.txt"; then
+    echo "the merge should print its usage ($usage):" >&2
+    cat "$OUT/$usage.txt" >&2
+    exit 1
+  fi
+done
+if [ "$merge_usage_status" -eq 0 ] || [ "$merge_usage_fragments_status" -eq 0 ]; then
+  echo "the merge should fail without --execroot or without --fragments" >&2
   exit 1
 fi
 if [ "$merge_empty_status" -eq 0 ] || ! grep -q "fragments under" "$OUT/merge-empty.txt"; then
