@@ -153,14 +153,97 @@ final class Check {
                 }
             });
         }
-        IntSet seen = new IntSet();
-        IntBuf owners = new IntBuf(8);
+        Memo memo = new Memo();
         for (int node = 0; node < graph.size(); node++) {
             int className = graph.nameOf(node);
-            finalOwnersOnChain(className, newIndex, graph, finalOwners, seen, owners);
-            if (!owners.isEmpty()) {
+            int superName = graph.superOf(node);
+            if (superName != Intern.NONE && memo.superclassChainHas(superName, newIndex, graph, finalOwners)) {
                 wanted.add(className);
             }
+        }
+    }
+
+    /**
+     * Whether a type's supertypes hold a member of a set, remembered per type. The scanned
+     * classes are many and their supertypes few, so the walk per class this replaces visited
+     * the same chains hundreds of thousands of times over. Answered by the same steps as
+     * {@link #forEachSupertype}: the library index first, then the scan graph.
+     */
+    static final class Memo {
+        private static final byte NO = 1;
+        private static final byte YES = 2;
+        /** Marks a type whose closure is being computed, so a cyclic hierarchy in corrupt input ends. */
+        private static final byte OPEN = 3;
+
+        /** Sized once: a walk interns nothing, so every type it meets already has an id. */
+        private final byte[] state = new byte[Intern.tableLen()];
+
+        private byte get(int type) {
+            return state[type];
+        }
+
+        private void set(int type, byte value) {
+            state[type] = value;
+        }
+
+        /** {@code type} or a superclass on its chain is in {@code owners}. */
+        boolean superclassChainHas(int type, ApiIndex lib, ClassGraph graph, IntSet owners) {
+            byte known = get(type);
+            if (known != 0) {
+                return known == YES;
+            }
+            boolean result;
+            if (owners.contains(type)) {
+                result = true;
+            } else {
+                set(type, OPEN);
+                int superName = Intern.NONE;
+                int node = graph.node(type);
+                if (node >= 0) {
+                    superName = graph.superOf(node);
+                }
+                if (superName == Intern.NONE) {
+                    int entry = lib.entry(type);
+                    superName = entry < 0 ? Intern.NONE : lib.superOf(entry);
+                }
+                result = superName != Intern.NONE && superclassChainHas(superName, lib, graph, owners);
+            }
+            set(type, result ? YES : NO);
+            return result;
+        }
+
+        /** {@code type} or any supertype in its closure is in {@code owners}, walking as {@link #forEachSupertype} does. */
+        boolean closureHas(int type, ApiIndex lib, ClassGraph graph, IntSet owners) {
+            if (type == Scope.objectSym()) {
+                return false;
+            }
+            byte known = get(type);
+            if (known != 0) {
+                return known == YES;
+            }
+            boolean result = false;
+            if (owners.contains(type)) {
+                result = true;
+            } else {
+                set(type, OPEN);
+                int entry = lib.entry(type);
+                int node = entry >= 0 ? -1 : graph.node(type);
+                if (entry >= 0) {
+                    int superName = lib.superOf(entry);
+                    result = superName != Intern.NONE && closureHas(superName, lib, graph, owners);
+                    for (int k = 0, n = lib.interfaceCount(entry); !result && k < n; k++) {
+                        result = closureHas(lib.interfaceAt(entry, k), lib, graph, owners);
+                    }
+                } else if (node >= 0) {
+                    int superName = graph.superOf(node);
+                    result = superName != Intern.NONE && closureHas(superName, lib, graph, owners);
+                    for (int k = 0, n = graph.interfaceCount(node); !result && k < n; k++) {
+                        result = closureHas(graph.interfaceAt(node, k), lib, graph, owners);
+                    }
+                }
+            }
+            set(type, result ? YES : NO);
+            return result;
         }
     }
 
@@ -233,7 +316,13 @@ final class Check {
                 scannedChain.add(anc);
             }
         };
+        // The memoized answer decides which classes need the chain collected; the full walk
+        // then runs only for those, a small fraction of the graph.
+        Memo memo = new Memo();
         for (int node = 0; node < graph.size(); node++) {
+            if (!memo.closureHas(graph.nameOf(node), newIndex, graph, owners)) {
+                continue;
+            }
             inherits[0] = false;
             scannedChain.n = 0;
             forEachSupertype(graph.nameOf(node), newIndex, graph, walk, visitor);
