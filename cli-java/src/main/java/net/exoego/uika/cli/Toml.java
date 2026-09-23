@@ -1118,7 +1118,8 @@ final class Toml {
                     case E_ARRAY_OPEN -> pending = array(e);
                     case E_SCALAR -> pending = decodeScalar(e);
                     case E_VALUE_SEP, E_INLINE_TABLE_CLOSE -> {
-                        if (key != null && pending != null) {
+                        // The first pass puts a value, or a stand-in for one, after every key.
+                        if (key != null) {
                             insertInline(result, path, key, pending);
                         }
                         key = null;
@@ -1142,7 +1143,6 @@ final class Toml {
                 if (existing == null) {
                     Table created = new Table();
                     created.implicit = true;
-                    created.dotted = true;
                     created.inline = true;
                     table.map.put(part.text, new Entry(source, part, tableValue(created, part.start, part.end)));
                     table = created;
@@ -1155,7 +1155,7 @@ final class Toml {
                     throw cannotExtend(existing.value.kind.typeStr, part);
                 }
             }
-            if (table.dotted == path.isEmpty() || table.map.containsKey(key.text)) {
+            if (table.map.containsKey(key.text)) {
                 throw duplicateKey(key);
             }
             table.map.put(key.text, new Entry(source, key, value));
