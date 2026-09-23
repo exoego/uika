@@ -55,7 +55,7 @@ public final class DumpMain {
         System.out.println("uika classpath dump: " + target);
     }
 
-    private static String required(String property) {
+    static String required(String property) {
         String value = System.getProperty(property);
         if (value == null || value.isEmpty()) {
             throw new IllegalStateException("missing -D" + property + "; use the uika_dump rule");
