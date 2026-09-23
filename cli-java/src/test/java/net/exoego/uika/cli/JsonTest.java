@@ -124,6 +124,14 @@ class JsonTest {
         assertEquals("é😀", Json.parse("\"\\u00E9\\ud83d\\ude00\""));
     }
 
+    @Test
+    void anEscapeThatIsNotFourHexDigitsIsRejected() {
+        assertEquals("invalid escape at line 1, column 4", error("\"\\x\""));
+        assertEquals("invalid escape at line 1, column 4", error("\"\\u00G1\""));
+        assertEquals("invalid escape at line 1, column 4", error("\"\\u+041\""));
+        assertEquals("invalid escape at line 1, column 4", error("\"\\u-041\""));
+    }
+
     /** A dump cut off mid-write lands here. */
     @Test
     void truncatedInputSaysWhatWasLeftOpen() {

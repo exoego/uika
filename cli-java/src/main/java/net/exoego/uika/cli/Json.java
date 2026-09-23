@@ -328,9 +328,10 @@ final class Json {
                             if (pos + 4 > text.length()) {
                                 throw endOfFile(" inside a string");
                             }
+                            // Not Integer.parseInt: it takes a sign, so "+041" would read as 'A'.
                             try {
-                                sb.append((char) Integer.parseInt(text.substring(pos, pos + 4), 16));
-                            } catch (NumberFormatException ex) {
+                                sb.append((char) java.util.HexFormat.fromHexDigits(text, pos, pos + 4));
+                            } catch (IllegalArgumentException ex) {
                                 throw error("invalid escape");
                             }
                             pos += 4;
