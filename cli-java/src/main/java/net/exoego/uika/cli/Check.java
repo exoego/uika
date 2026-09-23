@@ -153,42 +153,61 @@ final class Check {
                 }
             });
         }
-        Memo memo = new Memo();
+        SupertypeReach reach = SupertypeReach.bySuperclass(finalOwners, newIndex, graph);
         for (int node = 0; node < graph.size(); node++) {
             int className = graph.nameOf(node);
             int superName = graph.superOf(node);
-            if (superName != Intern.NONE && memo.superclassChainHas(superName, newIndex, graph, finalOwners)) {
+            if (superName != Intern.NONE && reach.reaches(superName)) {
                 wanted.add(className);
             }
         }
     }
 
     /**
-     * Whether a type's supertypes hold a member of a set, remembered per type. The scanned
-     * classes are many and their supertypes few, so the walk per class this replaces visited
-     * the same chains hundreds of thousands of times over. Answered by the same steps as
-     * {@link #forEachSupertype}: the library index first, then the scan graph.
+     * Whether a type, or a supertype of it, is one of a set of owners, remembered per type:
+     * the scanned classes are many and their supertypes few, so a walk per class visits the
+     * same chains hundreds of thousands of times over. One instance answers for one owner set
+     * and one kind of walk, since the answer depends on both. {@link #bySuperclass} follows
+     * the superclass chain alone, the way a final method is inherited; {@link #byClosure}
+     * follows interfaces too, by the steps of {@link #forEachSupertype}, the library index
+     * first, then the scan graph.
      */
-    static final class Memo {
+    static final class SupertypeReach {
         private static final byte NO = 1;
         private static final byte YES = 2;
-        /** Marks a type whose closure is being computed, so a cyclic hierarchy in corrupt input ends. */
+        /** Marks a type being answered, so a cyclic hierarchy in corrupt input ends. */
         private static final byte OPEN = 3;
 
+        private final IntSet owners;
+        private final ApiIndex lib;
+        private final ClassGraph graph;
+        private final boolean closure;
         /** Sized once: a walk interns nothing, so every type it meets already has an id. */
         private final byte[] state = new byte[Intern.tableLen()];
 
-        private byte get(int type) {
-            return state[type];
+        private SupertypeReach(IntSet owners, ApiIndex lib, ClassGraph graph, boolean closure) {
+            this.owners = owners;
+            this.lib = lib;
+            this.graph = graph;
+            this.closure = closure;
         }
 
-        private void set(int type, byte value) {
-            state[type] = value;
+        /** Reaches through superclasses only: the scan graph's edge first, else the library's. */
+        static SupertypeReach bySuperclass(IntSet owners, ApiIndex lib, ClassGraph graph) {
+            return new SupertypeReach(owners, lib, graph, false);
         }
 
-        /** {@code type} or a superclass on its chain is in {@code owners}. */
-        boolean superclassChainHas(int type, ApiIndex lib, ClassGraph graph, IntSet owners) {
-            byte known = get(type);
+        /** Reaches through superclasses and interfaces, as {@link #forEachSupertype} walks them. */
+        static SupertypeReach byClosure(IntSet owners, ApiIndex lib, ClassGraph graph) {
+            return new SupertypeReach(owners, lib, graph, true);
+        }
+
+        /** Whether {@code type} or a supertype of it is an owner. */
+        boolean reaches(int type) {
+            if (closure && type == Scope.objectSym()) {
+                return false;
+            }
+            byte known = state[type];
             if (known != 0) {
                 return known == YES;
             }
@@ -196,53 +215,45 @@ final class Check {
             if (owners.contains(type)) {
                 result = true;
             } else {
-                set(type, OPEN);
-                int superName = Intern.NONE;
-                int node = graph.node(type);
-                if (node >= 0) {
-                    superName = graph.superOf(node);
-                }
-                if (superName == Intern.NONE) {
-                    int entry = lib.entry(type);
-                    superName = entry < 0 ? Intern.NONE : lib.superOf(entry);
-                }
-                result = superName != Intern.NONE && superclassChainHas(superName, lib, graph, owners);
+                state[type] = OPEN;
+                result = closure ? closureReaches(type) : superclassReaches(type);
             }
-            set(type, result ? YES : NO);
+            state[type] = result ? YES : NO;
             return result;
         }
 
-        /** {@code type} or any supertype in its closure is in {@code owners}, walking as {@link #forEachSupertype} does. */
-        boolean closureHas(int type, ApiIndex lib, ClassGraph graph, IntSet owners) {
-            if (type == Scope.objectSym()) {
+        private boolean superclassReaches(int type) {
+            int superName = Intern.NONE;
+            int node = graph.node(type);
+            if (node >= 0) {
+                superName = graph.superOf(node);
+            }
+            if (superName == Intern.NONE) {
+                int entry = lib.entry(type);
+                superName = entry < 0 ? Intern.NONE : lib.superOf(entry);
+            }
+            return superName != Intern.NONE && reaches(superName);
+        }
+
+        private boolean closureReaches(int type) {
+            int entry = lib.entry(type);
+            if (entry >= 0) {
+                int superName = lib.superOf(entry);
+                boolean result = superName != Intern.NONE && reaches(superName);
+                for (int k = 0, n = lib.interfaceCount(entry); !result && k < n; k++) {
+                    result = reaches(lib.interfaceAt(entry, k));
+                }
+                return result;
+            }
+            int node = graph.node(type);
+            if (node < 0) {
                 return false;
             }
-            byte known = get(type);
-            if (known != 0) {
-                return known == YES;
+            int superName = graph.superOf(node);
+            boolean result = superName != Intern.NONE && reaches(superName);
+            for (int k = 0, n = graph.interfaceCount(node); !result && k < n; k++) {
+                result = reaches(graph.interfaceAt(node, k));
             }
-            boolean result = false;
-            if (owners.contains(type)) {
-                result = true;
-            } else {
-                set(type, OPEN);
-                int entry = lib.entry(type);
-                int node = entry >= 0 ? -1 : graph.node(type);
-                if (entry >= 0) {
-                    int superName = lib.superOf(entry);
-                    result = superName != Intern.NONE && closureHas(superName, lib, graph, owners);
-                    for (int k = 0, n = lib.interfaceCount(entry); !result && k < n; k++) {
-                        result = closureHas(lib.interfaceAt(entry, k), lib, graph, owners);
-                    }
-                } else if (node >= 0) {
-                    int superName = graph.superOf(node);
-                    result = superName != Intern.NONE && closureHas(superName, lib, graph, owners);
-                    for (int k = 0, n = graph.interfaceCount(node); !result && k < n; k++) {
-                        result = closureHas(graph.interfaceAt(node, k), lib, graph, owners);
-                    }
-                }
-            }
-            set(type, result ? YES : NO);
             return result;
         }
     }
@@ -316,11 +327,11 @@ final class Check {
                 scannedChain.add(anc);
             }
         };
-        // The memoized answer decides which classes need the chain collected; the full walk
+        // The remembered answer decides which classes need the chain collected; the full walk
         // then runs only for those, a small fraction of the graph.
-        Memo memo = new Memo();
+        SupertypeReach reach = SupertypeReach.byClosure(owners, newIndex, graph);
         for (int node = 0; node < graph.size(); node++) {
-            if (!memo.closureHas(graph.nameOf(node), newIndex, graph, owners)) {
+            if (!reach.reaches(graph.nameOf(node))) {
                 continue;
             }
             inherits[0] = false;

@@ -727,14 +727,14 @@ final class CheckSelectionTest {
     }
 
     /**
-     * The closure memo reaches an owner through either scope and either edge kind: a
-     * library superclass, a library root's interface (its superclass slot is empty, not
+     * Reach by closure finds an owner through either scope and either edge kind: a library
+     * superclass, a library root's interface (its superclass slot is empty, not
      * java/lang/Object), a scanned class's superclass, and a scanned class's interface.
      * java/lang/Object ends every walk, a type in no scope answers no, and an answer is
      * remembered.
      */
     @Test
-    void closureMemoReachesOwnersThroughEitherScopeAndEitherEdge() {
+    void reachByClosureFindsOwnersThroughEitherScopeAndEitherEdge() {
         ApiIndex lib = index(
                 amvClass("lib/Owner", JAVA_LANG_OBJECT, Acc.PUBLIC),
                 amvClass("lib/ViaSuper", "lib/Owner", Acc.PUBLIC),
@@ -746,41 +746,39 @@ final class CheckSelectionTest {
                 node("app/Unrelated", JAVA_LANG_OBJECT));
         graph.insertIfAbsent(intern("app/Rootless"), Intern.NONE, syms("lib/Owner"), new int[0], Intern.NONE, intern("consumer.jar"));
         IntSet owners = owners("lib/Owner");
-        IntSet flipped = owners("app/Unrelated");
         int nowhere = intern("nowhere/X");
-        // The memo is sized to the symbol table when built, and the walk interns nothing.
-        Check.Memo memo = new Check.Memo();
-        assertTrue(memo.closureHas(intern("lib/Owner"), lib, graph, owners));
-        assertTrue(memo.closureHas(intern("lib/ViaSuper"), lib, graph, owners));
-        assertTrue(memo.closureHas(intern("lib/ViaIface"), lib, graph, owners));
-        assertFalse(memo.closureHas(intern("lib/Unrelated"), lib, graph, owners));
-        assertTrue(memo.closureHas(intern("app/ViaSuper"), lib, graph, owners));
-        assertTrue(memo.closureHas(intern("app/ViaIface"), lib, graph, owners));
-        assertTrue(memo.closureHas(intern("app/Rootless"), lib, graph, owners));
-        assertFalse(memo.closureHas(intern("app/Unrelated"), lib, graph, owners));
-        assertFalse(memo.closureHas(intern(JAVA_LANG_OBJECT), lib, graph, owners));
-        assertFalse(memo.closureHas(nowhere, lib, graph, owners));
-        // Remembered: the same answers with an owner set that would now say otherwise.
-        assertTrue(memo.closureHas(intern("app/ViaSuper"), lib, graph, new IntSet()));
-        assertFalse(memo.closureHas(intern("app/Unrelated"), lib, graph, flipped));
+        // Sized to the symbol table when built, and the walk interns nothing.
+        Check.SupertypeReach reach = Check.SupertypeReach.byClosure(owners, lib, graph);
+        assertTrue(reach.reaches(intern("lib/Owner")));
+        assertTrue(reach.reaches(intern("lib/ViaSuper")));
+        assertTrue(reach.reaches(intern("lib/ViaIface")));
+        assertFalse(reach.reaches(intern("lib/Unrelated")));
+        assertTrue(reach.reaches(intern("app/ViaSuper")));
+        assertTrue(reach.reaches(intern("app/ViaIface")));
+        assertTrue(reach.reaches(intern("app/Rootless")));
+        assertFalse(reach.reaches(intern("app/Unrelated")));
+        assertFalse(reach.reaches(intern(JAVA_LANG_OBJECT)));
+        assertFalse(reach.reaches(nowhere));
+        // Remembered: the same answer after the owner set changes underneath.
+        owners.add(intern("app/Unrelated"));
+        assertFalse(reach.reaches(intern("app/Unrelated")));
     }
 
-    /** A cyclic hierarchy in corrupt input ends the walk instead of recursing forever, answering no. */
+    /** A cyclic hierarchy in corrupt input ends either walk instead of recursing forever, answering no. */
     @Test
-    void closureMemoEndsACyclicHierarchy() {
+    void reachEndsACyclicHierarchy() {
         ClassGraph graph = scannedGraph("app/A", "app/B", "app/B", "app/A");
         IntSet owners = owners("lib/Owner");
-        Check.Memo memo = new Check.Memo();
-        assertFalse(memo.closureHas(intern("app/A"), index(), graph, owners));
-        assertFalse(memo.superclassChainHas(intern("app/A"), index(), graph, owners));
+        assertFalse(Check.SupertypeReach.byClosure(owners, index(), graph).reaches(intern("app/A")));
+        assertFalse(Check.SupertypeReach.bySuperclass(owners, index(), graph).reaches(intern("app/A")));
     }
 
     /**
-     * The superclass-chain memo follows only superclasses, from the scan graph into the
-     * library index, and stops at a type with none.
+     * Reach by superclass follows only superclasses, from the scan graph into the library
+     * index, and stops at a type with none.
      */
     @Test
-    void superclassChainMemoFollowsSuperclassesAcrossScopesOnly() {
+    void reachBySuperclassFollowsSuperclassesAcrossScopesOnly() {
         ApiIndex lib = index(
                 amvClass("lib/Owner", JAVA_LANG_OBJECT, Acc.PUBLIC),
                 amvClass("lib/Mid", "lib/Owner", Acc.PUBLIC),
@@ -790,13 +788,14 @@ final class CheckSelectionTest {
                 node("app/OnlyIface", JAVA_LANG_OBJECT, "lib/Owner"));
         IntSet owners = owners("lib/Owner");
         int nowhere = intern("nowhere/X");
-        Check.Memo memo = new Check.Memo();
-        assertTrue(memo.superclassChainHas(intern("lib/Owner"), lib, graph, owners));
-        assertTrue(memo.superclassChainHas(intern("app/Deep"), lib, graph, owners));
-        assertTrue(memo.superclassChainHas(intern("lib/Mid"), lib, graph, owners));
-        assertFalse(memo.superclassChainHas(intern("lib/Root"), lib, graph, owners), "an interface edge is not a superclass");
-        assertFalse(memo.superclassChainHas(intern("app/OnlyIface"), lib, graph, owners));
-        assertFalse(memo.superclassChainHas(nowhere, lib, graph, owners));
-        assertTrue(memo.superclassChainHas(intern("app/Deep"), lib, graph, new IntSet()), "remembered");
+        Check.SupertypeReach reach = Check.SupertypeReach.bySuperclass(owners, lib, graph);
+        assertTrue(reach.reaches(intern("lib/Owner")));
+        assertTrue(reach.reaches(intern("app/Deep")));
+        assertTrue(reach.reaches(intern("lib/Mid")));
+        assertFalse(reach.reaches(intern("lib/Root")), "an interface edge is not a superclass");
+        assertFalse(reach.reaches(intern("app/OnlyIface")));
+        assertFalse(reach.reaches(nowhere));
+        owners.add(intern("app/OnlyIface"));
+        assertFalse(reach.reaches(intern("app/OnlyIface")), "remembered");
     }
 }
