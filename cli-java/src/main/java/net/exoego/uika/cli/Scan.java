@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ForkJoinTask;
 import java.util.concurrent.RecursiveAction;
 
 /**
@@ -186,14 +187,48 @@ final class Scan {
         return Scratch.threads() * 16;
     }
 
+    /** The first chunk's central-directory reads, running on the pool ahead of the scan. */
+    static final class Ahead {
+        private final List<String> paths;
+        private final boolean collectEdges;
+        private final Input.Prepared[] prepared;
+        private final List<ForkJoinTask<?>> tasks = new ArrayList<>();
+
+        private Ahead(List<String> paths, boolean collectEdges) {
+            this.paths = paths;
+            this.collectEdges = collectEdges;
+            this.prepared = new Input.Prepared[paths.size()];
+        }
+    }
+
+    /**
+     * Starts the first chunk's central-directory reads now, for a {@link #scanTargetPaths}
+     * over the same paths later. The reads need nothing the caller may still be building.
+     */
+    static Ahead prepareAhead(List<String> paths, boolean collectEdges) {
+        Ahead ahead = new Ahead(paths, collectEdges);
+        int n = Math.min(paths.size(), chunkSize());
+        for (int i = 0; i < n; i++) {
+            int index = i;
+            ahead.tasks.add(Scratch.pool().submit(() -> ahead.prepared[index] = Input.prepare(paths.get(index), collectEdges)));
+        }
+        return ahead;
+    }
+
     static Result scanTargetPaths(List<String> paths, ApiIndex oldIndex, MemberProbe probe, boolean collectEdges) {
+        return scanTargetPaths(paths, oldIndex, probe, collectEdges, null);
+    }
+
+    /** @param ahead the first chunk's directory reads if they were started early, else null */
+    static Result scanTargetPaths(List<String> paths, ApiIndex oldIndex, MemberProbe probe, boolean collectEdges, Ahead ahead) {
         Result result = new Result();
         NameSet oldNames = oldIndex.classNameSet();
+        boolean useAhead = ahead != null && ahead.paths.equals(paths) && ahead.collectEdges == collectEdges;
         Input.onPool(() -> {
             Dedup dedup = new Dedup();
             int chunkSize = chunkSize();
             int n = paths.size();
-            Input.Prepared[] prepared = new Input.Prepared[n];
+            Input.Prepared[] prepared = useAhead ? ahead.prepared : new Input.Prepared[n];
             // Each round scans one chunk and, in the same parallel region, reads the central
             // directories of the next, so dedup costs no barrier of its own.
             for (int base = -chunkSize; base < n; base += chunkSize) {
@@ -228,8 +263,9 @@ final class Scan {
                         }
                     };
                 }
-                List<RecursiveAction> prepares = new ArrayList<>();
-                for (int i = Math.max(scanEnd, 0); i < nextEnd; i++) {
+                List<ForkJoinTask<?>> prepares = new ArrayList<>();
+                boolean aheadRound = useAhead && base < 0;
+                for (int i = Math.max(scanEnd, 0); i < nextEnd && !aheadRound; i++) {
                     int index = i;
                     prepares.add(new RecursiveAction() {
                         private static final long serialVersionUID = 1L;
@@ -251,8 +287,11 @@ final class Scan {
                 if (lanes != null) {
                     lanes.fork();
                 }
-                for (RecursiveAction prepare : prepares) {
+                for (ForkJoinTask<?> prepare : prepares) {
                     prepare.fork();
+                }
+                if (aheadRound) {
+                    prepares.addAll(ahead.tasks);
                 }
                 // Merged in path order as each path completes, so duplicate-class winners are
                 // deterministic and a finished path's leaves go back to the pool while the
@@ -272,7 +311,7 @@ final class Scan {
                     }
                     perPath[i] = null;
                 }
-                for (RecursiveAction prepare : prepares) {
+                for (ForkJoinTask<?> prepare : prepares) {
                     prepare.join();
                 }
                 for (int i = Math.max(scanEnd, 0); i < nextEnd; i++) {
