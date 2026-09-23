@@ -158,6 +158,14 @@ class JsonTest {
         assertEquals("unescaped control character in a string at line 1, column 5", error("\"tab\there\""));
     }
 
+    /** A file cut off inside a number or a literal names its last character. */
+    @Test
+    void aValueCutOffAtTheEndNamesTheLastColumn() {
+        assertEquals("invalid number at line 1, column 2", error("1e"));
+        assertEquals("invalid number at line 2, column 1", error("\n-"));
+        assertEquals("expected true at line 1, column 1", error("t"));
+    }
+
     @Test
     void malformedContainersNameTheOffendingColumn() {
         assertEquals("trailing comma at line 1, column 4", error("[1,]"));
