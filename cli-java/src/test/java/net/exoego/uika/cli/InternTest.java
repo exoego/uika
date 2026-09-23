@@ -206,4 +206,42 @@ class InternTest {
         assertEquals(Intern.tableLen(), stats[0]);
         assertTrue(stats[1] > 0);
     }
+
+    /** A string longer than a thread's slab takes the shared arena path from the cached side too, and comes back whole. */
+    @Test
+    void aStringLongerThanASlabInternsThroughAThreadCache() {
+        Scratch scratch = new Scratch();
+        byte[] big = ("slab/" + "y".repeat(20 * 1024)).getBytes(StandardCharsets.UTF_8);
+        int sym = Intern.intern(scratch, big, 0, big.length);
+        assertEquals(sym, Intern.intern(scratch, big, 0, big.length));
+        assertEquals(sym, Intern.intern(null, big, 0, big.length));
+        assertEquals(new String(big, StandardCharsets.UTF_8), Intern.str(sym));
+    }
+
+    /**
+     * The id space is an int. A counter at its top, or one already past it, refuses the next
+     * symbol instead of wrapping into negative ids. The probe uses a throwaway cache so the
+     * block of ids it claims near the top never reaches a real thread's cache, and the
+     * counter is put back afterwards.
+     */
+    @Test
+    void refusesToOverflowTheIdSpace() throws Exception {
+        java.lang.reflect.Field field = Intern.class.getDeclaredField("NEXT_ID");
+        field.setAccessible(true);
+        java.util.concurrent.atomic.AtomicInteger nextId = (java.util.concurrent.atomic.AtomicInteger) field.get(null);
+        int saved = nextId.get();
+        byte[] name = ("overflow/probe-" + System.nanoTime()).getBytes(StandardCharsets.UTF_8);
+        try {
+            nextId.set(Integer.MAX_VALUE - 1);
+            IllegalStateException atTop =
+                    assertThrows(IllegalStateException.class, () -> Intern.intern(new Scratch(), name, 0, name.length));
+            assertEquals("intern table overflow", atTop.getMessage());
+            nextId.set(-5);
+            IllegalStateException pastTop =
+                    assertThrows(IllegalStateException.class, () -> Intern.intern(new Scratch(), name, 0, name.length));
+            assertEquals("intern table overflow", pastTop.getMessage());
+        } finally {
+            nextId.set(saved);
+        }
+    }
 }
