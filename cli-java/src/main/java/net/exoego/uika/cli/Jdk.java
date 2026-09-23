@@ -383,7 +383,8 @@ final class Jdk {
             IntSet requested = new IntSet();
             List<Integer> pending = new ArrayList<>();
             for (int root : roots.toArray()) {
-                if (entries.containsKey(Intern.str(root)) && requested.add(root)) {
+                if (entries.containsKey(Intern.str(root))) {
+                    requested.add(root);
                     pending.add(root);
                 }
             }

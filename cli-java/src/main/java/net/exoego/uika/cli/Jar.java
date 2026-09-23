@@ -261,7 +261,7 @@ final class Jar {
             }
             if (position < bufferStart || position + need > bufferStart + bufferLength) {
                 int length = (int) Math.min(buffer.capacity(), limit - position);
-                if (length < need || !readFully(channel, buffer, position, length)) {
+                if (!readFully(channel, buffer, position, length)) {
                     return -1;
                 }
                 bufferStart = position;
