@@ -56,6 +56,17 @@ final class Jar {
             return compressed[i] & 0xffffffffL;
         }
 
+        /** Pooled columns for {@code capacity} rows. */
+        private void acquire(int capacity) {
+            name = IntPool.acquire(capacity);
+            crc = IntPool.acquire(capacity);
+            offset = IntPool.acquire(capacity);
+            end = IntPool.acquire(capacity);
+            compressed = IntPool.acquire(capacity);
+            inflated = IntPool.acquire(capacity);
+            stored = new boolean[capacity];
+        }
+
         /** Hands the columns back to {@link IntPool}. The entries must not be used afterwards. */
         void release() {
             for (int[] column : new int[][] {name, crc, offset, end, compressed, inflated}) {
@@ -65,6 +76,58 @@ final class Jar {
             }
             name = crc = offset = end = compressed = inflated = null;
             count = 0;
+        }
+
+        /**
+         * The same rows in pooled columns sized for {@code count}. Columns are sized by the
+         * directory's record count, so a JAR that is mostly resources would otherwise park
+         * columns several times its class count in the pool until the chunk is merged.
+         */
+        private void compact() {
+            if (count == 0 || count > name.length / 2) {
+                return;
+            }
+            Entries tight = permuted(null);
+            release();
+            name = tight.name;
+            crc = tight.crc;
+            offset = tight.offset;
+            end = tight.end;
+            compressed = tight.compressed;
+            inflated = tight.inflated;
+            stored = tight.stored;
+            count = tight.count;
+        }
+
+        /** A copy of the first {@link #count} rows in new pooled columns, reordered by {@code permutation} when given. */
+        private Entries permuted(int[] permutation) {
+            Entries out = new Entries();
+            out.count = count;
+            out.name = pick(name, count, permutation);
+            out.crc = pick(crc, count, permutation);
+            out.offset = pick(offset, count, permutation);
+            out.end = pick(end, count, permutation);
+            out.compressed = pick(compressed, count, permutation);
+            out.inflated = pick(inflated, count, permutation);
+            out.stored = new boolean[count];
+            for (int i = 0; i < count; i++) {
+                out.stored[i] = stored[permutation == null ? i : permutation[i]];
+            }
+            out.services = services;
+            return out;
+        }
+
+        /** The copy comes from {@link IntPool}, so it may be longer than {@code n}. */
+        private static int[] pick(int[] column, int n, int[] permutation) {
+            int[] out = IntPool.acquire(n);
+            if (permutation == null) {
+                System.arraycopy(column, 0, out, 0, n);
+                return out;
+            }
+            for (int i = 0; i < n; i++) {
+                out[i] = column[permutation[i]];
+            }
+            return out;
         }
 
         /** Drops every entry whose {@code keep} flag is unset. */
@@ -208,9 +271,33 @@ final class Jar {
         }
     }
 
+    /**
+     * The columns are filled in place, sized by the record count the end record declares: an
+     * upper bound of the scannable entries, so the parse never grows or copies them. A jar
+     * with tens of thousands of entries used to grow a worker's scratch columns by doubling and
+     * drop them again after, on every worker, for every such jar.
+     */
     private static Entries parse(Cursor cursor, int total, long cdOffset, Scratch scratch, boolean general) {
-        Scratch.EntryColumns c = scratch.entryColumns;
-        c.reset(general ? total : 0);
+        Entries c = new Entries();
+        c.acquire(total);
+        int[] ordinal = general ? IntPool.acquire(total) : null;
+        long[] allKeys = general ? new long[total] : null;
+        Entries result = null;
+        try {
+            result = parse(cursor, total, cdOffset, scratch, c, ordinal, allKeys);
+            return result;
+        } finally {
+            if (result != c) {
+                c.release();
+            }
+            if (ordinal != null) {
+                IntPool.release(ordinal);
+            }
+        }
+    }
+
+    private static Entries parse(Cursor cursor, int total, long cdOffset, Scratch scratch, Entries c, int[] ordinal, long[] allKeys) {
+        boolean general = ordinal != null;
         int n = 0;
         long previousOffset = -1;
         List<ServiceEntry> services = null;
@@ -251,7 +338,7 @@ final class Jar {
                 return null;
             }
             if (general) {
-                c.allKeys[i] = unsignedOffset << 31 | i;
+                allKeys[i] = unsignedOffset << 31 | i;
             } else {
                 if (unsignedOffset < previousOffset) {
                     return NOT_MONOTONIC;
@@ -274,14 +361,15 @@ final class Jar {
                 if (method != 0 && method != 8) {
                     return null;
                 }
-                c.ensure(n + 1);
                 c.name[n] = Intern.intern(scratch, name, 0, nameLength - 6);
                 c.crc[n] = crc;
                 c.offset[n] = offset;
                 c.compressed[n] = compressed;
                 c.inflated[n] = inflated;
                 c.stored[n] = method == 0;
-                c.ordinal[n] = i;
+                if (general) {
+                    ordinal[n] = i;
+                }
                 pendingEnd = true;
                 n++;
             }
@@ -290,14 +378,19 @@ final class Jar {
         if (pendingEnd && !general) {
             c.end[n - 1] = (int) cdOffset;
         }
-        Entries entries = general ? sortedByOffset(c, n, total, cdOffset) : c.copy(n, null);
-        entries.services = services;
-        return entries;
+        c.count = n;
+        c.services = services;
+        if (general) {
+            return sortedByOffset(c, ordinal, allKeys, cdOffset);
+        }
+        c.compact();
+        return c;
     }
 
     /** The rare JAR whose directory is not in offset order: a stable sort by offset. */
-    private static Entries sortedByOffset(Scratch.EntryColumns c, int n, int total, long cdOffset) {
-        long[] keys = Arrays.copyOf(c.allKeys, total);
+    private static Entries sortedByOffset(Entries c, int[] ordinal, long[] keys, long cdOffset) {
+        int n = c.count;
+        int total = keys.length;
         Arrays.sort(keys);
         // Position of each ordinal in offset order, to find its successor.
         int[] rank = new int[total];
@@ -306,7 +399,7 @@ final class Jar {
         }
         long[] order = new long[n];
         for (int j = 0; j < n; j++) {
-            int k = rank[c.ordinal[j]];
+            int k = rank[ordinal[j]];
             c.end[j] = (int) (k + 1 < total ? keys[k + 1] >>> 31 : cdOffset);
             order[j] = (long) k << 32 | j;
         }
@@ -315,6 +408,6 @@ final class Jar {
         for (int j = 0; j < n; j++) {
             permutation[j] = (int) order[j];
         }
-        return c.copy(n, permutation);
+        return c.permuted(permutation);
     }
 }
