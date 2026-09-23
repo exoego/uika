@@ -85,6 +85,9 @@ comment:
   require_changes: false
 
 ignore:
+  # The Rust CLI, removed in #278-#281. Carryforward keeps its last `rust` upload in
+  # every report, so without this its 842 missed lines count against the total.
+  - "cli/**"
   # Committed symlinks into jvm-plugin-core. The Gradle and Maven reports name those
   # sources by package path alone, so every symlink is a second candidate that would
   # split one file's coverage, and now also charge it to the wrong component.
