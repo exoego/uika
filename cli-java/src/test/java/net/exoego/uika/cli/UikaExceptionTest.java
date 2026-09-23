@@ -30,6 +30,14 @@ class UikaExceptionTest {
                 UikaException.describe(new FileSystemException("/x/y", null, "Not a directory")));
     }
 
+    /** Other file system reasons keep the JDK's text, which names the file. */
+    @Test
+    void anotherFileSystemReasonKeepsTheFileName() {
+        assertEquals(
+                "/x/y: Too many levels of symbolic links",
+                UikaException.describe(new FileSystemException("/x/y", null, "Too many levels of symbolic links")));
+    }
+
     @Test
     void aCauseWithoutAMessageIsNamedByItsType() {
         assertEquals("cannot read x: IOException", new UikaException("cannot read x", new IOException()).getMessage());
