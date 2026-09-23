@@ -1327,12 +1327,12 @@ final class Toml {
 
         private String literalString(int start, int end) {
             String invalid = "invalid literal string";
-            int a = start;
-            if (a < end && s[a] == '\'') {
-                a++;
-            } else {
+            // Only the stand-in for a missing inline table value is empty. Any other span is a
+            // lexed literal string, which starts at its quote.
+            if (start == end) {
                 throw fail(invalid, start, start, lit("'"));
             }
+            int a = start + 1;
             int b = end;
             if (b > a && s[b - 1] == '\'') {
                 b--;
