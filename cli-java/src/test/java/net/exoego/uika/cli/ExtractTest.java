@@ -725,6 +725,31 @@ class ExtractTest {
                 evidenceOf(out));
     }
 
+    /** An obfuscated or damaged class can hold a member name that does not decode. */
+    @Test
+    void invocationEvidenceSkipsAMemberNameThatDoesNotDecode() throws Exception {
+        ClassFileBytes b = ClassFileBytes.header(52, 12);
+        b.utf8("app/Ev"); // #1
+        b.classRef(1); // #2
+        b.utf8("lib/Owner"); // #3
+        b.classRef(3); // #4
+        b.utf8(new byte[] {'g', 'o', (byte) 0xC0, 'x'}); // #5
+        b.utf8("()V"); // #6
+        b.nameAndType(5, 6); // #7
+        b.memberRef(10, 4, 7); // #8
+        b.utf8("call"); // #9
+        b.nameAndType(9, 6); // #10
+        b.memberRef(10, 4, 10); // #11
+        b.u16(0x0021).u16(2).u16(0).u16(0).u16(0).u16(0).u16(0);
+        byte[] bytes = b.toByteArray();
+        ClassParser p = new ClassParser();
+        p.parse(bytes, bytes.length);
+
+        IntBuf out = new IntBuf();
+        Extract.invocationEvidence(out, p, scratch, new MemberProbe(new long[] {MemberKey.of("call", "()V")}));
+        assertEquals(List.of("lib/Owner.call:()V"), evidenceOf(out));
+    }
+
     /**
      * A raw deflate stream holding the first {@code length} bytes of {@code data} in one stored
      * block, then {@code tail}, with the slack the decoder may read past the end.
