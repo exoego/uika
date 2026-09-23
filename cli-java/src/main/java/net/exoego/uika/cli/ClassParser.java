@@ -165,59 +165,43 @@ final class ClassParser {
         int n = cpNext;
         while (n < cpCount) {
             int tagPos = pos;
-            // An entry wholly in the buffer, which is nearly every one, is stepped over from
-            // its size alone. The rest go through the reader, whose bounds checks give a
-            // truncated file its error at the offset the goldens pin, or ask for more bytes.
-            if (tagPos + 3 <= end) {
-                int tag = b[tagPos] & 0xff;
-                int size = entrySize(tag, tagPos);
-                if (size > 0 && tagPos + size <= end) {
-                    pos = tagPos + size;
-                    if (tag == 5 || tag == 6) {
-                        cp[n++] = tagPos;
-                        tagPos = 0;
-                    } else if (tag == 7 || tag == 8 || (tag >= 9 && tag <= 11)) {
-                        addTagged(tag, n);
-                    }
-                    cp[n++] = tagPos;
-                    continue;
-                }
-            }
-            if (!last) {
-                // Resumable: never consume a partial entry.
-                if (tagPos + 3 > available) {
+            // An entry is stepped over from its size. One cut by the end of the buffer asks
+            // for more bytes (never a partial entry), or on the last call fails at the offset
+            // a reader of its fields would have reached, which the goldens pin.
+            if (tagPos + 3 > end) {
+                if (!last) {
                     cpNext = n;
                     headerNeed = tagPos + 3;
                     return false;
                 }
-                int size = entrySize(b[tagPos] & 0xff, tagPos);
-                if (size > 0 && tagPos + size > available) {
+                if (tagPos >= end) {
+                    throw truncatedAt(tagPos);
+                }
+                int tag = b[tagPos] & 0xff;
+                if (fixedSize(tag) == 0) {
+                    throw unknownTag(tag, tagPos + 1);
+                }
+                throw truncatedAt(cutOffset(tagPos));
+            }
+            int tag = b[tagPos] & 0xff;
+            int size = entrySize(tag, tagPos);
+            if (size == 0) {
+                throw unknownTag(tag, tagPos + 1);
+            }
+            if (tagPos + size > end) {
+                if (!last) {
                     cpNext = n;
                     headerNeed = tagPos + size;
                     return false;
                 }
+                throw truncatedAt(cutOffset(tagPos));
             }
-            int tag = u8();
-            switch (tag) {
-                case 1 -> skip(u16());
-                case 7, 8 -> {
-                    addTagged(tag, n);
-                    skip(2);
-                }
-                case 16, 19, 20 -> skip(2);
-                case 9, 10, 11 -> {
-                    addTagged(tag, n);
-                    skipTwoU16();
-                }
-                case 12 -> skipTwoU16();
-                case 3, 4, 17, 18 -> skip(4);
-                case 5, 6 -> {
-                    skip(8);
-                    cp[n++] = tagPos;
-                    tagPos = 0;
-                }
-                case 15 -> skip(3);
-                default -> throw new FormatException("unknown constant pool tag " + tag + " at offset " + pos);
+            pos = tagPos + size;
+            if (tag == 5 || tag == 6) {
+                cp[n++] = tagPos;
+                tagPos = 0;
+            } else if (tag == 7 || tag == 8 || (tag >= 9 && tag <= 11)) {
+                addTagged(tag, n);
             }
             cp[n++] = tagPos;
         }
@@ -253,14 +237,37 @@ final class ClassParser {
 
     /** Whole size of the entry whose tag sits at {@code tagPos}; 0 for an unknown tag. Needs 3 readable bytes. */
     private int entrySize(int tag, int tagPos) {
+        int size = fixedSize(tag);
+        return tag == 1 ? size + be16(bytes, tagPos + 1) : size;
+    }
+
+    /** Size of an entry of {@code tag} without a Utf8's bytes, so 3 for a Utf8's header; 0 for an unknown tag. */
+    private static int fixedSize(int tag) {
         return switch (tag) {
-            case 1 -> 3 + be16(bytes, tagPos + 1);
-            case 7, 8, 16, 19, 20 -> 3;
+            case 1, 7, 8, 16, 19, 20 -> 3;
             case 9, 10, 11, 12, 3, 4, 17, 18 -> 5;
             case 5, 6 -> 9;
             case 15 -> 4;
             default -> 0;
         };
+    }
+
+    /**
+     * The offset a field-by-field reader of the entry at {@code tagPos} reports when the entry
+     * is cut short: past the tag, or past a first u16 that is still whole. The Rust reader
+     * read a Utf8's length, and the two u16 of a member reference or NameAndType, as
+     * separate reads, so a cut after the first one reports the second one's offset.
+     */
+    private int cutOffset(int tagPos) {
+        int p = tagPos + 1;
+        return switch (bytes[tagPos] & 0xff) {
+            case 1, 9, 10, 11, 12 -> p + 2 <= end ? p + 2 : p;
+            default -> p;
+        };
+    }
+
+    private static FormatException unknownTag(int tag, int offset) {
+        return new FormatException("unknown constant pool tag " + tag + " at offset " + offset);
     }
 
     /**
@@ -521,16 +528,9 @@ final class ClassParser {
 
     // ---- reader ----
 
-    private int u8() throws FormatException {
-        if (pos + 1 > end) {
-            throw truncated();
-        }
-        return bytes[pos++] & 0xff;
-    }
-
     private int u16() throws FormatException {
         if (pos + 2 > end) {
-            throw truncated();
+            throw truncatedAt(pos);
         }
         int value = be16(bytes, pos);
         pos += 2;
@@ -539,7 +539,7 @@ final class ClassParser {
 
     private long u32() throws FormatException {
         if (pos + 4 > end) {
-            throw truncated();
+            throw truncatedAt(pos);
         }
         long value = be32(bytes, pos) & 0xffffffffL;
         pos += 4;
@@ -548,23 +548,12 @@ final class ClassParser {
 
     private void skip(long n) throws FormatException {
         if (pos + n > end) {
-            throw truncated();
+            throw truncatedAt(pos);
         }
         pos += (int) n;
     }
 
-    /** The Rust reader takes these as two u16, so a cut after the first one reports the second one's offset. */
-    private void skipTwoU16() throws FormatException {
-        if (pos + 4 > end) {
-            if (pos + 2 <= end) {
-                pos += 2;
-            }
-            throw truncated();
-        }
-        pos += 4;
-    }
-
-    private FormatException truncated() {
-        return new FormatException("truncated class file at offset " + pos);
+    private static FormatException truncatedAt(int offset) {
+        return new FormatException("truncated class file at offset " + offset);
     }
 }
