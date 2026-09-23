@@ -214,8 +214,10 @@ final class Extract {
         }
         Arrays.fill(scratch.cpOwner, 0, cpLen, 0);
         boolean any = false;
-        for (int index = 1; index < cpLen; index++) {
-            if (p.tag(index) == ClassParser.TAG_CLASS && classRefOwner(p, scratch, oldNames, index) != Intern.NONE) {
+        int[] tagged = p.tagged;
+        for (int i = 0, n = p.taggedCount; i < n; i++) {
+            int entry = tagged[i];
+            if ((entry >>> 16) == ClassParser.TAG_CLASS && classRefOwner(p, scratch, oldNames, entry & 0xffff) != Intern.NONE) {
                 any = true;
             }
         }
@@ -264,8 +266,10 @@ final class Extract {
             return;
         }
         byte[] b = p.bytes;
-        for (int index = 1; index < p.cpLen; index++) {
-            int tag = p.tag(index);
+        int[] tagged = p.tagged;
+        for (int i = 0, n = p.taggedCount; i < n; i++) {
+            int tag = tagged[i] >>> 16;
+            int index = tagged[i] & 0xffff;
             int sym = Intern.NONE;
             if (tag == ClassParser.TAG_CLASS) {
                 int name = p.operand1(index);
@@ -284,14 +288,14 @@ final class Extract {
         }
         int from = countAt + 1;
         Arrays.sort(out.a, from, out.n);
-        int n = from;
+        int kept = from;
         for (int i = from; i < out.n; i++) {
-            if (n == from || out.a[n - 1] != out.a[i]) {
-                out.a[n++] = out.a[i];
+            if (kept == from || out.a[kept - 1] != out.a[i]) {
+                out.a[kept++] = out.a[i];
             }
         }
-        out.n = n;
-        out.a[countAt] = n - from;
+        out.n = kept;
+        out.a[countAt] = kept - from;
     }
 
     /** "foo/Bar" and "[[Lfoo/Bar;" intern foo/Bar; "[I" and undecodable names intern nothing. */
@@ -377,8 +381,10 @@ final class Extract {
             }
         }
         int count = 0;
-        for (int index = 1; index < cpLen; index++) {
-            int tag = p.tag(index);
+        int[] tagged = p.tagged;
+        for (int t = 0, n = p.taggedCount; t < n; t++) {
+            int tag = tagged[t] >>> 16;
+            int index = tagged[t] & 0xffff;
             if (tag == ClassParser.TAG_CLASS) {
                 int owner = classRefOwner(p, scratch, oldNames, index);
                 if (owner != Intern.NONE) {
@@ -390,12 +396,10 @@ final class Extract {
                 }
                 continue;
             }
-            if ((flags[index] & CP_CODE_REF) != 0) {
+            if (tag == ClassParser.TAG_STRING || (flags[index] & CP_CODE_REF) != 0) {
                 continue;
             }
-            if (tag >= ClassParser.TAG_FIELDREF && tag <= ClassParser.TAG_INTERFACE_METHODREF) {
-                count += memberRef(out, p, scratch, oldNames, index, tag, 0, 0);
-            }
+            count += memberRef(out, p, scratch, oldNames, index, tag, 0, 0);
         }
         for (int i = 0; i < codeRefCount; i++) {
             int ref = codeRefs[i];
@@ -524,8 +528,10 @@ final class Extract {
      */
     static void invocationEvidence(IntBuf out, ClassParser p, Scratch scratch, MemberProbe probe) {
         byte[] b = p.bytes;
-        for (int index = 1; index < p.cpLen; index++) {
-            int tag = p.tag(index);
+        int[] tagged = p.tagged;
+        for (int t = 0, n = p.taggedCount; t < n; t++) {
+            int tag = tagged[t] >>> 16;
+            int index = tagged[t] & 0xffff;
             if (tag != ClassParser.TAG_METHODREF && tag != ClassParser.TAG_INTERFACE_METHODREF) {
                 continue;
             }
