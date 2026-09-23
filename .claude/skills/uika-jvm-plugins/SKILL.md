@@ -526,26 +526,12 @@ hold lives here.
   lands outside the sandbox on purpose. The `jfr-jvmopt` subcommand prints the flag AND
   creates the directory, so the `docs/bazel.md` recipe cannot drift from
   `UikaCli.jfrClassLoadJvmArg` the way Maven's hand-written argLine can.
-- Coverage is ONE measurement: a JaCoCo agent riding every JVM `it/run.sh` starts, the
-  way sbt and Mill are measured. `bazel coverage` reaches `//java:manifest_test` and
-  nothing else, since every other entry point runs under `bazel run` in the IT's throwaway
-  workspace, and before the agent it reported `Materialize` at 0/53 and `UpgradeCheckMain`
-  at 13/69 while the ITs were exercising 46/53 and 59/69. It was then two measurements,
-  the `bazel coverage` lcov uploaded beside the IT's XML, and Codecov's merge of that pair
-  turned every branch line the IT covered only PARTLY into a miss (the lcov names the
-  line's branches as untaken, the XML only counts them): `UpgradeCheckMain` showed 57/73
-  while the XML alone had 63/73. So the IT now runs the unit suite itself, in its own
-  workspace and into the same exec file, and nothing uploads an lcov. Four things make it
-  work: the agent goes in through a `run --jvmopt=` line written into the workspace
-  `.bazelrc`, so a new invocation is instrumented by existing; the unit suite runs as
-  `bazel test @uika//java:manifest_test --spawn_strategy=local --nocache_test_results`
-  with the agent passed by hand, because a SANDBOXED test cannot read an agent jar outside
-  it (the JVM dies before main with a native "processing of -javaagent failed") and a
-  cached one forks no JVM; it runs in the IT workspace rather than the ruleset's own
-  because JaCoCo matches execution data to a class by a hash of its bytes, and only jars
-  from the same build are the ones the report reads; and the report skips every jar whose
-  name carries a dash, since `libcore-hjar.jar` and `-tjar.jar` are header jars with the
-  method bodies stripped and JaCoCo fails the whole report on the first one it meets.
+- Coverage is ONE report: a JaCoCo agent riding every JVM `it/run.sh` starts, the unit
+  suite included (`bazel test` in the IT workspace, unsandboxed, uncached; run.sh says why
+  each). Do not upload the `bazel coverage` lcov beside it. Codecov merges the pair per
+  line and shows every branch line the IT covers only partly as a miss. The report skips
+  every jar whose name carries a dash: `libcore-hjar.jar` and `-tjar.jar` are header jars
+  with the method bodies stripped, and JaCoCo fails the whole report on the first one.
 - The release archive is cut with `cp -RL` (`bazel-rules/stage.sh`, via `make
   bazel-stage`). The four jvm-plugin-core sources under `bazel-rules/java` are committed
   symlinks pointing OUT of the module root, which is fine in this repository and useless
