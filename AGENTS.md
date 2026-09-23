@@ -151,9 +151,9 @@ relearned by experiment.
   Merged mode has no per-module data and compares the dump-level values instead. Gradle
   rehydration carries the input dump's values forward instead of stamping the
   rehydrating JVM.
-- Tuning knobs: `UIKA_THREADS` (worker count), `UIKA_CHUNK` (paths processed
-  concurrently in pass 1; default = 16x threads, rationale in
-  `Scan.scanTargetPaths`), `UIKA_FILE_LANES` (concurrent openers of loose class
+- Tuning knobs: `UIKA_THREADS` (worker count), `UIKA_CHUNK` (paths in flight in
+  pass 1, from central-directory read to merge; default = 8x threads, rationale
+  in `Scan.window`), `UIKA_FILE_LANES` (concurrent openers of loose class
   files; 4 on macOS, one per worker elsewhere), `UIKA_NO_RELAUNCH` (stay in the
   JVM that was started).
 - `cli-java/build.gradle.kts` stays at the `0.0.0-dev` placeholder; a release
@@ -168,8 +168,11 @@ relearned by experiment.
   reasons are in `cli-java/AGENTS.md`.
 - Inflated bytes live in the per-thread `Scratch` and are overwritten by the next
   class; nothing retains them past the class they belong to.
-- Preserve both parallelism layers: chunks across input paths, spans and batches
-  within each JAR/dir. Nested ForkJoin tasks provide the load balancing.
+- Preserve both parallelism layers: a window of paths in flight across input
+  paths, spans and batches within each JAR/dir. Nested ForkJoin tasks provide the
+  load balancing. Pass 1 has no barrier: reads, dedup, scans and merges advance
+  through the path list behind cursors, and only the merge and dedup cursors are
+  sequential, because both are first-wins in path order.
 - Preserve determinism: output sorted by string value (`Intern.compare`, UTF-8
   bytes); duplicates first-wins by input path order. Never sort or compare output
   by symbol id — interning order is nondeterministic. The same rule covers
