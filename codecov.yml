@@ -41,8 +41,9 @@ flag_management:
 #
 # Bazel rules used to be a third: `bazel coverage` reaches //java:manifest_test alone, so
 # DumpMain, MergeMain and Materialize read 0 while the integration test was exercising
-# nearly all of them. Its ITs now carry a JaCoCo agent of their own, so the number covers
-# both halves; the Makefile's bazel-coverage target says how.
+# nearly all of them. Its ITs now carry a JaCoCo agent of their own and run the unit suite
+# under it too, so one report covers both halves; the Makefile's bazel-coverage target
+# says how, and why it is one report rather than an lcov beside an XML.
 #
 # No component declares statuses, so none of them opens a check. That matches the flags
 # they replace, which had no per-flag status either.

@@ -373,18 +373,17 @@ jobs:
           restore-keys: |
             bazel-${{ runner.os }}-
 
-      # `bazel coverage` runs //java:manifest_test, and the integration test runs with the
-      # agent attached, so this is the whole of bazel-test.
+      # The integration test runs with the agent attached and runs the unit suite itself,
+      # so this is the whole of bazel-test.
       - name: Test with coverage
         run: make bazel-coverage
 
       - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          # Two reports, because no one tool sees both halves: bazel.lcov is `bazel
-          # coverage` over //java:manifest_test, bazel-it.xml is the JaCoCo agent riding
-          # the integration test's `bazel run` invocations, which that number cannot see.
-          files: target/coverage/bazel.lcov,target/coverage/bazel-it.xml
+          # One report on purpose. The Makefile's bazel-coverage target says why an lcov
+          # from `bazel coverage` must not be uploaded next to it.
+          files: target/coverage/bazel-it.xml
           flags: bazel
           disable_search: true
           fail_ci_if_error: true
