@@ -202,15 +202,18 @@ final class Intern {
                 if (cache.internSlabEnd - cache.internSlabPos < len) {
                     cache.internSlabPos = claim(SLAB);
                     cache.internSlabEnd = cache.internSlabPos + SLAB;
+                    cache.internSlabChunk = strChunk((int) (cache.internSlabPos >>> STR_BITS));
                 }
                 pos = cache.internSlabPos;
                 cache.internSlabPos += len;
+                // The slab's chunk is resolved once per slab: resolving it per string put the
+                // rarely taken chunk-growth branch on the hot path, and the JIT deoptimized the
+                // interner every time a chunk was added.
+                cache.internSlabChunk.put((int) (pos & STR_MASK), buf, off, len);
             } else {
                 pos = claim(len);
+                strChunk((int) (pos >>> STR_BITS)).put((int) (pos & STR_MASK), buf, off, len);
             }
-            int chunkIndex = (int) (pos >>> STR_BITS);
-            ByteBuffer chunk = strChunk(chunkIndex);
-            chunk.put((int) (pos & STR_MASK), buf, off, len);
             loc = (pos << LEN_BITS) | len;
         }
         int id;
