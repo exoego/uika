@@ -1,5 +1,6 @@
 (ns exoego.uika-test
   (:require [clojure.data.json :as json]
+            [clojure.java.basis :as basis]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str]
@@ -537,3 +538,99 @@
       (let [text (slurp converted)]
         (is (or (str/includes? text "Java stack when loading ")
                 (str/includes? text "[class,load] ")))))))
+
+(deftest env-treats-a-blank-variable-as-unset
+  ;; Every test that reaches the reader stubs it, since the ambient environment is not
+  ;; theirs to assume. The reader itself still has to answer a set variable and nil an
+  ;; unset one.
+  (let [[name value] (some (fn [[k v]] (when-not (str/blank? v) [k v])) (System/getenv))]
+    (is (= value (#'uika.core/env name))))
+  (is (nil? (#'uika.core/env "UIKA_TEST_VARIABLE_NOBODY_SETS"))))
+
+(deftest jdk-release-takes-a-number-or-a-numeric-string
+  ;; project.clj and :exec-args are free text, so "11" next to :fail-on "reachable" is
+  ;; the natural spelling, and (long "11") would throw a ClassCastException no caller
+  ;; catches.
+  (let [release #(#'uika.core/release-number %)]
+    (is (nil? (release nil)))
+    (is (= 11 (release 11)))
+    (is (= 11 (release 11.0)))
+    (is (= 11 (release "11")))
+    (is (= 11 (release " 11 ")))
+    ;; The same typo must not land two different ways: (long 11.9) truncates silently,
+    ;; so the number and the string are refused alike.
+    (doseq [bad [11.9 "11.9" "eleven" :eleven]]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #":jdk-release must be a number"
+                            (release bad))
+          (pr-str bad)))))
+
+(deftest the-jdk-api-layer-is-skipped-when-ct-sym-cannot-serve-it
+  ;; Both messages name the project JVM's home. For the Leiningen plugin that JVM is not
+  ;; the one evaluating this, and blaming the wrong one sends the reader to a ct.sym that
+  ;; was never consulted.
+  (let [home (temp-dir)
+        effective #(#'uika.core/effective-jdk-release % {:home home :feature 21})]
+    (testing "below the lowest release ct.sym carries"
+      (let [out (with-out-str (is (nil? (effective 7))))]
+        (is (str/includes? out "release 7 is below the lowest release ct.sym serves"))))
+    (testing "a JVM without lib/ct.sym"
+      (let [out (with-out-str (is (nil? (effective 17))))]
+        (is (str/includes? out (str "no usable ct.sym in " home)))))))
+
+(deftest jfr-conversion-says-why-the-converter-is-unavailable
+  ;; The compiled class is looked up reflectively so that a source install without it
+  ;; still runs the text-log flow. The two ways it can be absent get their own reasons:
+  ;; an older JVM refuses the class file with UnsupportedClassVersionError, never
+  ;; ClassNotFoundException.
+  (let [missing-with (fn [throwable]
+                       (with-redefs-fn {#'uika.core/jfr-evidence-class
+                                        (fn [] (throw throwable))}
+                         #(:missing (#'uika.core/jfr-evidence))))]
+    (is (str/includes? (missing-with (ClassNotFoundException. "JfrEvidence"))
+                       "not on the classpath"))
+    (is (str/includes? (missing-with (UnsupportedClassVersionError. "JfrEvidence"))
+                       "needs a Java 17+ runtime"))))
+
+(deftest without-the-converter-text-logs-pass-through-and-a-recording-is-refused
+  ;; A source install loses only conversion: text logs still reach the CLI as they are.
+  ;; An explicit :jfr fails with the reason instead of forwarding a binary the CLI would
+  ;; silently skip.
+  (let [dir (temp-dir)
+        stub (io/file dir "uika")
+        before (io/file dir "before.json")
+        after (io/file dir "after.json")
+        text-log (io/file dir "loads.log")]
+    (spit stub "#!/bin/sh\necho \"$@\" > \"$3.args\"\nexit 0\n")
+    (.setExecutable stub true false)
+    (spit before "{}")
+    (spit after "{}")
+    (spit text-log "[class,load] com.example.FromText\n")
+    (with-redefs-fn {#'uika.core/jfr-evidence (constantly {:missing "no converter here"})}
+      (fn []
+        (uika/upgrade-check {:before (str before) :after (str after)
+                             :class-load-log [(str text-log)]
+                             :cli-path (str stub)})
+        (is (str/includes? (slurp (str before ".args")) (str "--class-load-log " text-log)))
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                              #"cannot convert JFR evidence: no converter here"
+                              (uika/upgrade-check {:before (str before) :after (str after)
+                                                   :jfr (str (io/file dir "rec.jfr"))
+                                                   :cli-path (str stub)})))))))
+
+(deftest the-cli-jar-refuses-a-jvm-older-than-it-needs
+  ;; The JVM's own answer would be an UnsupportedClassVersionError at exit 1, which is
+  ;; also the CLI's code for broken references.
+  (let [dir (temp-dir)
+        jar (io/file dir "uika-cli.jar")]
+    (spit jar "")
+    (with-redefs [uika.core/this-jvm (constantly {:home (str dir) :feature 11})]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                            #"needs Java 17 or newer and this JVM is Java 11"
+                            (#'uika.core/launch-command jar "before.json" "after.json"))))))
+
+(deftest own-version-comes-from-the-tools-coordinate-in-the-running-basis
+  ;; The deps.edn alias flow: the runtime basis carries the tool's own :mvn/version, and
+  ;; that one coordinate pins the CLI version with it.
+  (with-redefs [basis/current-basis
+                (constantly {:libs {'net.exoego.uika/clojure-uika {:mvn/version "1.2.3"}}})]
+    (is (= "1.2.3" (#'uika/own-version)))))

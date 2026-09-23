@@ -35,22 +35,20 @@
   It is written on the module as well as on the dump, the shape the JVM plugins
   emit for builds that mix releases across modules. Neither frontend has more than
   one module, so here the two are always the same number."
-  ([module-name artifacts class-dirs]
-   (dump-json module-name artifacts class-dirs (.feature (Runtime/version))))
-  ([module-name artifacts class-dirs jdk-release]
-   (let [artifact-maps (vec artifacts)
-         ;; Omitted when nil, like DumpFormat's writer: a below-floor project JVM (lein
-         ;; probing a JDK 7 :java-cmd) has nothing servable to record, and a dump naming
-         ;; a below-floor release hard-fails the CLI's JDK-pair run.
-         module (cond-> {"module" module-name
-                         "classesDirs" (mapv (fn [^String p] {"root" 0 "path" p}) class-dirs)
-                         "artifactRefs" (vec (range (count artifact-maps)))}
-                  jdk-release (assoc "jdkRelease" jdk-release))]
-     (json/write-str (cond-> {"version" 2
-                              "roots" [""]
-                              "artifacts" artifact-maps
-                              "modules" [module]}
-                       jdk-release (assoc "jdkRelease" jdk-release))))))
+  [module-name artifacts class-dirs jdk-release]
+  (let [artifact-maps (vec artifacts)
+        ;; Omitted when nil, like DumpFormat's writer: a below-floor project JVM (lein
+        ;; probing a JDK 7 :java-cmd) has nothing servable to record, and a dump naming
+        ;; a below-floor release hard-fails the CLI's JDK-pair run.
+        module (cond-> {"module" module-name
+                        "classesDirs" (mapv (fn [^String p] {"root" 0 "path" p}) class-dirs)
+                        "artifactRefs" (vec (range (count artifact-maps)))}
+                 jdk-release (assoc "jdkRelease" jdk-release))]
+    (json/write-str (cond-> {"version" 2
+                             "roots" [""]
+                             "artifacts" artifact-maps
+                             "modules" [module]}
+                      jdk-release (assoc "jdkRelease" jdk-release)))))
 
 (defn- env
   "An environment variable, treating blank as unset. A CI `env:` block whose value
@@ -336,6 +334,11 @@
                               " (the ct.sym in " home " has no release " target ")")))
               effective))))))
 
+(defn- jfr-evidence-class
+  "The lookup on its own, so a test can stand in for a classpath or a JVM this one is not."
+  []
+  (Class/forName "net.exoego.uika.plugin.core.JfrEvidence"))
+
 (defn- jfr-evidence
   "The compiled net.exoego.uika.plugin.core.JfrEvidence out of jvm-plugin-core, as
   {:class c}, or {:missing why} when this frontend cannot convert recordings. Looked
@@ -345,7 +348,7 @@
   and an older JVM answers the load with UnsupportedClassVersionError, not
   ClassNotFoundException, so the two absences get their own messages."
   []
-  (try {:class (Class/forName "net.exoego.uika.plugin.core.JfrEvidence")}
+  (try {:class (jfr-evidence-class)}
        (catch ClassNotFoundException _
          {:missing (str "the compiled JfrEvidence class is not on the classpath"
                         " (the Maven-distributed artifact carries it; a source"
@@ -399,7 +402,7 @@
   [binary before after]
   (if-not (jar? binary)
     [(str binary)]
-    (let [feature (.feature (Runtime/version))
+    (let [feature (long (:feature (this-jvm)))
           windows (str/includes? (.toLowerCase ^String (System/getProperty "os.name" "")
                                                java.util.Locale/ROOT)
                                  "windows")
