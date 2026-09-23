@@ -11,8 +11,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # Superseded PR pushes are pointless to finish. Every main commit still runs to the end.
+  # Superseded PR pushes are pointless to finish. Every other run gets a group of its own,
+  # because a shared group cancels a PENDING run even with cancel-in-progress off, and a main
+  # commit without a run has no cache save and no Codecov base.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # One job per build tool, so the tools run side by side. Each job runs the instrumented
