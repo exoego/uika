@@ -1007,8 +1007,9 @@ final class Toml {
             boolean array = ek.a[open] == E_ARRAY_TABLE_OPEN;
             List<Key> path = new ArrayList<>();
             Key key = null;
-            int end = ee.a[open];
-            while (ep < ek.n) {
+            int end;
+            // A header without its close holds the empty stand-in key, and decoding that throws.
+            while (true) {
                 int e = ep++;
                 int kind = ek.a[e];
                 if (kind == E_ARRAY_TABLE_CLOSE || kind == E_STD_TABLE_CLOSE) {
@@ -1032,29 +1033,27 @@ final class Toml {
         private Key onKey(int keyEvent, List<Key> path) {
             Key key = null;
             int pending = keyEvent;
+            // The first pass puts a key, maybe the empty stand-in, on both sides of every dot.
             if (moreKey()) {
-                while (ep < ek.n) {
+                while (true) {
                     int e = ep++;
                     if (ek.a[e] == E_KEY) {
                         pending = e;
                         if (!moreKey()) {
                             break;
                         }
-                    } else if (ek.a[e] == E_KEY_SEP && pending >= 0) {
+                    } else if (ek.a[e] == E_KEY_SEP) {
                         if (key != null) {
                             path.add(key);
                         }
                         key = decodeKey(pending);
-                        pending = -1;
                     }
                 }
             }
-            if (pending >= 0) {
-                if (key != null) {
-                    path.add(key);
-                }
-                key = decodeKey(pending);
+            if (key != null) {
+                path.add(key);
             }
+            key = decodeKey(pending);
             if (LIMIT <= path.size()) {
                 throw source.error("key has more than " + LIMIT + " dotted parts", path.get(0).start, key.end);
             }
