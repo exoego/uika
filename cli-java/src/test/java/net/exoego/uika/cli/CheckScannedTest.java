@@ -9,6 +9,7 @@ import static net.exoego.uika.cli.CheckTest.syms;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -19,6 +20,7 @@ import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -634,6 +636,42 @@ final class CheckScannedTest {
             references.add(v.reference);
         }
         assertEquals(List.of(SymbolRef.ofClass(intern("lib/A")), call), references);
+    }
+
+    /**
+     * Two jars at mismatched versions: the new lib/A extends x/B, while the lagging x/B still
+     * extends lib/A. The JVM rejects the pair with ClassCircularityError. Every walk over the
+     * chain must still end, and the upgrade's own breaks in x/B are still reported.
+     */
+    @Test
+    void aSuperclassCycleAcrossSkewedJarsEndsEveryWalk() throws Exception {
+        ClassWriter b = new ClassWriter("x/B", "lib/A").method(Acc.PUBLIC, "m", "()V", RETURN);
+        int p = b.memberRef(10, "lib/P", "p", "()V");
+        b.method(Acc.PUBLIC, "call", "()V", ACONST_NULL, INVOKEVIRTUAL, p >>> 8, p & 0xff, RETURN);
+        String cp = jar("x.jar", "x/B.class", b.bytes());
+        ClassApi oldA = classWithMethodAccess("lib/A", m("m", "()V", Acc.PUBLIC));
+        oldA.interfaces = syms("lib/I");
+        ClassApi newA = classWithMethodAccess("lib/A", m("m", "()V", Acc.PUBLIC | Acc.FINAL));
+        newA.superName = intern("x/B");
+        newA.interfaces = syms("lib/I");
+        int iface = Acc.PUBLIC | Acc.INTERFACE | Acc.ABSTRACT;
+        ClassApi oldI = classApi("lib/I", JAVA_LANG_OBJECT, iface);
+        ClassApi newI = classWithMethodAccess("lib/I", m("n", "()V", Acc.PUBLIC | Acc.ABSTRACT));
+        newI.access = iface;
+        ApiIndex oldLib = index(oldA, oldI, classWithMethodAccess("lib/P", m("p", "()V", Acc.PUBLIC)));
+        ApiIndex newLib = index(newA, newI, classWithMethodAccess("lib/P", m("p", "()V", Acc.PROTECTED)));
+
+        Check.Report report = assertTimeoutPreemptively(Duration.ofSeconds(30), () -> Check.check(List.of(cp), oldLib, newLib, List.of()));
+
+        assertEquals(List.of(), report.warnings);
+        List<String> found = new ArrayList<>();
+        for (Violation v : report.violations) {
+            assertEquals("x/B", Intern.str(v.sourceClass));
+            found.add(v.reason + " " + Intern.str(v.reference.owner()) + "." + Intern.str(MemberKey.name(v.reference.member())));
+        }
+        assertEquals(
+                List.of("METHOD_ACCESS_NARROWED lib/P.p", "METHOD_BECAME_ABSTRACT lib/I.n", "METHOD_BECAME_FINAL lib/A.m"),
+                found.stream().sorted().toList());
     }
 
     /** An unreadable jar or class yields no evidence; whatever else was read still counts. */
