@@ -310,6 +310,44 @@ class InputTest {
         assertEquals("warning: " + path + "!p/Bad.class: deflate error\n", captured.toString());
     }
 
+    /** A name that is not UTF-8 sends the JAR to the fallback reader, which must treat a corrupt entry the same way. */
+    @Test
+    void aCorruptEntryInAFallbackJarSkipsThatEntryOnly() throws Exception {
+        byte[] text = classLike("compressible ".repeat(400));
+        Path path = dir.resolve("latin1.jar");
+        try (OutputStream file = Files.newOutputStream(path);
+                ZipOutputStream zip = new ZipOutputStream(file, StandardCharsets.ISO_8859_1)) {
+            for (String name : List.of("café.txt", "p/Good1.class", "p/Bad.class", "p/Good2.class")) {
+                zip.putNextEntry(new ZipEntry(name));
+                zip.write(text);
+                zip.closeEntry();
+            }
+        }
+        assertNull(readEntries(path.toString()), "the fast reader must refuse the Latin-1 name");
+        byte[] zip = Files.readAllBytes(path);
+        // The local header comes before the directory, so the first match is its name.
+        int header = indexOf(zip, "p/Bad.class".getBytes(StandardCharsets.US_ASCII)) - 30;
+        int nameLength = (zip[header + 26] & 0xff) | (zip[header + 27] & 0xff) << 8;
+        int extraLength = (zip[header + 28] & 0xff) | (zip[header + 29] & 0xff) << 8;
+        // A final block of the reserved type 3.
+        zip[header + 30 + nameLength + extraLength] = 0x07;
+        Files.write(path, zip);
+
+        StringBuilder captured = new StringBuilder();
+        List<Seen> seen = streamCapturingWarnings(path.toString(), captured);
+        assertEquals(List.of("p/Good1", "p/Good2"), entriesOf(seen));
+        assertEquals("warning: " + path + "!p/Bad.class: invalid block type\n", captured.toString());
+    }
+
+    private static int indexOf(byte[] haystack, byte[] needle) {
+        for (int i = 0; i + needle.length <= haystack.length; i++) {
+            if (Arrays.equals(haystack, i, i + needle.length, needle, 0, needle.length)) {
+                return i;
+            }
+        }
+        throw new AssertionError("not found");
+    }
+
     /** The central directory is trusted for where an entry starts, and the local header for how long its name is. */
     @Test
     void anEntryWhoseLocalHeaderIsDamagedIsSkippedWithAWarning() throws Exception {
