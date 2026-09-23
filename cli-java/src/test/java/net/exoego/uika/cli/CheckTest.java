@@ -258,6 +258,18 @@ final class CheckTest {
         assertOk(v);
     }
 
+    /**
+     * lib/C moved to another artifact that is still on the classpath. Pass 2 fetches no flags
+     * for a class-only reference, so existence passes it like any other class reference.
+     */
+    @Test
+    void newOnAClassMovedToTheScannedClasspathIsOk() {
+        ApiIndex oldLib = index(classApi("lib/C"));
+        ClassGraph graph = new ClassGraph();
+        insert(graph, "lib/C", Scope.objectSym(), new int[0], Intern.NONE, "moved.jar");
+        assertOk(verdict(newRef("lib/C"), "app/Use", new Scope(oldLib), new Scope(index()), graph));
+    }
+
     @Test
     void methodrefOwnerThatBecameInterfaceIsBroken() {
         // A Methodref (compiled against a class) whose owner is now an interface makes
