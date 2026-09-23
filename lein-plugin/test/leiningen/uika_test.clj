@@ -217,3 +217,29 @@
   ;; throw there loses the usage hint that names :cli-version.
   (let [version (#'uika/own-version)]
     (is (or (nil? version) (and (string? version) (not (str/blank? version)))))))
+
+(deftest project-jvm-falls-back-when-the-probe-answers-nothing-usable
+  ;; A launcher that runs but prints no java.home, such as a wrapper script or a JVM
+  ;; without -XshowSettings: the probe exits cleanly with nothing to parse, and the task
+  ;; must still run on lein's own JVM rather than fail. `true` is on every PATH and
+  ;; ignores its arguments.
+  (let [warned (StringWriter.)
+        jvm (binding [*err* warned]
+              (#'uika/project-jvm {:java-cmd "true"}))]
+    (is (= (core/this-jvm) jvm))
+    (is (str/includes? (str warned) "could not read the version of true"))))
+
+(deftest a-failed-cli-download-aborts-with-the-exception-class
+  ;; FileNotFoundException from a URL carries the URL as its whole message, which alone
+  ;; does not separate a 404 from a proxy rejection, a DNS failure or a full disk, so the
+  ;; class name goes in front of it. The env reader is stubbed too: an exported
+  ;; UIKA_CLI_PATH would otherwise skip the download this test is about.
+  (let [msg (with-redefs-fn {#'core/env (constantly nil)
+                             #'core/fetch-cli (fn [_]
+                                                (throw (java.io.FileNotFoundException.
+                                                        "https://example.invalid/uika-cli.jar")))}
+              #(abort-message
+                (fn [] (uika/uika {:uika {:cli-version "9.9.9"}}
+                                  "upgrade-check" "a.json" "b.json"))))]
+    (is (some? msg))
+    (is (str/includes? msg "uika: FileNotFoundException: https://example.invalid/uika-cli.jar"))))
