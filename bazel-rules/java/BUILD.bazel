@@ -74,6 +74,13 @@ java_test(
     size = "small",
     javacopts = _RELEASE_17,
     srcs = ["net/exoego/uika/bazel/ManifestSelfTest.java"],
+    # The suite's own source, as a runfile the resolver test can look up. rlocationpath
+    # rather than a hand-written path, because the ruleset is the main repository here and
+    # an external module when the integration workspace runs this same target.
+    data = ["net/exoego/uika/bazel/ManifestSelfTest.java"],
+    jvm_flags = [
+        "-Duika.selftest.runfile=$(rlocationpath net/exoego/uika/bazel/ManifestSelfTest.java)",
+    ],
     main_class = "net.exoego.uika.bazel.ManifestSelfTest",
     use_testrunner = False,
     deps = [

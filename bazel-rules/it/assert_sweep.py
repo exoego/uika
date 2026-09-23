@@ -51,7 +51,15 @@ def files(module):
 if len(sys.argv) != 3:
     fail("usage: assert_sweep.py <sweep.json> <rule-based.json>")
 
-sweep, rule_based = modules(load(sys.argv[1])), modules(load(sys.argv[2]))
+sweep_dump = load(sys.argv[1])
+# The merge is handed overlapping --fragments roots on purpose, so it sees //app's fragment
+# twice. A module listed twice would be paired with the wrong one, or dropped, by
+# upgrade-check.
+names = [m["module"] for m in sweep_dump["modules"]]
+if len(names) != len(set(names)):
+    fail("the sweep lists a module twice: {}".format(sorted(names)))
+
+sweep, rule_based = modules(sweep_dump), modules(load(sys.argv[2]))
 
 for name in COMPARED:
     if name not in sweep:
