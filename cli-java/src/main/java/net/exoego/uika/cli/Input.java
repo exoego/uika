@@ -377,7 +377,13 @@ final class Input {
                 if (!isScannable(entry.getName())) {
                     continue;
                 }
-                int length = readEntry(zip, entry, scratch);
+                int length;
+                try {
+                    length = readEntry(zip, entry, scratch);
+                } catch (IOException e) {
+                    Out.err.println("warning: " + path + "!" + entry.getName() + ": " + UikaException.describe(e));
+                    continue;
+                }
                 if (!hasClassMagic(scratch.classBytes, length)) {
                     continue;
                 }
