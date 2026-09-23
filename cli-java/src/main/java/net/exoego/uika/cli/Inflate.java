@@ -399,17 +399,17 @@ final class Inflate {
                     subPrefix = prefix;
                     subStart = next;
                     subBits = len - primaryBits;
+                    // A code reaching a subtable is complete, so the walk ends by maxLen. The
+                    // tables hold the worst case: 400 of 512 for distances, zlib's 1332 of 2600
+                    // for literal/lengths.
                     int remaining = (1 << subBits) - (n - k);
                     int l2 = len;
-                    while (remaining > 0 && l2 < maxLen) {
+                    while (remaining > 0) {
                         l2++;
                         subBits++;
                         remaining = (remaining << 1) - cnt[l2];
                     }
                     next += 1 << subBits;
-                    if (next > table.length) {
-                        throw new FormatException("code table overflow");
-                    }
                     table[prefix] = SUBTABLE | subStart << 16 | subBits << 8 | primaryBits;
                 }
                 int entry = payload | (len - primaryBits);

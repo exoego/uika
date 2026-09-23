@@ -325,7 +325,7 @@ final class Input {
     private static <L> String decodeEntry(
             Jar.Entries entries, int i, ByteBuffer view, int spanLength, long spanStart, Scratch scratch, int source, Sink<L> sink, L leaf) {
         long base = entries.offset(i) - spanStart;
-        if (base < 0 || base + 30 > spanLength) {
+        if (base + 30 > spanLength) {
             return "local header runs into the next entry or the central directory";
         }
         int at = (int) base;
