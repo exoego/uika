@@ -17,6 +17,17 @@ assert module.artifactRefs.collect { json.artifacts[it] }.any { artifact ->
         (json.roots[artifact.root] + artifact.path).endsWith("commons-lang3-3.20.0.jar")
 }
 
+// Scope: the runtime dependency is on the classpath the application runs with and must be
+// dumped; the test one is not. The goal has no scope filter of its own. Maven resolves
+// each project for it afresh at the RUNTIME scope the goal declares, whatever surefire
+// resolved earlier, and that declaration is what these two checks pin.
+def scopesAreRespected = { artifacts, which ->
+    assert artifacts.any { it.group == "org.slf4j" && it.name == "slf4j-api" && it.version == "1.7.36" } :
+            "a runtime-scoped dependency was dropped from the ${which} dump: ${artifacts*.name}"
+    assert !artifacts.any { it.group == "org.hamcrest" } :
+            "a test-scoped dependency reached the ${which} dump: ${artifacts*.name}"
+}
+
 // The reactor dependency is attributed to its producing module, so uika can check
 // :dummy-maven-app against its own classpath and fall back to :dummy-maven-lib's
 // classesDirs if the jar is ever missing.
@@ -48,6 +59,7 @@ assert libModule != null
 assert libModule.classesDirs.any { dir ->
     json.roots[dir.root] + dir.path == new File(basedir, "lib/target/classes").absolutePath
 }
+scopesAreRespected(libModule.artifactRefs.collect { json.artifacts[it] }, "reactor")
 
 // The -pl invocation: Maven resolved dependencies for the selected project only, so an
 // unselected module in the dump could only carry zero artifacts. The dump must therefore
@@ -60,3 +72,12 @@ assert selected.modules.collect { it.module } == [":dummy-maven-lib"]
 assert selected.modules[0].classesDirs.any { dir ->
     selected.roots[dir.root] + dir.path == new File(basedir, "lib/target/classes").absolutePath
 }
+scopesAreRespected(selected.modules[0].artifactRefs.collect { selected.artifacts[it] }, "-pl lib")
+
+// The third invocation named an output under a regular file. The write's own exception
+// names a path and a reason, so what the goal adds is which knob pointed there.
+def unwritable = new File(basedir, "pom.xml/classpath.json")
+assert !unwritable.exists()
+assert new File(basedir, "build.log").text.contains(
+        "failed to write uika classpath dump: ${unwritable.absolutePath}") :
+        "an unwritable output did not fail with the goal's message naming the path"

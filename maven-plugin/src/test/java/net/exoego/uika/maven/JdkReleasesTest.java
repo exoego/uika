@@ -98,6 +98,21 @@ final class JdkReleasesTest {
     }
 
     @Test
+    void theConfigurationFallsBackToTargetAndThenToTheProperties() {
+        var byTarget = project("jar");
+        byTarget.getBuild().addPlugin(compilerPlugin(configuration("target", "11")));
+        assertEquals(11, JdkReleases.declaredRelease(byTarget),
+                "a configuration without <release> is read through <target>");
+
+        var namesNeither = project("jar");
+        namesNeither.getProperties().setProperty("maven.compiler.release", "17");
+        namesNeither.getBuild().addPlugin(compilerPlugin(configuration("encoding", "UTF-8")));
+        // A block that pins something else says nothing about the API, so it must not
+        // shadow the property the way a <release> would.
+        assertEquals(17, JdkReleases.declaredRelease(namesNeither));
+    }
+
+    @Test
     void theReactorMinimumIgnoresWhatDeclaresNothing() {
         var eleven = project("jar");
         eleven.getProperties().setProperty("maven.compiler.release", "11");
@@ -140,10 +155,14 @@ final class JdkReleasesTest {
     }
 
     private static Xpp3Dom release(String value) {
+        return configuration("release", value);
+    }
+
+    private static Xpp3Dom configuration(String element, String value) {
         var configuration = new Xpp3Dom("configuration");
-        var release = new Xpp3Dom("release");
-        release.setValue(value);
-        configuration.addChild(release);
+        var child = new Xpp3Dom(element);
+        child.setValue(value);
+        configuration.addChild(child);
         return configuration;
     }
 }

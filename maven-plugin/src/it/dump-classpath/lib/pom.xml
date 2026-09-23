@@ -12,4 +12,24 @@
 
   <artifactId>dummy-maven-lib</artifactId>
   <packaging>jar</packaging>
+
+  <!-- One dependency per scope the dump has to decide on. Only compile and runtime are
+       on the classpath the application runs with, and the goal has no scope filter of its
+       own: its declared RUNTIME resolution scope is what keeps the test-scoped one out,
+       so this is what pins that declaration. On lib rather than app because lib has no
+       reactor dependency, and a `-pl` build cannot resolve an unselected sibling. -->
+  <dependencies>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+      <version>1.7.36</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.hamcrest</groupId>
+      <artifactId>hamcrest</artifactId>
+      <version>2.2</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
 </project>
