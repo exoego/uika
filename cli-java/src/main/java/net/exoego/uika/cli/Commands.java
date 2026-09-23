@@ -267,12 +267,20 @@ final class Commands {
             Jdk.Indexer jdk,
             Verdicts.Writer verdicts) {
         ScanTargets scan = scanTargets(oldJars, newJars, targets);
-        // The first chunk's central-directory reads need no index, so they run on the pool
-        // while the indexes build here, and the JIT meets the directory parser and the
-        // interner before pass 1 starts.
+        // The two indexes build side by side: each is a couple of jars, so alone it leaves
+        // most of the pool idle, and it runs on a cold JIT. The first chunk's
+        // central-directory reads need no index, so they queue up behind the builds and
+        // bring the JIT to the directory parser and the interner before pass 1 starts.
+        java.util.concurrent.ForkJoinPool pool = Scratch.pool();
+        List<String> oldWarnings = new ArrayList<>();
+        List<String> newWarnings = new ArrayList<>();
+        java.util.concurrent.ForkJoinTask<ApiIndex> oldTask = pool.submit(() -> ApiIndex.fromPaths(oldJars, oldWarnings));
+        java.util.concurrent.ForkJoinTask<ApiIndex> newTask = pool.submit(() -> ApiIndex.fromPaths(newJars, newWarnings));
         Scan.Ahead ahead = Scan.prepareAhead(scan.paths(), !appRoots.isEmpty());
-        ApiIndex oldIndex = buildIndex(oldJars);
-        ApiIndex newIndex = buildIndex(newJars);
+        ApiIndex oldIndex = oldTask.join();
+        ApiIndex newIndex = newTask.join();
+        Out.warnAll(oldWarnings);
+        Out.warnAll(newWarnings);
         return runCheckWithIndexes(oldIndex, newIndex, scan, appRoots, excludeRules, jdk, verdicts, ahead);
     }
 
