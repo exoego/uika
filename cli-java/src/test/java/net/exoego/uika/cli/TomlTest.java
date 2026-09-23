@@ -85,6 +85,13 @@ class TomlTest {
     }
 
     @Test
+    void literalStringsTakeNonAscii() {
+        Toml.Table t = Toml.parse("'kéy' = 'é 日本語 𝄞'\nml = '''\nü\n'''\n");
+        assertEquals("é 日本語 𝄞", string(t, "kéy"));
+        assertEquals("ü\n", string(t, "ml"));
+    }
+
+    @Test
     void multiLineBasicStrings() {
         Toml.Table t = Toml.parse("a = \"\"\"\nfirst newline is trimmed\nsecond stays\"\"\"\n"
                 + "b = \"\"\"line \\\n      continued \\  \n\n   here\"\"\"\n"
