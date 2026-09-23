@@ -43,11 +43,18 @@ final class ClassSource {
         deflated = false;
     }
 
+    /** Above this the buffer grows to the request only: every thread keeps its largest, and doubling kept twice the largest class. */
+    static final int DOUBLING_LIMIT = 256 * 1024;
+
     byte[] reserve(int size) {
         if (bytes.length < size) {
-            bytes = new byte[Math.max(size, bytes.length * 2)];
+            bytes = new byte[grownLength(bytes.length, size)];
         }
         return bytes;
+    }
+
+    static int grownLength(int current, int needed) {
+        return needed >= DOUBLING_LIMIT ? needed : Math.max(needed, current * 2);
     }
 
     /**

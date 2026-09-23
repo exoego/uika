@@ -452,7 +452,7 @@ final class Inflate {
 
     private void ensureOut(int extra) {
         if (outPos + extra + 16 > out.length) {
-            out = Arrays.copyOf(out, Math.max(out.length * 2, outPos + extra + 16));
+            out = Arrays.copyOf(out, ClassSource.grownLength(out.length, outPos + extra + 16));
         }
     }
 
