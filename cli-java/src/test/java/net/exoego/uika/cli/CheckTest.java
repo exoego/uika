@@ -270,6 +270,22 @@ final class CheckTest {
         assertOk(verdict(newRef("lib/C"), "app/Use", new Scope(oldLib), new Scope(index()), graph));
     }
 
+    /**
+     * The JVM refuses a class file that is not java/lang/Object yet has no superclass (JVMS 4.1),
+     * but the scan still indexes one. A caller whose chain ends there is provably no subclass.
+     */
+    @Test
+    void aSuperChainEndingWithoutJavaLangObjectIsNoSubclass() {
+        ApiIndex oldLib = index(classWithMethodAccess("lib/P", m("m", "()V", Acc.PUBLIC)));
+        ClassApi root = classApi("lib/Root");
+        root.superName = Intern.NONE;
+        ApiIndex newLib = index(classWithMethodAccess("lib/P", m("m", "()V", Acc.PROTECTED)), root);
+        ClassGraph graph = new ClassGraph();
+        insert(graph, "app/Sub", intern("lib/Root"), new int[0], Intern.NONE, "app.jar");
+        Check.Verdict v = verdict(methodRef("lib/P", "m", "()V"), "app/Sub", new Scope(oldLib), new Scope(newLib), graph);
+        assertEquals(Reason.METHOD_ACCESS_NARROWED, broken(v).reason());
+    }
+
     @Test
     void methodrefOwnerThatBecameInterfaceIsBroken() {
         // A Methodref (compiled against a class) whose owner is now an interface makes

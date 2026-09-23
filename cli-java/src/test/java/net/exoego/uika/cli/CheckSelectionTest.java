@@ -705,6 +705,43 @@ final class CheckSelectionTest {
         assertTrue(abstractViolations(oldLib, newLib, fetched, graph).isEmpty());
     }
 
+    /**
+     * The JVM refuses a class file that is not java/lang/Object yet has no superclass (JVMS 4.1),
+     * but the scan still indexes one. The class chain ends there, and the interfaces still decide.
+     */
+    @Test
+    void aClassChainEndingWithoutJavaLangObjectStillJudgesTheInterfaces() {
+        ApiIndex oldLib = index(rootless("lib/R", Acc.PUBLIC, "lib/I"), amvFull("lib/I", JAVA_LANG_OBJECT, IFACE, NO_INTERFACES));
+        ApiIndex newLib =
+                index(rootless("lib/R", Acc.PUBLIC, "lib/I"), amvFull("lib/I", JAVA_LANG_OBJECT, IFACE, NO_INTERFACES, ABSTRACT_N));
+        ApiIndex fetched = index(amvClass("app/C", "lib/R", Acc.PUBLIC));
+        ClassGraph graph = scannedGraph("app/C", "lib/R");
+        List<Violation> v = abstractViolations(oldLib, newLib, fetched, graph);
+        assertEquals(1, v.size());
+        assertEquals(Reason.METHOD_BECAME_ABSTRACT, v.get(0).reason);
+        assertEquals("lib/I", Intern.str(v.get(0).reference.owner()));
+    }
+
+    /**
+     * The JVM refuses a class file that names java/lang/Object as a superinterface, but the scan
+     * still indexes one. Both interface walks pass it by, so it neither hides nor settles a conflict.
+     */
+    @Test
+    void javaLangObjectNamedAsASuperinterfaceIsPassedBy() {
+        String[] objectAsInterface = {JAVA_LANG_OBJECT};
+        ApiIndex oldLib = index(
+                amvFull("lib/A", JAVA_LANG_OBJECT, IFACE, objectAsInterface, DEFAULT_N),
+                amvFull("lib/B", JAVA_LANG_OBJECT, IFACE, NO_INTERFACES));
+        ApiIndex newLib = index(
+                amvFull("lib/A", JAVA_LANG_OBJECT, IFACE, objectAsInterface, DEFAULT_N),
+                amvFull("lib/B", JAVA_LANG_OBJECT, IFACE, NO_INTERFACES, DEFAULT_N));
+        ApiIndex fetched = index(amvFull("app/C", JAVA_LANG_OBJECT, Acc.PUBLIC, new String[] {"lib/A", "lib/B"}));
+        ClassGraph graph = scannedGraphFull(node("app/C", JAVA_LANG_OBJECT, "lib/A", "lib/B"));
+        List<Violation> v = abstractViolations(oldLib, newLib, fetched, graph);
+        assertEquals(1, v.size());
+        assertEquals(Reason.CONFLICTING_DEFAULT_METHODS, v.get(0).reason);
+    }
+
     // ---- the memoized supertype walks behind the wanted-class collection ----
 
     private static IntSet owners(String... names) {
