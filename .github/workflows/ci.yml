@@ -59,7 +59,7 @@ jobs:
       - name: Test with coverage
         run: make java-cli-coverage
 
-      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: cli-java/build/reports/jacoco/test/jacocoTestReport.xml
@@ -98,7 +98,7 @@ jobs:
       - name: Check with coverage
         run: make gradle-check-coverage
 
-      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: gradle-plugin/build/reports/jacoco/test/jacocoTestReport.xml
@@ -138,7 +138,7 @@ jobs:
       - name: Verify with coverage
         run: make maven-coverage
 
-      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: maven-plugin/target/site/jacoco/jacoco.xml,maven-plugin/target/site/jacoco-it/jacoco.xml
@@ -177,7 +177,7 @@ jobs:
       - name: Scripted tests with coverage
         run: make sbt-coverage
 
-      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: sbt-plugin/target/jacoco/jacoco.xml
@@ -211,7 +211,7 @@ jobs:
       - name: Test with coverage
         run: make mill-coverage
 
-      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: mill-plugin/out/jacoco/jacoco.xml
@@ -268,7 +268,7 @@ jobs:
       - name: Test with coverage
         run: make clojure-coverage
 
-      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: clojure-tool/target/coverage/lcov.info
@@ -329,7 +329,7 @@ jobs:
       - name: Test with coverage
         run: make lein-coverage
 
-      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lein-plugin/target/coverage/lcov.info
@@ -378,7 +378,7 @@ jobs:
       - name: Test with coverage
         run: make bazel-coverage
 
-      - uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           # One report on purpose. The Makefile's bazel-coverage target says why an lcov
