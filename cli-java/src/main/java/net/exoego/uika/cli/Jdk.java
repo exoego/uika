@@ -22,9 +22,9 @@ import java.util.zip.ZipFile;
  * escapes into JDK types conclude instead of ending Unknown. {@code --jdk-release-old N
  * --jdk-release-new M} makes the JDK upgrade itself the compared pair.
  *
- * <p>ct.sym ships with every JDK and holds API stub class files for historical releases;
- * the stubs are regular class files. The running JDK's own release is not in ct.sym, so it
- * comes from jmods instead.
+ * <p>ct.sym ships with every JDK and holds API stub class files for the releases below that
+ * JDK, and from JDK 22 on for its own release too. The stubs are regular class files. JDK 21
+ * and earlier leave their own release out, so a pair side naming it comes from jmods instead.
  *
  * <p>ct.sym entry layouts: 12+ is {@code <codes>/<module>/<binary/name>.sig} (module dirs
  * contain a '.'); 9-11 is {@code <codes>/<binary/name>.sig}; 8 is unsupported. Codes are
@@ -173,10 +173,11 @@ final class Jdk {
     }
 
     /**
-     * The whole API of one JDK release, for using a JDK upgrade as the checked pair. Older
-     * than the running JDK comes from ct.sym; the running JDK's own release from jmods, which
-     * is a SUPERSET (unexported internals included). That only errs toward silence while it
-     * is the NEW side; as the OLD side against a ct.sym new side it would invent removals.
+     * The whole API of one JDK release, for using a JDK upgrade as the checked pair. It comes
+     * from ct.sym whenever ct.sym carries it. The one exception is the JDK's own release on JDK
+     * 21 and earlier, which comes from jmods. jmods is a SUPERSET (unexported internals
+     * included), which only errs toward silence while it is the NEW side. As the OLD side
+     * against a ct.sym new side it would invent removals.
      */
     static ApiIndex releaseIndex(int release, List<String> warnings) {
         Path home = findHome();
@@ -184,7 +185,7 @@ final class Jdk {
             throw new UikaException("--jdk-release-old/--jdk-release-new need a JDK: set UIKA_JDK to a JDK home "
                     + "(checked first) or JAVA_HOME");
         }
-        if (installedFeature(home) == release) {
+        if (servedFromJmods(home, release)) {
             return jmodsIndex(home, release, warnings);
         }
         Path ctSym = ctSymIn(home);
@@ -196,10 +197,38 @@ final class Jdk {
         }
     }
 
-    /** Whether {@code release} is the running JDK's own, and so served from jmods. */
-    static boolean isInstalledRelease(int release) {
+    /** Whether {@code release} comes from jmods rather than ct.sym. */
+    static boolean servedFromJmods(int release) {
         Path home = findHome();
-        return home != null && installedFeature(home) == release;
+        return home != null && servedFromJmods(home, release);
+    }
+
+    private static boolean servedFromJmods(Path home, int release) {
+        if (installedFeature(home) != release) {
+            return false;
+        }
+        Path ctSym = ctSymIn(home);
+        return ctSym == null || !carries(ctSym, release);
+    }
+
+    /**
+     * Whether ct.sym holds class stubs for {@code release}. A JDK 21 ct.sym holds an
+     * L/system-modules entry but no L stubs.
+     */
+    private static boolean carries(Path ctSym, int release) {
+        char code = releaseCode(release);
+        try (ZipFile archive = new ZipFile(ctSym.toFile())) {
+            Enumeration<? extends ZipEntry> all = archive.entries();
+            while (all.hasMoreElements()) {
+                String[] parsed = parseEntry(all.nextElement().getName());
+                if (parsed != null && parsed[0].indexOf(code) >= 0) {
+                    return true;
+                }
+            }
+        } catch (IOException ignored) {
+            // An unreadable ct.sym leaves the JDK's own release to jmods.
+        }
+        return false;
     }
 
     private static ApiIndex jmodsIndex(Path home, int release, List<String> warnings) {
@@ -213,9 +242,7 @@ final class Jdk {
             }
         } catch (IOException e) {
             throw new UikaException(
-                    "release " + release + " is this JDK's own, which ct.sym never carries, so it must come from " + dir
-                            + " (absent in a JRE or a jlink'd runtime)",
-                    e);
+                    "release " + release + " is this JDK's own and is not in its ct.sym, so it must come from " + dir, e);
         }
         // Deterministic first-wins across modules, and deterministic warnings.
         Collections.sort(jmods);
@@ -279,10 +306,10 @@ final class Jdk {
     }
 
     /**
-     * Drops what a jmods class file carries and a ct.sym stub does not. Stubs strip
-     * PermittedSubclasses (java.lang.constant.ConstantDesc has been sealed since 12 and its
-     * stub has none), so keeping it would report every sealed JDK class as newly sealed.
-     * NestHost IS in stubs, so it stays.
+     * Drops what a jmods class file carries and a ct.sym stub does not. jmods is read only on
+     * JDK 21 and earlier, whose stubs have no PermittedSubclasses. java.lang.constant.ConstantDesc
+     * has been sealed since 17, yet a JDK 21 stub of it has none, so keeping the attribute would
+     * report every sealed JDK class as newly sealed. NestHost IS in stubs, so it stays.
      */
     static void levelToCtSymFidelity(ClassApi api) {
         api.permitted = null;
@@ -357,8 +384,8 @@ final class Jdk {
                     }
                     available.append(r);
                 }
-                throw new UikaException("release " + release + " not present in " + ctSym + " (available: " + available
-                        + "; the installed JDK's own release is served from its runtime image, not ct.sym, so pick an older one)");
+                String hint = release > releases.last() ? "; a newer JDK carries it" : "";
+                throw new UikaException("release " + release + " not present in " + ctSym + " (available: " + available + hint + ")");
             }
             return new Indexer(archive, entries);
         }

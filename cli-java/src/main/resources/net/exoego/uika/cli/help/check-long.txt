@@ -35,10 +35,10 @@ Options:
           [default: any]
 
       --jdk-release <JDK_RELEASE>
-          Resolve hierarchy escapes into the JDK API of this release (8-35, older than the installed JDK) instead of counting them unverified. Reads ct.sym from $UIKA_JDK if set (a JDK home or a ct.sym file), else $JAVA_HOME
+          Resolve hierarchy escapes into the JDK API of this release (8-35, no newer than the installed JDK, and older on JDK 21 and earlier) instead of counting them unverified. Reads ct.sym from $UIKA_JDK if set (a JDK home or a ct.sym file), else $JAVA_HOME
 
       --jdk-release-old <JDK_RELEASE_OLD>
-          Check a JDK upgrade itself: resolve against this release as the old side. Requires --jdk-release-new. The JDK API becomes the compared pair, so --old and --new must be omitted. Reads ct.sym for releases below the running JDK and jmods for its own release
+          Check a JDK upgrade itself: resolve against this release as the old side. Requires --jdk-release-new. The JDK API becomes the compared pair, so --old and --new must be omitted. Reads ct.sym, and jmods for the installed JDK's own release on JDK 21 and earlier
 
       --jdk-release-new <JDK_RELEASE_NEW>
           The new side of a JDK upgrade check. Requires --jdk-release-old

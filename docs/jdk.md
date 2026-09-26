@@ -24,15 +24,26 @@ first and authoritative when set, else `JAVA_HOME`. `UIKA_JDK` may be a JDK home
 or a `ct.sym` file, and the plugins export it themselves so that the release
 they pass and the `ct.sym` the CLI reads come from one JVM.
 
-`ct.sym` carries the releases below the JDK that ships it, never that JDK's own,
-so the layered release has to be older than the JDK uika finds. That JDK's own
-release comes from its `jmods/`, which a JDK upgrade check reads when one of its
-sides is that release, so checking an upgrade *to* the JDK you now run needs
-only that one JDK. Both sources are plain files, so uika reads them without starting that JDK.
+`ct.sym` carries every release below the JDK that ships it, and from JDK 22 on
+that JDK's own release too. The layered release has to be one of those, so it
+cannot be newer than the JDK uika finds, and on JDK 21 and earlier it has to be
+older. A JDK upgrade check reads both of its sides from `ct.sym` as well. Only
+on JDK 21 and earlier does a side that names the JDK's own release come from
+its `jmods/` instead. Either way, checking an upgrade *to* the JDK you now run
+needs only that one JDK. From JDK 22 on it does not need `jmods/`, which
+Temurin 25 does not ship. Both sources are plain files, so uika reads them
+without starting that JDK.
 
-A JDK upgrade check cannot see sealing changes, because `ct.sym` stubs do not
-carry `PermittedSubclasses` and reporting them from the `jmods` side alone would
-be a false positive.
+The JDK uika finds has to be at least as new as the release you move to. By
+default a plugin hands uika the JDK the build runs on, so a change that moves a
+module above that JDK fails the check with exit code 2 until the build runs on
+the newer one.
+
+Stubs from JDK 22 on carry `PermittedSubclasses`, so a JDK upgrade check sees a
+class that became sealed when the JDK uika finds is 22 or later. Stubs from JDK
+21 and earlier do not carry it, so on those JDKs the check cannot see sealing
+changes. It drops the attribute from the `jmods/` side too, since reporting
+sealing from that side alone would be a false positive.
 
 ## Not the same as checking a JDK upgrade
 

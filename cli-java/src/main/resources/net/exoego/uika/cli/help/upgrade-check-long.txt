@@ -26,7 +26,7 @@ Options:
           [default: any]
 
       --jdk-release <JDK_RELEASE>
-          Resolve hierarchy escapes into the JDK API of this release (8-35, older than the installed JDK) instead of counting them unverified. Reads ct.sym from $UIKA_JDK if set (a JDK home or a ct.sym file), else $JAVA_HOME
+          Resolve hierarchy escapes into the JDK API of this release (8-35, no newer than the installed JDK, and older on JDK 21 and earlier) instead of counting them unverified. Reads ct.sym from $UIKA_JDK if set (a JDK home or a ct.sym file), else $JAVA_HOME
 
       --verdicts-json <VERDICTS_JSON>
           Evaluation: stream every reference verdict (ok/unknown/broken) as JSON Lines to this file, for answer-checking against a real JVM (tools/jvm-probe)
