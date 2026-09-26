@@ -28,6 +28,13 @@ tasks.withType<UpgradeCheckTask>().configureEach {
 }
 ```
 
+Apply the plugin in the root build script. `uikaUpgradeCheck` fetches the CLI
+jar, and `uikaResolveClasspath` fetches baseline JARs, through the root
+project's repositories. A build that declares repositories only in subprojects
+or convention plugins fails there with "no repositories are defined". Declare
+them in `settings.gradle.kts` under `dependencyResolutionManagement`, or in the
+root build script.
+
 ```console
 $ ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
 $ ./gradlew uikaUpgradeCheck \
