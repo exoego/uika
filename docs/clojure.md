@@ -187,10 +187,12 @@ degrading to a warning. The cache save and restore close that gap.
 ## Options
 
 Every option is a keyword argument on the call, `upgrade-check` unless the
-entry says otherwise. A key neither call accepts is an error rather than a
-silent no-op, so a misspelling cannot quietly disable a flag. Watch for the
-Leiningen plugin's spellings: it says `:exclude-files` and `:class-load-logs`
-where this tool says `:exclude-file` and `:class-load-log`.
+entry says otherwise. Each call rejects any key it does not take, so a
+misspelling cannot quietly disable a flag. That includes a key only the other
+call takes, so keep `upgrade-check` options out of an alias's `:exec-args`,
+which `-T` passes to both calls. Watch for the Leiningen plugin's spellings: it
+says `:exclude-files` and `:class-load-logs` where this tool says
+`:exclude-file` and `:class-load-log`.
 
 - [`:fail-on`](../README.md#violation-tiers-and-the-failon-threshold) is `never`,
   `reachable` or `any`.
