@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /// The knob names are scraped from each tool's source, not from a list kept here, so a knob
 /// added to a build fails this test until its page names it. Each scrape is anchored to the
 /// declaration the tool reads the knob from (a Gradle property lookup, an sbt key, a Maven
-/// `@Parameter` property, a Mill command parameter, a Clojure key set, a Bazel macro
+/// `@Parameter` property, a Mill setting or command parameter, a Clojure key set, a Bazel macro
 /// parameter), so a rename on either side fails as a missing name rather than passing on a
 /// lookalike.
 ///
@@ -74,16 +74,19 @@ final class DocPageContractTest {
     }
 
     @Test
-    void everyMillParameterIsOnTheMillPage() throws IOException {
-        String source = read("mill-plugin/src/net/exoego/uika/mill/Uika.scala");
+    void everyMillSettingAndParameterIsOnTheMillPage() throws IOException {
+        String source = read("mill-plugin/src/net/exoego/uika/mill/UikaModule.scala");
+        var settings = scrape(source, "(?m)^  def ([a-zA-Z]+): T\\[");
+        assertTrue(settings.size() >= 6, "scraped too few Mill settings: " + settings);
+        assertAllOnPage("mill", settings, name -> "def " + name);
+
         var parameters = new LinkedHashSet<String>();
-        var command = Pattern.compile("def (?:dumpClasspath|upgradeCheck)\\(([^)]*)\\)", Pattern.DOTALL).matcher(source);
+        var command = Pattern.compile("def (?:dumpClasspath|upgradeCheck)\\(([^)]*)\\)").matcher(source);
         while (command.find()) {
-            // One parameter per line, and the comments between them name types and flags.
-            parameters.addAll(scrape(command.group(1).replaceAll("//[^\\n]*", ""), "(?m)^\\s*([a-zA-Z]+):"));
+            parameters.addAll(scrape(command.group(1), "([a-zA-Z]+):"));
         }
         parameters.remove("ev");
-        assertTrue(parameters.size() >= 8, "scraped too few Mill parameters: " + parameters);
+        assertTrue(parameters.size() >= 3, "scraped too few Mill parameters: " + parameters);
         assertAllOnPage("mill", parameters, name -> "--" + name);
     }
 

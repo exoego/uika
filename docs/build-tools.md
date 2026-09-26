@@ -42,18 +42,19 @@ on the base branch and consume on the PR), `jdkRelease`, and
 
 One row per option, one column per tool. A cell is how that tool spells the
 option; the Gradle task property and the Maven POM element are the spelling a
-build script uses, and the `-P` and `-D` forms are the command line.
+build script uses, and the `-P` and `-D` forms are the command line. A Mill
+`def` is a setting on the build's `UikaModule` object.
 
 | Option | Gradle | sbt | Maven | Mill | Clojure CLI | Leiningen | Bazel |
 |---|---|---|---|---|---|---|---|
-| Gate threshold | `-PuikaFailOn` / `failOn` | `uikaFailOn` | `-Duika.failOn` / `<failOn>` | `--failOn` | `:fail-on` | `:fail-on` | `fail_on` |
-| Exclude files | `-PuikaExcludeFile` / `excludeFiles` | `uikaExcludeFiles` | `-Duika.excludeFiles` / `<excludeFiles>` | `--excludeFile` | `:exclude-file` | `:exclude-files` | `exclude_files` |
-| JDK API release | `-PuikaJdkRelease` / `jdkRelease` | `uikaJdkRelease` | `-Duika.jdkRelease` / `<jdkRelease>` | `--jdkRelease` | `:jdk-release` | `:jdk-release` | `jdk_release` |
-| Merged classpath | `-PuikaMergedClasspath` / `mergedClasspath` | `uikaMergedClasspath` | `-Duika.mergedClasspath` / `<mergedClasspath>` | `--mergedClasspath` | `:merged-classpath` | `:merged-classpath` | `merged_classpath` |
-| Runtime evidence (JFR) | `-PuikaJfr` | `uikaJfr` | `-Duika.jfr` / `<jfr>` | `--jfr` | `:jfr` | `:jfr` | `--jfr` |
-| Text class-load logs | `classLoadLogs` | in `uikaJfr` | in `<jfr>` | in `--jfr` | `:class-load-log` | `:class-load-logs` | `--classLoadLog` |
-| Draft exclude file | `-PuikaDraftExcludeFile` / `draftExcludeFile` | `uikaDraftExcludeFile` | `-Duika.draftExcludeFile` / `<draftExcludeFile>` | `--draftExcludeFile` | `:draft-exclude-file` | `:draft-exclude-file` | `--draftExcludeFile` |
-| CLI version | `-PuikaCliVersion` / `cliVersion` | `uikaCliVersion` | `-Duika.cliVersion` / `<cliVersion>` | `--cliVersion` | `:cli-version`, `UIKA_CLI_VERSION` | `:cli-version`, `UIKA_CLI_VERSION` | `uika.cli(version)` |
+| Gate threshold | `-PuikaFailOn` / `failOn` | `uikaFailOn` | `-Duika.failOn` / `<failOn>` | `def failOn` | `:fail-on` | `:fail-on` | `fail_on` |
+| Exclude files | `-PuikaExcludeFile` / `excludeFiles` | `uikaExcludeFiles` | `-Duika.excludeFiles` / `<excludeFiles>` | `def excludeFiles` | `:exclude-file` | `:exclude-files` | `exclude_files` |
+| JDK API release | `-PuikaJdkRelease` / `jdkRelease` | `uikaJdkRelease` | `-Duika.jdkRelease` / `<jdkRelease>` | `def jdkRelease` | `:jdk-release` | `:jdk-release` | `jdk_release` |
+| Merged classpath | `-PuikaMergedClasspath` / `mergedClasspath` | `uikaMergedClasspath` | `-Duika.mergedClasspath` / `<mergedClasspath>` | `def mergedClasspath` | `:merged-classpath` | `:merged-classpath` | `merged_classpath` |
+| Runtime evidence (JFR) | `-PuikaJfr` | `uikaJfr` | `-Duika.jfr` / `<jfr>` | `UIKA_JFR` | `:jfr` | `:jfr` | `--jfr` |
+| Text class-load logs | `classLoadLogs` | in `uikaJfr` | in `<jfr>` | in `UIKA_JFR` | `:class-load-log` | `:class-load-logs` | `--classLoadLog` |
+| Draft exclude file | `-PuikaDraftExcludeFile` / `draftExcludeFile` | `uikaDraftExcludeFile` | `-Duika.draftExcludeFile` / `<draftExcludeFile>` | `def draftExcludeFile` | `:draft-exclude-file` | `:draft-exclude-file` | `--draftExcludeFile` |
+| CLI version | `-PuikaCliVersion` / `cliVersion` | `uikaCliVersion` | `-Duika.cliVersion` / `<cliVersion>` | `def cliVersion` | `:cli-version`, `UIKA_CLI_VERSION` | `:cli-version`, `UIKA_CLI_VERSION` | `uika.cli(version)` |
 | CLI to run instead | `UIKA_CLI_PATH` | `UIKA_CLI_PATH` | `UIKA_CLI_PATH` | `UIKA_CLI_PATH` | `:cli-path`, `UIKA_CLI_PATH` | `:cli-path`, `UIKA_CLI_PATH` | `UIKA_CLI_PATH` |
 | Dump output | `-PuikaOutput` | `uikaOutput` | `-Duika.output` | `--output` | `:output` | positional | `--output` |
 
@@ -68,8 +69,8 @@ Some options exist in a few tools only:
 - Maven, Leiningen and the Clojure CLI: the JFR collection flag goes on the test
   JVM by hand. Gradle and sbt add it themselves, Mill through its test-module
   mixin, and Bazel prints it.
-- Mill: `UIKA_JFR` is the environment fallback for `--jfr`, since a Mill command
-  has no build-wide setting to read.
+- Mill: runtime evidence is only `UIKA_JFR`, not a setting, since a setting in
+  `build.mill` would make every forked test run record.
 - Clojure CLI and Leiningen: `UIKA_CLI_URL` overrides where the jar is
   downloaded from, because these two fetch it themselves rather than through a
   resolver. The Clojure CLI also takes `:dir` and `:aliases` to pick the basis it
