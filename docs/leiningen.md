@@ -134,6 +134,7 @@ jobs:
         run: lein uika dump-classpath /tmp/after.json
 
       - name: Dump baseline classpath (fallback)
+        # no :prep-tasks, so the base branch compiles nothing over the PR's classes
         id: baseline-fallback
         if: steps.baseline-artifact.outcome != 'success'
         # a PR whose base cannot produce a baseline skips the check instead
@@ -142,7 +143,7 @@ jobs:
         run: |
           git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
           git checkout ${{ github.event.pull_request.base.sha }}
-          if lein uika dump-classpath /tmp/before.json; then
+          if lein update-in : assoc :prep-tasks '[]' -- uika dump-classpath /tmp/before.json; then
             status=0
           else
             status=1

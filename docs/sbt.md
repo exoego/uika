@@ -130,11 +130,8 @@ jobs:
           unzip -o /tmp/baseline.zip -d /tmp/baseline
           mv /tmp/baseline/classpath.json /tmp/before.json
 
-      - name: Dump PR classpath
-        # compile so the build outputs anchor the reachability ranking
-        run: sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json
-
       - name: Dump baseline classpath (fallback)
+        # ahead of the PR dump, so the PR's compile replaces the base's classes
         id: baseline-fallback
         if: steps.baseline-artifact.outcome != 'success'
         # a PR whose base cannot produce a baseline skips the check instead
@@ -150,6 +147,10 @@ jobs:
           fi
           git checkout -
           exit $status
+
+      - name: Dump PR classpath
+        # compile so the build outputs anchor the reachability ranking
+        run: sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json
 
       - name: Check broken references
         if: steps.baseline-artifact.outcome == 'success' || steps.baseline-fallback.outcome == 'success'
