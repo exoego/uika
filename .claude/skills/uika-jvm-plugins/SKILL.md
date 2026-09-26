@@ -102,9 +102,9 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   build-script task value silently beat the `-P` property. A private field is not an
   annotated input, so where the value changes a task's OUTPUT it is registered by hand
   (`DumpModuleClasspathTask`'s initializer block, `getInputs().property`). The upgrade-check
-  task needs none: it has no outputs, so it always runs. The one public setting left is
-  `configurationName` on the per-module dump task, the per-module override the
-  build-wide `configuration` cannot express.
+  task needs none: it has no outputs, so it always runs. No task setting stays public,
+  not even a per-module `configurationName`: the user chose one way to configure over a
+  per-module override, so `configuration` is build-wide.
 - `DumpFormat` changes propagate to all four plugins via source inclusion from
   `jvm-plugin-core/` — no core artifact to publish.
 - The upgrade-check tasks (`uikaUpgradeCheck`, Maven `uika:upgrade-check`)

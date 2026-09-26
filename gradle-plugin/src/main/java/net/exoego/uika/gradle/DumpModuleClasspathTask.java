@@ -56,20 +56,15 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
     @OutputFile
     public abstract RegularFileProperty getOutputFile();
 
-    /** Configuration name to resolve, from the uika extension's {@code configuration}. Public
-     * because the extension is build-wide, and a build where the name exists on some modules
-     * only needs a per-module override. */
-    @Input
-    public abstract Property<String> getConfigurationName();
-
     /** This module's project path, e.g. ":app". */
     @Input
     public abstract Property<String> getModulePath();
 
-    // The release this module records: the uika extension's jdkRelease (or -PuikaJdkRelease)
-    // when set, else what the module compiles for. Private so the extension stays the one
-    // place a build script sets it, and still an input, through the initializer below, because it
-    // changes what the task writes.
+    // The configuration to resolve and the release this module records, from the uika
+    // extension or their -Puika* properties. Private so the extension stays the one place a
+    // build script sets them, and still inputs, through the initializer below, because they
+    // change what the task writes.
+    private final Property<String> configurationName = getProject().getObjects().property(String.class);
     private final Property<Integer> jdkRelease = getProject().getObjects().property(Integer.class);
 
     // Whether the outputs the entries name were built before this task ran. Then a project
@@ -81,7 +76,12 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
     // An initializer, not a constructor: Gradle instantiates tasks through a public or
     // @Inject constructor, and the static-analysis recipe narrows a public one to protected.
     {
+        getInputs().property("configurationName", configurationName);
         getInputs().property("jdkRelease", jdkRelease).optional(true);
+    }
+
+    Property<String> configurationName() {
+        return configurationName;
     }
 
     Property<Integer> jdkRelease() {
