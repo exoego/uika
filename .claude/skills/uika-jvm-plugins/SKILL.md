@@ -258,8 +258,8 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   recording); recordings inside the directory are found following symlinks
   (the CLI follows them too) and by content, not name alone (`FLR\0` magic —
   `jcmd JFR.dump` and a file-valued `filename=` write suffixless recordings),
-  then converted with the binary left in place (the CLI skips `.jfr` names in
-  its directory walk), and any text logs in the directory still reach the CLI
+  then converted with the binary left in place (the CLI's walk skips them by
+  name or magic), and any text logs in the directory still reach the CLI
   as-is (bring-your-own -Xlog). Conversion dedups per batch to exactly what
   the CLI keeps (first bare line per class, first framed stack block —
   evidence.rs is or_insert / first-framed-wins, so every test fork repeating
@@ -475,7 +475,7 @@ Same rule as the Mill section: point-of-use comments and the tests in
   load on a source install without the class, taking the text-log flow down with it.
   Class absent or JVM below 17 (which throws UnsupportedClassVersionError, not
   ClassNotFoundException) degrades to text-only, and an explicit :jfr then fails
-  with the specific reason instead of forwarding a binary the CLI silently skips.
+  with the specific reason instead of forwarding a binary the CLI skips.
   The whole class-load list goes through JfrEvidence.rewrite when the class is
   present — the JVM plugins' shape — so a recording handed to :class-load-log
   converts too, and the workdir leaf comes from the class's own WORK_DIR_NAME.

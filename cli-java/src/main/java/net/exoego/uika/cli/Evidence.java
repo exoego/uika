@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -38,6 +39,9 @@ final class Evidence {
      * bounded memory instead of being buffered whole.
      */
     static final int MAX_LINE = 64 * 1024;
+
+    /** Every JFR chunk, and so every recording, starts with these bytes. */
+    private static final byte[] JFR_MAGIC = {'F', 'L', 'R', 0};
 
     /** What the logs recorded for one loaded class. */
     static final class LoadRecord {
@@ -222,8 +226,8 @@ final class Evidence {
             }
             if (Files.isDirectory(file)) {
                 walk(path, path, file, new ArrayList<>(), loaded);
-            } else {
-                parseFile(path, file, loaded);
+            } else if (!parseFile(path, file, loaded)) {
+                Out.warn("skipping JFR recording " + path + " (convert recordings to text first, as the build-tool plugins do)");
             }
         }
         return new LoadEvidence(loaded, String.join(", ", paths));
@@ -265,9 +269,9 @@ final class Evidence {
                 walk(root, childDisplay, child, ancestors, loaded);
             } else if (Files.isRegularFile(child)) {
                 // Binary JFR recordings live next to their plugin-converted text in the
-                // intended flow. Skip them by name instead of byte-scanning up to 250MB each
-                // for newlines. An explicitly passed `.jfr` path is still read (and skipped
-                // line by line), so text evidence deliberately named `.jfr` keeps a way in.
+                // intended flow, so skipping one here is silent. A `.jfr` name skips it
+                // unopened, and parseFile catches any other name by its magic. An explicit
+                // `.jfr` path is still opened, so text evidence named `.jfr` keeps a way in.
                 int dot = name.lastIndexOf('.');
                 if (dot > 0 && name.substring(dot + 1).equals("jfr")) {
                     continue;
@@ -285,11 +289,17 @@ final class Evidence {
         return new UikaException("cannot read class-load log directory " + root + ": " + where + io);
     }
 
-    private static void parseFile(String display, Path path, Map<String, LoadRecord> loaded) {
+    /** False, with nothing parsed, when the file is a JFR recording. */
+    private static boolean parseFile(String display, Path path, Map<String, LoadRecord> loaded) {
         Parser parser = new Parser(loaded);
         byte[] line = new byte[MAX_LINE];
         try (InputStream in = Files.newInputStream(path)) {
-            Lines lines = new Lines(in);
+            // Read as text, a recording registers names from its constant pool and thread dumps.
+            byte[] head = in.readNBytes(JFR_MAGIC.length);
+            if (Arrays.equals(head, JFR_MAGIC)) {
+                return false;
+            }
+            Lines lines = new Lines(in, head);
             while (true) {
                 int n = lines.read(line);
                 if (n == 0) {
@@ -311,6 +321,7 @@ final class Evidence {
         }
         // EOF ends an open stack block like any other block boundary.
         parser.closeBlock();
+        return true;
     }
 
     /** Hands out at most {@link #MAX_LINE} bytes a call, so no line is ever held whole. */
@@ -320,8 +331,11 @@ final class Evidence {
         private int pos;
         private int limit;
 
-        Lines(InputStream in) {
+        /** {@code head} is what the caller already read from {@code in}. */
+        Lines(InputStream in, byte[] head) {
             this.in = in;
+            System.arraycopy(head, 0, chunk, 0, head.length);
+            limit = head.length;
         }
 
         /** Fills {@code line} up to and including the next newline. Zero at EOF. */

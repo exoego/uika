@@ -89,8 +89,8 @@ public final class UpgradeCheckMain {
             // Recordings are converted HERE, never by the CLI: the CLI must
             // not read binary JFR. The WHOLE list goes through the converter, the shape
             // every sibling integration uses: a recording handed to --classLoadLog converts
-            // too (the CLI skips .jfr names silently, so forwarding it raw loses the
-            // evidence with no symptom), while a text log or a directory entry passes
+            // too (the CLI skips a raw recording, so forwarding it would lose the
+            // evidence), while a text log or a directory entry passes
             // through with any recordings found under it appended. The conversions land
             // under the knob directory itself, which rewrite() handles by design (it
             // deletes its own stale output first).

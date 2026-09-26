@@ -594,7 +594,7 @@
 (deftest without-the-converter-text-logs-pass-through-and-a-recording-is-refused
   ;; A source install loses only conversion: text logs still reach the CLI as they are.
   ;; An explicit :jfr fails with the reason instead of forwarding a binary the CLI would
-  ;; silently skip.
+  ;; skip.
   (let [dir (temp-dir)
         stub (io/file dir "uika")
         before (io/file dir "before.json")

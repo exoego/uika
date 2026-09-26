@@ -275,6 +275,13 @@ class CommandsTest {
                 assertThrows(UikaException.class, () -> Commands.applyEvidenceAndDraft(new ArrayList<>(), null, evidence, draft));
         assertTrue(refused.getMessage().contains("no class loads were observed"), refused.getMessage());
 
+        // A raw JFR recording, read as text, named java.lang.Thread.State and slipped past the guard.
+        Path recording = Files.writeString(dir.resolve("rec.jfr"), "FLR\0\n   java.lang.Thread.State: RUNNABLE\n");
+        Evidence.LoadEvidence raw = Evidence.load(List.of(recording.toString()));
+        UikaException rawRefused =
+                assertThrows(UikaException.class, () -> Commands.applyEvidenceAndDraft(new ArrayList<>(), null, raw, draft));
+        assertTrue(rawRefused.getMessage().contains("no class loads were observed"), rawRefused.getMessage());
+
         Files.writeString(log, "[class,load] com.example.Loaded\n");
         Evidence.LoadEvidence loaded = Evidence.load(List.of(log.toString()));
         assertEquals(1, loaded.distinctClasses());
@@ -303,7 +310,7 @@ class CommandsTest {
     }
 
     /** Runs {@code body} and returns what it printed to stderr. */
-    private static String stderrOf(Runnable body) {
+    static String stderrOf(Runnable body) {
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         PrintStream previous = Out.err;
         Out.err = new PrintStream(err, true, StandardCharsets.UTF_8);

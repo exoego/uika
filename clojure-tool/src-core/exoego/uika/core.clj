@@ -444,7 +444,7 @@
         ;; logs while contributing any recordings found under it. Without the
         ;; compiled class, text-only entries keep the old pass-through (a source
         ;; install loses only conversion), while an explicit :jfr fails with the
-        ;; reason instead of forwarding a binary the CLI would silently skip.
+        ;; reason instead of forwarding a binary the CLI would skip.
         evidence (let [entries (into (->vec class-load-log) (->vec jfr))]
                    (if (empty? entries)
                      entries
