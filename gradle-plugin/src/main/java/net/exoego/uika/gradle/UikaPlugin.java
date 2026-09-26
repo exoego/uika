@@ -281,7 +281,7 @@ public class UikaPlugin implements Plugin<Project> {
                         // time to what the build JVM's ct.sym can actually serve.
                         // The provider is an @Input, so the configuration cache evaluates it while
                         // the project is still available.
-                        task.getDerivedJdkRelease().convention(
+                        task.derivedJdkRelease().convention(
                                 root.getProviders().provider(() -> defaultJdkRelease(root)));
                     }
                     // Through the provider API, not System.getenv: reading the environment

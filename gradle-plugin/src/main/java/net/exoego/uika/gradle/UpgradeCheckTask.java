@@ -75,14 +75,14 @@ public abstract class UpgradeCheckTask extends DefaultTask {
     @Optional
     public abstract Property<Integer> getJdkRelease();
 
-    /**
-     * What {@link #getJdkRelease()} falls back to. Kept apart from it so the dump can tell a
-     * value the build states from the derived one, which it must not record over each
-     * module's own.
-     */
-    @Input
-    @Optional
-    public abstract Property<Integer> getDerivedJdkRelease();
+    // Apart from getJdkRelease so the dump can tell a stated release from this derived one,
+    // which it must not record over each module's own. Private because no user sets it.
+    private final Property<Integer> derivedJdkRelease =
+            getProject().getObjects().property(Integer.class);
+
+    Property<Integer> derivedJdkRelease() {
+        return derivedJdkRelease;
+    }
 
     /**
      * Runtime class-load evidence (JFR recordings, text logs, or directories of both) from a
@@ -148,7 +148,7 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         // above what this JVM serves is clamped down rather than chased.
         UikaCli.JdkSource jdk = UikaCli.JdkSource.current();
         Integer jdkRelease = UikaCli.effectiveJdkRelease(
-                getJdkRelease().orElse(getDerivedJdkRelease()).getOrNull(), jdk, getLogger()::lifecycle);
+                getJdkRelease().orElse(derivedJdkRelease).getOrNull(), jdk, getLogger()::lifecycle);
         // JFR recordings on the knob (a .jfr value, or recordings inside a directory) are
         // converted to the CLI's text format here: the CLI never reads
         // binary JFR, while this task always runs on a full JDK.
