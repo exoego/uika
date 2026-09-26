@@ -51,31 +51,33 @@ build script uses, and the `-P` and `-D` forms are the command line.
 | JDK API release | `-PuikaJdkRelease` / `jdkRelease` | `uikaJdkRelease` | `-Duika.jdkRelease` / `<jdkRelease>` | `--jdkRelease` | `:jdk-release` | `:jdk-release` | `jdk_release` |
 | Merged classpath | `-PuikaMergedClasspath` / `mergedClasspath` | `uikaMergedClasspath` | `-Duika.mergedClasspath` / `<mergedClasspath>` | `--mergedClasspath` | `:merged-classpath` | `:merged-classpath` | `merged_classpath` |
 | Runtime evidence (JFR) | `-PuikaJfr` | `uikaJfr` | `-Duika.jfr` / `<jfr>` | `--jfr` | `:jfr` | `:jfr` | `--jfr` |
+| Text class-load logs | `classLoadLogs` | in `uikaJfr` | in `<jfr>` | in `--jfr` | `:class-load-log` | `:class-load-logs` | `--classLoadLog` |
 | Draft exclude file | `-PuikaDraftExcludeFile` / `draftExcludeFile` | `uikaDraftExcludeFile` | `-Duika.draftExcludeFile` / `<draftExcludeFile>` | `--draftExcludeFile` | `:draft-exclude-file` | `:draft-exclude-file` | `--draftExcludeFile` |
-| CLI version | `-PuikaCliVersion` / `cliVersion` | `uikaCliVersion` | `-Duika.cliVersion` / `<cliVersion>` | `--cliVersion` | `:cli-version` | `:cli-version` | `uika.cli(version)` |
+| CLI version | `-PuikaCliVersion` / `cliVersion` | `uikaCliVersion` | `-Duika.cliVersion` / `<cliVersion>` | `--cliVersion` | `:cli-version`, `UIKA_CLI_VERSION` | `:cli-version`, `UIKA_CLI_VERSION` | `uika.cli(version)` |
 | CLI to run instead | `UIKA_CLI_PATH` | `UIKA_CLI_PATH` | `UIKA_CLI_PATH` | `UIKA_CLI_PATH` | `:cli-path`, `UIKA_CLI_PATH` | `:cli-path`, `UIKA_CLI_PATH` | `UIKA_CLI_PATH` |
 | Dump output | `-PuikaOutput` | `uikaOutput` | `-Duika.output` | `--output` | `:output` | positional | `--output` |
 
-Some knobs exist in one tool only, each for a reason its page gives, and a
-tool lacking one of them is not behind:
+Some options exist in a few tools only:
 
-- Gradle: `-PuikaConfiguration` picks the configuration the dump resolves, and
-  `-PuikaBuildOutputs=false` skips building outputs. Only Gradle both resolves a
-  named configuration and builds outputs as part of the dump.
-- Gradle and Bazel take text class-load logs directly (`classLoadLogs`,
-  `--classLoadLog`). Everywhere else they ride in the JFR directory.
-- sbt: `uikaModuleClasspath` answers what one subproject contributes, since the
-  dump is a whole-build merge.
-- Maven: the JFR collection flag is an `argLine` written by hand. No mojo can
-  inject into surefire.
+- Gradle: `-PuikaConfiguration` picks the configuration the dump resolves.
+  `uikaResolveClasspath` (`-PuikaInput`, `-PuikaResolveOutput`) rehydrates a
+  baseline dump written on another machine, fetching the JARs it names through
+  the build's own repositories.
+- Gradle and Bazel: the dump builds the modules' outputs, and a baseline dump
+  skips that with `-PuikaBuildOutputs=false` or `build_outputs = False`.
+- Maven, Leiningen and the Clojure CLI: the JFR collection flag goes on the test
+  JVM by hand. Gradle and sbt add it themselves, Mill through its test-module
+  mixin, and Bazel prints it.
 - Mill: `UIKA_JFR` is the environment fallback for `--jfr`, since a Mill command
   has no build-wide setting to read.
 - Clojure CLI and Leiningen: `UIKA_CLI_URL` overrides where the jar is
   downloaded from, because these two fetch it themselves rather than through a
-  resolver. The Clojure CLI also takes `:dir`, `:aliases` and `:class-dir` to
-  describe another project's basis.
-- Bazel: `--materialize` rehydrates a baseline dump from the repository cache,
-  and the `uika.cli` tag pins the jar's checksum.
+  resolver. The Clojure CLI also takes `:dir` and `:aliases` to pick the basis it
+  dumps, `:class-dir` for classes outside `:paths`, and `:evidence-work-dir` for
+  where recordings are converted.
+- Bazel: `--materialize <dir>` on a dump hard-links or copies every JAR it names
+  into one directory, so a baseline artifact carries its own JARs. The `uika.cli`
+  tag pins the jar's checksum.
 
 Two CLI flags have no plugin option,
 [`--json`](cli.md#options-shared-by-check-and-upgrade-check) and
