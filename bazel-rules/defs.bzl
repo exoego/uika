@@ -55,7 +55,8 @@ def uika(
     - `:uika_dump` writes the dump of `targets`. Each entry becomes one module, named by
       its label, so the check can check each against its own resolution.
     - `:uika_baseline_dump` writes the same dump without building `targets`. It is the
-      baseline of a PR gate, which only feeds the version diff.
+      baseline of a PR gate, which only feeds the version diff, so it builds none of your
+      code and still records your Maven dependencies, rules_jvm_external's included.
     - `:uika_check` runs `uika upgrade-check` over `--before` and `--after`.
 
     Both dumps take `--output <path>`, and `--materialize <dir>`, which copies every jar

@@ -60,9 +60,9 @@ adds one flag.
 
 Collect from the test job the base branch already runs, not from the
 `dump-baseline` job next to it. No `dump-baseline` job runs tests, and the
-Gradle and Bazel ones resolve the classpath without building outputs at all, so
-hosting the recording there adds a full test run to the job whose whole point is
-to stay cheap. The recording also needs a test JVM that actually forks, which a
+Gradle and Bazel ones build none of your code, so hosting the recording there
+adds a full test run to the job whose whole point is to stay cheap. The
+recording also needs a test JVM that actually forks, which a
 build replaying cached test results never does. Watch for an `UP-TO-DATE` or
 `FROM-CACHE` Gradle task, `testCached` in Mill, a Bazel run without
 `--nocache_test_results`, and a surefire cache hit in Maven. For Gradle:
