@@ -7,13 +7,6 @@ import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.Property;
-import org.gradle.api.tasks.Input;
-import org.gradle.api.tasks.InputFile;
-import org.gradle.api.tasks.InputFiles;
-import org.gradle.api.tasks.Internal;
-import org.gradle.api.tasks.Optional;
-import org.gradle.api.tasks.PathSensitive;
-import org.gradle.api.tasks.PathSensitivity;
 import org.gradle.api.tasks.TaskAction;
 import org.gradle.work.DisableCachingByDefault;
 
@@ -28,109 +21,93 @@ import java.util.Set;
  * (same philosophy as {@link ResolveClasspathTask}: uika needs no repository knowledge of its
  * own), so downloads land in the Gradle cache and the version lives in the build, where bots
  * bump it. {@link UikaPlugin} wires the detached configuration for the jar into
- * {@link #getCliJar()} lazily from {@link #getCliVersion()}, so the action never touches
+ * {@link #cliJar()} lazily from {@link #cliVersion()}, so the action never touches
  * {@code getProject()} and the task is configuration-cache compatible.
  */
 @DisableCachingByDefault(because = "Resolves the CLI through environment-specific Gradle repositories")
 public abstract class UpgradeCheckTask extends DefaultTask {
+    // Every setting is a private carrier wired by UikaPlugin from the uika extension or a
+    // -Puika* property, so the extension is the one place a build script configures. None
+    // is declared as an input or output: the task has no outputs on purpose (see
+    // draftExcludeFile), so it always runs and fingerprinting inputs would buy nothing.
+    private final RegularFileProperty beforeFile = getProject().getObjects().fileProperty();
+    private final RegularFileProperty afterFile = getProject().getObjects().fileProperty();
+    private final Property<String> cliVersion = getProject().getObjects().property(String.class);
+    // With no CLI version the friendly error in resolveBinary must win, not a failure to
+    // resolve an absent notation.
+    private final ConfigurableFileCollection cliJar = getProject().getObjects().fileCollection();
+    private final Property<String> failOn = getProject().getObjects().property(String.class);
+    private final ConfigurableFileCollection excludeFiles = getProject().getObjects().fileCollection();
+    private final Property<Integer> jdkRelease = getProject().getObjects().property(Integer.class);
+    private final ConfigurableFileCollection classLoadLogs = getProject().getObjects().fileCollection();
+    // Never an output: declaring one made a second invocation UP-TO-DATE and silently
+    // skipped the check. The draft is read by a human, never by another task.
+    private final RegularFileProperty draftExcludeFile = getProject().getObjects().fileProperty();
+    // Where JFR recordings on the class-load knob are converted to text for the CLI.
+    private final DirectoryProperty jfrWorkDir = getProject().getObjects().directoryProperty();
+    private final Property<Boolean> mergedClasspath = getProject().getObjects().property(Boolean.class);
+    // From providers.environmentVariable rather than System.getenv, which the configuration
+    // cache would record as a configuration input and invalidate the whole entry on.
+    private final Property<String> cliPath = getProject().getObjects().property(String.class);
 
-    @InputFile
-    @PathSensitive(PathSensitivity.NONE)
-    public abstract RegularFileProperty getBeforeFile();
+    RegularFileProperty beforeFile() {
+        return beforeFile;
+    }
 
-    @InputFile
-    @PathSensitive(PathSensitivity.NONE)
-    public abstract RegularFileProperty getAfterFile();
+    RegularFileProperty afterFile() {
+        return afterFile;
+    }
 
-    /** uika-cli version; defaults to the plugin's own version. */
-    @Input
-    @Optional
-    public abstract Property<String> getCliVersion();
+    Property<String> cliVersion() {
+        return cliVersion;
+    }
 
-    /** The resolved CLI jar (one file), wired from {@link #getCliVersion()}.
-     * Internal, not InputFiles: with no CLI version the friendly error below must win, not
-     * a fingerprinting failure on an absent provider. */
-    @Internal
-    public abstract ConfigurableFileCollection getCliJar();
+    ConfigurableFileCollection cliJar() {
+        return cliJar;
+    }
 
-    /** When to fail the build: {@code never}, {@code reachable}, or {@code any} (default). */
-    @Input
-    public abstract Property<String> getFailOn();
+    Property<String> failOn() {
+        return failOn;
+    }
 
-    /** TOML files of known false positives to suppress, passed as repeated {@code --exclude-file}. */
-    @InputFiles
-    @Optional
-    @PathSensitive(PathSensitivity.NONE)
-    public abstract ConfigurableFileCollection getExcludeFiles();
+    ConfigurableFileCollection excludeFiles() {
+        return excludeFiles;
+    }
 
-    /**
-     * JDK API release for the CLI's {@code --jdk-release} (resolves JDK hierarchy escapes
-     * instead of counting them unverified). Defaults to the lowest release any project in the
-     * build compiles for, from {@code compileJava}'s {@code options.release} else its target
-     * compatibility, and to the build JVM when no project declares one. Clamped to what the
-     * build JVM's ct.sym can serve. Set 0 to disable the layer.
-     */
-    @Input
-    @Optional
-    public abstract Property<Integer> getJdkRelease();
+    Property<Integer> jdkRelease() {
+        return jdkRelease;
+    }
 
-    /**
-     * Runtime class-load evidence (JFR recordings, text logs, or directories of both) from a
-     * test run of the current, not yet upgraded build, passed as repeated
-     * {@code --class-load-log} after recordings are converted into {@link #getJfrWorkDir()}.
-     * Wired from {@code -PuikaJfr} — the same property that makes {@code Test} tasks record,
-     * so one value serves the collect run and the check run.
-     */
-    @InputFiles
-    @Optional
-    @PathSensitive(PathSensitivity.NONE)
-    public abstract ConfigurableFileCollection getClassLoadLogs();
+    ConfigurableFileCollection classLoadLogs() {
+        return classLoadLogs;
+    }
 
-    /**
-     * Where the CLI writes draft exclude rules for symbols never observed loading, passed as
-     * {@code --draft-exclude-file}. The CLI rejects it without class-load logs, so the flag
-     * is only useful together with {@link #getClassLoadLogs()}. Internal, not OutputFile:
-     * this task declares no outputs on purpose, because declaring one makes a second
-     * invocation UP-TO-DATE, and a check must always run and print its report (the draft is
-     * consumed by a human, never by another task).
-     */
-    @Internal
-    public abstract RegularFileProperty getDraftExcludeFile();
+    RegularFileProperty draftExcludeFile() {
+        return draftExcludeFile;
+    }
 
-    /** Where JFR recordings on the class-load knob are converted to text for the CLI. */
-    @Internal
-    public abstract DirectoryProperty getJfrWorkDir();
+    DirectoryProperty jfrWorkDir() {
+        return jfrWorkDir;
+    }
 
-    /**
-     * Check the union of every module's classpath once instead of each module against its
-     * own resolution, passed as {@code --merged-classpath}.
-     *
-     * <p>Per-module checking scans once per module, so a build with many of them can pay
-     * minutes for it. The trade is real in the other direction too: a break that only one
-     * module's resolution shows can hide behind another module's version of the same jar,
-     * which is why this is off by default.
-     */
-    @Input
-    @Optional
-    public abstract Property<Boolean> getMergedClasspath();
+    Property<Boolean> mergedClasspath() {
+        return mergedClasspath;
+    }
 
-    /**
-     * A binary to run instead of resolving one, from {@code UIKA_CLI_PATH}.
-     *
-     * <p>Wired from a {@code providers.environmentVariable} rather than read with
-     * {@code System.getenv}, which the configuration cache would record as a
-     * configuration input and invalidate the whole entry on. Through a provider the value
-     * is re-read at execution instead, so the entry stays reusable.
-     */
-    @Input
-    @Optional
-    public abstract Property<String> getCliPath();
+    Property<String> cliPath() {
+        return cliPath;
+    }
 
     @TaskAction
     public void run() throws Exception {
+        // Undeclared as inputs, so Gradle no longer names a missing dump; say it here.
+        if (!beforeFile.isPresent() || !afterFile.isPresent()) {
+            throw new GradleException(
+                    "uika upgrade-check needs both dumps; pass -PuikaBefore=<file> -PuikaAfter=<file>");
+        }
         var binary = resolveBinary();
 
-        List<Path> excludeFiles = getExcludeFiles().getFiles().stream()
+        List<Path> excludeFiles = excludeFiles().getFiles().stream()
                 .map(File::toPath)
                 .toList();
         // The build JVM supplies ct.sym: Gradle can name a module's toolchain but resolving it
@@ -138,27 +115,27 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         // above what this JVM serves is clamped down rather than chased.
         UikaCli.JdkSource jdk = UikaCli.JdkSource.current();
         Integer jdkRelease = UikaCli.effectiveJdkRelease(
-                getJdkRelease().getOrNull(), jdk, getLogger()::lifecycle);
+                jdkRelease().getOrNull(), jdk, getLogger()::lifecycle);
         // JFR recordings on the knob (a .jfr value, or recordings inside a directory) are
         // converted to the CLI's text format here: the CLI never reads
         // binary JFR, while this task always runs on a full JDK.
         var classLoadLogs = net.exoego.uika.plugin.core.JfrEvidence.rewrite(
-                getClassLoadLogs().getFiles().stream().map(File::toPath).toList(),
-                getJfrWorkDir().get().getAsFile().toPath(),
+                classLoadLogs().getFiles().stream().map(File::toPath).toList(),
+                jfrWorkDir().get().getAsFile().toPath(),
                 getLogger()::lifecycle);
-        Path draftExcludeFile = getDraftExcludeFile().isPresent()
-                ? getDraftExcludeFile().get().getAsFile().toPath()
+        Path draftExcludeFile = draftExcludeFile().isPresent()
+                ? draftExcludeFile().get().getAsFile().toPath()
                 : null;
         var exit = UikaCli.runUpgradeCheck(binary,
-                getBeforeFile().get().getAsFile().toPath(),
-                getAfterFile().get().getAsFile().toPath(),
-                getFailOn().getOrElse("any"),
+                beforeFile().get().getAsFile().toPath(),
+                afterFile().get().getAsFile().toPath(),
+                failOn().getOrElse("any"),
                 excludeFiles,
                 jdkRelease,
                 jdk,
                 classLoadLogs,
                 draftExcludeFile,
-                getMergedClasspath().getOrElse(false),
+                mergedClasspath().getOrElse(false),
                 getLogger()::lifecycle);
         if (exit == 1) {
             throw new GradleException("uika upgrade-check found broken references (see output above)");
@@ -175,17 +152,17 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         // executable, which is how an artifact round trip usually breaks a hand-supplied
         // binary. Through the property rather than System.getenv, so the configuration
         // cache sees the variable as a declared input.
-        Path override = UikaCli.overrideFrom(getCliPath().getOrNull());
+        Path override = UikaCli.overrideFrom(cliPath().getOrNull());
         if (override != null) {
             return override;
         }
-        if (!getCliVersion().isPresent()) {
+        if (!cliVersion().isPresent()) {
             throw new GradleException(
                     "uika-cli version is unknown; pass -PuikaCliVersion=<version>");
         }
-        Set<File> files = getCliJar().getFiles();
+        Set<File> files = cliJar().getFiles();
         if (files.isEmpty()) {
-            throw new GradleException("uika-cli " + getCliVersion().get() + " did not resolve to a jar");
+            throw new GradleException("uika-cli " + cliVersion().get() + " did not resolve to a jar");
         }
         // Run from where Gradle cached it: a jar needs no extraction and no executable bit.
         return files.iterator().next().toPath();

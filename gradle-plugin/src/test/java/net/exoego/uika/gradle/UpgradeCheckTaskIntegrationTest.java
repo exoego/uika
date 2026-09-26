@@ -110,10 +110,8 @@ final class UpgradeCheckTaskIntegrationTest {
 
     @Test
     void failOnConfigurableFromBuildScript() throws Exception {
-        // Declarative config in build.gradle.kts (the task DSL), no -PuikaFailOn.
+        // Declarative config in build.gradle.kts (the uika extension), no -PuikaFailOn.
         write(projectDir.resolve("build.gradle.kts"), """
-                import net.exoego.uika.gradle.UpgradeCheckTask
-
                 plugins {
                     id("net.exoego.uika")
                 }
@@ -125,8 +123,8 @@ final class UpgradeCheckTaskIntegrationTest {
                     }
                 }
 
-                tasks.withType<UpgradeCheckTask>().configureEach {
-                    failOn.set("reachable")
+                uika {
+                    failOn = "reachable"
                 }
                 """.formatted(repoDir.toUri()));
 
@@ -238,10 +236,8 @@ final class UpgradeCheckTaskIntegrationTest {
                 owner = "lib/C"
                 reason = "test"
                 """);
-        // Declarative config in build.gradle.kts (the task DSL), no -PuikaExcludeFile.
+        // Declarative config in build.gradle.kts (the uika extension), no -PuikaExcludeFile.
         write(projectDir.resolve("build.gradle.kts"), """
-                import net.exoego.uika.gradle.UpgradeCheckTask
-
                 plugins {
                     id("net.exoego.uika")
                 }
@@ -253,7 +249,7 @@ final class UpgradeCheckTaskIntegrationTest {
                     }
                 }
 
-                tasks.withType<UpgradeCheckTask>().configureEach {
+                uika {
                     excludeFiles.from("%s")
                 }
                 """.formatted(repoDir.toUri(), excludeFile.toString().replace("\\", "\\\\")));
@@ -638,6 +634,138 @@ final class UpgradeCheckTaskIntegrationTest {
                 "stub binary was not executed on the cache-reuse run");
     }
 
+    /// Every check setting is written once in the uika extension and reaches the CLI.
+    @Test
+    void extensionSettingsReachTheCli() throws Exception {
+        Path logDir = Files.createDirectories(projectDir.resolve("load-logs"));
+        writeBuildScriptWithExtension("""
+                uika {
+                    jdkRelease = 11
+                    mergedClasspath = true
+                    classLoadLogs.from("load-logs")
+                    draftExcludeFile = layout.projectDirectory.file("uika-draft.toml")
+                }
+                """);
+
+        var result = runner(CLEAN_VERSION).build();
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(args.contains("--jdk-release 11"), () -> "jdkRelease was not forwarded: " + args);
+        assertTrue(args.contains("--merged-classpath"), () -> "mergedClasspath was not forwarded: " + args);
+        assertTrue(args.contains("--class-load-log " + logDir.toRealPath()),
+                () -> "classLoadLogs was not forwarded: " + args);
+        assertTrue(args.contains("--draft-exclude-file " + projectDir.toRealPath().resolve("uika-draft.toml")),
+                () -> "draftExcludeFile was not forwarded: " + args);
+    }
+
+    /// A -Puika* property is the one-off override, so it wins over the extension. A task
+    /// value used to beat the property instead, which a CI script could not see.
+    @Test
+    void propertiesWinOverTheExtension() throws Exception {
+        Path committed = write(projectDir.resolve("uika-exclude.toml"), "");
+        Path oneOff = write(projectDir.resolve("uika-one-off.toml"), "");
+        writeBuildScriptWithExtension("""
+                uika {
+                    failOn = "reachable"
+                    jdkRelease = 17
+                    mergedClasspath = true
+                    excludeFiles.from("uika-exclude.toml")
+                }
+                """);
+
+        runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION,
+                        "-PuikaFailOn=never",
+                        "-PuikaJdkRelease=11",
+                        "-PuikaMergedClasspath=false",
+                        "-PuikaExcludeFile=" + oneOff)
+                .build();
+
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(args.contains("--fail-on never"), () -> "-PuikaFailOn lost: " + args);
+        assertTrue(args.contains("--jdk-release 11"), () -> "-PuikaJdkRelease lost: " + args);
+        assertFalse(args.contains("--merged-classpath"), () -> "-PuikaMergedClasspath lost: " + args);
+        assertTrue(args.contains("--exclude-file " + oneOff), () -> "-PuikaExcludeFile lost: " + args);
+        assertFalse(args.contains(committed.getFileName().toString()),
+                () -> "-PuikaExcludeFile must replace the extension's files: " + args);
+    }
+
+    /// The property replaces the extension's files, so a blank one must not count, or a CI
+    /// interpolation of an unset input would silently drop the committed excludes.
+    @Test
+    void aBlankExcludeFilePropertyKeepsTheExtensionFiles() throws Exception {
+        write(projectDir.resolve("uika-exclude.toml"), "");
+        writeBuildScriptWithExtension("""
+                uika {
+                    excludeFiles.from("uika-exclude.toml")
+                }
+                """);
+
+        runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION,
+                        "-PuikaExcludeFile=")
+                .build();
+
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(args.contains("--exclude-file ") && args.contains("uika-exclude.toml"),
+                () -> "a blank -PuikaExcludeFile dropped the extension's files: " + args);
+    }
+
+    /// The extension's values are stored in the configuration cache entry, and a reused
+    /// entry still hands them to the CLI.
+    @Test
+    void configurationCacheKeepsExtensionSettings() throws Exception {
+        writeBuildScriptWithExtension("""
+                uika {
+                    failOn = "reachable"
+                    jdkRelease = 11
+                }
+                """);
+        String[] args = {
+                "uikaUpgradeCheck",
+                "--configuration-cache",
+                "--stacktrace",
+                "-PuikaBefore=" + before,
+                "-PuikaAfter=" + after,
+                "-PuikaCliVersion=" + CLEAN_VERSION};
+
+        var first = runner(CLEAN_VERSION).withArguments(args).build();
+        assertTrue(first.getOutput().contains("Configuration cache entry stored"),
+                () -> "no configuration cache entry was stored:\n" + first.getOutput());
+        Files.delete(Path.of(before + ".args"));
+
+        var second = runner(CLEAN_VERSION).withArguments(args).build();
+        assertTrue(second.getOutput().contains("Configuration cache entry reused"),
+                () -> "the configuration cache entry was not reused:\n" + second.getOutput());
+        String sent = Files.readString(Path.of(before + ".args"));
+        assertTrue(sent.contains("--fail-on reachable") && sent.contains("--jdk-release 11"),
+                () -> "the reused entry lost the extension's settings: " + sent);
+    }
+
+    @Test
+    void aMissingDumpIsNamedByItsProperty() {
+        var result = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments("uikaUpgradeCheck", "-PuikaCliVersion=" + CLEAN_VERSION)
+                .withPluginClasspath()
+                .forwardOutput()
+                .buildAndFail();
+
+        assertTrue(result.getOutput().contains("pass -PuikaBefore=<file> -PuikaAfter=<file>"),
+                () -> "a missing dump was not reported with the knobs to set:\n" + result.getOutput());
+    }
+
     @Test
     void violationExitCodeFailsTheBuild() {
         var result = runner(VIOLATION_VERSION).buildAndFail();
@@ -732,14 +860,12 @@ final class UpgradeCheckTaskIntegrationTest {
 
     /// The jar's detached configuration is wired after evaluation from the version that is
     /// final then. The task graph becoming ready is the one window left between that wiring
-    /// and execution, where a task property can still be set. A version arriving there is
+    /// and execution, where the extension can still be set. A version arriving there is
     /// present with no configuration behind it, and the action has to say which version it
     /// could not resolve rather than fail on an empty file set.
     @Test
     void aVersionSetAfterWiringIsReportedAsUnresolved() throws Exception {
         write(projectDir.resolve("build.gradle.kts"), """
-                import net.exoego.uika.gradle.UpgradeCheckTask
-
                 plugins {
                     id("net.exoego.uika")
                 }
@@ -752,9 +878,7 @@ final class UpgradeCheckTaskIntegrationTest {
                 }
 
                 gradle.taskGraph.whenReady {
-                    tasks.withType<UpgradeCheckTask>().configureEach {
-                        cliVersion.set("%s")
-                    }
+                    uika.cliVersion.set("%s")
                 }
                 """.formatted(repoDir.toUri(), CLEAN_VERSION));
 
@@ -901,6 +1025,22 @@ final class UpgradeCheckTaskIntegrationTest {
         try (var files = Files.list(dir)) {
             return files.filter(net.exoego.uika.plugin.core.JfrEvidence::isRecording).count();
         }
+    }
+
+    private void writeBuildScriptWithExtension(String extension) throws IOException {
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    id("net.exoego.uika")
+                }
+
+                repositories {
+                    maven {
+                        url = uri("%s")
+                        metadataSources { artifact() }
+                    }
+                }
+
+                """.formatted(repoDir.toUri()) + extension);
     }
 
     private GradleRunner runner(String cliVersion) {
