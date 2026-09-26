@@ -9,6 +9,7 @@ import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -32,7 +33,7 @@ final class JdkReleasesTest {
         // A BOM or aggregator compiles nothing, so the property it happens to inherit is not
         // a target anyone ships. Letting it into the minimum would gut the layer for the
         // modules that do compile.
-        assertNull(JdkReleases.declaredRelease(bom));
+        assertNull(JdkReleases.declaredRelease(bom, NONE));
     }
 
     @Test
@@ -40,20 +41,20 @@ final class JdkReleasesTest {
         var byRelease = project("jar");
         byRelease.getProperties().setProperty("maven.compiler.release", "17");
         byRelease.getProperties().setProperty("maven.compiler.target", "11");
-        assertEquals(17, JdkReleases.declaredRelease(byRelease),
+        assertEquals(17, JdkReleases.declaredRelease(byRelease, NONE),
                 "maven.compiler.release pins the API; target only names the bytecode level");
 
         var byTarget = project("jar");
         byTarget.getProperties().setProperty("maven.compiler.target", "1.8");
-        assertEquals(8, JdkReleases.declaredRelease(byTarget),
+        assertEquals(8, JdkReleases.declaredRelease(byTarget, NONE),
                 "the legacy 1.8 spelling names release 8, which the layer can serve");
 
         var belowTheFloor = project("jar");
         belowTheFloor.getProperties().setProperty("maven.compiler.release", "7");
-        assertNull(JdkReleases.declaredRelease(belowTheFloor),
+        assertNull(JdkReleases.declaredRelease(belowTheFloor, NONE),
                 "below the floor is no declaration at all, so it cannot drag the minimum under it");
 
-        assertNull(JdkReleases.declaredRelease(project("jar")));
+        assertNull(JdkReleases.declaredRelease(project("jar"), NONE));
     }
 
     @Test
@@ -63,7 +64,7 @@ final class JdkReleasesTest {
         project.getBuild().addPlugin(compilerPlugin(release("17")));
         // A module that configures the plugin directly overrides whatever property it
         // inherits from a parent it does not control.
-        assertEquals(17, JdkReleases.declaredRelease(project));
+        assertEquals(17, JdkReleases.declaredRelease(project, NONE));
     }
 
     @Test
@@ -72,7 +73,7 @@ final class JdkReleasesTest {
         // One source root at 8 and another at 17 means the module runs on 8.
         project.getBuild().addPlugin(
                 compilerPlugin(null, execution("legacy", release("8")), execution("main", release("17"))));
-        assertEquals(8, JdkReleases.declaredRelease(project));
+        assertEquals(8, JdkReleases.declaredRelease(project, NONE));
     }
 
     @Test
@@ -86,7 +87,7 @@ final class JdkReleasesTest {
                 release("8"),
                 execution("default-compile", release("17")),
                 execution("default-testCompile", release("17"))));
-        assertEquals(17, JdkReleases.declaredRelease(project));
+        assertEquals(17, JdkReleases.declaredRelease(project, NONE));
     }
 
     @Test
@@ -94,14 +95,14 @@ final class JdkReleasesTest {
         var project = project("jar");
         // Nothing overrides it, so it is what the default lifecycle executions inherit.
         project.getBuild().addPlugin(compilerPlugin(release("11"), execution("main", null)));
-        assertEquals(11, JdkReleases.declaredRelease(project));
+        assertEquals(11, JdkReleases.declaredRelease(project, NONE));
     }
 
     @Test
     void theConfigurationFallsBackToTargetAndThenToTheProperties() {
         var byTarget = project("jar");
         byTarget.getBuild().addPlugin(compilerPlugin(configuration("target", "11")));
-        assertEquals(11, JdkReleases.declaredRelease(byTarget),
+        assertEquals(11, JdkReleases.declaredRelease(byTarget, NONE),
                 "a configuration without <release> is read through <target>");
 
         var namesNeither = project("jar");
@@ -109,7 +110,7 @@ final class JdkReleasesTest {
         namesNeither.getBuild().addPlugin(compilerPlugin(configuration("encoding", "UTF-8")));
         // A block that pins something else says nothing about the API, so it must not
         // shadow the property the way a <release> would.
-        assertEquals(17, JdkReleases.declaredRelease(namesNeither));
+        assertEquals(17, JdkReleases.declaredRelease(namesNeither, NONE));
     }
 
     @Test
@@ -122,11 +123,11 @@ final class JdkReleasesTest {
         var aggregator = project("pom");
         aggregator.getProperties().setProperty("maven.compiler.release", "8");
 
-        assertEquals(11, JdkReleases.lowest(List.of(seventeen, eleven, aggregator)));
+        assertEquals(11, JdkReleases.lowest(List.of(seventeen, eleven, aggregator), NONE));
         // Nothing declares a servable target, so the build JVM is the only evidence left.
         assertEquals(Runtime.version().feature(),
-                JdkReleases.lowest(List.of(project("jar"), aggregator)));
-        assertEquals(Runtime.version().feature(), JdkReleases.lowest(List.of()));
+                JdkReleases.lowest(List.of(project("jar"), aggregator), NONE));
+        assertEquals(Runtime.version().feature(), JdkReleases.lowest(List.of(), NONE));
     }
 
     @Test
@@ -134,13 +135,13 @@ final class JdkReleasesTest {
         // javac runs in Maven's JVM and targets its own release. Recording nothing left the
         // module on the dump-level value, which is a sibling's declared release whenever one
         // declares any, so a CI JDK move went unseen and the sibling's moves were charged to it.
-        assertEquals(Runtime.version().feature(), JdkReleases.moduleRelease(project("jar")));
+        assertEquals(Runtime.version().feature(), JdkReleases.moduleRelease(project("jar"), NONE));
 
         var declared = project("jar");
         declared.getProperties().setProperty("maven.compiler.release", "11");
-        assertEquals(11, JdkReleases.moduleRelease(declared));
+        assertEquals(11, JdkReleases.moduleRelease(declared, NONE));
 
-        assertNull(JdkReleases.moduleRelease(project("pom")), "a pom-packaged project compiles nothing");
+        assertNull(JdkReleases.moduleRelease(project("pom"), NONE), "a pom-packaged project compiles nothing");
     }
 
     @Test
@@ -149,12 +150,12 @@ final class JdkReleasesTest {
         // Recording nothing keeps the old fallback to the dump-level value.
         var toolchains = project("jar");
         toolchains.getBuild().addPlugin(plugin("maven-toolchains-plugin", null));
-        assertNull(JdkReleases.moduleRelease(toolchains));
+        assertNull(JdkReleases.moduleRelease(toolchains, NONE));
 
         var jdkToolchain = project("jar");
         jdkToolchain.getBuild().addPlugin(compilerPlugin(
                 null, execution("default-compile", configuration("jdkToolchain", null))));
-        assertNull(JdkReleases.moduleRelease(jdkToolchain));
+        assertNull(JdkReleases.moduleRelease(jdkToolchain, NONE));
 
         var forked = project("jar");
         var fork = configuration("fork", "true");
@@ -162,31 +163,68 @@ final class JdkReleasesTest {
         executable.setValue("/opt/jdk-11/bin/javac");
         fork.addChild(executable);
         forked.getBuild().addPlugin(compilerPlugin(fork));
-        assertNull(JdkReleases.moduleRelease(forked));
+        assertNull(JdkReleases.moduleRelease(forked, NONE));
 
         var forkedByProperties = project("jar");
         forkedByProperties.getProperties().setProperty("maven.compiler.fork", "true");
         forkedByProperties.getProperties().setProperty("maven.compiler.executable", "/opt/jdk-11/bin/javac");
-        assertNull(JdkReleases.moduleRelease(forkedByProperties));
+        assertNull(JdkReleases.moduleRelease(forkedByProperties, NONE));
 
         // An executable without fork is ignored by the compiler, so javac stays in Maven's JVM.
         var executableAlone = project("jar");
         executableAlone.getProperties().setProperty("maven.compiler.executable", "/opt/jdk-11/bin/javac");
-        assertEquals(Runtime.version().feature(), JdkReleases.moduleRelease(executableAlone));
+        assertEquals(Runtime.version().feature(), JdkReleases.moduleRelease(executableAlone, NONE));
 
         // A declared release pins the API whichever JDK compiles it.
         var declaredWithToolchain = project("jar");
         declaredWithToolchain.getProperties().setProperty("maven.compiler.release", "11");
         declaredWithToolchain.getBuild().addPlugin(plugin("maven-toolchains-plugin", null));
-        assertEquals(11, JdkReleases.moduleRelease(declaredWithToolchain));
+        assertEquals(11, JdkReleases.moduleRelease(declaredWithToolchain, NONE));
     }
 
     @Test
     void theFlagStillIgnoresModulesThatDeclareNothing() {
         var eleven = project("jar");
         eleven.getProperties().setProperty("maven.compiler.release", "11");
-        assertEquals(11, JdkReleases.lowest(List.of(eleven, project("jar"))));
+        assertEquals(11, JdkReleases.lowest(List.of(eleven, project("jar")), NONE));
     }
+
+    @Test
+    void aCommandLinePropertyWinsOverThePom() {
+        // -Dmaven.compiler.release reaches the compiler's parameter ahead of the POM's value, so
+        // reading the POM alone recorded Maven's JVM for a module compiled at 11.
+        var cli = new Properties();
+        cli.setProperty("maven.compiler.release", "11");
+        assertEquals(11, JdkReleases.moduleRelease(project("jar"), cli));
+        assertEquals(11, JdkReleases.lowest(List.of(project("jar")), cli));
+
+        var forkedByCli = new Properties();
+        forkedByCli.setProperty("maven.compiler.fork", "true");
+        forkedByCli.setProperty("maven.compiler.executable", "/opt/jdk-11/bin/javac");
+        assertNull(JdkReleases.moduleRelease(project("jar"), forkedByCli));
+    }
+
+    @Test
+    void anExecutionThatTurnsForkOffCompilesInMavensJvm() {
+        var fork = configuration("fork", "true");
+        var executable = new Xpp3Dom("executable");
+        executable.setValue("/opt/jdk-11/bin/javac");
+        fork.addChild(executable);
+        var project = project("jar");
+        project.getBuild().addPlugin(compilerPlugin(fork,
+                execution("default-compile", configuration("fork", "false")),
+                execution("default-testCompile", configuration("fork", "false"))));
+        assertEquals(Runtime.version().feature(), JdkReleases.moduleRelease(project, NONE));
+
+        // One execution still forking is enough for javac to run on the other JDK.
+        var oneForks = project("jar");
+        oneForks.getBuild().addPlugin(compilerPlugin(fork,
+                execution("default-compile", configuration("fork", "false")),
+                execution("default-testCompile", null)));
+        assertNull(JdkReleases.moduleRelease(oneForks, NONE));
+    }
+
+    private static final Properties NONE = new Properties();
 
     private static MavenProject project(String packaging) {
         var model = new Model();

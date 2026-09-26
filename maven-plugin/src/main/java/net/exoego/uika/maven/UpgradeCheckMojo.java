@@ -153,7 +153,7 @@ public final class UpgradeCheckMojo extends AbstractMojo {
         try {
             UikaCli.JdkSource jdk = UikaCli.JdkSource.current();
             Integer effectiveJdkRelease = UikaCli.effectiveJdkRelease(
-                    jdkRelease != null ? jdkRelease : JdkReleases.lowest(session.getAllProjects()),
+                    jdkRelease != null ? jdkRelease : JdkReleases.lowest(session.getAllProjects(), session.getUserProperties()),
                     jdk,
                     line -> getLog().info(line));
             // Recordings (a .jfr value, or recordings inside the directory) are converted

@@ -168,7 +168,7 @@ public final class DumpClasspathMojo extends AbstractMojo {
 
         Integer override = UikaCli.overrideRelease(jdkRelease);
         return new ClasspathDump.Module(moduleNames.get(reactorProject), classesDirs, artifacts,
-                override != null ? override : JdkReleases.moduleRelease(reactorProject));
+                override != null ? override : JdkReleases.moduleRelease(reactorProject, session.getUserProperties()));
     }
 
     private static String gav(MavenProject project) {

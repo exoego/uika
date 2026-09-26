@@ -8,6 +8,7 @@ import org.codehaus.plexus.util.xml.Xpp3Dom;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 
 /**
  * What the reactor's projects compile for, read from the spelling that pins the API rather
@@ -33,10 +34,10 @@ final class JdkReleases {
      * scope a JDK move to the modules that made it; the flag stays one value because the
      * layer it switches on is process-wide.
      */
-    static int lowest(List<MavenProject> reactorProjects) {
+    static int lowest(List<MavenProject> reactorProjects, Properties userProperties) {
         Integer lowest = null;
         for (MavenProject project : reactorProjects) {
-            Integer release = declaredRelease(project);
+            Integer release = declaredRelease(project, userProperties);
             if (release != null) {
                 lowest = lowest == null ? release : Math.min(lowest, release);
             }
@@ -52,9 +53,10 @@ final class JdkReleases {
      *
      * <p>{@link #lowest} does not use it. The flag stays on declared releases, as before.
      */
-    static Integer moduleRelease(MavenProject project) {
-        Integer declared = declaredRelease(project);
-        if (declared != null || "pom".equals(project.getPackaging()) || compilesOnAnotherJdk(project)) {
+    static Integer moduleRelease(MavenProject project, Properties userProperties) {
+        Integer declared = declaredRelease(project, userProperties);
+        if (declared != null || "pom".equals(project.getPackaging())
+                || compilesOnAnotherJdk(project, userProperties)) {
             return declared;
         }
         return DumpFormat.buildJvmRelease();
@@ -65,34 +67,52 @@ final class JdkReleases {
      * by maven-toolchains-plugin or by the compiler's {@code <jdkToolchain>}, or a forked
      * {@code <executable>}.
      */
-    static boolean compilesOnAnotherJdk(MavenProject project) {
+    static boolean compilesOnAnotherJdk(MavenProject project, Properties userProperties) {
         if (project.getPlugin("org.apache.maven.plugins:maven-toolchains-plugin") != null) {
             return true;
         }
-        var properties = project.getProperties();
-        var fork = "true".equals(properties.getProperty("maven.compiler.fork"));
-        var executable = !isBlank(properties.getProperty("maven.compiler.executable"));
+        var fork = "true".equals(property(project, userProperties, "maven.compiler.fork"));
+        var executable = !isBlank(property(project, userProperties, "maven.compiler.executable"));
         var compiler = project.getPlugin("org.apache.maven.plugins:maven-compiler-plugin");
-        if (compiler != null) {
-            var configurations = new ArrayList<Object>();
-            configurations.add(compiler.getConfiguration());
-            for (PluginExecution execution : compiler.getExecutions()) {
-                configurations.add(execution.getConfiguration());
+        if (compiler == null) {
+            return fork && executable;
+        }
+        var pluginLevel = compiler.getConfiguration() instanceof Xpp3Dom dom ? dom : null;
+        if (pluginLevel != null && pluginLevel.getChild("jdkToolchain") != null) {
+            return true;
+        }
+        // Execution values override the plugin level, which overrides the properties, so a
+        // plugin-level fork that every execution turns off never runs another javac.
+        fork = flag(pluginLevel, "fork", fork);
+        executable = flag(pluginLevel, "executable", executable);
+        if (compiler.getExecutions().isEmpty()) {
+            return fork && executable;
+        }
+        for (PluginExecution execution : compiler.getExecutions()) {
+            var dom = execution.getConfiguration() instanceof Xpp3Dom d ? d : null;
+            if (dom != null && dom.getChild("jdkToolchain") != null) {
+                return true;
             }
-            for (Object configuration : configurations) {
-                if (!(configuration instanceof Xpp3Dom dom)) {
-                    continue;
-                }
-                if (dom.getChild("jdkToolchain") != null) {
-                    return true;
-                }
-                var forkChild = dom.getChild("fork");
-                fork |= forkChild != null && "true".equals(forkChild.getValue());
-                var executableChild = dom.getChild("executable");
-                executable |= executableChild != null && !isBlank(executableChild.getValue());
+            if (flag(dom, "fork", fork) && flag(dom, "executable", executable)) {
+                return true;
             }
         }
-        return fork && executable;
+        return false;
+    }
+
+    /** Whether {@code name} is on in {@code dom}: true/false for fork, non-blank for executable. */
+    private static boolean flag(Xpp3Dom dom, String name, boolean inherited) {
+        var child = dom == null ? null : dom.getChild(name);
+        if (child == null) {
+            return inherited;
+        }
+        return "fork".equals(name) ? "true".equals(child.getValue()) : !isBlank(child.getValue());
+    }
+
+    /** A {@code -D} property wins over the POM's, as it does for the compiler's own parameters. */
+    private static String property(MavenProject project, Properties userProperties, String name) {
+        var value = userProperties.getProperty(name);
+        return value != null ? value : project.getProperties().getProperty(name);
     }
 
     private static boolean isBlank(String value) {
@@ -108,7 +128,7 @@ final class JdkReleases {
      * {@code maven.compiler.release} a BOM or sub-aggregator inherits is not a target anyone
      * ships, and letting it into the minimum would gut the layer for the modules that do.
      */
-    static Integer declaredRelease(MavenProject project) {
+    static Integer declaredRelease(MavenProject project, Properties userProperties) {
         if ("pom".equals(project.getPackaging())) {
             return null;
         }
@@ -116,9 +136,8 @@ final class JdkReleases {
         if (configured != null) {
             return configured;
         }
-        var properties = project.getProperties();
         for (String name : List.of("maven.compiler.release", "maven.compiler.target")) {
-            Integer release = UikaCli.parseRelease(properties.getProperty(name));
+            Integer release = UikaCli.parseRelease(property(project, userProperties, name));
             if (release != null) {
                 return release;
             }
