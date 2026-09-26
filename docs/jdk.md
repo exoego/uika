@@ -14,9 +14,6 @@ The layer sits under the old and the new side alike, so a gap in it resolves the
 same way on both and cancels out. It can turn an unverified reference into a
 conclusion, never invent a violation.
 
-On a guava 22 -> 23 check of selenium-remote-driver it takes 16 unverified
-references to 0 with the broken count unchanged.
-
 ## Where the stubs come from
 
 The stubs come from the `ct.sym` file of the JDK named by `UIKA_JDK`, checked

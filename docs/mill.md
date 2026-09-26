@@ -179,8 +179,7 @@ degrading to a warning. The cache save and restore close that gap.
   included, since Mill compiles with both). Set 0 to disable the API layer.
   `dumpClasspath` takes it too, where it names the release every module is
   recorded as running on, for a build whose runtime is not what it compiles
-  against. There 0 means "keep the derived value" instead, because recording
-  nothing would take JDK move detection down with the API layer.
+  against. There 0 keeps the derived value instead.
 - `--mergedClasspath` checks the union of every module's classpath once instead
   of [each module against its own
   resolution](../README.md#per-module-checking). Per-module checking scans once
@@ -208,9 +207,7 @@ object test extends JavaTests, TestModule.Junit5, net.exoego.uika.mill.UikaTestM
 
 Export `UIKA_JFR=<dir>` for the test run, and keep it exported for the
 `upgradeCheck` step, which reads the same variable back (`--jfr` is the
-explicit override). One option serves both phases. The mixin is needed
-because `forkArgs` is a task on the test module itself, out of reach of a
-command that finds the modules through the evaluator.
+explicit override). One option serves both phases.
 
 Collect with `test`. It is a Mill command and always forks, while a cached
 `testCached` replays without forking a JVM and records nothing, the same
