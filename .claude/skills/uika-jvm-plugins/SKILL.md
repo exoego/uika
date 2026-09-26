@@ -90,8 +90,21 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   entry is never reused for a changed dump). If the file appears mid-build, the
   task fails with an explicit message (`getWiredAtConfiguration()`), never
   silently skips fetching. The CLI jar's detached configuration is wired in
-  `afterEvaluate` from the final `cliVersion` (register action would miss
-  `configureEach` overrides).
+  `afterEvaluate` from the final `cliVersion` (the register action runs before the
+  root build script's `uika {}` block).
+- Users configure through ONE root extension, `uika {}` (`UikaExtension`), and every
+  task reads it. Each `-Puika*` property is read once in `apply()` and WINS over its
+  extension setting (`UikaPlugin.propertyOr`); a list knob (`excludeFiles`) is replaced,
+  not appended to. The tasks' settings are private `Property` fields with
+  package-private accessors, so a build script cannot set them and the extension stays
+  the one place. That closed two traps: a value both commands need (`jdkRelease`, which
+  the dump records and the check passes) lived on the check task alone, and a
+  build-script task value silently beat the `-P` property. A private field is not an
+  annotated input, so where the value changes a task's OUTPUT it is registered by hand
+  (`DumpModuleClasspathTask`'s initializer block, `getInputs().property`). The upgrade-check
+  task needs none: it has no outputs, so it always runs. No task setting stays public,
+  not even a per-module `configurationName`: the user chose one way to configure over a
+  per-module override, so `configuration` is build-wide.
 - `DumpFormat` changes propagate to all four plugins via source inclusion from
   `jvm-plugin-core/` — no core artifact to publish.
 - The upgrade-check tasks (`uikaUpgradeCheck`, Maven `uika:upgrade-check`)
@@ -190,7 +203,7 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   `uika` prefix appears exactly where the namespace is flat and shared with the whole
   build. `-PuikaFailOn`, `uikaFailOn` and `-Duika.failOn` carry it (Gradle project
   properties, sbt's `autoImport`, and system properties are one space every plugin shares);
-  the Gradle task property, the Maven POM element, Mill's command parameters, the two
+  the Gradle `uika {}` extension, the Maven POM element, Mill's command parameters, the two
   Clojure maps and Bazel's rule attributes do not, since each already sits inside something
   uika owns. Renaming a knob away from its flag would break the mechanical correspondence
   the clojure-tool sync test checks, so do not do it for readability alone -- rename the
@@ -243,7 +256,7 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   buildSettings task reads the keys via `LocalRootProject / ...` so the
   `docs/sbt.md`'s bare `uikaJfr := Some(...)` (root-project scope) reaches the
   check, not only ThisBuild.
-  `UpgradeCheckTask.getDraftExcludeFile` is `@Internal`, NOT `@OutputFile`:
+  `UpgradeCheckTask`'s `draftExcludeFile` must never be an output:
   declaring an output made a second invocation UP-TO-DATE and silently skipped
   the whole check (caught by `configurationCacheReusesUpgradeCheck`, which sets
   the draft property for exactly that reason).

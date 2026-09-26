@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 ///
 /// The knob names are scraped from each tool's source, not from a list kept here, so a knob
 /// added to a build fails this test until its page names it. Each scrape is anchored to the
-/// declaration the tool reads the knob from (a Gradle property lookup, an sbt key, a Maven
+/// declaration the tool reads the knob from (a Gradle property lookup or extension getter, an sbt key, a Maven
 /// `@Parameter` property, a Mill command parameter, a Clojure key set, a Bazel macro
 /// parameter), so a rename on either side fails as a missing name rather than passing on a
 /// lookalike.
@@ -53,6 +53,17 @@ final class DocPageContractTest {
         String source = read("gradle-plugin/src/main/java/net/exoego/uika/gradle/UikaPlugin.java");
         var properties = scrape(source, "(?:findProperty|gradleProperty)\\(\"(uika[A-Za-z]+)\"\\)");
         assertAllOnPage("gradle", properties, name -> "-P" + name);
+    }
+
+    @Test
+    void everyGradleExtensionSettingIsOnTheGradlePage() throws IOException {
+        String source = read("gradle-plugin/src/main/java/net/exoego/uika/gradle/UikaExtension.java");
+        var settings = new LinkedHashSet<String>();
+        for (String getter : scrape(source, "public abstract [A-Za-z<>]+ get([A-Z][A-Za-z]+)\\(\\);")) {
+            settings.add(Character.toLowerCase(getter.charAt(0)) + getter.substring(1));
+        }
+        assertTrue(settings.size() >= 8, "scraped too few Gradle extension settings: " + settings);
+        assertAllOnPage("gradle", settings, name -> "`" + name + "`");
     }
 
     @Test

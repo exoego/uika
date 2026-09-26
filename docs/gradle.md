@@ -15,18 +15,21 @@ pluginManagement {
 
 ```kotlin
 // build.gradle.kts
-import net.exoego.uika.gradle.UpgradeCheckTask
-
 plugins {
     id("net.exoego.uika") version "VERSION_PLACEHOLDER"
 }
 
 // Optional: gate only on reachable violations, and suppress known false positives.
-tasks.withType<UpgradeCheckTask>().configureEach {
-    failOn.set("reachable")
+uika {
+    failOn = "reachable"
     excludeFiles.from("uika-exclude.toml")
 }
 ```
+
+Every setting lives in this one `uika {}` block of the root build script, and
+every uika task reads it. Most settings also have a `-Puika*` property, such as
+`-PuikaFailOn` for `failOn`, and [Options](#options) names each one. The
+property wins over the block for that one invocation.
 
 ```console
 $ ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
@@ -37,6 +40,7 @@ $ ./gradlew uikaUpgradeCheck \
 The dump task builds the module outputs by default. Pass
 `-PuikaBuildOutputs=false` for a resolution-only dump, which is what the
 [PR gate](#pr-gate-on-github-actions) uses on the base branch.
+`buildOutputs = false` in the `uika {}` block does the same for every dump.
 
 `uikaUpgradeCheck` fetches the CLI as the `jvm` jar of
 `net.exoego.uika:uika-cli:<version>` and runs it on the JVM that runs Gradle. So
@@ -179,36 +183,49 @@ resolved local paths.
 
 ## Options
 
-- [`failOn`](../README.md#violation-tiers-and-the-failon-threshold) and
-  [`excludeFiles`](../README.md#excluding-known-false-positives)
-  are shown in the build script above. The command-line forms are
-  `-PuikaFailOn=` and `-PuikaExcludeFile=`, the latter comma-separated, so
-  suppressing a finding for one CI run needs no build-script edit. A path
-  containing a comma has to go through the task's `excludeFiles` instead, since
-  the comma is the delimiter there.
-- [`jdkRelease`](build-tools.md#jdkrelease) is derived from
-  `compileJava`'s `options.release`, else target compatibility. Override with
-  `-PuikaJdkRelease=` on both the dump and the check, or set 0 to disable the
-  API layer.
-- `-PuikaMergedClasspath` checks the union of every module's classpath once
-  instead of [each module against its own
+The settings of the `uika {}` block, each with its `-P` form:
+
+- [`failOn`](../README.md#violation-tiers-and-the-failon-threshold)
+  (`-PuikaFailOn=`) is `any` by default.
+- [`excludeFiles`](../README.md#excluding-known-false-positives)
+  (`-PuikaExcludeFile=`) takes TOML files. The property is comma-separated and
+  replaces the block's files for that run, so a one-off run that still wants the
+  committed file lists it too. A blank property counts as unset. A path containing a comma has to go in the
+  block, since the comma is the delimiter in the property.
+- [`jdkRelease`](build-tools.md#jdkrelease) (`-PuikaJdkRelease=`) is the
+  release the application runs on. The dump records it for every module and
+  the check passes it as `--jdk-release`. Unset, each module records what
+  `compileJava`'s `options.release`, else target compatibility, says, and the
+  check takes the lowest of them. 0 disables the check's API layer and leaves
+  the dump derived.
+- `mergedClasspath` (`-PuikaMergedClasspath`) checks the union of every
+  module's classpath once instead of [each module against its own
   resolution](../README.md#per-module-checking). Per-module checking scans once
   per module, so a large build may want the union; the trade is that a break
   only one module's resolution shows can hide behind another module's version of
-  the same jar. Bare means on, `=false` turns it back off.
-- `-PuikaConfiguration=` picks which configuration the dump resolves, default
-  `runtimeClasspath`. A configuration that a project lacks or cannot resolve
-  contributes no artifacts, which would leave that module in the dump with an
-  empty classpath and nothing to check, so the dump task fails naming the
-  project instead. Only the dump fails, and only for a project the java plugin
-  touches. For a build where the name exists on some modules only, override
-  `configurationName` on the others' `uikaDumpModuleClasspath` task.
-- `classLoadLogs` is the build-script property for [text
-  evidence](runtime-load-evidence.md) you produced some other way, such as
-  `-Xlog:class+load` output or a classlist. `-PuikaJfr` adds its directory to
-  the same property, so recordings and text logs mix freely there. Only the
-  property itself takes a bare text file: `-PuikaJfr` rejects one, because a
-  test JVM told to record into it aborts at startup.
+  the same jar. A bare property means on, `=false` turns it back off.
+- `configuration` (`-PuikaConfiguration=`) picks which configuration the dump
+  resolves, default `runtimeClasspath`. A configuration that a project lacks or
+  cannot resolve contributes no artifacts, which would leave that module in the
+  dump with an empty classpath and nothing to check, so the dump task fails
+  naming the project instead. Only the dump fails, and only for a project the
+  java plugin touches. The setting is build-wide, so it has to name a
+  configuration every such module has.
+- `buildOutputs` (`-PuikaBuildOutputs=false`) builds the module outputs before
+  dumping, default true.
+- `cliVersion` (`-PuikaCliVersion=`) is the uika-cli version to fetch, default
+  the plugin's own.
+- `classLoadLogs` takes [text evidence](runtime-load-evidence.md) you produced
+  some other way, such as `-Xlog:class+load` output or a classlist. `-PuikaJfr`
+  adds its directory to the same list, so recordings and text logs mix freely
+  there. Only `classLoadLogs` takes a bare text file: `-PuikaJfr` rejects one,
+  because a test JVM told to record into it aborts at startup.
+- `draftExcludeFile` (`-PuikaDraftExcludeFile=`) is described
+  [below](#runtime-load-evidence-jfr).
+
+The dump and resolve paths (`-PuikaOutput`, `-PuikaBefore`, `-PuikaAfter`,
+`-PuikaInput`, `-PuikaResolveOutput`) and `-PuikaJfr` change from run to run,
+so they are properties only.
 - `UIKA_CLI_PATH` runs a CLI you already have instead of resolving one, so a
   build can run air-gapped or against a locally built CLI. It takes the jar, or
   an executable that runs it, such as a script that starts the jar on another
@@ -222,7 +239,7 @@ recording](runtime-load-evidence.md) there (and run for real — an `UP-TO-DATE`
 or `FROM-CACHE` test task forks no JVM and would collect nothing), and makes
 `uikaUpgradeCheck` convert and read the directory back. A bare `-PuikaJfr` uses
 `build/uika/jfr`. [`--draft-exclude-file`](runtime-load-evidence.md) maps to
-`-PuikaDraftExcludeFile=`.
+`draftExcludeFile` in the `uika {}` block and to `-PuikaDraftExcludeFile=`.
 
 The [base-branch-to-PR CI wiring](runtime-load-evidence.md#collecting-on-the-base-branch-consuming-on-the-pr)
 is the same for every tool, with this page's two commands inside it.

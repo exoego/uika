@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -261,6 +262,74 @@ final class UikaPluginIntegrationTest {
         var derived = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
         assertEquals(11, ((Number) derived.get("jdkRelease")).intValue());
         assertEquals(Map.of(":older", 11, ":newer", 17), moduleReleases(derived));
+    }
+
+    /// Written once in the extension, the release reaches the dump as well as the check. A
+    /// value the check alone saw kept the dump on the derived release, so a runtime move was
+    /// never checked. -PuikaJdkRelease still wins for one invocation. Under the configuration
+    /// cache, so a reused entry is seen to keep the value.
+    @Test
+    void extensionJdkReleaseIsRecordedInTheDumpAndThePropertyWins() throws Exception {
+        var output = projectDir.resolve("classpath.json");
+        writeMixedReleaseProject();
+        appendToRootBuildScript("""
+                uika {
+                    jdkRelease = 21
+                }
+                """);
+
+        for (var run = 0; run < 2; run++) {
+            Files.deleteIfExists(output);
+            var result = runDump(output, "--configuration-cache");
+            assertTrue(result.getOutput().contains(run == 0
+                            ? "Configuration cache entry stored" : "Configuration cache entry reused"),
+                    result::getOutput);
+            @SuppressWarnings("unchecked")
+            var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+            assertEquals(21, ((Number) doc.get("jdkRelease")).intValue());
+            assertEquals(Map.of(":older", 21, ":newer", 21), moduleReleases(doc));
+        }
+
+        Files.delete(output);
+        runDump(output, "-PuikaJdkRelease=17");
+        @SuppressWarnings("unchecked")
+        var overridden = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        assertEquals(Map.of(":older", 17, ":newer", 17), moduleReleases(overridden));
+    }
+
+    /// The dump's own settings come from the extension too, and their properties still win.
+    @Test
+    void extensionPicksTheConfigurationAndSkipsBuildingOutputs() throws Exception {
+        writeMultiModuleProject();
+        appendToRootBuildScript("""
+                uika {
+                    buildOutputs = false
+                }
+                """);
+        var output = projectDir.resolve("classpath.json");
+
+        var resolutionOnly = runDump(output);
+        assertTrue(resolutionOnly.task(":app:compileJava") == null,
+                ":app:compileJava must not run with buildOutputs = false");
+        assertUnbuiltLibAttributed(output);
+
+        var built = runDump(output, "-PuikaBuildOutputs=true");
+        assertTaskSuccess(built, ":app:compileJava");
+
+        appendToRootBuildScript("""
+                uika {
+                    configuration = "nosuchConfiguration"
+                }
+                """);
+        var missing = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments("uikaDumpClasspath", "-PuikaOutput=" + output)
+                .withPluginClasspath()
+                .buildAndFail();
+        assertTrue(missing.getOutput().contains("has no configuration \"nosuchConfiguration\""),
+                missing::getOutput);
+        assertTaskSuccess(runDump(output, "-PuikaConfiguration=runtimeClasspath"),
+                ":app:uikaDumpModuleClasspath");
     }
 
     @Test
@@ -746,6 +815,10 @@ final class UikaPluginIntegrationTest {
                     }
                 }
                 """);
+    }
+
+    private void appendToRootBuildScript(String text) throws IOException {
+        Files.writeString(projectDir.resolve("build.gradle.kts"), text, StandardOpenOption.APPEND);
     }
 
     private BuildResult runDump(Path output, String... extraArgs) {
