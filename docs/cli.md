@@ -44,10 +44,14 @@ those lines. The same snake_case kinds are what
 rules match on.
 
 ```console
-$ uika diff guava-22.0.jar guava-23.0-rc1.jar [--json]
+$ uika diff guava-22.0.jar guava-23.0-rc1.jar
+...
 CLASS BECAME FINAL     com/google/common/collect/BoundType
-FIELD REMOVED          com/google/common/graph/GraphConstants.EDGE_CONNECTING_NOT_IN_GRAPH Ljava/lang/String;
+...
 METHOD ACCESS NARROWED com/google/common/collect/Iterators$ConcatenatedIterator.<init> (Ljava/util/Iterator;)V (public -> package-private)
+...
+FIELD REMOVED          com/google/common/graph/GraphConstants.EDGE_CONNECTING_NOT_IN_GRAPH Ljava/lang/String;
+...
 
 breaking changes: 93 (classes: 26, methods: 61, fields: 6)
 ```
@@ -62,7 +66,7 @@ a resolved build.
 ```console
 $ uika check --old kotlinx-coroutines-core-jvm-1.7.1.jar \
              --new kotlinx-coroutines-core-jvm-1.11.0.jar \
-             --classpath ktor-io-jvm-2.3.13.jar:other-dep.jar \
+             --classpath ktor-io-jvm-2.3.13.jar:kotlin-stdlib-2.2.20.jar \
              --app build/classes/kotlin/main
 checked kotlinx-coroutines-core-jvm-1.7.1.jar -> kotlinx-coroutines-core-jvm-1.11.0.jar against 3 scan targets
 
@@ -75,7 +79,7 @@ checked kotlinx-coroutines-core-jvm-1.7.1.jar -> kotlinx-coroutines-core-jvm-1.1
     used by 1 class:
         io.ktor.utils.io.jvm.javaio.BlockingAdapter  (ktor-io-jvm-2.3.13.jar)
 
-scanned 372 classes: ❌ 1 broken (of which 💥 1 reachable, ⚠️ 0 not proven reachable), ❓ 5 unverified references (hierarchy escapes the analyzed scope)
+scanned 1346 classes: ❌ 1 broken (of which 💥 1 reachable, ⚠️ 0 not proven reachable)
 ```
 
 - `--old` and `--new` name the compared pair. Both are repeatable, so several
@@ -170,6 +174,8 @@ checked JDK 11 -> JDK 17 against 1 scan target
     class removed, throws NoClassDefFoundError at first use
     used by 1 class:
         UsesRemoved  (app.jar)
+
+scanned 1 classes: ❌ 1 broken
 ```
 
 Both releases are read from the one JDK uika finds, so checking an upgrade *to*
