@@ -65,6 +65,17 @@ cd "$WS"
 UIKA_CLI_PATH=$UIKA_BIN
 export UIKA_CLI_PATH
 
+# expect_error <what> <output file> <exit status> <message>. A mistake in how a binary is run
+# exits 2, the CLI's code for an error, with one line naming it. An uncaught exception exits
+# 1 instead, which a CI step reads as violations found.
+expect_error() {
+  if [ "$3" -ne 2 ] || ! grep -q "^uika: $4" "$2" || grep -q "Exception in thread" "$2"; then
+    echo "$1 should exit 2 with 'uika: $4', got exit $3:" >&2
+    cat "$2" >&2
+    exit 1
+  fi
+}
+
 echo "--- baseline dump (resolution only)"
 # The workspace directory is recreated per run but its output base is not, so bazel-out
 # still holds the jars the LAST run built. Without this clean the assertion below reads
@@ -107,11 +118,15 @@ set +e
 "$BAZEL" run //:dump -- --output "$OUT/never.json" --bogus > "$OUT/dump-guard.txt" 2>&1
 dump_guard_status=$?
 set -e
-if [ "$dump_guard_status" -eq 0 ] || ! grep -q "unknown argument: --bogus" "$OUT/dump-guard.txt"; then
-  echo "the dump should reject a flag it does not have:" >&2
-  cat "$OUT/dump-guard.txt" >&2
-  exit 1
-fi
+expect_error "a dump given a flag it does not have" "$OUT/dump-guard.txt" \
+  "$dump_guard_status" "unknown argument: --bogus"
+# An I/O failure is named by its exception class, since most of them carry only a path.
+set +e
+"$BAZEL" run //:dump -- --output "$OUT/dump-guard.txt/never.json" > "$OUT/dump-io-guard.txt" 2>&1
+dump_io_status=$?
+set -e
+expect_error "a dump whose output sits under a file" "$OUT/dump-io-guard.txt" \
+  "$dump_io_status" "FileAlreadyExistsException: "
 
 echo "--- upgrade-check"
 set +e
@@ -291,17 +306,15 @@ python3 "$RULES/it/assert_jfr.py" "$OUT/cll-jfr-report.txt"
 # value, or a text log.
 for bad in "$rec" "$OUT/jfr-report.txt"; do
   set +e
-  "$BAZEL" run //:check -- jfr-jvmopt "$bad" > "$OUT/jvmopt-guard.txt" 2>&1
+  "$BAZEL" run //:check -- jfr-jvmopt "$bad" > "$OUT/jvmopt-guard.out" 2> "$OUT/jvmopt-guard.txt"
   guard=$?
   set -e
-  if [ "$guard" -eq 0 ]; then
-    echo "jfr-jvmopt should reject $bad" >&2
-    cat "$OUT/jvmopt-guard.txt" >&2
-    exit 1
-  fi
-  if ! grep -q "jfr-jvmopt wants a directory" "$OUT/jvmopt-guard.txt"; then
-    echo "jfr-jvmopt rejected $bad without naming itself:" >&2
-    cat "$OUT/jvmopt-guard.txt" >&2
+  expect_error "jfr-jvmopt given $bad" "$OUT/jvmopt-guard.txt" "$guard" \
+    "jfr-jvmopt wants a directory"
+  # The recipe reads the flag from stdout, so an error printed there would become the flag.
+  if [ -s "$OUT/jvmopt-guard.out" ]; then
+    echo "jfr-jvmopt printed to stdout while rejecting $bad:" >&2
+    cat "$OUT/jvmopt-guard.out" >&2
     exit 1
   fi
 done
@@ -361,27 +374,14 @@ merge_empty_status=$?
   > "$OUT/merge-bogus.txt" 2>&1
 merge_bogus_status=$?
 set -e
-for usage in merge-usage merge-usage-fragments; do
-  if ! grep -q "usage: --execroot" "$OUT/$usage.txt"; then
-    echo "the merge should print its usage ($usage):" >&2
-    cat "$OUT/$usage.txt" >&2
-    exit 1
-  fi
-done
-if [ "$merge_usage_status" -eq 0 ] || [ "$merge_usage_fragments_status" -eq 0 ]; then
-  echo "the merge should fail without --execroot or without --fragments" >&2
-  exit 1
-fi
-if [ "$merge_empty_status" -eq 0 ] || ! grep -q "fragments under" "$OUT/merge-empty.txt"; then
-  echo "the merge should name the roots it found no fragments under:" >&2
-  cat "$OUT/merge-empty.txt" >&2
-  exit 1
-fi
-if [ "$merge_bogus_status" -eq 0 ] || ! grep -q "unknown argument: --bogus" "$OUT/merge-bogus.txt"; then
-  echo "the merge should reject a flag it does not have:" >&2
-  cat "$OUT/merge-bogus.txt" >&2
-  exit 1
-fi
+expect_error "the merge without --execroot" "$OUT/merge-usage.txt" \
+  "$merge_usage_status" "usage: --execroot"
+expect_error "the merge without --fragments" "$OUT/merge-usage-fragments.txt" \
+  "$merge_usage_fragments_status" "usage: --execroot"
+expect_error "the merge over roots with no fragments" "$OUT/merge-empty.txt" \
+  "$merge_empty_status" "no .uika-manifest.tsv fragments under"
+expect_error "the merge given a flag it does not have" "$OUT/merge-bogus.txt" \
+  "$merge_bogus_status" "unknown argument: --bogus"
 
 python3 "$RULES/it/assert_dump.py" "$OUT/before.json" "$OUT/after.json" \
   "$OUT/resolution.json" "$OUT/report.txt" \
@@ -400,29 +400,23 @@ assert_check_rejects() {
   UIKA_CLI_PATH=$STUB "$BAZEL" run //:check -- "$@" > "$OUT/arg-guard.txt" 2>&1
   guard_status=$?
   set -e
-  if [ "$guard_status" -eq 0 ]; then
-    echo "expected $what to be rejected" >&2
-    cat "$OUT/arg-guard.txt" >&2
-    exit 1
-  fi
-  if ! grep -q "$expected" "$OUT/arg-guard.txt"; then
-    echo "expected '$expected' for $what, got:" >&2
-    cat "$OUT/arg-guard.txt" >&2
-    exit 1
-  fi
+  expect_error "$what" "$OUT/arg-guard.txt" "$guard_status" "$expected"
 }
 
-assert_check_rejects "an empty --before" "missing value for" \
+assert_check_rejects "an empty --before" "missing value for --before" \
   --before "" --after "$OUT/after.json"
-assert_check_rejects "a trailing --after" "missing value for" \
+assert_check_rejects "a trailing --after" "missing value for --after" \
   --before "$OUT/before.json" --after
-assert_check_rejects "a non-numeric --jdkRelease" "wants a whole number" \
+assert_check_rejects "a non-numeric --jdkRelease" "--jdkRelease wants a whole number, got abc" \
   --before "$OUT/before.json" --after "$OUT/after.json" --jdkRelease abc
 assert_check_rejects "a flag this binary does not have" "unknown argument: --bogus" \
   --before "$OUT/before.json" --after "$OUT/after.json" --bogus
-assert_check_rejects "a run without --after" "usage:" \
+# The likeliest unknown flag, since the CLI itself spells it this way.
+assert_check_rejects "the CLI's spelling of --failOn" "unknown argument: --fail-on" \
+  --before "$OUT/before.json" --after "$OUT/after.json" --fail-on never
+assert_check_rejects "a run without --after" "usage: bazel run" \
   --before "$OUT/before.json"
-assert_check_rejects "a run without any argument" "usage:"
+assert_check_rejects "a run without any argument" "usage: bazel run"
 
 # ...but a blank --failOn is UNSET, not an error. Every other integration drops it, and so
 # does this binary's own rule-attribute path, so rejecting it would make Bazel the one tool
@@ -449,16 +443,8 @@ UIKA_CLI_PATH=$NOT_EXECUTABLE "$BAZEL" run //:check -- \
   --before "$OUT/before.json" --after "$OUT/after.json" > "$OUT/cli-path-guard.txt" 2>&1
 cli_path_status=$?
 set -e
-if [ "$cli_path_status" -eq 0 ]; then
-  echo "a non-executable UIKA_CLI_PATH should fail the check" >&2
-  cat "$OUT/cli-path-guard.txt" >&2
-  exit 1
-fi
-if ! grep -q "UIKA_CLI_PATH is not executable" "$OUT/cli-path-guard.txt"; then
-  echo "expected the failure to name UIKA_CLI_PATH, got:" >&2
-  cat "$OUT/cli-path-guard.txt" >&2
-  exit 1
-fi
+expect_error "a non-executable UIKA_CLI_PATH" "$OUT/cli-path-guard.txt" \
+  "$cli_path_status" "UIKA_CLI_PATH is not executable"
 
 echo "--- merged_classpath, and both directions of its flag"
 # Per-module checking is the default and the expensive one, so the absence case matters as
