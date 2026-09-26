@@ -16,7 +16,9 @@ three until you pass it.
 The CLI is one jar, `uika-cli-<version>.jar`, attached to every [GitHub
 release](https://github.com/exoego/uika/releases) and published to Maven
 Central as `net.exoego.uika:uika-cli:<version>:jvm@jar`. It needs Java 17 or
-newer and nothing else, not even a JDK. Run it as
+newer. A JRE is enough, except for `--jdk-release` and a JDK upgrade check,
+which read the JDK API from the JDK named by `UIKA_JDK`, else `JAVA_HOME`. They
+never use the JVM running the CLI. Run it as
 `java -jar uika-cli-<version>.jar <command>`. The examples below spell that
 `uika`, which is the alias to set:
 
@@ -85,11 +87,14 @@ scanned 1346 classes: ❌ 1 broken (of which 💥 1 reachable, ⚠️ 0 not prov
 - `--old` and `--new` name the compared pair. Both are repeatable, so several
   changed libraries can be checked in one run.
 - `--classpath` takes the transitive dependencies, `:`-separated and
-  repeatable.
+  repeatable. A path that does not exist, here or in `--app`, is skipped with a
+  warning, so check the scan-target count on the first line of the report. A
+  missing `--old` or `--new` file is an error.
 - `--app` takes your own build outputs, as class directories or JARs. They are
   the roots the [reachability
-  ranking](../README.md#violation-tiers-and-the-failon-threshold) walks from. Without
-  them every violation stays 💥.
+  ranking](../README.md#violation-tiers-and-the-failon-threshold) walks from.
+  Without them nothing is labelled ⚠️, so every violation counts as 💥 except a
+  💤 latent one.
 - `--classpath-file` reads a dump written by any of the plugins and adds its
   artifacts and build outputs to the scan targets. It is more accurate than a
   hand-assembled classpath and reduces unverified references, so prefer it
@@ -147,7 +152,9 @@ $ uika dump some.jar
   from that evidence. It requires `--class-load-log`.
 - [`--jdk-release N`](jdk.md) layers the JDK API of release N under the
   resolution scope, so hierarchy escapes into the JDK conclude instead of
-  counting as unverified. It is opt-in here and defaults to on in every plugin,
+  counting as unverified. Without it, a library class that adds a final
+  override of a method it inherits from the JDK is neither reported nor
+  counted. It is opt-in here and defaults to on in every plugin,
   because a plugin knows the release the build compiles for and the CLI does
   not. The API is read from `$UIKA_JDK` when set, else `$JAVA_HOME`.
 - `--json` prints the report as JSON instead of text. No plugin exposes it.
