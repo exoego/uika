@@ -173,9 +173,9 @@ checked JDK 11 -> JDK 17 against 1 scan target
 ```
 
 Both releases are read from the one JDK uika finds, so checking an upgrade *to*
-the JDK you now run needs only that JDK. [The JDK API
-layer](jdk.md#where-the-stubs-come-from) covers the two stub sources and the one
-change they cannot show, a class that became sealed.
+the JDK you now run needs only that JDK. That JDK cannot be older than release
+M. [The JDK API layer](jdk.md#where-the-stubs-come-from) covers the two stub
+sources and why only a JDK 22 or later shows a class that became sealed.
 
 From a build tool this needs no flag at all. Each dump records the API release
 the application runs on, per module, which is what lets `upgrade-check` see the

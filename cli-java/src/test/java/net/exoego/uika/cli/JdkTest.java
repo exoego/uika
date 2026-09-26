@@ -163,7 +163,7 @@ class JdkTest {
         assertEquals(
                 "--jdk-release-old/--jdk-release-new need a JDK: set UIKA_JDK to a JDK home (checked first) or JAVA_HOME",
                 pair.getMessage());
-        assertFalse(Jdk.isInstalledRelease(17));
+        assertFalse(Jdk.servedFromJmods(17));
 
         String nowhere = dir.resolve("nowhere").toString();
         Env.override("UIKA_JDK", nowhere);
@@ -263,45 +263,19 @@ class JdkTest {
         }
     }
 
+    /** The own release comes from jmods only on JDK 21 and earlier. JDK 22 and later carry it in ct.sym. */
     @Test
-    void aReleaseCtSymDoesNotCarryIsExplained() {
+    void theOwnReleaseComesFromJmodsOnlyOnJdk21AndEarlier() {
         Path home = findJdkHome();
         assumeTrue(home != null, "no JDK with ct.sym found (UIKA_JDK/JAVA_HOME/mise)");
-        Path ctSym = Jdk.ctSymIn(home);
         int own = Jdk.installedFeature(home);
-
-        UikaException tooNew = assertThrows(UikaException.class, () -> Jdk.Indexer.open(ctSym, own));
-        assertTrue(tooNew.getMessage().startsWith("release " + own + " not present in " + ctSym + " (available: "), tooNew.getMessage());
-        assertTrue(
-                tooNew.getMessage()
-                        .endsWith("; the installed JDK's own release is served from its runtime image, not ct.sym, so pick an older one)"),
-                tooNew.getMessage());
-        // The available list is ascending and stops one short of the JDK's own release.
-        String available = tooNew.getMessage().substring(tooNew.getMessage().indexOf("(available: ") + 12, tooNew.getMessage().indexOf(';'));
-        List<String> releases = List.of(available.split(", "));
-        assertEquals(String.valueOf(own - 1), releases.get(releases.size() - 1));
-        for (int i = 1; i < releases.size(); i++) {
-            assertTrue(Integer.parseInt(releases.get(i - 1)) < Integer.parseInt(releases.get(i)), available);
-        }
-
-        UikaException unsupported = assertThrows(UikaException.class, () -> Jdk.Indexer.open(ctSym, 7));
-        assertEquals("unsupported --jdk-release 7 (not between 8 and 35)", unsupported.getMessage());
-        assertEquals(
-                "unsupported --jdk-release 36 (not between 8 and 35)",
-                assertThrows(UikaException.class, () -> Jdk.Indexer.open(ctSym, 36)).getMessage());
-    }
-
-    @Test
-    void theRunningReleaseComesFromJmodsAndOlderOnesFromCtSym() {
-        Path home = findJdkHome();
-        assumeTrue(home != null, "no JDK with ct.sym found (UIKA_JDK/JAVA_HOME/mise)");
-        assumeTrue(Files.isDirectory(home.resolve("jmods")), "no jmods under " + home);
+        boolean fromJmods = own <= 21;
+        assumeTrue(!fromJmods || Files.isDirectory(home.resolve("jmods")), "no jmods under " + home);
         int release = stubbedRelease(home);
         assumeTrue(release > 0, "no usable release in " + home);
-        int own = Jdk.installedFeature(home);
         Env.override("UIKA_JDK", home.toString());
-        assertTrue(Jdk.isInstalledRelease(own));
-        assertFalse(Jdk.isInstalledRelease(release));
+        assertEquals(fromJmods, Jdk.servedFromJmods(own));
+        assertFalse(Jdk.servedFromJmods(release));
 
         List<String> warnings = new ArrayList<>();
         ApiIndex older = Jdk.releaseIndex(release, warnings);
@@ -312,12 +286,17 @@ class JdkTest {
         assertTrue(running.containsClass(string));
         // jmods is a superset of ct.sym, so unexported internals are only there.
         int internal = Intern.intern("jdk/internal/misc/Unsafe");
-        assertTrue(running.containsClass(internal));
+        assertEquals(fromJmods, running.containsClass(internal));
         assertFalse(older.containsClass(internal));
-        // Sealing is levelled away, or every sealed JDK class would read as newly sealed.
+        // JDK 21 stubs carry no sealing, so it is levelled away from jmods. Stubs from JDK 22 on keep it.
         int constantDesc = Intern.intern("java/lang/constant/ConstantDesc");
         assertTrue(running.containsClass(constantDesc));
-        assertEquals(-1, running.permittedCount(running.entry(constantDesc)));
+        int permitted = running.permittedCount(running.entry(constantDesc));
+        if (fromJmods) {
+            assertEquals(-1, permitted);
+        } else {
+            assertTrue(permitted > 0, "permitted subclasses: " + permitted);
+        }
         // The whole release is in, not an escape closure.
         assertTrue(older.classCount() > 3000, "classes in release " + release + ": " + older.classCount());
     }
@@ -375,18 +354,116 @@ class JdkTest {
         }
         assertEquals(List.of("ct.sym!x/Bad: not a class file (bad magic)"), warnings);
 
-        // '7' is a real code in joint dirs but no selectable release, so it is not offered.
+        // '7' is a real code in joint dirs but no selectable release, so it is not offered. A
+        // release inside the range needs no newer JDK, so no hint says so.
         assertEquals(
-                "release 11 not present in " + ctSym + " (available: 8, 9, 17; the installed JDK's own release is served"
-                        + " from its runtime image, not ct.sym, so pick an older one)",
+                "release 11 not present in " + ctSym + " (available: 8, 9, 17)",
                 assertThrows(UikaException.class, () -> Jdk.Indexer.open(ctSym, 11)).getMessage());
+    }
+
+    /**
+     * A stand-in for a real JDK home, found through UIKA_JDK. Its ct.sym holds ArrayList for
+     * every release it carries. JDK 21 and earlier keep only a system-modules entry for their
+     * own release and ship its classes in jmods. JDK 22 and later carry it in ct.sym, with
+     * ConstantDesc sealed from 17 as their stubs have it. This one then ships no jmods, as a
+     * Temurin 25 does not.
+     */
+    static Path realisticHome(Path dir, int feature) throws IOException {
+        Path home = Files.createDirectories(dir.resolve("jdk-" + feature));
+        Files.writeString(home.resolve("release"), "JAVA_VERSION=\"" + feature + ".0.1\"\n", StandardCharsets.UTF_8);
+        boolean ownInCtSym = feature >= 22;
+        int last = ownInCtSym ? feature : feature - 1;
+        StringBuilder carried = new StringBuilder();
+        StringBuilder sealed = new StringBuilder();
+        for (int release = Jdk.MIN_RELEASE; release <= last; release++) {
+            carried.append(Jdk.releaseCode(release));
+            if (release >= 17) {
+                sealed.append(Jdk.releaseCode(release));
+            }
+        }
+        Map<String, byte[]> stubs = new LinkedHashMap<>();
+        stubs.put(carried + "/java.base/java/util/ArrayList.sig", jdkClass("java/util/ArrayList"));
+        if (ownInCtSym) {
+            stubs.put(sealed + "/java.base/java/lang/constant/ConstantDesc.sig", jdkClass("java/lang/constant/ConstantDesc"));
+        } else {
+            stubs.put(Jdk.releaseCode(feature) + "/system-modules", "java.base\n".getBytes(StandardCharsets.UTF_8));
+            Map<String, byte[]> classes = new LinkedHashMap<>();
+            classes.put("classes/java/util/ArrayList.class", jdkClass("java/util/ArrayList"));
+            classes.put("classes/java/lang/constant/ConstantDesc.class", jdkClass("java/lang/constant/ConstantDesc"));
+            zip(Files.createDirectories(home.resolve("jmods")).resolve("java.base.jmod"), classes);
+        }
+        zip(Files.createDirectories(home.resolve("lib")).resolve("ct.sym"), stubs);
+        Env.override("UIKA_JDK", home.toString());
+        return home;
+    }
+
+    @Test
+    void aReleaseCtSymDoesNotCarryIsExplained() throws Exception {
+        Path jdk21 = Jdk.ctSymIn(realisticHome(dir, 21));
+        assertEquals(
+                "release 21 not present in " + jdk21 + " (available: 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20;"
+                        + " a newer JDK carries it)",
+                assertThrows(UikaException.class, () -> Jdk.Indexer.open(jdk21, 21)).getMessage());
+        Path jdk25 = Jdk.ctSymIn(realisticHome(dir, 25));
+        assertEquals(
+                "release 26 not present in " + jdk25 + " (available: 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,"
+                        + " 22, 23, 24, 25; a newer JDK carries it)",
+                assertThrows(UikaException.class, () -> Jdk.Indexer.open(jdk25, 26)).getMessage());
+
+        assertEquals(
+                "unsupported --jdk-release 7 (not between 8 and 35)",
+                assertThrows(UikaException.class, () -> Jdk.Indexer.open(jdk21, 7)).getMessage());
+        assertEquals(
+                "unsupported --jdk-release 36 (not between 8 and 35)",
+                assertThrows(UikaException.class, () -> Jdk.Indexer.open(jdk21, 36)).getMessage());
+    }
+
+    /** A JDK 25 build may ship no jmods, and its own release needs none. */
+    @Test
+    void theOwnReleaseComesFromCtSymWhenItCarriesIt() throws Exception {
+        Path home = realisticHome(dir, 25);
+        assertFalse(Files.exists(home.resolve("jmods")));
+        assertFalse(Jdk.servedFromJmods(25));
+        List<String> warnings = new ArrayList<>();
+        ApiIndex own = Jdk.releaseIndex(25, warnings);
+        assertEquals(List.of(), warnings);
+        assertTrue(own.containsClass(Intern.intern("java/util/ArrayList")));
+        // On JDK 22 and later both sides of a pair come from stubs that keep sealing, so
+        // nothing is levelled away.
+        int constantDesc = Intern.intern("java/lang/constant/ConstantDesc");
+        assertTrue(own.permittedCount(own.entry(constantDesc)) > 0, "the stub's sealing was dropped");
+    }
+
+    /** The system-modules entry a JDK 21 ct.sym keeps for its own release holds no stubs. */
+    @Test
+    void theOwnReleaseComesFromJmodsWhenCtSymLacksIt() throws Exception {
+        realisticHome(dir, 21);
+        assertTrue(Jdk.servedFromJmods(21));
+        assertFalse(Jdk.servedFromJmods(17));
+        List<String> warnings = new ArrayList<>();
+        ApiIndex own = Jdk.releaseIndex(21, warnings);
+        assertEquals(List.of(), warnings);
+        int constantDesc = Intern.intern("java/lang/constant/ConstantDesc");
+        assertTrue(own.containsClass(constantDesc));
+        assertEquals(-1, own.permittedCount(own.entry(constantDesc)));
+    }
+
+    /** The own release needs only jmods on JDK 21 and earlier, so a ct.sym that cannot be read must not fail it. */
+    @Test
+    void anUnreadableCtSymLeavesTheOwnReleaseToJmods() throws Exception {
+        Path ctSym = realisticHome(dir, 21).resolve("lib").resolve("ct.sym");
+        Files.writeString(ctSym, "plain text");
+        assertTrue(Jdk.servedFromJmods(21));
+        assertTrue(Jdk.releaseIndex(21, new ArrayList<>()).containsClass(Intern.intern("java/util/ArrayList")));
+        UikaException older = assertThrows(UikaException.class, () -> Jdk.releaseIndex(17, new ArrayList<>()));
+        assertTrue(older.getMessage().startsWith("not a zip: " + ctSym + ": "), older.getMessage());
     }
 
     @Test
     void anOlderReleaseComesWholeFromTheHomesCtSym() throws Exception {
         Path home = fakeHome("21.0.4");
         fakeCtSym(home.resolve("lib").resolve("ct.sym"));
-        assertFalse(Jdk.isInstalledRelease(17));
+        assertFalse(Jdk.servedFromJmods(17));
         List<String> warnings = new ArrayList<>();
         ApiIndex index = Jdk.releaseIndex(17, warnings);
         assertTrue(index.containsClass(Intern.intern("java/util/ArrayList")));
@@ -396,10 +473,10 @@ class JdkTest {
     @Test
     void theRunningReleaseNeedsJmods() throws Exception {
         Path home = fakeHome("21.0.4");
-        assertTrue(Jdk.isInstalledRelease(21));
+        assertTrue(Jdk.servedFromJmods(21));
         assertEquals(
-                "release 21 is this JDK's own, which ct.sym never carries, so it must come from " + home.resolve("jmods")
-                        + " (absent in a JRE or a jlink'd runtime): No such file or directory",
+                "release 21 is this JDK's own and is not in its ct.sym, so it must come from " + home.resolve("jmods")
+                        + ": No such file or directory",
                 assertThrows(UikaException.class, () -> Jdk.releaseIndex(21, new ArrayList<>())).getMessage());
     }
 
