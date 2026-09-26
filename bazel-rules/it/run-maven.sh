@@ -48,8 +48,8 @@ cd "$WS"
 
 echo "--- before dump (guava 22.0)"
 render 22.0
-"$BAZEL" run //:dump -- --output "$OUT/before.json"
-"$BAZEL" run //:dump -- --output "$OUT/before-materialized.json" \
+"$BAZEL" run //:uika_dump -- --output "$OUT/before.json"
+"$BAZEL" run //:uika_dump -- --output "$OUT/before-materialized.json" \
   --materialize "$OUT/baseline-jars"
 
 # Models the flow the baseline artifact exists for, where the check runs somewhere the
@@ -60,11 +60,11 @@ echo "--- clean, so the baseline's jars are no longer on disk"
 
 echo "--- after dump (guava 23.0-rc1)"
 render 23.0-rc1
-"$BAZEL" run //:dump -- --output "$OUT/after.json"
+"$BAZEL" run //:uika_dump -- --output "$OUT/after.json"
 
 run_check() {
   set +e
-  "$BAZEL" run //:check -- --before "$1" --after "$OUT/after.json" > "$2" 2>&1
+  "$BAZEL" run //:uika_check -- --before "$1" --after "$OUT/after.json" > "$2" 2>&1
   echo $? > "$2.status"
   set -e
   cat "$2"

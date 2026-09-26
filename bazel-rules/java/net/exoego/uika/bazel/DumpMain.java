@@ -10,7 +10,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 
 /**
- * Turns the classpath manifest a {@code uika_dump} target builds into a uika v2 dump.
+ * Turns the classpath manifest a {@code uika} dump target builds into a uika v2 dump.
  *
  * <p>Run by {@code bazel run //:your_dump}, never as a build action. That is the whole point:
  * a dump names absolute paths, and an action's output is cacheable and may be replayed on
@@ -58,7 +58,7 @@ public final class DumpMain {
     static String required(String property) {
         String value = System.getProperty(property);
         if (value == null || value.isEmpty()) {
-            throw new IllegalStateException("missing -D" + property + "; use the uika_dump rule");
+            throw new IllegalStateException("missing -D" + property + "; use the uika macro");
         }
         return value;
     }

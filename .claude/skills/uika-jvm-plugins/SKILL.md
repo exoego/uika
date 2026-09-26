@@ -562,14 +562,23 @@ hold lives here.
   default, so that decision lives in the one place that knows both the version and the
   pin. No test reaches this: the integration test consumes the rules at a git revision,
   where the pin is empty by construction, so the trap only exists in a released archive.
-- No duplicate-target guard is needed on `uika_dump`. Bazel rejects a repeated label in a
+- ONE public macro, `uika`, declares `<name>_dump`, `<name>_baseline_dump` and
+  `<name>_check`. It replaced `uika_dump` and `uika_upgrade_check`, whose `targets` and
+  `jdk_release` had to be repeated and could drift, so a stated runtime release reached the
+  dump but not the check. Both binaries get the same `-Duika.jdkRelease`, and the value
+  works for both because they read it differently: the dump folds anything below
+  `MIN_RELEASE` into "derived", the check reads 0 as "layer off" and a negative as "derive".
+  The macro's default is -1. Without `targets` no dump is declared, since an empty dump
+  reads every dependency as added and passes the check. That no-targets shape is what the
+  `//...` sweep pairs with.
+- No duplicate-target guard is needed on the `uika` macro. Bazel rejects a repeated label in a
   `label_list` itself ("Label '//app:app' is duplicated in the 'targets' attribute"), before
   the rule implementation runs, and two distinct labels cannot produce one module name. A
   guard was written and then removed once that was checked.
 - The manifest fails the build on a field carrying a tab or a newline instead of escaping
   it. A codec on both sides of the wire would exist only to hide a corrupt manifest that
   the Java side would mis-parse into the wrong module.
-- The `//...` sweep and the `uika_dump` rule share `private/manifest.bzl` so one code path
+- The `//...` sweep and the `uika` dump targets share `private/manifest.bzl` so one code path
   decides what a module is. They differ only in which path names each jar, which `path_of`
   selects. The rule resolves runfiles (`short_path`), while the sweep has no runfiles tree
   and its merge step prefixes `bazel info execution_root` (`path`). `@uika//:merge` IS an
