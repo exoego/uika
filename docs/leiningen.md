@@ -7,10 +7,7 @@ One of uika's [build-tool integrations](build-tools.md).
 :plugins [[net.exoego.uika/lein-uika "VERSION_PLACEHOLDER"]]
 ;; Optional: gate only on reachable violations, and suppress known false positives.
 :uika {:fail-on "reachable"
-       :exclude-files ["uika-exclude.toml"]
-       ;; Defaults to the plugin's own version. There is no command-line override,
-       ;; but UIKA_CLI_VERSION overrides this from the environment.
-       :cli-version "VERSION_PLACEHOLDER"}
+       :exclude-files ["uika-exclude.toml"]}
 ```
 
 ```console
@@ -179,6 +176,11 @@ Every option is a key of the `:uika` map in `project.clj`. Any other key is an
 error rather than a silent no-op, so a misspelling cannot quietly disable a
 flag. Watch for the Clojure CLI tool's spellings: it says `:exclude-file` and
 `:class-load-log` where this map says `:exclude-files` and `:class-load-logs`.
+Leiningen's own `update-in` changes a key for one run:
+
+```console
+$ lein update-in :uika assoc :fail-on '"never"' -- uika upgrade-check /tmp/before.json /tmp/after.json
+```
 
 - [`:fail-on`](../README.md#violation-tiers-and-the-failon-threshold) is `"never"`,
   `"reachable"` or `"any"`.
@@ -199,10 +201,12 @@ flag. Watch for the Clojure CLI tool's spellings: it says `:exclude-file` and
   them. The CLI answers a lone `:draft-exclude-file` by naming
   `--class-load-log`, whose keyword form this map rejects as unknown.
 - `:cli-version` and `:cli-path` pick the CLI, as do `UIKA_CLI_VERSION` and
-  `UIKA_CLI_PATH` from the environment. There is no command-line override. The
-  path takes the jar, or an executable that runs it. A path that is not a file,
-  or an executable that lost its bit, fails naming the one you set, `:cli-path`
-  or the variable.
+  `UIKA_CLI_PATH` from the environment. A key in `project.clj` wins over its
+  variable, and a path wins over a version. With no `:cli-version` and no
+  `UIKA_CLI_VERSION`, the CLI version is the plugin's own. The path takes the
+  jar, or an executable that runs it. A path that is not a file, or an
+  executable that lost its bit, fails naming the one you set, `:cli-path` or the
+  variable.
 
 ## Runtime load evidence (JFR)
 
