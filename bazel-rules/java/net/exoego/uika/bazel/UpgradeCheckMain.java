@@ -21,12 +21,16 @@ import java.util.List;
 public final class UpgradeCheckMain {
     private UpgradeCheckMain() {}
 
-    public static void main(String[] args) throws IOException, InterruptedException {
+    public static void main(String[] args) throws InterruptedException {
+        Manifest.runMain(() -> check(args));
+    }
+
+    private static int check(String[] args) throws IOException, InterruptedException {
         if (args.length > 0 && "jfr-jvmopt".equals(args[0])) {
             // Guarded like the flags below: an empty directory argument would create and
             // record into the workspace root.
             printJfrJvmOpt(args.length > 1 ? Manifest.flagValue(args, 1) : "uika/jfr");
-            return;
+            return 0;
         }
 
         Path before = null;
@@ -101,9 +105,8 @@ public final class UpgradeCheckMain {
         JdkSource jdk = JdkSource.current();
         Integer release = UikaCli.effectiveJdkRelease(
                 wantedRelease(wanted), jdk, System.out::println);
-        var status = UikaCli.runUpgradeCheck(cliBinary(), before, after, failOn, excludeFiles,
+        return UikaCli.runUpgradeCheck(cliBinary(), before, after, failOn, excludeFiles,
                 release, jdk, evidence, draftExcludeFile, mergedClasspath, System.out::println);
-        System.exit(status);
     }
 
     /**
