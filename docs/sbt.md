@@ -204,9 +204,11 @@ degrading to a warning. The cache save and restore close that gap.
 `uikaJfr := Some(file("<dir>"))` in `build.sbt` (bare or `ThisBuild`-scoped)
 makes forked test JVMs record class loads into a [JFR
 recording](runtime-load-evidence.md) there, and makes `uikaUpgradeCheck`
-convert and read the directory back. It needs `Test / fork := true`: an
-in-process test runs inside sbt's own JVM, which no flag can reach after
-startup. [`--draft-exclude-file`](runtime-load-evidence.md) maps to
+convert and read the directory back. It needs
+`ThisBuild / Test / fork := true`. A bare `Test / fork := true` in `build.sbt`
+forks only the root project's tests, and a test that does not fork runs inside
+sbt's own JVM, which no flag can reach after startup.
+[`--draft-exclude-file`](runtime-load-evidence.md) maps to
 `uikaDraftExcludeFile :=`.
 
 The [base-branch-to-PR CI wiring](runtime-load-evidence.md#collecting-on-the-base-branch-consuming-on-the-pr)
