@@ -31,10 +31,9 @@ object UikaPlugin extends AutoPlugin {
   // What a module that declares no release compiles for: the JDK sbt forks javac from when
   // javaHome names one, else the JVM running sbt. None when javaHome names a JDK whose
   // release cannot be read, since guessing the build JVM there could over-claim.
-  private def compilerRelease(javaHome: Option[File]): Option[Integer] = javaHome match {
-    case Some(home) => Option(UikaCli.installedRelease(home.toPath))
-    case None => Some(Int.box(DumpFormat.buildJvmRelease()))
-  }
+  private def compilerRelease(javaHome: Option[File]): Option[Integer] =
+    javaHome.fold(Option(Int.box(DumpFormat.buildJvmRelease())))(home =>
+      Option(UikaCli.installedRelease(home.toPath)))
 
   override def buildSettings: Seq[Setting[_]] = Seq(
     uikaOutput := baseDirectory.value / "target" / "uika" / "classpath.json",

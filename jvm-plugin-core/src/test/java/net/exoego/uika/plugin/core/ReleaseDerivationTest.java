@@ -76,6 +76,8 @@ final class ReleaseDerivationTest {
         assertEquals(25, UikaCli.installedRelease(home));
         Files.writeString(release, "JAVA_VERSION=\"1.7.0_80\"\n");
         assertNull(UikaCli.installedRelease(home), "below the floor");
+        Files.writeString(release, "JAVA_VERSION=\"1\"\n");
+        assertNull(UikaCli.installedRelease(home), "a bare 1 is not 1.x");
         Files.writeString(release, "IMPLEMENTOR=\"Eclipse Adoptium\"\n");
         assertNull(UikaCli.installedRelease(home), "no version line");
     }

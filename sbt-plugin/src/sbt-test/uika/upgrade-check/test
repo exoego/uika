@@ -48,6 +48,20 @@ $ exists before.json.marker
 > uikaUpgradeCheck before.json after.json
 > checkJdkReleaseFromJavaHome
 > set legacy / javaHome := None
+
+# Nothing declared and no readable javaHome anywhere: the build JVM is the only evidence
+# left, clamped to what its ct.sym serves. The minimum of nothing must not throw. legacy
+# is set by name because its project-scoped None above shadows ThisBuild.
+> set older / Compile / javacOptions := Nil
+> set newer / scalacOptions := Nil
+> set ThisBuild / javaHome := Some((ThisBuild / baseDirectory).value / "no-such-jdk")
+> set legacy / javaHome := Some((ThisBuild / baseDirectory).value / "no-such-jdk")
+> uikaUpgradeCheck before.json after.json
+> checkJdkReleaseFromBuildJvm
+> set ThisBuild / javaHome := None
+> set legacy / javaHome := None
+> set older / Compile / javacOptions := Seq("--release=12")
+> set newer / scalacOptions := Seq("-release", "17")
 > set ThisBuild / uikaJdkRelease := 11
 
 # Root-project scope, the documented `set uikaFailOn := ...` shell form. The ThisBuild
