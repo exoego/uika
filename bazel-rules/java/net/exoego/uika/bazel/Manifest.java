@@ -15,6 +15,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.IntConsumer;
 
 /**
  * Reads the tab-separated manifest that a dump or check target of the
@@ -247,10 +248,16 @@ final class Manifest {
 
     /** Runs a main's work and exits with {@link #exitCode}. */
     static void runMain(Body body) throws InterruptedException {
-        int code = exitCode(body, System.err::println);
-        // Returning already exits 0, and JaCoCo counts a call that never returns as missed.
+        runMain(body, System.err::println, System::exit);
+    }
+
+    // The exit is a parameter because JaCoCo counts a call that never returns as missed.
+    static void runMain(Body body, Consumer<String> err, IntConsumer exit)
+            throws InterruptedException {
+        int code = exitCode(body, err);
+        // Returning already exits 0.
         if (code != 0) {
-            System.exit(code);
+            exit.accept(code);
         }
     }
 

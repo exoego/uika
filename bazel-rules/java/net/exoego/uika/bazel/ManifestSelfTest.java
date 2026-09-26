@@ -58,7 +58,7 @@ public final class ManifestSelfTest {
         // A floor, not a total: `failures` counts only what FAILED, so a deleted call in
         // main or an early return inside a method would otherwise be a silent pass. The
         // class-file floor guard next door fails on an empty sweep for the same reason.
-        var expected = 87;
+        var expected = 89;
         if (checks < expected) {
             System.err.println("only " + checks + " checks ran, expected at least " + expected);
             System.exit(1);
@@ -520,6 +520,14 @@ public final class ManifestSelfTest {
                         "uika: NoSuchFileException: /no/such.json",
                         "uika: NoSuchFileException: /no/such.jar").equals(lines),
                 "each error should be one line, an I/O one naming its class: " + lines);
+
+        var codes = new ArrayList<Integer>();
+        Manifest.runMain(() -> 0, lines::add, codes::add);
+        check(codes.isEmpty(), "a clean run should return rather than exit: " + codes);
+        Manifest.runMain(() -> {
+            throw new IllegalArgumentException("unknown argument: --bogus");
+        }, lines::add, codes::add);
+        check(List.of(2).equals(codes), "a mistake should exit 2: " + codes);
     }
 
     private static List<Module> parse(String manifest, Integer override) throws IOException {
