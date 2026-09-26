@@ -263,6 +263,26 @@ final class UikaPluginIntegrationTest {
         assertEquals(Map.of(":older", 11, ":newer", 17), moduleReleases(derived));
     }
 
+    /// The build-script spelling the check takes. It used to set the check alone, so a user
+    /// who wrote it once kept recording the derived release and never saw the runtime move.
+    @Test
+    void jdkReleaseSetOnTheCheckTaskIsRecordedInTheDump() throws Exception {
+        var output = projectDir.resolve("classpath.json");
+        writeMixedReleaseProject();
+        Files.writeString(projectDir.resolve("build.gradle.kts"), """
+                tasks.named<net.exoego.uika.gradle.UpgradeCheckTask>("uikaUpgradeCheck") {
+                    jdkRelease.set(21)
+                }
+                """, java.nio.file.StandardOpenOption.APPEND);
+
+        runDump(output);
+
+        @SuppressWarnings("unchecked")
+        var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        assertEquals(21, ((Number) doc.get("jdkRelease")).intValue());
+        assertEquals(Map.of(":older", 21, ":newer", 21), moduleReleases(doc));
+    }
+
     @Test
     void malformedJdkReleasePropertyFailsWithAUikaMessage() throws Exception {
         writeMixedReleaseProject();

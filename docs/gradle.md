@@ -187,9 +187,10 @@ resolved local paths.
   containing a comma has to go through the task's `excludeFiles` instead, since
   the comma is the delimiter there.
 - [`jdkRelease`](build-tools.md#jdkrelease) is derived from
-  `compileJava`'s `options.release`, else target compatibility. Override with
-  `-PuikaJdkRelease=` on both the dump and the check, or set 0 to disable the
-  API layer.
+  `compileJava`'s `options.release`, else target compatibility. Override it
+  once with `uikaUpgradeCheck`'s `jdkRelease` in the build script, which the
+  dump records too, or with `-PuikaJdkRelease=` on both commands. Set 0 to
+  disable the API layer.
 - `-PuikaMergedClasspath` checks the union of every module's classpath once
   instead of [each module against its own
   resolution](../README.md#per-module-checking). Per-module checking scans once

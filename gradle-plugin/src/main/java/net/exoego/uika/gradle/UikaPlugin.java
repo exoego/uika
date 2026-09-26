@@ -94,17 +94,19 @@ public class UikaPlugin implements Plugin<Project> {
     }
 
     /**
-     * The release ONE module records in the dump: {@code -PuikaJdkRelease} when it is set,
-     * else what that project compiles for.
+     * The release ONE module records in the dump: {@code uikaUpgradeCheck}'s
+     * {@code jdkRelease} when the build states one (from {@code -PuikaJdkRelease} or the
+     * build script), else what that project compiles for.
      *
      * <p>The override replaces every module's own value rather than sitting beside them,
      * because it is a statement about the whole build. It exists here for the case the
      * derivation cannot see: a build compiling {@code --release 11} that ships on a 21
      * runtime has no other way to say so, and without it upgrade-check would never notice
-     * that runtime moving.
+     * that runtime moving. Read from the task rather than the property alone, so the one
+     * setting a user writes in the build script reaches both commands.
      */
-    private static Integer dumpJdkRelease(Project root, Project project) {
-        Integer override = UikaCli.overrideRelease(jdkReleaseProperty(root));
+    private static Integer dumpJdkRelease(UpgradeCheckTask check, Project project) {
+        Integer override = UikaCli.overrideRelease(check.getJdkRelease().getOrNull());
         return override != null ? override : declaredRelease(project);
     }
 
@@ -279,7 +281,7 @@ public class UikaPlugin implements Plugin<Project> {
                         // time to what the build JVM's ct.sym can actually serve.
                         // The provider is an @Input, so the configuration cache evaluates it while
                         // the project is still available.
-                        task.getJdkRelease().convention(
+                        task.getDerivedJdkRelease().convention(
                                 root.getProviders().provider(() -> defaultJdkRelease(root)));
                     }
                     // Through the provider API, not System.getenv: reading the environment
@@ -410,7 +412,7 @@ public class UikaPlugin implements Plugin<Project> {
                 // Here rather than at registration: compileJava's options.release and the
                 // java extension's targetCompatibility are both build-script settable, so
                 // reading them before the project evaluates would see the plugin defaults.
-                task.getJdkRelease().set(dumpJdkRelease(root, p));
+                task.getJdkRelease().set(dumpJdkRelease(upgradeCheck.get(), p));
                 SourceSet main = DumpModuleClasspathTask.mainSourceSet(p);
                 if (main != null) {
                     task.getClassesDirs().from(main.getOutput().getClassesDirs());
