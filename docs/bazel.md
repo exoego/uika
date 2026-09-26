@@ -216,7 +216,8 @@ and never against the runfiles tree.
 - [`fail_on`](../README.md#violation-tiers-and-the-failon-threshold) is `never`,
   `reachable` or `any`, and `--failOn` overrides it.
 - [`exclude_files`](../README.md#excluding-known-false-positives)
-  is a label list, and the repeatable `--excludeFile` adds to it.
+  takes file paths from the workspace root, not labels, even in a BUILD file
+  below the root. The repeatable `--excludeFile` adds to it.
 - [`jdk_release`](#coordinates-and-jdk_release) is derived per target, and
   `--jdkRelease` overrides it on both rules and on `@uika//:merge`.
 - [`merged_classpath`](../README.md#per-module-checking) checks the union of
