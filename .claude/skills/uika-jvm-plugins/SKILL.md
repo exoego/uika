@@ -195,11 +195,12 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   uika owns. Renaming a knob away from its flag would break the mechanical correspondence
   the clojure-tool sync test checks, so do not do it for readability alone -- rename the
   CLI flag instead, which is how `--merged` became `--merged-classpath`.
-- `--json` and `--verdicts-json` stay CLI-only ON PURPOSE, and the decision is recorded in
-  `docs/cli.md` and `docs/build-tools.md` rather than only here. `--json` writes the report
-  to stdout, which every plugin pipes through its own logger, so Maven would prefix every
-  line with `[INFO]` and Gradle would not: a report DESTINATION the plugins could point at
-  a file is the missing piece, and this flag is not it. `--verdicts-json` is an evaluation
+- `--json` and `--verdicts-json` stay CLI-only ON PURPOSE. The user docs only say that no
+  plugin exposes them. `--json` writes the report to stdout, and no integration passes that
+  stream on untouched. Each merges the CLI's stderr into it and adds its own `uika:` lines,
+  and the Gradle, sbt, Maven and Mill plugins print through a logger that may prefix every
+  line (`[INFO]` in Maven). A report DESTINATION the plugins could point at a file is the
+  missing piece, and this flag is not it. `--verdicts-json` is an evaluation
   stream for `tools/jvm-probe` -- written before exclude filtering, without graph-walk
   violations, call-site duplicates not deduped -- so it is not a report a build acts on.
 - Runtime load evidence is ONE knob per tool pointed at one directory, serving

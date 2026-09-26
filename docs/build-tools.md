@@ -28,10 +28,9 @@ differently, and their pages say how.
 Every tool takes `UIKA_CLI_PATH` to run a CLI you already have instead, which is
 what an air-gapped build needs. It takes the jar, or an executable that runs it,
 such as a script that starts the jar on another JDK. A value that is not a file,
-or an executable that lost its bit, fails naming the variable rather than deep
-inside process start-up: shipping a script as a CI artifact is the usual way to
-get it onto the runner, and `upload-artifact` does not preserve the executable
-bit. A jar needs no such bit.
+or a script without its executable bit, fails naming the variable.
+`actions/upload-artifact` does not keep that bit, so run `chmod +x` on a script
+fetched as an artifact, or point the variable at the jar, which needs none.
 
 ## Options
 
@@ -41,12 +40,6 @@ Every tool spells the same options its own way, listed per page:
 evidence](runtime-load-evidence.md) (one directory serving both phases, collect
 on the base branch and consume on the PR), `jdkRelease`, and
 `mergedClasspath`.
-
-Each name is its CLI flag's, written the way the tool writes names, and the
-`uika` prefix appears exactly where the namespace is flat and shared with the
-whole build: `-PuikaFailOn` and `-Duika.failOn` carry it, while the Gradle task
-property, the Maven POM element, and every Mill, Leiningen, Clojure and Bazel
-spelling already sit inside something uika owns and do not.
 
 One row per option, one column per tool. A cell is how that tool spells the
 option; the Gradle task property and the Maven POM element are the spelling a
@@ -85,17 +78,10 @@ tool lacking one of them is not behind:
 - Bazel: `--materialize` rehydrates a baseline dump from the repository cache,
   and the `uika.cli` tag pins the jar's checksum.
 
-`DocPageContractTest` in `jvm-plugin-core` holds each page to the same section
-order and checks that every knob scraped from a tool's source is named on its
-page, so a knob added to a build fails the build until it is documented.
-
-Two CLI flags are deliberately not exposed anywhere.
-[`--json`](cli.md) swaps the report for JSON on stdout, and every tool prints the
-CLI's output through its own logger, so it would arrive with `[INFO]` on every
-line from Maven and without it from Gradle — parseable from neither.
-[`--verdicts-json`](cli.md) streams raw per-reference verdicts for
-answer-checking against a real JVM, which is an evaluation aid rather than
-something a build acts on.
+Two CLI flags have no plugin option,
+[`--json`](cli.md#options-shared-by-check-and-upgrade-check) and
+[`--verdicts-json`](cli.md#options-shared-by-check-and-upgrade-check). To get
+either, run the CLI on the dumps your build writes.
 
 ## `jdkRelease`
 
@@ -120,9 +106,6 @@ moves. The same override says so by hand. A positive value is recorded as the
 release every module runs on, while `0` still only switches the API layer off
 and leaves the recorded release derived.
 
-Below 8 is neither. The layer cannot serve it — `ct.sym` carries no older stubs
-— and a dump naming it would send the next check to ask for a release that has
-never existed there, failing the run outright. So a value under 8 is dropped:
-the check says so on its output, the dump does not and keeps its derived value.
-The two differ because the check runs once and the dump writes a module at a
-time, so saying it there would repeat the same line once per module.
+Below 8 is neither, since `ct.sym` carries no older stubs. The check skips the
+API layer and says so on its output. The dump drops the value without a word and
+keeps its derived one.
