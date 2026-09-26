@@ -201,9 +201,8 @@ Bazel has no shared dependency cache to restore, so `--materialize` puts
 the JARs into the artifact itself, and the materialized directory has to
 land at the same absolute path the baseline run wrote it to. Both jobs use
 `/tmp/uika-baseline` for that reason. A missing old-side JAR exits 2
-rather than degrading to a warning, which
-[What a dump names](#what-a-dump-names) explains and
-`bazel-rules/it/run-maven.sh` asserts.
+rather than degrading to a warning, as
+[What a dump names](#what-a-dump-names) explains.
 
 ## Options
 
@@ -238,9 +237,8 @@ and never against the runfiles tree.
 
 ## Runtime load evidence (JFR)
 
-Collect with `bazel test`, check with `--jfr <dir>`. `--jvmopt` already
-reaches every test JVM, so nothing has to be injected, and the check target
-prints the flag (and creates the directory) so the recipe cannot drift:
+Collect with `bazel test`, check with `--jfr <dir>`. The check target prints
+the `--jvmopt` flag and creates the directory:
 
 ```console
 $ jvmopt=$(bazel run //:uika_upgrade_check -- jfr-jvmopt /tmp/uika-jfr)
@@ -303,19 +301,11 @@ Fragments land in the configuration's own `bazel-out/<config>/bin`, so a `-c opt
 sweep read back through a bare `bazel info bazel-bin` either finds nothing or
 merges an older configuration's fragments.
 
-`--materialize` works the same way here. The merge is a separate command from the
-sweep build because it needs the execution root, which the recipe reads with
-`bazel info` and passes in. `@uika//:merge` is itself an ordinary `bazel run`
-target.
+`--materialize` works on `@uika//:merge` the same way.
 
 There is no `build_outputs = False` for a sweep, so a baseline taken this way
-builds everything the pattern matches. It cannot be an aspect parameter:
-`//...` matches the `uika_dump` targets too, and their `targets` attribute
-applies the same aspect with the default value, so a parameterized instance
-from the command line is a SECOND aspect over those same targets. Both declare
-`<name>.uika-manifest.tsv` and Bazel rejects the pair as conflicting actions
-(measured on 9.2). List the targets in a `uika_dump` when the baseline's build
-cost matters.
+builds everything the pattern matches. List the targets in a `uika_dump` when
+that build cost matters.
 
 ## Coordinates and `jdk_release`
 
@@ -328,30 +318,22 @@ project dependency. [`jdkRelease`](build-tools.md#jdkrelease) is
 derived per target from its `javacopts`, falling back to the Java toolchain's
 target version, and `jdk_release = N` on the rule overrides every module.
 
-`jdk_release` sits on both rules and the two default differently on purpose. On
-`uika_dump` it defaults to 0, which folds into the derived value, since 0 there
-would otherwise mean "record nothing" and take JDK move detection down with the
-API layer. On `uika_upgrade_check` it defaults to -1 for "derive" so that 0
-stays available as the switch that turns the API layer off. Both rules'
-binaries also take `--jdkRelease` at run time, `@uika//:merge` included.
+`jdk_release` sits on both rules. On `uika_dump` it names the release every
+module is recorded as running on, and 0, the default, keeps the derived value.
+On `uika_upgrade_check` the default, -1, derives it, and 0 turns the API layer
+off. Both rules' binaries also take `--jdkRelease` at run time, `@uika//:merge`
+included.
 
 ## What a dump names
 
-Two Bazel-specific things to know. The dump is written by a `bazel run`, never by
-a build action, because it names absolute paths and an action's output is
-cacheable. The sweep does write its per-target fragments from an action, but a
-fragment names paths relative to the execution root and only the merge turns them
-absolute. Which paths those are depends on the route. A `bazel run` lays the
-classpath out as runfiles and resolves those symlinks, while the merge resolves
-against the execution root, and both end at the same real file.
-
-And a dump names JARs under `bazel-out`, which is build output rather than
-source. They survive a lockfile change in the same tree, so the checkout-based PR
-gate works unchanged. They do not survive a `bazel clean`, a fresh output
-base, or another machine. That last case is the baseline-as-artifact flow, and
-there the check does not degrade quietly. It fails with `cannot open ...` and
-exit 2, because the changed pair's old JAR is what the API diff is computed
-against, and only a scan target is skipped with a warning. `--materialize <dir>`
-is the answer. It hard-links every JAR the dump names into one directory and
-points the dump there, which takes the baseline out of `bazel-out` and makes it
-portable to another machine. See [Caching the baseline](#caching-the-baseline).
+A dump names JARs by absolute path under `bazel-out`, which is build output
+rather than source. They survive a lockfile change in the same tree, so the
+checkout-based PR gate works unchanged. They do not survive a `bazel clean`, a
+fresh output base, or another machine. That last case is the
+baseline-as-artifact flow, and there the check does not degrade quietly. It
+fails with `cannot open ...` and exit 2, because the changed pair's old JAR is
+what the API diff is computed against, and only a scan target is skipped with a
+warning. `--materialize <dir>` is the answer. It hard-links every JAR the dump
+names into one directory and points the dump there, which takes the baseline out
+of `bazel-out` and makes it portable to another machine. See [Caching the
+baseline](#caching-the-baseline).
