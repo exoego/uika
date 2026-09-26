@@ -19,7 +19,7 @@ unqualified (tools.deps resolves no usage data for a Maven coordinate, so a
 $ clojure -T:uika dump-classpath                        # writes target/uika/classpath.json
 $ clojure -T:uika dump-classpath :output '"/tmp/after.json"' :aliases '[:prod]'
 $ clojure -T:uika upgrade-check :before '"/tmp/before.json"' :after '"/tmp/after.json"' \
-      :fail-on reachable :exclude-file '"uika-exclude.toml"'   # :cli-version to override
+      :exclude-file '"uika-exclude.toml"'   # :cli-version to override
 ```
 
 The dump records the resolved Maven coordinates from the project's own
@@ -193,7 +193,9 @@ Leiningen plugin's spellings: it says `:exclude-files` and `:class-load-logs`
 where this tool says `:exclude-file` and `:class-load-log`.
 
 - [`:fail-on`](../README.md#violation-tiers-and-the-failon-threshold) is `never`,
-  `reachable` or `any`.
+  `reachable` or `any`. Reachability walks class files only, so Clojure code that
+  is not AOT-compiled roots nothing. A break used only from such code is ⚠️ and
+  passes `reachable`, so keep the default `any` for that code.
 - [`:exclude-file`](../README.md#excluding-known-false-positives)
   takes one path or a vector of paths.
 - There is no module model to read a compile target from, so

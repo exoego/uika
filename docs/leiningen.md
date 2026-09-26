@@ -5,9 +5,8 @@ One of uika's [build-tool integrations](build-tools.md).
 ```clojure
 ;; project.clj
 :plugins [[net.exoego.uika/lein-uika "VERSION_PLACEHOLDER"]]
-;; Optional: gate only on reachable violations, and suppress known false positives.
-:uika {:fail-on "reachable"
-       :exclude-files ["uika-exclude.toml"]}
+;; Optional: suppress known false positives.
+:uika {:exclude-files ["uika-exclude.toml"]}
 ```
 
 ```console
@@ -183,7 +182,9 @@ $ lein update-in :uika assoc :fail-on '"never"' -- uika upgrade-check /tmp/befor
 ```
 
 - [`:fail-on`](../README.md#violation-tiers-and-the-failon-threshold) is `"never"`,
-  `"reachable"` or `"any"`.
+  `"reachable"` or `"any"`. Reachability walks class files only, so a namespace
+  that is not in `:aot` roots nothing. A break used only from such code is ⚠️ and
+  passes `"reachable"`, so keep the default `"any"` for that code.
 - [`:exclude-files`](../README.md#excluding-known-false-positives)
   takes a vector of paths.
 - [`:jdk-release`](build-tools.md#jdkrelease) defaults to the release
