@@ -1,6 +1,7 @@
 # [Maven plugin](../maven-plugin/) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fuika-maven-plugin%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/uika-maven-plugin)
 
 One of uika's [build-tool integrations](build-tools.md).
+Maven running on Java 17 or newer.
 
 ```xml
 <build>
@@ -31,8 +32,7 @@ A dump also refers to build outputs, and this plugin cannot build them itself.
 Run a `compile` phase in the same invocation when they should be scanned.
 
 `uika:upgrade-check` fetches the CLI as the `jvm` jar of
-`net.exoego.uika:uika-cli:<version>` and runs it on the JVM that runs Maven. So
-it works wherever that JVM does.
+`net.exoego.uika:uika-cli:<version>` and runs it on the JVM that runs Maven.
 
 ## PR gate on GitHub Actions
 

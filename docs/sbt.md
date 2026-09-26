@@ -1,6 +1,7 @@
 # [sbt plugin](../sbt-plugin/) [![Maven Central](https://img.shields.io/maven-metadata/v?metadataUrl=https%3A%2F%2Frepo1.maven.org%2Fmaven2%2Fnet%2Fexoego%2Fuika%2Fsbt-uika_2.12_1.0%2Fmaven-metadata.xml)](https://central.sonatype.com/artifact/net.exoego.uika/sbt-uika_2.12_1.0)
 
 One of uika's [build-tool integrations](build-tools.md).
+sbt 1.9 or newer, running on Java 17 or newer.
 
 ```scala
 // project/plugins.sbt
@@ -26,8 +27,7 @@ defined for the build rather than per project, so every spelling of it runs the
 one whole-build merge.
 
 `uikaUpgradeCheck` fetches the CLI as the `jvm` jar of
-`net.exoego.uika:uika-cli:<version>` and runs it on the JVM that runs sbt. So it
-works wherever that JVM does.
+`net.exoego.uika:uika-cli:<version>` and runs it on the JVM that runs sbt.
 
 ## PR gate on GitHub Actions
 

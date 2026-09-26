@@ -19,11 +19,10 @@ The upgrade-check task fetches the CLI itself, the pure-Java jar published as
 the `jvm` classifier of `net.exoego.uika:uika-cli:<version>`, through the
 build's own dependency resolution, reusing its repositories, credentials, and
 cache, so there is no separate install step. It runs the jar on the JVM that
-runs the build, so an
-integration works wherever its build tool does, with no per-platform binary to
-be missing. The version defaults to the plugin's own, so one coordinate bump
-updates both. The Clojure CLI tool, Leiningen and Bazel fetch the jar
-differently, and their pages say how.
+runs the build. The dump and the check both need that JVM to be Java 17 or
+newer. The version defaults to the plugin's own, so one coordinate bump updates
+both. The Clojure CLI tool, Leiningen and Bazel fetch the jar differently, and
+their pages say how.
 
 Every tool takes `UIKA_CLI_PATH` to run a CLI you already have instead, which is
 what an air-gapped build needs. It takes the jar, or an executable that runs it,
