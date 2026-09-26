@@ -98,7 +98,7 @@ public final class DumpClasspathMojo extends AbstractMojo {
      * <p>Packaging, not an empty output directory: this goal declares no lifecycle phase, so a
      * run on an unbuilt tree has empty classesDirs everywhere and that test would empty the
      * whole dump. Dropping pom-packaged projects cannot move {@code DumpFormat.dumpRelease}
-     * either, because {@link JdkReleases#declaredRelease} already answers null for them and an
+     * either, because {@link JdkReleases#moduleRelease} already answers null for them and an
      * explicit {@code jdkRelease} override replaces every module's value with the same number.
      */
     private static boolean compilesNothing(MavenProject project) {
@@ -168,7 +168,7 @@ public final class DumpClasspathMojo extends AbstractMojo {
 
         Integer override = UikaCli.overrideRelease(jdkRelease);
         return new ClasspathDump.Module(moduleNames.get(reactorProject), classesDirs, artifacts,
-                override != null ? override : JdkReleases.declaredRelease(reactorProject));
+                override != null ? override : JdkReleases.moduleRelease(reactorProject));
     }
 
     private static String gav(MavenProject project) {

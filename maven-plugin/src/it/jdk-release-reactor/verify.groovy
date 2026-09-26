@@ -13,3 +13,13 @@ assert args.text.contains("--jdk-release 11") :
 // candidate would report 9 here and gut the layer for the whole reactor.
 assert !args.text.contains("--jdk-release 9") :
     "a plugin-level release that every execution overrides was counted: ${args.text}"
+
+// The dump keeps each module's own release. `undeclared` names none, so it records the JVM
+// running Maven, which is what javac targets for it. Recording nothing left it on the lowest
+// sibling's 11, so a CI JDK move went unseen for it while the siblings' moves were charged to it.
+def dump = new groovy.json.JsonSlurper().parse(new File(basedir, "target/uika/classpath.json"))
+def releases = dump.modules.collectEntries { [(it.module): it.jdkRelease] }
+assert releases == [":older": 11, ":newer": 17, ":overridden": 17, ":undeclared": Runtime.version().feature()] :
+    "unexpected per-module releases: $releases"
+// The dump-level value is still the lowest across the modules.
+assert dump.jdkRelease == 11 : "unexpected dump-level release: ${dump.jdkRelease}"
