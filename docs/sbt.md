@@ -149,8 +149,7 @@ jobs:
           exit $status
 
       - name: Dump PR classpath
-        # compile so the build outputs anchor the reachability ranking
-        run: sbt compile uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json
+        run: sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json
 
       - name: Check broken references
         if: steps.baseline-artifact.outcome == 'success' || steps.baseline-fallback.outcome == 'success'
