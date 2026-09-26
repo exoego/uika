@@ -40,6 +40,10 @@ the Java dependencies on the classpath at full strength but only the
 type-hinted, AOT-compiled part of the Clojure code itself; point `:class-dir`
 at the tools.build `compile-clj` output to include it.
 
+`dump-classpath` builds nothing. Run your own compile step first, such as a
+tools.build task, or the dump holds none of your classes. The check then warns
+that no application root matched, and `:fail-on reachable` fails like `any`.
+
 ## PR gate on GitHub Actions
 
 The `linkage-check` job dumps a baseline from the PR's base branch and the
@@ -142,6 +146,7 @@ jobs:
           mv /tmp/baseline/classpath.json /tmp/before.json
 
       - name: Dump PR classpath
+        # compile your Java or AOT classes first, since the dump builds nothing
         run: clojure -T:uika dump-classpath :output '"/tmp/after.json"'
 
       - name: Dump baseline classpath (fallback)
@@ -220,7 +225,9 @@ where this tool says `:exclude-file` and `:class-load-log`.
   `target/uika/classpath.json`), `:dir` to point at another project's
   `deps.edn` (default: where the tool was invoked), `:aliases` to include in
   the resolution, and `:class-dir` for the AOT output of a tools.build
-  `compile-clj`. The project's own `:paths` are recorded either way.
+  `compile-clj`. The project's own `:paths` are recorded too, but only those
+  that exist as directories. A `:class-dir` is recorded even when it is missing,
+  and the check then warns that it skipped it.
 - `upgrade-check` alone takes `:evidence-work-dir`, where recordings are
   converted, defaulting to `target/uika`.
 

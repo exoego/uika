@@ -60,8 +60,9 @@
   :dir      project directory (default: where the tool was invoked)
   :aliases  aliases to include in the resolution, e.g. [:prod]
   :class-dir extra classes directory to record (AOT output from tools.build
-             compile-clj); the project :paths are always recorded so hinted-interop
-             classes compiled there are scanned too.
+             compile-clj), even when it is missing. The project :paths that exist
+             as directories are recorded too, so hinted-interop classes compiled
+             there are scanned. The dump compiles nothing, so build first.
   :jdk-release the release to record the application as running on, instead of this
              JVM's. The same knob upgrade-check takes, for a project whose runtime is
              not the JVM that writes the dump. 0 leaves the recorded release derived,
