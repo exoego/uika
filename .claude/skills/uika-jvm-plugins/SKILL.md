@@ -134,7 +134,13 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   target really does compile against the build JVM. Gradle emits the release on every
   module it dumps (`getTargetCompatibility()` falls back to the toolchain, so a Java
   project always names one); the Clojure frontends write the same number on their
-  single module and on the dump.
+  single module and on the dump. Maven's dump (`JdkReleases.moduleRelease`) gives a
+  non-pom module that declares nothing the JVM running Maven, since in-process javac
+  targets it. Recording nothing left it on the dump-level value, a sibling's declared
+  release whenever one declared any. It still records nothing when javac may run on
+  another JDK (maven-toolchains-plugin present, `<jdkToolchain>`, or fork plus
+  `<executable>`), because that JDK's release is not read. The FLAG (`lowest`) stays
+  on declared releases only.
 - Each tool's release knob (`jdkRelease` / `uikaJdkRelease` / `<jdkRelease>` /
   `:jdk-release`) feeds the DUMP as well as the flag, through
   `UikaCli.overrideRelease` (`core/override-release` in Clojure). It is the only way a
@@ -368,7 +374,7 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   everywhere and that test would empty the whole dump). The sbt filter must not
   move `DumpFormat.dumpRelease`, so the release is computed over ALL modules
   and only the emitted list is filtered; Maven needs no such care because
-  `JdkReleases.declaredRelease` already answers null for pom packaging.
+  `JdkReleases.moduleRelease` already answers null for pom packaging.
 
 
 ## Every Tool's Doc Page

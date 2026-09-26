@@ -188,6 +188,11 @@ degrading to a warning. The cache save and restore close that gap.
   maven-compiler-plugin's `<release>`/`<target>`, else
   `maven.compiler.release`/`maven.compiler.target`. Override with
   `<jdkRelease>` or `-Duika.jdkRelease=`, or set 0 to disable the API layer.
+  A module that declares neither is recorded in the dump with the release of
+  the JVM running Maven, since that is what javac targets. The plugin does not
+  read the release of a JDK toolchain or a forked `<executable>`, so a module
+  compiled that way records nothing and the check uses the lowest release any
+  module records.
 - `<mergedClasspath>` / `-Duika.mergedClasspath=true` checks the union of every
   module's classpath once instead of [each module against its own
   resolution](../README.md#per-module-checking). Per-module checking scans once
