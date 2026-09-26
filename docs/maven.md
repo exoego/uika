@@ -187,7 +187,8 @@ degrading to a warning. The cache save and restore close that gap.
 - [`jdkRelease`](build-tools.md#jdkrelease) is derived from
   maven-compiler-plugin's `<release>`/`<target>`, else
   `maven.compiler.release`/`maven.compiler.target`. Override with
-  `<jdkRelease>` or `-Duika.jdkRelease=`, or set 0 to disable the API layer.
+  `<jdkRelease>` or `-Duika.jdkRelease=` on both goals, or set 0 to disable the
+  API layer.
 - `<mergedClasspath>` / `-Duika.mergedClasspath=true` checks the union of every
   module's classpath once instead of [each module against its own
   resolution](../README.md#per-module-checking). Per-module checking scans once
