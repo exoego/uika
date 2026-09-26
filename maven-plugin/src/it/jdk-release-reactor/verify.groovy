@@ -23,3 +23,7 @@ assert releases == [":older": 11, ":newer": 17, ":overridden": 17, ":undeclared"
     "unexpected per-module releases: $releases"
 // The dump-level value is still the lowest across the modules.
 assert dump.jdkRelease == 11 : "unexpected dump-level release: ${dump.jdkRelease}"
+
+def overridden = new groovy.json.JsonSlurper().parse(new File(basedir, "target/uika/overridden.json"))
+assert overridden.modules.collect { it.jdkRelease }.every { it == 21 } :
+    "-Duika.jdkRelease must replace every module's release: ${overridden.modules}"

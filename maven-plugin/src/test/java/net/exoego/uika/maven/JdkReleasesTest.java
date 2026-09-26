@@ -224,6 +224,39 @@ final class JdkReleasesTest {
         assertNull(JdkReleases.moduleRelease(oneForks, NONE));
     }
 
+    @Test
+    void forkNeedsAnExecutableToLeaveMavensJvm() {
+        // The compiler ignores fork without an executable, and an empty executable, so javac
+        // stays in Maven's JVM whichever level says it.
+        var byProperty = project("jar");
+        byProperty.getProperties().setProperty("maven.compiler.fork", "true");
+        assertEquals(Runtime.version().feature(), JdkReleases.moduleRelease(byProperty, NONE));
+
+        var pluginLevel = project("jar");
+        pluginLevel.getBuild().addPlugin(compilerPlugin(configuration("fork", "true")));
+        assertEquals(Runtime.version().feature(), JdkReleases.moduleRelease(pluginLevel, NONE));
+
+        var noFork = project("jar");
+        noFork.getBuild().addPlugin(compilerPlugin(configuration("encoding", "UTF-8")));
+        assertEquals(Runtime.version().feature(), JdkReleases.moduleRelease(noFork, NONE));
+
+        var inExecution = project("jar");
+        var blankExecutable = configuration("fork", "true");
+        blankExecutable.addChild(new Xpp3Dom("executable"));
+        blankExecutable.getChild("executable").setValue(" ");
+        inExecution.getBuild().addPlugin(compilerPlugin(null,
+                execution("default-compile", blankExecutable)));
+        assertEquals(Runtime.version().feature(), JdkReleases.moduleRelease(inExecution, NONE));
+    }
+
+    @Test
+    void aPluginLevelJdkToolchainRecordsNothing() {
+        var project = project("jar");
+        project.getBuild().addPlugin(compilerPlugin(configuration("jdkToolchain", null),
+                execution("default-compile", null)));
+        assertNull(JdkReleases.moduleRelease(project, NONE));
+    }
+
     private static final Properties NONE = new Properties();
 
     private static MavenProject project(String packaging) {
