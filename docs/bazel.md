@@ -29,7 +29,7 @@ uika(
 The `uika` macro declares three targets that share these settings. `:uika_dump`
 dumps the classpath of `targets`. `:uika_baseline_dump` writes the same dump
 without building `targets`, which is the baseline the PR gate compares against.
-It only feeds the version diff, so it resolves without building anything.
+It only feeds the version diff, so it builds none of your code.
 `:uika_check` compares two dumps.
 
 ```console
@@ -106,7 +106,7 @@ jobs:
 
       # ... You may need to setup Bazel here ....
 
-      # this target resolves without building anything
+      # this target builds none of your code
       - run: |
           bazel run //:uika_baseline_dump -- \
             --output /tmp/uika-baseline/classpath.json \
