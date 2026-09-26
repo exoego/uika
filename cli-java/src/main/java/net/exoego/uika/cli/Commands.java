@@ -216,7 +216,7 @@ final class Commands {
             if (evidence.distinctClasses() == 0) {
                 throw new UikaException("refusing to draft from " + evidence.sources() + ": no class loads were observed at all, so every "
                         + "violation would be drafted as never-loaded. Check that the evidence was "
-                        + "produced and, for the Clojure frontends, that it is text and not JFR.");
+                        + "produced and that JFR recordings were converted to text, because the CLI skips them.");
             }
             int drafted = Evidence.draftExcludes(violations, appRootsMatched, evidence, draft);
             Out.note("drafted " + drafted + " exclude rule(s) to " + draft);

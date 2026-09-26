@@ -126,8 +126,9 @@ $ uika dump some.jar
 - [`--exclude-file`](../README.md#excluding-known-false-positives)
   is repeatable, and rules from every file given are merged.
 - [`--class-load-log`](runtime-load-evidence.md) is repeatable and takes text
-  evidence, or a directory of it. The CLI reads no binary JFR, which is why the
-  plugins convert recordings before invoking it. Without one, convert a
+  evidence, or a directory of it. The CLI does not decode JFR, which is why the
+  plugins convert recordings before invoking it. It skips a recording, with a
+  warning when the recording is passed directly. Without a plugin, convert a
   recording by hand:
 
   ```console

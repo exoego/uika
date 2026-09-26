@@ -264,8 +264,7 @@ fi
 python3 "$RULES/it/assert_jfr.py" "$OUT/jfr-report.txt"
 
 # A recording handed to --classLoadLog must be converted exactly like a --jfr value:
-# the CLI skips .jfr names silently, so forwarding it raw loses the
-# evidence with no symptom at all.
+# the CLI skips a raw recording, so forwarding it would lose the evidence.
 rec="$(find "$JFR" -name '*.jfr' | head -1)"
 set +e
 "$BAZEL" run //:check -- --before "$OUT/before.json" --after "$OUT/after.json" \
