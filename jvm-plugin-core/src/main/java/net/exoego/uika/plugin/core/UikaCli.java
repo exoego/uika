@@ -190,7 +190,8 @@ public final class UikaCli {
      * its derived value rather than going silent and taking JDK-move detection down with the
      * layer. Anything below {@link #MIN_RELEASE} is dropped for a harder reason: a dump
      * naming it would send upgrade-check to ask ct.sym for a release it has never carried,
-     * failing the whole run.
+     * failing the whole run. The check logs that drop and the dump does not, because the
+     * dump calls this once per module and would repeat the same line for each.
      */
     public static Integer overrideRelease(Integer override) {
         return override != null && override >= MIN_RELEASE ? override : null;

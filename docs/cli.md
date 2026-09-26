@@ -24,9 +24,10 @@ newer and nothing else, not even a JDK. Run it as
 $ alias uika='java -jar /path/to/uika-cli-<version>.jar'
 ```
 
-The jar starts a second JVM with the flags a short run wants (serial collector,
-small young generation, and the first-tier compiler below about 800 scan
-targets). `UIKA_NO_RELAUNCH=1` keeps it in the JVM you started, for debugging.
+The jar re-runs each command in a second JVM tuned for a short run. Options
+given to `java` itself, such as `-Xmx`, do not reach that JVM. Pass memory
+options through `JAVA_TOOL_OPTIONS` instead, or set `UIKA_NO_RELAUNCH=1` to stay
+in the JVM you started.
 
 ## Commands
 
@@ -145,17 +146,13 @@ $ uika dump some.jar
   counting as unverified. It is opt-in here and defaults to on in every plugin,
   because a plugin knows the release the build compiles for and the CLI does
   not. The API is read from `$UIKA_JDK` when set, else `$JAVA_HOME`.
-- `--json` prints the report as JSON instead of text. CLI-only, deliberately:
-  each plugin prints the CLI's output through its own logger, so the JSON would
-  come out of Maven with `[INFO]` on every line and out of Gradle without,
-  parseable from neither. A report destination the plugins could point at a file
-  would be the fix, and this flag is not it.
-- `--verdicts-json <path>` streams every reference verdict (ok, unknown, broken)
-  as JSON Lines to a file, for answer-checking against a real JVM
-  (`tools/jvm-probe`, `make probe`). CLI-only, deliberately: it is written
-  before `--exclude-file` filtering, carries neither graph-walk violations nor
-  the service-provider walk, and does not dedupe call sites, so it is an
-  evaluation stream rather than a report a build should act on.
+- `--json` prints the report as JSON instead of text. No plugin exposes it.
+- `--verdicts-json <path>` writes every reference verdict (ok, unknown, broken)
+  to a file as JSON Lines, for checking uika's answers against a real JVM. It is
+  not a report. It ignores `--exclude-file`, repeats a reference once per call
+  site, and leaves out breaks that no single reference carries, such as a
+  subclass of a class that became final or a stale service-provider entry. No
+  plugin exposes it either.
 
 ## Checking a JDK upgrade
 
