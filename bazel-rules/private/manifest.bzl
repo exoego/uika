@@ -66,6 +66,15 @@ def _runtime_jars(target):
         return target[java_common.JavaRuntimeClasspathInfo].runtime_classpath.to_list()
     return target[JavaInfo].transitive_runtime_jars.to_list()
 
+def _external_artifact(jar, entry):
+    """Whether a jar comes from another repository and carries Maven coordinates.
+
+    rules_jvm_external's jars are generated files, a `processed_` jar when it stamps manifests
+    and a copy when it does not, so a baseline that skipped every generated jar recorded none.
+    """
+    return (entry != None and entry.group != None and
+            jar.owner != None and jar.owner.workspace_name != "")
+
 def module_records(
         target,
         info,
@@ -109,12 +118,9 @@ def module_records(
             continue
         entry = owners.get(jar.path)
         project = entry.project if entry else None
-        if not build_outputs and not jar.is_source:
-            # build_outputs = False means "build nothing", so the jars to leave out are
-            # exactly the generated ones. is_source rather than a main-repository test: a
-            # vendored jar in the main repository needs no build and carries the coordinates
-            # the version diff runs on, so dropping it would empty a baseline dump of the
-            # very artifacts it exists for.
+        if not build_outputs and not jar.is_source and not _external_artifact(jar, entry):
+            # What stays out is the main repository's own code, which this mode exists not to
+            # build, and generated jars with no coordinates for the version diff to use.
             continue
         lines.append(line(
             "dep",

@@ -506,10 +506,15 @@ hold lives here.
 - A `java_binary`'s `JavaInfo.transitive_runtime_jars` is EMPTY. Its classpath is in
   `JavaRuntimeClasspathInfo` instead. The symptom is a dump with no artifacts at all and
   no error, so `_runtime_jars` in `private/manifest.bzl` checks that provider first.
-- `build_outputs = False` skips GENERATED jars, never main-repository ones. A vendored
-  jar in the main repository needs no build and carries the coordinates the version diff
-  runs on, so a main-repository test would empty a baseline dump of the artifacts it
-  exists for.
+- `build_outputs = False` skips a GENERATED jar only when it is the main repository's or
+  carries no coordinates. rules_jvm_external's jars are generated too, a `processed_` jar
+  when `jvm_import` stamps manifests (the default) and a `copy_file` output when it does
+  not. An `is_source` test alone therefore dropped every Maven artifact from the baseline,
+  and the check read them all as ADDED and exited 0. A main-repository test alone would do
+  the same to a vendored jar, which is a source file. `it/run-maven.sh` pins the first case
+  and `it/run.sh` the second. Keeping the Maven jars costs one stamping action per jar plus
+  a build of rules_jvm_external's stamping tool, and no Javac for the workspace's targets
+  (execution log on 9.2). With stamping off it costs nothing.
 - The release derivation is single-sourced through the SAME manifest rule the dump uses,
   in a `releases_only` mode. Reading only the Java toolchain would be shorter and wrong,
   because a target that pins a lower release than the toolchain would then be
@@ -518,10 +523,11 @@ hold lives here.
   decoration. Bazel's default `--java_language_version` is 11, so without it the core's
   arrow switches do not compile in a user's workspace. Bazel strips the toolchain's
   `-source`/`-target` when javacopts name `--release`, so the two do not conflict.
-- The integration test cleans the output base before asserting that
-  `build_outputs = False` built nothing. The workspace copy is recreated per run but its
-  output base is keyed by that stable path and is not, so the assertion would otherwise
-  read the jars the previous run left behind and pass unconditionally.
+- Both integration tests clean the output base before asserting that
+  `build_outputs = False` built none of the workspace's targets. The workspace copy is
+  recreated per run but its output base is keyed by that stable path and is not, so the
+  assertion would otherwise read the jars the previous run left behind and pass
+  unconditionally.
 - JFR collection needs `--nocache_test_results`: a cached test forks no JVM and records
   nothing, with no symptom. It also needs `--sandbox_writable_path`, since the recording
   lands outside the sandbox on purpose. The `jfr-jvmopt` subcommand prints the flag AND

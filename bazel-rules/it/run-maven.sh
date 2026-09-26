@@ -46,8 +46,19 @@ render() {
 
 cd "$WS"
 
-echo "--- before dump (guava 22.0)"
+echo "--- baseline dump (guava 22.0)"
 render 22.0
+# The output base outlives the workspace copy, so without this clean bazel-bin would still
+# hold the //app the last run built and the check below would pass whatever the rule does.
+"$BAZEL" clean
+"$BAZEL" run //:uika_baseline_dump -- --output "$OUT/resolution.json" \
+  --materialize "$OUT/resolution-jars"
+if [ -e bazel-bin/app ]; then
+  echo "the baseline dump built //app" >&2
+  exit 1
+fi
+
+echo "--- before dump (guava 22.0)"
 "$BAZEL" run //:uika_dump -- --output "$OUT/before.json"
 "$BAZEL" run //:uika_dump -- --output "$OUT/before-materialized.json" \
   --materialize "$OUT/baseline-jars"
@@ -76,8 +87,12 @@ run_check "$OUT/before-materialized.json" "$OUT/materialized-report.txt"
 echo "--- check against the baseline still pointing into Bazel's external directory"
 run_check "$OUT/before.json" "$OUT/external-report.txt"
 
+echo "--- check against the baseline dump"
+run_check "$OUT/resolution.json" "$OUT/resolution-report.txt"
+
 python3 "$RULES/it/assert_maven.py" \
   "$OUT/before.json" "$OUT/after.json" "$OUT/before-materialized.json" \
-  "$OUT/materialized-report.txt" "$OUT/external-report.txt"
+  "$OUT/materialized-report.txt" "$OUT/external-report.txt" \
+  "$OUT/resolution.json" "$OUT/resolution-report.txt"
 
 echo "bazel rules_jvm_external integration test passed"
