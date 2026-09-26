@@ -49,11 +49,12 @@ $ bazel run //:uika_upgrade_check -- --before /tmp/before.json --after /tmp/afte
 
 The CLI is a jar that comes from a repository rule, so Bazel's repository cache
 holds it, a second run needs no network, and the release archive pins its
-checksum. It is one jar for every host, and the check target starts it on its
-own Java runtime. `UIKA_CLI_PATH` points it at a CLI you already have instead,
-the jar or an executable that runs it, and a value that is not a file, or an
-executable that lost its bit, fails naming the variable. The check target repeats
-`targets` only to read the API release they compile for, so it builds nothing.
+checksum. The check and dump targets run on the Java runtime Bazel gives them
+(`--java_runtime_version`, the local JDK by default), which has to be Java 17 or
+newer. `UIKA_CLI_PATH` runs a CLI you already have instead, the jar or an
+executable that runs it, and a value that is not a file, or an executable that
+lost its bit, fails naming the variable. The check target repeats `targets` only
+to read the API release they compile for, so it builds nothing.
 
 The `uika.cli` module-extension tag overrides where the jar comes from.
 That is the pin for every case the release archive's checksum cannot
