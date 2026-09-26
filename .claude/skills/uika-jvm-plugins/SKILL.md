@@ -141,6 +141,14 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   another JDK (maven-toolchains-plugin present, `<jdkToolchain>`, or fork plus
   `<executable>`), because that JDK's release is not read. The FLAG (`lowest`) stays
   on declared releases only.
+  sbt gives a module that declares nothing the release of
+  its compiling JDK, read from the `release` file of `Compile / javaHome` when set
+  (`UikaCli.installedRelease`), else the JVM running sbt. Left without one, such a module
+  took the dump-level value, the LOWEST sibling's declaration, so a CI JDK move went
+  unchecked for it while a sibling's move was checked in its name. An unreadable javaHome
+  records nothing rather than guessing the build JVM. The flag takes the same compiling
+  JDKs into its minimum, which only moves it when javaHome names a JDK older than every
+  declared release, because a JDK cannot compile for a release newer than itself.
 - Each tool's release knob (`jdkRelease` / `uikaJdkRelease` / `<jdkRelease>` /
   `:jdk-release`) feeds the DUMP as well as the flag, through
   `UikaCli.overrideRelease` (`core/override-release` in Clojure). It is the only way a
