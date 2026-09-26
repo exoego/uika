@@ -1,10 +1,12 @@
 package net.exoego.uika.maven;
 
+import net.exoego.uika.plugin.core.DumpFormat;
 import net.exoego.uika.plugin.core.UikaCli;
 import org.apache.maven.model.PluginExecution;
 import org.apache.maven.project.MavenProject;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -40,6 +42,61 @@ final class JdkReleases {
             }
         }
         return lowest == null ? Runtime.version().feature() : lowest;
+    }
+
+    /**
+     * The release one module's dump entry records. What it declares, else the release of the
+     * JDK that compiles it, which is the JVM running Maven unless javac runs on another JDK.
+     * Null for a pom-packaged project, and null when that other JDK is in play, since its
+     * release is not read here and the CLI then falls back to the dump-level value.
+     *
+     * <p>{@link #lowest} does not use it. The flag stays on declared releases, as before.
+     */
+    static Integer moduleRelease(MavenProject project) {
+        Integer declared = declaredRelease(project);
+        if (declared != null || "pom".equals(project.getPackaging()) || compilesOnAnotherJdk(project)) {
+            return declared;
+        }
+        return DumpFormat.buildJvmRelease();
+    }
+
+    /**
+     * Whether javac may run on a JDK other than the one running Maven: a JDK toolchain, picked
+     * by maven-toolchains-plugin or by the compiler's {@code <jdkToolchain>}, or a forked
+     * {@code <executable>}.
+     */
+    static boolean compilesOnAnotherJdk(MavenProject project) {
+        if (project.getPlugin("org.apache.maven.plugins:maven-toolchains-plugin") != null) {
+            return true;
+        }
+        var properties = project.getProperties();
+        var fork = "true".equals(properties.getProperty("maven.compiler.fork"));
+        var executable = !isBlank(properties.getProperty("maven.compiler.executable"));
+        var compiler = project.getPlugin("org.apache.maven.plugins:maven-compiler-plugin");
+        if (compiler != null) {
+            var configurations = new ArrayList<Object>();
+            configurations.add(compiler.getConfiguration());
+            for (PluginExecution execution : compiler.getExecutions()) {
+                configurations.add(execution.getConfiguration());
+            }
+            for (Object configuration : configurations) {
+                if (!(configuration instanceof Xpp3Dom dom)) {
+                    continue;
+                }
+                if (dom.getChild("jdkToolchain") != null) {
+                    return true;
+                }
+                var forkChild = dom.getChild("fork");
+                fork |= forkChild != null && "true".equals(forkChild.getValue());
+                var executableChild = dom.getChild("executable");
+                executable |= executableChild != null && !isBlank(executableChild.getValue());
+            }
+        }
+        return fork && executable;
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     /**

@@ -16,6 +16,7 @@
     <module>older</module>
     <module>newer</module>
     <module>overridden</module>
+    <module>undeclared</module>
   </modules>
 
   <properties>

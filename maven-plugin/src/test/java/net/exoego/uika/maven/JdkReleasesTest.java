@@ -129,6 +129,65 @@ final class JdkReleasesTest {
         assertEquals(Runtime.version().feature(), JdkReleases.lowest(List.of()));
     }
 
+    @Test
+    void aModuleThatDeclaresNothingRecordsTheJvmRunningMaven() {
+        // javac runs in Maven's JVM and targets its own release. Recording nothing left the
+        // module on the dump-level value, which is a sibling's declared release whenever one
+        // declares any, so a CI JDK move went unseen and the sibling's moves were charged to it.
+        assertEquals(Runtime.version().feature(), JdkReleases.moduleRelease(project("jar")));
+
+        var declared = project("jar");
+        declared.getProperties().setProperty("maven.compiler.release", "11");
+        assertEquals(11, JdkReleases.moduleRelease(declared));
+
+        assertNull(JdkReleases.moduleRelease(project("pom")), "a pom-packaged project compiles nothing");
+    }
+
+    @Test
+    void aModuleCompiledOnAnotherJdkRecordsNothing() {
+        // Its release is not read here, and the JVM running Maven would be a wrong number.
+        // Recording nothing keeps the old fallback to the dump-level value.
+        var toolchains = project("jar");
+        toolchains.getBuild().addPlugin(plugin("maven-toolchains-plugin", null));
+        assertNull(JdkReleases.moduleRelease(toolchains));
+
+        var jdkToolchain = project("jar");
+        jdkToolchain.getBuild().addPlugin(compilerPlugin(
+                null, execution("default-compile", configuration("jdkToolchain", null))));
+        assertNull(JdkReleases.moduleRelease(jdkToolchain));
+
+        var forked = project("jar");
+        var fork = configuration("fork", "true");
+        var executable = new Xpp3Dom("executable");
+        executable.setValue("/opt/jdk-11/bin/javac");
+        fork.addChild(executable);
+        forked.getBuild().addPlugin(compilerPlugin(fork));
+        assertNull(JdkReleases.moduleRelease(forked));
+
+        var forkedByProperties = project("jar");
+        forkedByProperties.getProperties().setProperty("maven.compiler.fork", "true");
+        forkedByProperties.getProperties().setProperty("maven.compiler.executable", "/opt/jdk-11/bin/javac");
+        assertNull(JdkReleases.moduleRelease(forkedByProperties));
+
+        // An executable without fork is ignored by the compiler, so javac stays in Maven's JVM.
+        var executableAlone = project("jar");
+        executableAlone.getProperties().setProperty("maven.compiler.executable", "/opt/jdk-11/bin/javac");
+        assertEquals(Runtime.version().feature(), JdkReleases.moduleRelease(executableAlone));
+
+        // A declared release pins the API whichever JDK compiles it.
+        var declaredWithToolchain = project("jar");
+        declaredWithToolchain.getProperties().setProperty("maven.compiler.release", "11");
+        declaredWithToolchain.getBuild().addPlugin(plugin("maven-toolchains-plugin", null));
+        assertEquals(11, JdkReleases.moduleRelease(declaredWithToolchain));
+    }
+
+    @Test
+    void theFlagStillIgnoresModulesThatDeclareNothing() {
+        var eleven = project("jar");
+        eleven.getProperties().setProperty("maven.compiler.release", "11");
+        assertEquals(11, JdkReleases.lowest(List.of(eleven, project("jar"))));
+    }
+
     private static MavenProject project(String packaging) {
         var model = new Model();
         model.setPackaging(packaging);
@@ -137,13 +196,18 @@ final class JdkReleasesTest {
     }
 
     private static Plugin compilerPlugin(Xpp3Dom configuration, PluginExecution... executions) {
-        var plugin = new Plugin();
-        plugin.setGroupId("org.apache.maven.plugins");
-        plugin.setArtifactId("maven-compiler-plugin");
-        plugin.setConfiguration(configuration);
+        var plugin = plugin("maven-compiler-plugin", configuration);
         for (PluginExecution execution : executions) {
             plugin.addExecution(execution);
         }
+        return plugin;
+    }
+
+    private static Plugin plugin(String artifactId, Xpp3Dom configuration) {
+        var plugin = new Plugin();
+        plugin.setGroupId("org.apache.maven.plugins");
+        plugin.setArtifactId(artifactId);
+        plugin.setConfiguration(configuration);
         return plugin;
     }
 
