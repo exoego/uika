@@ -64,6 +64,23 @@ final class ReleaseDerivationTest {
     }
 
     @Test
+    void installedReleaseReadsTheJdksReleaseFile(@TempDir Path home) throws IOException {
+        assertNull(UikaCli.installedRelease(home), "no release file");
+
+        var release = home.resolve("release");
+        Files.writeString(release, "IMPLEMENTOR=\"Eclipse Adoptium\"\nJAVA_VERSION=\"21.0.4\"\n");
+        assertEquals(21, UikaCli.installedRelease(home));
+        Files.writeString(release, "JAVA_VERSION=\"1.8.0_402\"\n");
+        assertEquals(8, UikaCli.installedRelease(home), "8 still writes the legacy spelling");
+        Files.writeString(release, "JAVA_VERSION=\"25-ea\"\n");
+        assertEquals(25, UikaCli.installedRelease(home));
+        Files.writeString(release, "JAVA_VERSION=\"1.7.0_80\"\n");
+        assertNull(UikaCli.installedRelease(home), "below the floor");
+        Files.writeString(release, "IMPLEMENTOR=\"Eclipse Adoptium\"\n");
+        assertNull(UikaCli.installedRelease(home), "no version line");
+    }
+
+    @Test
     void overrideReleaseKeepsOnlyServableValues() {
         assertEquals(21, UikaCli.overrideRelease(21));
         assertEquals(UikaCli.MIN_RELEASE, UikaCli.overrideRelease(UikaCli.MIN_RELEASE));

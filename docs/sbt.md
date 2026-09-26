@@ -178,8 +178,9 @@ degrading to a warning. The cache save and restore close that gap.
   are settings, shown above. `set uikaFailOn := "reachable"` works from the
   sbt shell without editing the build.
 - [`jdkRelease`](build-tools.md#jdkrelease) is derived from
-  `javacOptions` and `scalacOptions`. Override with `uikaJdkRelease :=`, or
-  set 0 to disable the API layer.
+  `javacOptions` and `scalacOptions`. A module that declares no release in
+  either counts as the JDK `javaHome` names, else the JVM running sbt.
+  Override with `uikaJdkRelease :=`, or set 0 to disable the API layer.
 - `uikaMergedClasspath := true` checks the union of every module's classpath
   once instead of [each module against its own
   resolution](../README.md#per-module-checking). Per-module checking scans once
