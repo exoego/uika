@@ -205,9 +205,11 @@ commands. The commands take no options beyond `--output` on `dumpClasspath` and
   `Seq[String]` of exclude files. The default is none.
 - [`def jdkRelease`](build-tools.md#jdkrelease) overrides the release derived
   from `javacOptions` and `scalacOptions` (their mandatory halves included,
-  since Mill compiles with both). A positive value is also what the dump records
-  as the release every module runs on, for a build whose runtime is not what it
-  compiles against. Set 0 to disable the check's API layer. The dump then keeps
+  since Mill compiles with both). The dump records a module that declares no
+  release as running on the JDK that compiles it, which is its `jvmVersion` when
+  set and the JVM running Mill otherwise. A positive value is also what the dump
+  records as the release every module runs on, for a build whose runtime is not
+  what it compiles against. Set 0 to disable the check's API layer. The dump then keeps
   its derived values. The default, -1, derives both.
 - `def mergedClasspath = true` checks the union of every module's classpath
   once instead of [each module against its own
