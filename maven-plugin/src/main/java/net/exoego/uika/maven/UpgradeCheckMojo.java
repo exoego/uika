@@ -86,12 +86,13 @@ public final class UpgradeCheckMojo extends AbstractMojo {
      * clobbering the last — and quote the filename value when the path carries a comma,
      * the option delimiter: unquoted it silently truncates with exit 0), then
      * check with {@code -Duika.jfr=/tmp/uika-jfr}. Keep this recipe in sync with
-     * {@code UikaCli.jfrClassLoadJvmArg} by hand: no mojo can inject into surefire. Use
+     * {@code UikaCli.jfrClassLoadJvmArg} by hand, since this plugin has no goal that sets
+     * surefire's argLine. Use
      * an absolute path in a multi-module build: surefire forks resolve a relative path
      * against each module's basedir, while this aggregator mojo resolves it against the
      * execution root, so a relative directory collects recordings the check never reads.
-     * A command-line {@code -DargLine} also replaces any POM-configured argLine (jacoco's
-     * agent included); append to the POM's argLine instead when one exists.
+     * When the POM configures surefire's argLine, a command-line {@code -DargLine} is
+     * ignored and nothing records, so put the flag in that argLine instead.
      */
     @Parameter(property = "uika.jfr")
     private File jfr;

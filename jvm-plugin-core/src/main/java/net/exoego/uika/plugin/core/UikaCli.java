@@ -249,8 +249,8 @@ public final class UikaCli {
      * is spelled out because the triggers ({@code via ... from ...}) come from those
      * stacks and a custom JFC could have disabled the default. The Gradle, sbt and Mill
      * plugins compose the argument here so those three cannot drift. Maven users hand-write
-     * an argLine (no mojo can inject into surefire), so its documented recipe must be kept
-     * in sync with this format by hand.
+     * an argLine (the Maven plugin has no goal that sets it), so its documented recipe must
+     * be kept in sync with this format by hand.
      */
     public static String jfrClassLoadJvmArg(Path dir) {
         var filename = dir.toString();
