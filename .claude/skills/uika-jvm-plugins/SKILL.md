@@ -208,7 +208,9 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   value must be a directory or a `.jfr` recording — any other existing-file
   value fails fast at configuration, and a DIRECTORY named `x.jfr` still
   counts as a directory), sbt `uikaJfr := Some(dir)`, Maven `-Duika.jfr` plus
-  a hand-written `argLine` for collection (no mojo can inject into surefire),
+  a hand-written `argLine` for collection (the plugin has no goal that sets
+  surefire's `argLine` the way jacoco's prepare-agent does, and a POM
+  `<argLine>` ignores both that property and a command-line `-DargLine`),
   so Maven alone bypasses the shared composer — its `docs/maven.md`/javadoc
   recipe must be kept in sync with it by hand. Collection is JFR, not -Xlog, on purpose:
   `jdk.ClassLoad` with stacks is an information superset of both -Xlog
