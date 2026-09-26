@@ -24,8 +24,7 @@ The plugin downloads the CLI jar straight from Maven Central into
 `UIKA_CLI_PATH` to point at a CLI you already have and skip the download). The
 jar runs on the JVM that runs lein, which therefore has to be Java 17 or newer.
 On an older one, point `:cli-path` at a script that starts the jar on a newer JDK.
-`UIKA_CLI_URL` has to name the jar. A platform ZIP, which it named before the
-CLI became a jar, fails naming the variable.
+`UIKA_CLI_URL` has to name the jar.
 
 The dump excludes what only development pulls in (the `:base`/`:system`/`:user`/`:dev`
 profiles, so no nREPL, and `:provided`, which an uberjar leaves out) and runs the

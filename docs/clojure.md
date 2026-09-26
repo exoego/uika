@@ -3,10 +3,9 @@
 One of uika's [build-tool integrations](build-tools.md).
 The tool is published to Maven Central as `net.exoego.uika/clojure-uika` and
 declared as a deps.edn alias, the same shape tools.build uses. The alias
-carries `:ns-default` itself, which is what keeps the invocations below
-unqualified (tools.deps resolves no usage data for a Maven coordinate, so a
-`-Ttools`-installed Maven tool would need every call written as
-`exoego.uika/dump-classpath`):
+carries `:ns-default`, which keeps the calls below unqualified. A tool installed
+with `-Ttools install` instead needs every call qualified, as in
+`exoego.uika/dump-classpath`.
 
 ```clojure
 ;; deps.edn
@@ -200,9 +199,7 @@ where this tool says `:exclude-file` and `:class-load-log`.
   [`:jdk-release`](build-tools.md#jdkrelease) defaults to the project's
   own JVM release. Set it to override that, or to 0 to disable the API layer.
   `dump-classpath` takes it too, where it names the release the application is
-  recorded as running on. There 0 means "keep the derived value" instead,
-  because recording nothing would take JDK move detection down with the API
-  layer.
+  recorded as running on. There 0 keeps the derived value instead.
 - `:merged-classpath true` checks the union of every module's classpath once
   instead of [each module against its own
   resolution](../README.md#per-module-checking). A `deps.edn` project is one
@@ -214,8 +211,7 @@ where this tool says `:exclude-file` and `:class-load-log`.
   `UIKA_CLI_PATH` and `UIKA_CLI_URL` do the same from the environment. The path
   takes the jar, or an executable that runs it. A path that is not a file, or an
   executable that lost its bit, fails naming the one you set, `:cli-path` or the
-  variable. `UIKA_CLI_URL` has to name the jar. A platform ZIP, which it named
-  before the CLI became a jar, fails naming the variable.
+  variable. `UIKA_CLI_URL` has to name the jar.
 - `dump-classpath` alone takes `:output` (default
   `target/uika/classpath.json`), `:dir` to point at another project's
   `deps.edn` (default: where the tool was invoked), `:aliases` to include in

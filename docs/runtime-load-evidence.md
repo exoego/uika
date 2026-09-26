@@ -108,15 +108,11 @@ collect flag and the consume option for that build tool.
 
 ## JFR caveats
 
-All bounded: the event is disabled in the default JFC profile (the flag above
-enables it — the plugin prints each conversion's event count, and
-`0 jdk.ClassLoad events` means a recording made without it); a recording
-rotates away its oldest chunks past `maxsize` (250MB by default when
-`filename` is set — far above what class-load events reach); a SIGKILLed JVM
-never writes its final dump, so a crashed test fork contributes no evidence
-(promote-only makes that safe); and stack capture keeps the innermost 64 frames
-(`-XX:FlightRecorderOptions:stackdepth=` to raise), which truncates the harness
-side uika never reads — the trigger sits at the inner end.
+The `jdk.ClassLoad` event is off in the default JFC profile, and the flag above
+turns it on. Each conversion prints its event count, and `0 jdk.ClassLoad events`
+means a recording made without the flag. A test JVM killed with SIGKILL leaves
+no usable recording, which loses that JVM's evidence but never gives a wrong
+result.
 
 ## Bring-your-own text logs
 
