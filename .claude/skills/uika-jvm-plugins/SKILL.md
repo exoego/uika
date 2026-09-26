@@ -134,7 +134,13 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   target really does compile against the build JVM. Gradle emits the release on every
   module it dumps (`getTargetCompatibility()` falls back to the toolchain, so a Java
   project always names one); the Clojure frontends write the same number on their
-  single module and on the dump.
+  single module and on the dump. Mill writes, for a module that declares nothing, the
+  release in its `javaHome()`'s `release` file (what `jvmVersion` resolves to, and what
+  Mill compiles it with), else the Mill JVM's. Left empty, the CLI gave it the dump-level
+  value, a SIBLING's lowest declared release. The Mill `--jdk-release` default still reads
+  declared releases only, so an undeclared module on a lower `jvmVersion` can be
+  over-claimed by the flag. Kept that way for now: reading `javaHome()` in the check would
+  resolve, and may download, that JDK on the machine running the check.
 - Each tool's release knob (`jdkRelease` / `uikaJdkRelease` / `<jdkRelease>` /
   `:jdk-release`) feeds the DUMP as well as the flag, through
   `UikaCli.overrideRelease` (`core/override-release` in Clojure). It is the only way a

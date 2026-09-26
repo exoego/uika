@@ -115,6 +115,26 @@ object UikaTests extends TestSuite {
     lazy val millDiscover: Discover = Discover[this.type]
   }
 
+  // A module that declares no release but compiles on its own JDK (`jvmVersion`), next to
+  // one that declares a release on that same JDK. The JDK is the running one with its
+  // `release` file rewritten, so compiling needs no download and the recorded number can only
+  // come from that file.
+  object ownJdkBuild extends TestRootModule {
+    object undeclared extends JavaModule {
+      override def javaHome = Task.Input {
+        Task.env.get("UIKA_TEST_JAVA_HOME").map(home => PathRef(os.Path(home)))
+      }
+    }
+    object declared extends JavaModule {
+      override def javaHome = Task.Input {
+        Task.env.get("UIKA_TEST_JAVA_HOME").map(home => PathRef(os.Path(home)))
+      }
+      override def javacOptions = Seq("--release", "17")
+    }
+    object uika extends UikaModule
+    lazy val millDiscover: Discover = Discover[this.type]
+  }
+
   // No JavaModule at all. The CLI is resolved through a module's own resolver so that the
   // build's mirrors and credentials apply, which leaves a build with none nothing to
   // resolve it with.
@@ -341,11 +361,44 @@ object UikaTests extends TestSuite {
 
         assert(release(":older").contains(11))
         assert(release(":newer").contains(17))
-        // Declares no target of its own, so it falls back to the dump-level release, which
-        // is the lowest any module declares.
-        assert(release(":app").isEmpty)
+        // Declares no target of its own, so it compiles against the JVM running Mill. Left
+        // empty it would read the dump-level 11, a sibling's release.
+        assert(release(":app").contains(Runtime.version().feature()))
         assert(json("jdkRelease").num.toInt == 11)
       }
+    }
+
+    test("an undeclared module records its own JDK's release, a declared one its own") {
+      val real = os.Path(System.getProperty("java.home"))
+      val home = os.temp.dir(prefix = "uika-jdk")
+      for (entry <- os.list(real) if entry.last != "release") os.symlink(home / entry.last, entry)
+      os.write(home / "release", "IMPLEMENTOR=\"test\"\nJAVA_VERSION=\"11.0.2\"\n")
+      Using.resource(UnitTester(
+        ownJdkBuild,
+        null,
+        env = systemEnv + ("UIKA_TEST_JAVA_HOME" -> home.toString)
+      )) { tester =>
+        val out = os.Path(value(tester(ownJdkBuild.uika.dumpClasspath(tester.evaluator))))
+        val modules = ujson.read(os.read(out))("modules").arr
+        def release(module: String): Option[Int] =
+          modules.find(_("module").str == module).get.obj.get("jdkRelease").map(_.num.toInt)
+
+        assert(release(":undeclared").contains(11))
+        assert(release(":declared").contains(17))
+      }
+    }
+
+    test("a JDK's release file names its feature release") {
+      def releaseOf(content: String): Integer = {
+        val home = os.temp.dir(prefix = "uika-jdk")
+        os.write(home / "release", content)
+        UikaModule.javaHomeRelease(home)
+      }
+      assert(releaseOf("JAVA_VERSION=\"21.0.2\"\n") == 21)
+      assert(releaseOf("JAVA_VERSION=\"25\"\n") == 25)
+      assert(releaseOf("JAVA_VERSION=\"1.8.0_392\"\n") == 8)
+      assert(releaseOf("IMPLEMENTOR=\"x\"\n") == null)
+      assert(UikaModule.javaHomeRelease(os.temp.dir(prefix = "uika-jdk")) == null)
     }
 
     test("UIKA_CLI_PATH runs a binary instead of resolving one") {
