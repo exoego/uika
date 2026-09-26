@@ -101,6 +101,8 @@ between the two dumps and check that move too, scoped to the modules that made
 it. A module left on an older release is never checked against a sibling's
 upgrade, and a module that declares no target is recorded as running on the
 build's own JVM, which is what it compiles against.
+In Mill a module with its own `jvmVersion` compiles on that JDK, so its release is
+recorded instead.
 
 The derivation only sees what the build declares, so a project that compiles
 `--release 11` and ships on a 21 runtime looks unchanged when that runtime
