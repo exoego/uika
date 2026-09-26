@@ -473,6 +473,12 @@ Same rule as the Mill section: point-of-use comments and the tests in
   likeliest typo is the sibling's spelling, since the two deliberately differ:
   `:exclude-file`/`:exclude-files` and `:class-load-log`/`:class-load-logs`. That is why
   the message lists the accepted keys rather than only naming the rejected one.
+  "Accepted" is the UNION over every command, for both front ends: tools.deps merges
+  the alias's `:exec-args` into every `-T` call, and lein reads one `:uika` map for
+  every subtask. A per-command set made `:fail-on` in `:exec-args` fail both dump steps
+  of the PR gate. The union only works while a shared key means the same thing to every
+  command that reads it. Today only `:jdk-release` is shared, and it names the stated
+  runtime in both (0 turns the check's layer off and leaves the dump's release derived).
 - The port of `UikaCli.runUpgradeCheck`'s COMMAND BUILDING is pinned mechanically, by
   `the-command-port-carries-every-uikacli-flag` in the clojure-tool suite. It scrapes the
   quoted `"--flag"` literals out of both sources (quoted only, since each file also names

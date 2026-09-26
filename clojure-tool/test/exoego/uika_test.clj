@@ -486,7 +486,6 @@
          (uika/upgrade-check {:before (str before) :after (str after)
                               :cli-path (str stub)
                               :class-load-logs ["a.log"]})))
-    ;; dump-classpath takes a different set and checks it too.
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo #":outputt"
          (uika/dump-classpath {:dir fixture :outputt "x.json"})))
@@ -494,11 +493,25 @@
     (is (nil? (#'uika/check-options
                {:before "b" :after "a" :fail-on "any" :exclude-file [] :jdk-release 11
                 :jfr "d" :class-load-log [] :draft-exclude-file "d.toml"
-                :evidence-work-dir "w" :cli-version "1" :cli-path "p"}
-               @#'uika/check-option-keys)))
-    (is (nil? (#'uika/check-options
-               {:dir "." :output "o" :class-dir "c" :jdk-release 11 :aliases [:prod]}
-               @#'uika/dump-option-keys)))))
+                :merged-classpath true :evidence-work-dir "w" :cli-version "1"
+                :cli-path "p" :dir "." :output "o" :class-dir "c" :aliases [:prod]})))))
+
+(deftest one-exec-args-map-serves-every-command
+  ;; tools.deps merges the alias's :exec-args into EVERY -T call, so a key only one
+  ;; command reads must not fail the other. Before this, :fail-on in :exec-args broke
+  ;; both dump steps of the PR gate.
+  (let [dir (temp-dir)
+        out (io/file dir "dump.json")
+        exec-args {:jdk-release 17 :fail-on "reachable" :exclude-file "uika-exclude.toml"
+                   :cli-path (str (executable-stub dir "uika"))}]
+    (is (= (str out) (uika/dump-classpath (assoc exec-args :dir fixture :output (str out)))))
+    (is (= 17 (get (json/read-str (slurp out)) "jdkRelease")))
+    (is (nil? (uika/upgrade-check (assoc exec-args :before (str out) :after (str out)
+                                         :dir fixture :aliases [:prod]))))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #":fail-onn.*known.*:fail-on"
+         (uika/dump-classpath (assoc exec-args :dir fixture :output (str out)
+                                     :fail-onn "any"))))))
 
 (deftest jfr-recordings-are-converted-for-the-cli
   ;; A REAL recording, not a synthetic file: only the JDK's own writer produces the

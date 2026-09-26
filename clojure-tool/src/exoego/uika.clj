@@ -17,13 +17,19 @@
 (set! *warn-on-reflection* true)
 
 (def ^:private dump-option-keys
-  "Every key dump-classpath accepts."
+  "The keys dump-classpath reads."
   #{:dir :output :class-dir :jdk-release :aliases})
 
 (def ^:private check-option-keys
-  "Every key upgrade-check accepts."
+  "The keys upgrade-check reads."
   #{:before :after :fail-on :exclude-file :jdk-release :jfr :class-load-log
     :draft-exclude-file :merged-classpath :evidence-work-dir :cli-version :cli-path})
+
+(def ^:private option-keys
+  "Every command accepts the keys of all of them, so one alias :exec-args map can set
+  options for every call. The Leiningen plugin's one :uika map works the same way.
+  :jdk-release is the only key two commands read, and it names the same runtime in both."
+  (into dump-option-keys check-option-keys))
 
 (defn- check-options
   "Rejects a misspelled key. Destructuring drops what it does not name, so without this a
@@ -33,11 +39,11 @@
 
   The likeliest typo here is Leiningen's spelling: the two front ends share a core but
   differ on :exclude-file/:exclude-files and :class-load-log/:class-load-logs, so the
-  message lists what this call does accept."
-  [args known]
-  (when-let [unknown (core/unknown-options args known)]
+  message lists every accepted key."
+  [args]
+  (when-let [unknown (core/unknown-options args option-keys)]
     (throw (ex-info (str "uika: unknown option(s) " (pr-str (vec unknown))
-                         "; known: " (pr-str (vec (sort known))))
+                         "; known: " (pr-str (vec (sort option-keys))))
                     {:unknown (vec unknown)}))))
 
 (defn- project-basis
@@ -68,7 +74,7 @@
              not the JVM that writes the dump. 0 leaves the recorded release derived,
              since it only switches the API layer off."
   [{:keys [dir output class-dir jdk-release] :as args}]
-  (check-options args dump-option-keys)
+  (check-options args)
   (let [dir (str (or dir (System/getProperty "user.dir")))
         basis (project-basis dir args)
         ;; Source dirs go in as classesDirs: uika only parses .class files, so pure
@@ -135,7 +141,7 @@
   :cli-path          existing uika binary, skipping the download entirely
                      (UIKA_CLI_PATH does the same from the environment)"
   [{:keys [before after] :as args}]
-  (check-options args check-option-keys)
+  (check-options args)
   (when-not (and before after)
     (throw (ex-info "usage: clojure -T:uika upgrade-check :before <a.json> :after <b.json>" {})))
   (core/run-upgrade-check
