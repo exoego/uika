@@ -16,8 +16,8 @@ import java.util.List;
 import java.util.function.Function;
 
 /**
- * Reads the tab-separated manifest that a {@code uika_dump} or {@code uika_upgrade_check}
- * target builds, resolving every runfiles path to the real file it points at.
+ * Reads the tab-separated manifest that a dump or check target of the
+ * {@code uika} macro builds, resolving every runfiles path to the real file it points at.
  *
  * <p>Line-oriented rather than JSON so this side needs no JSON parser. jvm-plugin-core
  * deliberately has none, because every other front end borrows one from its build tool and
@@ -33,7 +33,7 @@ final class Manifest {
      * {@code bazel run} target names runfiles, and one built by the sweep aspect names
      * execution-root-relative paths, which is the only difference between the two.
      *
-     * <p>A release-only manifest (the one {@code uika_upgrade_check} builds) carries no
+     * <p>A release-only manifest (the one the check target builds) carries no
      * {@code classes} or {@code dep} lines, so the modules come back with empty lists and
      * only their release filled in. That is the whole point of reusing this parser for it.
      */

@@ -70,7 +70,7 @@ echo "--- baseline dump (resolution only)"
 # still holds the jars the LAST run built. Without this clean the assertion below reads
 # stale state and passes no matter what build_outputs does.
 "$BAZEL" clean
-"$BAZEL" run //:resolution_dump -- --output "$OUT/resolution.json"
+"$BAZEL" run //:uika_baseline_dump -- --output "$OUT/resolution.json"
 # Nothing under bazel-bin for the two source targets: a baseline dump has to be able to run
 # on a branch it never builds, which is the whole reason the PR gate can afford it.
 for built in bazel-bin/app bazel-bin/lib; do
@@ -81,20 +81,20 @@ for built in bazel-bin/app bazel-bin/lib; do
 done
 
 echo "--- before dump"
-"$BAZEL" run //:dump -- --output "$OUT/before.json"
+"$BAZEL" run //:uika_dump -- --output "$OUT/before.json"
 
 echo "--- before dump, materialized"
-"$BAZEL" run //:dump -- --output "$OUT/before-materialized.json" \
+"$BAZEL" run //:uika_dump -- --output "$OUT/before-materialized.json" \
   --materialize "$OUT/baseline-jars"
 
 echo "--- after dump (guava 22.0 -> 23.0-rc1)"
-"$BAZEL" run --define guava=23 //:dump -- --output "$OUT/after.json"
+"$BAZEL" run --define guava=23 //:uika_dump -- --output "$OUT/after.json"
 
 echo "--- dump flags"
 # --jdkRelease states the runtime for the whole build, so it replaces what every module
 # derived (11 for //app, the toolchain's for //lib) and the dump-level value with it.
 # -o is --output's short spelling, taken here so it is used somewhere.
-"$BAZEL" run //:dump -- -o "$OUT/override.json" --jdkRelease 17
+"$BAZEL" run //:uika_dump -- -o "$OUT/override.json" --jdkRelease 17
 python3 - "$OUT/override.json" <<'EOF'
 import json, sys
 dump = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -104,7 +104,7 @@ if dump.get("jdkRelease") != 17 or set(releases.values()) != {17}:
         dump.get("jdkRelease"), releases))
 EOF
 set +e
-"$BAZEL" run //:dump -- --output "$OUT/never.json" --bogus > "$OUT/dump-guard.txt" 2>&1
+"$BAZEL" run //:uika_dump -- --output "$OUT/never.json" --bogus > "$OUT/dump-guard.txt" 2>&1
 dump_guard_status=$?
 set -e
 if [ "$dump_guard_status" -eq 0 ] || ! grep -q "unknown argument: --bogus" "$OUT/dump-guard.txt"; then
@@ -115,7 +115,7 @@ fi
 
 echo "--- upgrade-check"
 set +e
-"$BAZEL" run //:check -- --before "$OUT/before.json" --after "$OUT/after.json" \
+"$BAZEL" run //:uika_check -- --before "$OUT/before.json" --after "$OUT/after.json" \
   > "$OUT/report.txt" 2>&1
 status=$?
 set -e
@@ -126,7 +126,7 @@ if [ "$status" -ne 1 ]; then
 fi
 
 set +e
-"$BAZEL" run //:check -- --before "$OUT/before.json" --after "$OUT/after.json" \
+"$BAZEL" run //:uika_check -- --before "$OUT/before.json" --after "$OUT/after.json" \
   --failOn never > /dev/null 2>&1
 clean_status=$?
 set -e
@@ -136,7 +136,7 @@ if [ "$clean_status" -ne 0 ]; then
 fi
 
 set +e
-"$BAZEL" run //:check_without_targets -- --before "$OUT/before.json" --after "$OUT/after.json" \
+"$BAZEL" run //:no_targets_check -- --before "$OUT/before.json" --after "$OUT/after.json" \
   > /dev/null 2>&1
 no_targets_status=$?
 set -e
@@ -148,7 +148,7 @@ fi
 # The same finding out of the materialized baseline. Its jars live outside Bazel's reach,
 # which is what a PR job needs once the lockfile change has taken the originals away.
 set +e
-"$BAZEL" run //:check -- --before "$OUT/before-materialized.json" --after "$OUT/after.json" \
+"$BAZEL" run //:uika_check -- --before "$OUT/before-materialized.json" --after "$OUT/after.json" \
   > "$OUT/materialized-report.txt" 2>&1
 materialized_status=$?
 set -e
@@ -164,7 +164,7 @@ echo "--- the CLI the rule wires in, with no UIKA_CLI_PATH at run time"
 # keeps this off the network (it symlinks the jar instead of downloading one), while the
 # binary's own environment has it blank and falls through to the @uika_cli jar.
 set +e
-UIKA_CLI_PATH= "$BAZEL" run --repo_env=UIKA_CLI_PATH="$UIKA_BIN" //:check -- \
+UIKA_CLI_PATH= "$BAZEL" run --repo_env=UIKA_CLI_PATH="$UIKA_BIN" //:uika_check -- \
   --before "$OUT/before.json" --after "$OUT/after.json" > "$OUT/repo-cli-report.txt" 2>&1
 repo_cli_status=$?
 set -e
@@ -193,7 +193,7 @@ EOF
 chmod +x "$STUB"
 
 # Default: the lowest declared release (11 from //app) reaches the CLI, paired with UIKA_JDK.
-UIKA_STUB_ARGS=$OUT/stub-args-default.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check -- \
+UIKA_STUB_ARGS=$OUT/stub-args-default.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:uika_check -- \
   --before "$OUT/before.json" --after "$OUT/after.json"
 if ! tr '\n' ' ' < "$OUT/stub-args-default.txt" | grep -q -- "--jdk-release 11 "; then
   echo "the default check should pass --jdk-release 11, got:" >&2
@@ -206,7 +206,7 @@ if [ ! -s "$OUT/stub-args-default.txt.jdk" ]; then
 fi
 
 # --jdkRelease 0 on the command line switches the layer off: no flag, no UIKA_JDK.
-UIKA_STUB_ARGS=$OUT/stub-args-zero.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check -- \
+UIKA_STUB_ARGS=$OUT/stub-args-zero.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:uika_check -- \
   --before "$OUT/before.json" --after "$OUT/after.json" --jdkRelease 0
 if grep -qx -- "--jdk-release" "$OUT/stub-args-zero.txt"; then
   echo "--jdkRelease 0 should omit --jdk-release, got:" >&2
@@ -219,11 +219,50 @@ if [ -s "$OUT/stub-args-zero.txt.jdk" ]; then
 fi
 
 # jdk_release = 0 on the rule means the same off switch.
-UIKA_STUB_ARGS=$OUT/stub-args-attr-zero.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check_layer_off -- \
+UIKA_STUB_ARGS=$OUT/stub-args-attr-zero.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:layer_off_check -- \
   --before "$OUT/before.json" --after "$OUT/after.json"
 if grep -qx -- "--jdk-release" "$OUT/stub-args-attr-zero.txt"; then
   echo "jdk_release = 0 on the rule should omit --jdk-release, got:" >&2
   cat "$OUT/stub-args-attr-zero.txt" >&2
+  exit 1
+fi
+
+# ...while the dumps of the same macro keep the derived releases, since JDK-move detection
+# must not go down with the layer.
+"$BAZEL" run //:layer_off_dump -- --output "$OUT/layer-off.json"
+python3 - "$OUT/layer-off.json" <<'EOF'
+import json, sys
+dump = json.load(open(sys.argv[1], encoding="utf-8"))
+releases = {m["module"]: m.get("jdkRelease") for m in dump["modules"]}
+if releases != {"//app:app": 11, "//lib:lib": 17} or dump.get("jdkRelease") != 11:
+    sys.exit("jdk_release = 0 should leave the dump's releases derived, got {} / {}".format(
+        dump.get("jdkRelease"), releases))
+EOF
+
+# One stated release reaches both sides: the dumps record it for every module, and the
+# check resolves against it.
+"$BAZEL" run //:runtime17_dump -- --output "$OUT/runtime17.json"
+"$BAZEL" run //:runtime17_baseline_dump -- --output "$OUT/runtime17-baseline.json"
+python3 - "$OUT/runtime17.json" "$OUT/runtime17-baseline.json" <<'EOF'
+import json, sys
+for path in sys.argv[1:]:
+    dump = json.load(open(path, encoding="utf-8"))
+    releases = {m["module"]: m.get("jdkRelease") for m in dump["modules"]}
+    if dump.get("jdkRelease") != 17 or set(releases.values()) != {17}:
+        sys.exit("jdk_release = 17 should reach {} and every module, got {} / {}".format(
+            path, dump.get("jdkRelease"), releases))
+EOF
+UIKA_STUB_ARGS=$OUT/stub-args-runtime17.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:runtime17_check -- \
+  --before "$OUT/before.json" --after "$OUT/after.json"
+if ! tr '\n' ' ' < "$OUT/stub-args-runtime17.txt" | grep -q -- "--jdk-release 17 "; then
+  echo "jdk_release = 17 should reach the check as --jdk-release 17, got:" >&2
+  cat "$OUT/stub-args-runtime17.txt" >&2
+  exit 1
+fi
+
+# Without targets there is nothing to dump, and an empty dump would pass every check.
+if "$BAZEL" query //:no_targets_dump > /dev/null 2>&1; then
+  echo "uika without targets should declare no dump" >&2
   exit 1
 fi
 
@@ -232,9 +271,9 @@ JFR=$OUT/jfr
 # The flag is printed by the check target rather than written out here, so this recipe
 # cannot drift from the format the converter expects. Printing it also creates the
 # directory, which JFR needs in place before any test JVM starts.
-jvmopt=$("$BAZEL" run //:check -- jfr-jvmopt "$JFR")
+jvmopt=$("$BAZEL" run //:uika_check -- jfr-jvmopt "$JFR")
 # Without a directory the recipe's default, uika/jfr under the workspace, is created too.
-case "$("$BAZEL" run //:check -- jfr-jvmopt)" in
+case "$("$BAZEL" run //:uika_check -- jfr-jvmopt)" in
   --jvmopt=*uika/jfr*) ;;
   *)
     echo "jfr-jvmopt without a directory should record into uika/jfr" >&2
@@ -251,7 +290,7 @@ fi
 "$BAZEL" test //app:load_test --nocache_test_results --sandbox_writable_path="$JFR" "$jvmopt"
 
 set +e
-"$BAZEL" run //:check -- --before "$OUT/before.json" --after "$OUT/after.json" \
+"$BAZEL" run //:uika_check -- --before "$OUT/before.json" --after "$OUT/after.json" \
   --jfr "$JFR" --failOn reachable > "$OUT/jfr-report.txt" 2>&1
 jfr_status=$?
 set -e
@@ -268,7 +307,7 @@ python3 "$RULES/it/assert_jfr.py" "$OUT/jfr-report.txt"
 # evidence with no symptom at all.
 rec="$(find "$JFR" -name '*.jfr' | head -1)"
 set +e
-"$BAZEL" run //:check -- --before "$OUT/before.json" --after "$OUT/after.json" \
+"$BAZEL" run //:uika_check -- --before "$OUT/before.json" --after "$OUT/after.json" \
   --classLoadLog "$rec" --failOn reachable > "$OUT/cll-jfr-report.txt" 2>&1
 cll_status=$?
 set -e
@@ -291,7 +330,7 @@ python3 "$RULES/it/assert_jfr.py" "$OUT/cll-jfr-report.txt"
 # value, or a text log.
 for bad in "$rec" "$OUT/jfr-report.txt"; do
   set +e
-  "$BAZEL" run //:check -- jfr-jvmopt "$bad" > "$OUT/jvmopt-guard.txt" 2>&1
+  "$BAZEL" run //:uika_check -- jfr-jvmopt "$bad" > "$OUT/jvmopt-guard.txt" 2>&1
   guard=$?
   set -e
   if [ "$guard" -eq 0 ]; then
@@ -397,7 +436,7 @@ assert_check_rejects() {
   expected=$2
   shift 2
   set +e
-  UIKA_CLI_PATH=$STUB "$BAZEL" run //:check -- "$@" > "$OUT/arg-guard.txt" 2>&1
+  UIKA_CLI_PATH=$STUB "$BAZEL" run //:uika_check -- "$@" > "$OUT/arg-guard.txt" 2>&1
   guard_status=$?
   set -e
   if [ "$guard_status" -eq 0 ]; then
@@ -427,7 +466,7 @@ assert_check_rejects "a run without any argument" "usage:"
 # ...but a blank --failOn is UNSET, not an error. Every other integration drops it, and so
 # does this binary's own rule-attribute path, so rejecting it would make Bazel the one tool
 # where `--failOn "$UIKA_FAIL_ON"` with the variable unset fails the build.
-UIKA_STUB_ARGS=$OUT/stub-args-blank-failon.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check -- \
+UIKA_STUB_ARGS=$OUT/stub-args-blank-failon.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:uika_check -- \
   --before "$OUT/before.json" --after "$OUT/after.json" --failOn ""
 if grep -qx -- "--fail-on" "$OUT/stub-args-blank-failon.txt"; then
   echo "a blank --failOn should be dropped, not forwarded:" >&2
@@ -445,7 +484,7 @@ NOT_EXECUTABLE=$WORK/stub-cli-no-x
 cp "$STUB" "$NOT_EXECUTABLE"
 chmod -x "$NOT_EXECUTABLE"
 set +e
-UIKA_CLI_PATH=$NOT_EXECUTABLE "$BAZEL" run //:check -- \
+UIKA_CLI_PATH=$NOT_EXECUTABLE "$BAZEL" run //:uika_check -- \
   --before "$OUT/before.json" --after "$OUT/after.json" > "$OUT/cli-path-guard.txt" 2>&1
 cli_path_status=$?
 set -e
@@ -470,21 +509,21 @@ if grep -qx -- "--merged-classpath" "$OUT/stub-args-default.txt"; then
   cat "$OUT/stub-args-default.txt" >&2
   exit 1
 fi
-UIKA_STUB_ARGS=$OUT/stub-args-merged.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check_merged -- \
+UIKA_STUB_ARGS=$OUT/stub-args-merged.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:merged_check -- \
   --before "$OUT/before.json" --after "$OUT/after.json"
 if ! grep -qx -- "--merged-classpath" "$OUT/stub-args-merged.txt"; then
   echo "merged_classpath = True did not reach the CLI:" >&2
   cat "$OUT/stub-args-merged.txt" >&2
   exit 1
 fi
-UIKA_STUB_ARGS=$OUT/stub-args-unmerged.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check_merged -- \
+UIKA_STUB_ARGS=$OUT/stub-args-unmerged.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:merged_check -- \
   --before "$OUT/before.json" --after "$OUT/after.json" --noMergedClasspath
 if grep -qx -- "--merged-classpath" "$OUT/stub-args-unmerged.txt"; then
   echo "--noMergedClasspath did not override the attribute:" >&2
   cat "$OUT/stub-args-unmerged.txt" >&2
   exit 1
 fi
-UIKA_STUB_ARGS=$OUT/stub-args-flag-merged.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check -- \
+UIKA_STUB_ARGS=$OUT/stub-args-flag-merged.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:uika_check -- \
   --before "$OUT/before.json" --after "$OUT/after.json" --mergedClasspath
 if ! grep -qx -- "--merged-classpath" "$OUT/stub-args-flag-merged.txt"; then
   echo "--mergedClasspath did not reach the CLI:" >&2
@@ -501,7 +540,7 @@ echo "--- exclude_files reaches the CLI"
 : > "$WS/excludes-b.toml"
 : > "$WS/excludes-c.toml"
 # --draftExcludeFile rides along: the other relative file knob, resolved the same way.
-UIKA_STUB_ARGS=$OUT/stub-args-excludes.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:check_with_excludes -- \
+UIKA_STUB_ARGS=$OUT/stub-args-excludes.txt UIKA_CLI_PATH=$STUB "$BAZEL" run //:excludes_check -- \
   --before "$OUT/before.json" --after "$OUT/after.json" --excludeFile excludes-c.toml \
   --draftExcludeFile draft-excludes.toml
 for toml in excludes-a excludes-b excludes-c draft-excludes; do
@@ -531,66 +570,44 @@ echo "--- jdk_release type guard"
 # as -Duika.jdkRelease=seventeen, and Integer.getInteger answers its default for anything
 # unparseable, so the build succeeded and the release was silently derived. Same package
 # trick as the comma guard below: added after the //... sweep so the sweep never loads it.
-# Both macros, because a guard on one is invisible to a test of the other, and the
-# numeric-string spelling, which has always worked and which Gradle and the Clojure tool
-# both accept for the same knob.
+# Also the numeric-string spelling, which has always worked and which Gradle and the
+# Clojure tool both accept for the same knob.
 mkdir -p badrelease goodrelease
 cat > badrelease/BUILD.bazel <<'EOF'
-load("@uika//:defs.bzl", "uika_dump", "uika_upgrade_check")
+load("@uika//:defs.bzl", "uika")
 
-uika_upgrade_check(
+uika(
     name = "bad",
-    jdk_release = "seventeen",
-)
-
-uika_dump(
-    name = "bad_dump",
-    targets = [],
     jdk_release = "seventeen",
 )
 EOF
 cat > goodrelease/BUILD.bazel <<'EOF'
-load("@uika//:defs.bzl", "uika_upgrade_check")
+load("@uika//:defs.bzl", "uika")
 
-uika_upgrade_check(
+uika(
     name = "quoted",
     jdk_release = "17",
 )
 EOF
 set +e
-"$BAZEL" build //badrelease:bad > "$OUT/release-guard.txt" 2>&1
+"$BAZEL" build //badrelease:bad_check > "$OUT/release-guard.txt" 2>&1
 release_guard_status=$?
 set -e
+rm -rf badrelease
 if [ "$release_guard_status" -eq 0 ]; then
   echo "a non-numeric jdk_release should fail the load" >&2
   cat "$OUT/release-guard.txt" >&2
   exit 1
 fi
-if ! grep -q "jdk_release wants a whole number" "$OUT/release-guard.txt"; then
+if ! grep -q 'uika(name = "bad"): jdk_release wants a whole number' "$OUT/release-guard.txt"; then
   echo "expected the uika jdk_release message:" >&2
   cat "$OUT/release-guard.txt" >&2
   exit 1
 fi
-# The guard must reject the string on BOTH macros, not just the one that happened to be
-# tested first: deleting either call has to fail this.
-if ! grep -q "uika_dump(name = " "$OUT/release-guard.txt"; then
-  sed -i.bak '/uika_upgrade_check(/,/^)$/d' badrelease/BUILD.bazel && rm -f badrelease/BUILD.bazel.bak
-  set +e
-  "$BAZEL" build //badrelease:bad_dump > "$OUT/release-guard-dump.txt" 2>&1
-  dump_guard_status=$?
-  set -e
-  if [ "$dump_guard_status" -eq 0 ] ||
-     ! grep -q "uika_dump(name = " "$OUT/release-guard-dump.txt"; then
-    echo "uika_dump did not reject a non-numeric jdk_release:" >&2
-    cat "$OUT/release-guard-dump.txt" >&2
-    exit 1
-  fi
-fi
-rm -rf badrelease
 
 # A quoted number has always worked, and Gradle and the Clojure tool both take one, so the
 # guard must not have made Bazel the strict outlier.
-"$BAZEL" build //goodrelease:quoted > "$OUT/release-quoted.txt" 2>&1 || {
+"$BAZEL" build //goodrelease:quoted_check > "$OUT/release-quoted.txt" 2>&1 || {
   echo "a quoted numeric jdk_release must still load:" >&2
   cat "$OUT/release-quoted.txt" >&2
   rm -rf goodrelease
@@ -605,15 +622,15 @@ echo "--- exclude_files comma guard"
 # the //... sweep above so the sweep never loads it.
 mkdir -p badcheck
 cat > badcheck/BUILD.bazel <<'EOF'
-load("@uika//:defs.bzl", "uika_upgrade_check")
+load("@uika//:defs.bzl", "uika")
 
-uika_upgrade_check(
+uika(
     name = "bad",
     exclude_files = ["ex,cludes.toml"],
 )
 EOF
 set +e
-"$BAZEL" build //badcheck:bad > "$OUT/comma-guard.txt" 2>&1
+"$BAZEL" build //badcheck:bad_check > "$OUT/comma-guard.txt" 2>&1
 guard_status=$?
 set -e
 rm -rf badcheck

@@ -113,7 +113,7 @@ final class DocPageContractTest {
     void everyBazelParameterIsOnTheBazelPage() throws IOException {
         String source = read("bazel-rules/defs.bzl");
         var parameters = new LinkedHashSet<String>();
-        var macro = Pattern.compile("def (?:uika_dump|uika_upgrade_check)\\(([^)]*)\\)", Pattern.DOTALL).matcher(source);
+        var macro = Pattern.compile("def uika\\(([^)]*)\\)", Pattern.DOTALL).matcher(source);
         while (macro.find()) {
             parameters.addAll(scrape(macro.group(1), "\\b([a-z_]+) ?="));
         }

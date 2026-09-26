@@ -64,7 +64,8 @@ Some options exist in a few tools only:
   baseline dump written on another machine, fetching the JARs it names through
   the build's own repositories.
 - Gradle and Bazel: the dump builds the modules' outputs, and a baseline dump
-  skips that with `-PuikaBuildOutputs=false` or `build_outputs = False`.
+  skips that with `-PuikaBuildOutputs=false` or the `:<name>_baseline_dump`
+  target.
 - Maven, Leiningen and the Clojure CLI: the JFR collection flag goes on the test
   JVM by hand. Gradle and sbt add it themselves, Mill through its test-module
   mixin, and Bazel prints it.
