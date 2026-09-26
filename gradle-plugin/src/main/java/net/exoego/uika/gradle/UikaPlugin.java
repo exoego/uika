@@ -396,7 +396,7 @@ public class UikaPlugin implements Plugin<Project> {
                         task.getOutputs().upToDateWhen(t -> false);
                         task.getOutputFile().convention(
                                 p.getLayout().getBuildDirectory().file("uika/module-classpath.json"));
-                        task.getConfigurationName().convention(configurationName);
+                        task.configurationName().set(configurationName);
                         task.getModulePath().set(p.getPath());
                         task.getEmptyDump().convention(false);
                         // Build the outputs the dump refers to (project dependencies'
@@ -417,7 +417,7 @@ public class UikaPlugin implements Plugin<Project> {
                             }
                             var dependencies = new java.util.ArrayList<>();
                             var conf = p.getConfigurations().findByName(
-                                    task.getConfigurationName().get());
+                                    task.configurationName().get());
                             if (conf != null && conf.isCanBeResolved()) {
                                 dependencies.add(elementsView(p, conf, LibraryElements.CLASSES).getArtifactFiles());
                                 dependencies.add(elementsView(p, conf, LibraryElements.RESOURCES).getArtifactFiles());
@@ -430,12 +430,12 @@ public class UikaPlugin implements Plugin<Project> {
                         }));
                     });
             // Wire the module's state in once every project is evaluated, so the java
-            // plugin, any build-script configuration (the uika extension, configurationName),
+            // plugin, any build-script configuration (the uika extension),
             // and the dependency projects' outgoing variants are all settled. The lenient
             // artifact views list a project dependency's directories even when they have
             // not been built (the CLI falls back to the producing module's classesDirs).
             p.getGradle().projectsEvaluated(gradle -> moduleTask.configure(task -> {
-                var confName = task.getConfigurationName().get();
+                var confName = task.configurationName().get();
                 var conf = p.getConfigurations().findByName(confName);
                 var javaExt =
                         p.getExtensions().findByType(JavaPluginExtension.class);
@@ -556,9 +556,7 @@ public class UikaPlugin implements Plugin<Project> {
         if (conf == null) {
             return "uika: project " + p.getPath() + " has no configuration \"" + name
                     + "\". The uika extension's configuration (or -PuikaConfiguration) must"
-                    + " name one every module resolves, or"
-                    + " override configurationName on that module's"
-                    + " uikaDumpModuleClasspath task.";
+                    + " name one every module resolves.";
         }
         if (!conf.isCanBeResolved()) {
             return "uika: configuration \"" + name + "\" of project " + p.getPath()

@@ -209,9 +209,8 @@ The settings of the `uika {}` block, each with its `-P` form:
   cannot resolve contributes no artifacts, which would leave that module in the
   dump with an empty classpath and nothing to check, so the dump task fails
   naming the project instead. Only the dump fails, and only for a project the
-  java plugin touches. For a build where the name exists on some modules only,
-  set `configurationName` on the others' `uikaDumpModuleClasspath` task, the
-  one per-module setting.
+  java plugin touches. The setting is build-wide, so it has to name a
+  configuration every such module has.
 - `buildOutputs` (`-PuikaBuildOutputs=false`) builds the module outputs before
   dumping, default true.
 - `cliVersion` (`-PuikaCliVersion=`) is the uika-cli version to fetch, default
