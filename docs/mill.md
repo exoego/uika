@@ -21,11 +21,13 @@ object uika extends net.exoego.uika.mill.UikaModule {
 
 An empty `object uika extends net.exoego.uika.mill.UikaModule` works too. Every
 setting has a default. In a `build.mill.yaml` build the plugin goes under
-`mill-build:`, and the settings are keys of the object:
+`mill-build:`, and the settings are keys of the object. A complete Java project:
 
 ```yaml
+mill-version: 1.1.8
 mill-build:
   mvnDeps: ["net.exoego.uika::mill-uika::VERSION_PLACEHOLDER"]
+extends: JavaModule
 
 object uika:
   extends: net.exoego.uika.mill.UikaModule
