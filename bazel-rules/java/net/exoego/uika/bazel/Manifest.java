@@ -13,6 +13,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
@@ -237,6 +238,43 @@ final class Manifest {
             }
         }
         return new ArrayList<>(roots);
+    }
+
+    /** A main's work, answering the exit code the process should end with. */
+    interface Body {
+        int run() throws IOException, InterruptedException;
+    }
+
+    /** Runs a main's work and exits with {@link #exitCode}. */
+    static void runMain(Body body) throws InterruptedException {
+        int code = exitCode(body, System.err::println);
+        // Returning already exits 0, and JaCoCo counts a call that never returns as missed.
+        if (code != 0) {
+            System.exit(code);
+        }
+    }
+
+    /**
+     * The exit code of {@code body}, with a usage or I/O error reported as one line and 2, the
+     * CLI's code for an error. Left to the JVM it was a stack trace and exit 1, which a CI step
+     * reads as violations found.
+     */
+    static int exitCode(Body body, Consumer<String> err) throws InterruptedException {
+        try {
+            return body.run();
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            err.accept("uika: " + e.getMessage());
+        } catch (IOException e) {
+            err.accept("uika: " + describe(e));
+        } catch (UncheckedIOException e) {
+            err.accept("uika: " + describe(e.getCause()));
+        }
+        return 2;
+    }
+
+    /** With the class name, since NoSuchFileException and its kin carry only a path. */
+    private static String describe(IOException e) {
+        return e.getClass().getSimpleName() + ": " + e.getMessage();
     }
 
     /**

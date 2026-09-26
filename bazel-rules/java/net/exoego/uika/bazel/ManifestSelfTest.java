@@ -7,9 +7,12 @@ import net.exoego.uika.plugin.core.JfrEvidence;
 import net.exoego.uika.plugin.core.UikaCli;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.function.Function;
@@ -31,7 +34,7 @@ public final class ManifestSelfTest {
     private static int failures;
     private static int checks;
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws IOException, InterruptedException {
         parsesModulesWithReleasesAndDeps();
         overrideReplacesEveryModulesRelease();
         emptyManifestIsNoModules();
@@ -50,11 +53,12 @@ public final class ManifestSelfTest {
         materializeReplacesAStaleCopy();
         materializeCopiesWhereItCannotLink();
         theMainsRefuseToRunWithoutTheirRuleProperties();
+        mistakesExitTwoWithOneLine();
 
         // A floor, not a total: `failures` counts only what FAILED, so a deleted call in
         // main or an early return inside a method would otherwise be a silent pass. The
         // class-file floor guard next door fails on an empty sweep for the same reason.
-        var expected = 81;
+        var expected = 87;
         if (checks < expected) {
             System.err.println("only " + checks + " checks ran, expected at least " + expected);
             System.exit(1);
@@ -488,6 +492,34 @@ public final class ManifestSelfTest {
         check(noManifest != null && noManifest.getMessage().contains("missing -Duika.manifest")
                         && noManifest.getMessage().contains("uika_dump"),
                 "the missing property and its rule should be named: " + noManifest);
+    }
+
+    /**
+     * Every main runs through {@link Manifest#exitCode}, so a mistake exits 2, the CLI's code
+     * for an error, with one line naming it. The integration test covers the mains end to end.
+     */
+    private static void mistakesExitTwoWithOneLine() throws InterruptedException {
+        var lines = new ArrayList<String>();
+        check(Manifest.exitCode(() -> 1, lines::add) == 1 && lines.isEmpty(),
+                "the body's own exit code should pass through untouched");
+        check(Manifest.exitCode(() -> {
+            throw new IllegalArgumentException("unknown argument: --bogus");
+        }, lines::add) == 2, "a usage error should exit 2");
+        check(Manifest.exitCode(() -> {
+            throw new IllegalStateException("UIKA_CLI_PATH does not name a file: /nope");
+        }, lines::add) == 2, "a bad environment should exit 2");
+        check(Manifest.exitCode(() -> {
+            throw new NoSuchFileException("/no/such.json");
+        }, lines::add) == 2, "an I/O error should exit 2");
+        check(Manifest.exitCode(() -> {
+            throw new UncheckedIOException(new NoSuchFileException("/no/such.jar"));
+        }, lines::add) == 2, "a wrapped I/O error should exit 2");
+        check(List.of(
+                        "uika: unknown argument: --bogus",
+                        "uika: UIKA_CLI_PATH does not name a file: /nope",
+                        "uika: NoSuchFileException: /no/such.json",
+                        "uika: NoSuchFileException: /no/such.jar").equals(lines),
+                "each error should be one line, an I/O one naming its class: " + lines);
     }
 
     private static List<Module> parse(String manifest, Integer override) throws IOException {
