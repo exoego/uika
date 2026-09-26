@@ -34,11 +34,12 @@ is taken from the tool's own coordinate in the runtime basis, so the one
 `:mvn/version` in the alias pins the tool and the CLI together;
 `:cli-version` and `UIKA_CLI_VERSION` override it, in that order.
 
-One Clojure-specific caveat. Interop calls without type hints go through
-runtime reflection and leave no reference in the constant pool, so uika sees
-the Java dependencies on the classpath at full strength but only the
-type-hinted, AOT-compiled part of the Clojure code itself; point `:class-dir`
-at the tools.build `compile-clj` output to include it.
+AOT-compile your namespaces before the dump. uika checks class files, so
+Clojure code that is only source on the classpath is invisible to it. Run the
+tools.build `compile-clj` and point `:class-dir` at its output. Interop calls
+without type hints go through runtime reflection and leave no reference in the
+class file either, so set `*warn-on-reflection*` and hint the calls you want
+checked.
 
 ## PR gate on GitHub Actions
 
@@ -193,9 +194,8 @@ Leiningen plugin's spellings: it says `:exclude-files` and `:class-load-logs`
 where this tool says `:exclude-file` and `:class-load-log`.
 
 - [`:fail-on`](../README.md#violation-tiers-and-the-failon-threshold) is `never`,
-  `reachable` or `any`. Reachability walks class files only, so Clojure code that
-  is not AOT-compiled roots nothing. A break used only from such code is ⚠️ and
-  passes `reachable`, so keep the default `any` for that code.
+  `reachable` or `any`. `reachable` needs the AOT output in the dump. Without
+  it your namespaces root nothing, and a break used only from them passes.
 - [`:exclude-file`](../README.md#excluding-known-false-positives)
   takes one path or a vector of paths.
 - There is no module model to read a compile target from, so

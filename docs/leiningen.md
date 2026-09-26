@@ -5,6 +5,8 @@ One of uika's [build-tool integrations](build-tools.md).
 ```clojure
 ;; project.clj
 :plugins [[net.exoego.uika/lein-uika "VERSION_PLACEHOLDER"]]
+;; uika checks class files, so AOT-compile your namespaces.
+:aot :all
 ;; Optional: suppress known false positives.
 :uika {:exclude-files ["uika-exclude.toml"]}
 ```
@@ -26,9 +28,10 @@ CLI became a jar, fails naming the variable.
 The dump excludes what only development pulls in (the `:base`/`:system`/`:user`/`:dev`
 profiles, so no nREPL, and `:provided`, which an uberjar leaves out) and runs the
 project's `:prep-tasks` first, so both `:aot` classes and `:java-source-paths` output
-are scanned. The [reflection caveat](clojure.md) of the Clojure code itself applies
-here too; `:class-dir` does not, because the dump takes its class directories
-from `:compile-path` and the project's own source and resource paths.
+are scanned. uika checks class files, so set `:aot :all` (or list your
+namespaces). A namespace left out of `:aot` is invisible to it. Interop calls
+without type hints leave no reference in the class file either, so set
+`:global-vars {*warn-on-reflection* true}` and hint the calls you want checked.
 
 ## PR gate on GitHub Actions
 
@@ -182,9 +185,8 @@ $ lein update-in :uika assoc :fail-on '"never"' -- uika upgrade-check /tmp/befor
 ```
 
 - [`:fail-on`](../README.md#violation-tiers-and-the-failon-threshold) is `"never"`,
-  `"reachable"` or `"any"`. Reachability walks class files only, so a namespace
-  that is not in `:aot` roots nothing. A break used only from such code is ⚠️ and
-  passes `"reachable"`, so keep the default `"any"` for that code.
+  `"reachable"` or `"any"`. `"reachable"` needs your namespaces in `:aot`. A
+  namespace left out roots nothing, and a break used only from it passes.
 - [`:exclude-files`](../README.md#excluding-known-false-positives)
   takes a vector of paths.
 - [`:jdk-release`](build-tools.md#jdkrelease) defaults to the release
