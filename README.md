@@ -92,12 +92,13 @@ When application roots are known (build outputs in the dump), they are ranked:
 reachable first, then the ones no static path reaches.
 
 ```console
-dependency changes: 1
+dependency changes: 2
     CHANGED io.opentelemetry:opentelemetry-sdk-common 1.42.1 -> 1.60.1
+    CHANGED org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm 1.7.1 -> 1.11.0
 
-per-module check: 2 of 41 modules changed their resolved versions (39 unchanged)
-    :app  scanned 84013 classes, ❌ 42 broken, ❓ 118 unverified
-    :worker  scanned 61200 classes, ✅ 0 broken, ❓ 87 unverified
+per-module check: 2 of 3 modules changed their resolved versions (1 unchanged)
+    :app  scanned 2303 classes, ❌ 2 broken, ❓ 50 unverified
+    :worker  scanned 75 classes, ✅ 0 broken, 0 unverified
 
 --------------------------------------------------------------------------------
 💥 reachable from the application (likely to break)
@@ -106,17 +107,18 @@ per-module check: 2 of 41 modules changed their resolved versions (39 unchanged)
 💡 suggestion: align all io.opentelemetry artifacts to one version (e.g. via the matching BOM); otherwise upgrade io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1 to a release built against io.opentelemetry:opentelemetry-sdk-common 1.60.1, or pin io.opentelemetry:opentelemetry-sdk-common to 1.42.1
     affected modules: :app
     why: io.opentelemetry:opentelemetry-sdk-common changed 1.42.1 -> 1.60.1, which breaks io.opentelemetry:opentelemetry-exporter-sender-okhttp:1.42.1:
-        io.opentelemetry.sdk.internal.DaemonThreadFactory was removed, but io.opentelemetry.exporter.sender.okhttp.internal.OkHttpGrpcSender still uses it
         io.opentelemetry.sdk.internal.DaemonThreadFactory was removed, but io.opentelemetry.exporter.sender.okhttp.internal.OkHttpUtil still uses it
 
 --------------------------------------------------------------------------------
 ⚠️  not proven reachable (no static path found; may still load via reflection)
 --------------------------------------------------------------------------------
 
-💡 suggestion: ...
-    why: ...
+💡 suggestion: upgrade io.ktor:ktor-io-jvm:2.3.13 to a release built against org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm 1.11.0, or pin org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm to 1.7.1
+    affected modules: :app
+    why: org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm changed 1.7.1 -> 1.11.0, which breaks io.ktor:ktor-io-jvm:2.3.13:
+        kotlinx.coroutines.EventLoopKt.processNextEventInCurrentThread() was removed, but io.ktor.utils.io.jvm.javaio.BlockingAdapter still calls it
 
-scanned 145213 classes: ❌ 42 broken (of which 💥 25 reachable, ⚠️ 17 not proven reachable), ❓ 205 unverified references (hierarchy escapes the analyzed scope)
+scanned 2378 classes: ❌ 2 broken (of which 💥 1 reachable, ⚠️ 1 not proven reachable), ❓ 50 unverified references (hierarchy escapes the analyzed scope)
 ```
 
 ### Per-module checking
