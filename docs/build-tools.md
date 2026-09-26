@@ -110,9 +110,16 @@ with the setting, or set 0 to disable it.
 Each dump also records the release next to every module it lists, read the same
 way. That is what lets a check notice the application's own JDK moved
 between the two dumps and check that move too, scoped to the modules that made
-it. A module left on an older release is never checked against a sibling's
-upgrade, and a module that declares no target is recorded as running on the
-build's own JVM, which is what it compiles against.
+it. A module that declares a release is never checked against a sibling's
+upgrade.
+
+A module that declares no release is handled per tool. Gradle, Bazel, the
+Clojure CLI and Leiningen record the release of the toolchain or JVM that
+compiles it. sbt, Maven and Mill record nothing, and the check then gives it the
+lowest release another module declares, or the build's own JVM when no module
+declares one. So in those three, such a module moves with its siblings, and a
+move of the build's JDK is not checked for it while any module declares a
+release. Declare a release in every module, or use the override below.
 
 The derivation only sees what the build declares, so a project that compiles
 `--release 11` and ships on a 21 runtime looks unchanged when that runtime
