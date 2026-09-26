@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -16,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -108,9 +110,36 @@ class InputTest {
         }
     };
 
+    /** Throws on the class named Fail, where a class file that cannot be read would end its batch. */
+    private static final Input.Sink<List<Seen>> FAIL_ON_FAIL = new Input.Sink<>() {
+        @Override
+        public List<Seen> newLeaf() {
+            return new ArrayList<>();
+        }
+
+        @Override
+        public void accept(List<Seen> leaf, Scratch scratch, int source, int entry, ClassSource bytes) {
+            if (Intern.str(entry).equals("Fail")) {
+                throw new UikaException("failed on purpose");
+            }
+            COLLECT.accept(leaf, scratch, source, entry, bytes);
+        }
+    };
+
     private static List<Seen> stream(String path, Input.Prepared prepared) {
         List<List<Seen>> leaves = new ArrayList<>();
         Input.onPool(() -> Input.forEachClass(path, prepared, COLLECT, leaves));
+        return Input.concat(leaves);
+    }
+
+    /** Scans one directory the way pass 1 does, not through the lane task. */
+    private static List<Seen> streamLikePass1(String path, Input.Sink<List<Seen>> sink) {
+        Input.DirectoryScan<List<Seen>> scan = new Input.DirectoryScan<>(sink);
+        List<List<Seen>> leaves = new ArrayList<>();
+        Input.onPool(() -> {
+            scan.start();
+            scan.finish(scan.add(path, leaves));
+        });
         return Input.concat(leaves);
     }
 
@@ -771,6 +800,38 @@ class InputTest {
         }
         java.util.Collections.sort(ran);
         assertEquals(List.of("Fail", "Hold"), ran);
+    }
+
+    /** Pass 1 joins each directory on its own, and a failed walk or batch must fail that join, not come back empty. */
+    @Test
+    void aFailedWalkOrBatchFailsItsDirectoryInPass1() throws Exception {
+        // Removed after the target list was read, as a concurrent clean would do.
+        Path gone = dir.resolve("gone");
+        UikaException walk = assertThrows(UikaException.class, () -> streamLikePass1(gone.toString(), COLLECT));
+        assertEquals("cannot read " + gone + ": No such file or directory", walk.getMessage());
+
+        Path classes = Files.createDirectories(dir.resolve("classes"));
+        Files.write(classes.resolve("Fail.class"), classLike("fail"));
+        Files.write(classes.resolve("Keep.class"), classLike("keep"));
+        assertEquals(List.of("Fail", "Keep"), entriesOf(streamLikePass1(classes.toString(), COLLECT)));
+        UikaException batch = assertThrows(UikaException.class, () -> streamLikePass1(classes.toString(), FAIL_ON_FAIL));
+        assertEquals("failed on purpose", batch.getMessage());
+    }
+
+    /** A directory added after the scan failed must fail too. No lane runs again, so its join would wait forever. */
+    @Test
+    void aDirectoryAddedAfterAFailureFailsInsteadOfHanging() throws Exception {
+        Path first = Files.createDirectories(dir.resolve("first"));
+        Files.write(first.resolve("Fail.class"), classLike("fail"));
+        Path later = Files.createDirectories(dir.resolve("later"));
+        Files.write(later.resolve("Later.class"), classLike("later"));
+        Input.DirectoryScan<List<Seen>> scan = new Input.DirectoryScan<>(FAIL_ON_FAIL);
+        assertTimeoutPreemptively(Duration.ofSeconds(10), () -> Input.onPool(() -> {
+            scan.start();
+            assertThrows(UikaException.class, () -> scan.finish(scan.add(first.toString(), new ArrayList<>())));
+            UikaException again = assertThrows(UikaException.class, () -> scan.finish(scan.add(later.toString(), new ArrayList<>())));
+            assertEquals("failed on purpose", again.getMessage());
+        }));
     }
 
     @Test

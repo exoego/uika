@@ -515,6 +515,11 @@ final class Input {
         Root<L> add(String path, List<L> out) {
             Root<L> root = new Root<>(out);
             synchronized (roots) {
+                // No lane starts after a failure, so a walk queued now would never end.
+                if (completion.isCompletedAbnormally()) {
+                    root.done.completeExceptionally(completion.getException());
+                    return root;
+                }
                 roots.add(root);
             }
             int source = Intern.intern(path);
@@ -570,12 +575,10 @@ final class Input {
         private void submit(Root<L> root, Runnable item) {
             outstanding.incrementAndGet();
             queued.incrementAndGet();
+            // Not in a finally, so a root whose item failed can only end through failAll, exceptionally.
             queue.add(() -> {
-                try {
-                    item.run();
-                } finally {
-                    root.itemDone();
-                }
+                item.run();
+                root.itemDone();
             });
             if (started) {
                 spawnLanes();
@@ -627,20 +630,18 @@ final class Input {
         private void walkRoot(Root<L> root, Path dir, int source) {
             List<Path> files = new ArrayList<>(BATCH);
             List<String> names = new ArrayList<>(BATCH);
-            try {
-                walk(root, dir, "", files, names, source);
-            } catch (IOException e) {
-                throw new UikaException(UikaException.describe(e));
-            }
+            walk(root, dir, "", files, names, source);
             flush(root, files, names, source);
         }
 
-        private void walk(Root<L> root, Path dir, String prefix, List<Path> files, List<String> names, int source) throws IOException {
+        private void walk(Root<L> root, Path dir, String prefix, List<Path> files, List<String> names, int source) {
             List<String> entries = new ArrayList<>();
             try (java.nio.file.DirectoryStream<Path> stream = Files.newDirectoryStream(dir)) {
                 for (Path entry : stream) {
                     entries.add(entry.getFileName().toString());
                 }
+            } catch (IOException e) {
+                throw new UikaException("cannot read " + dir, e);
             }
             Collections.sort(entries);
             List<String> others = new ArrayList<>();
@@ -697,7 +698,7 @@ final class Input {
                     if (Files.isSymbolicLink(files[k]) || Files.isDirectory(files[k])) {
                         continue;
                     }
-                    throw new UikaException(UikaException.describe(e));
+                    throw new UikaException("cannot read " + files[k], e);
                 }
                 if (hasClassMagic(scratch.classBytes, length)) {
                     String name = names[k];
