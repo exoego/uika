@@ -28,6 +28,14 @@ object UikaPlugin extends AutoPlugin {
 
   import autoImport._
 
+  // What a module that declares no release compiles for: the JDK sbt forks javac from when
+  // javaHome names one, else the JVM running sbt. None when javaHome names a JDK whose
+  // release cannot be read, since guessing the build JVM there could over-claim.
+  private def compilerRelease(javaHome: Option[File]): Option[Integer] = javaHome match {
+    case Some(home) => Option(UikaCli.installedRelease(home.toPath))
+    case None => Some(Int.box(DumpFormat.buildJvmRelease()))
+  }
+
   override def buildSettings: Seq[Setting[_]] = Seq(
     uikaOutput := baseDirectory.value / "target" / "uika" / "classpath.json",
     // Implementation-Version is written by build.sbt packageOptions; empty when the plugin
@@ -88,7 +96,7 @@ object UikaPlugin extends AutoPlugin {
       // The LOWEST release any subproject compiles for, because one flag serves a run that
       // checks every module. Under-claiming only costs Unknowns, while over-claiming makes a
       // member the runtime lacks resolve cleanly and loses the finding with nothing to show.
-      // A build declaring nothing falls back to the JVM, the only evidence left. The dump
+      // A project declaring nothing compiles for the JDK that compiles it. The dump
       // keeps each module's own release next to it (uikaModuleClasspath below); the flag
       // stays one value because the layer it switches on is process-wide.
       //
@@ -107,13 +115,19 @@ object UikaPlugin extends AutoPlugin {
         ++ scalacOptions.all(ScopeFilter(inAnyProject)).value
         ++ scalacOptions.all(ScopeFilter(inAnyProject, inConfigurations(Compile))).value)
         .flatMap(options => Option(UikaCli.declaredRelease(options.asJava)).map(_.intValue))
+      // Every project's compiling JDK joins the minimum. For a project that declares a
+      // release it changes nothing, since a JDK cannot compile for a release newer than
+      // itself, so it only moves the result when javaHome names an older JDK. The Compile
+      // axis alone, because it delegates to the project axis the way sbt's compilers read it.
+      val compilers = javaHome.all(ScopeFilter(inAnyProject, inConfigurations(Compile))).value
+        .flatMap(home => compilerRelease(home).map(_.intValue))
       // LocalRootProject scope for the same reason uikaJfr uses it below: read bare, a
       // buildSettings task sees ThisBuild only, and a root-scoped override in build.sbt would
       // be silently replaced by the derived value.
       val wantedRelease = (LocalRootProject / uikaJdkRelease).value match {
         case explicit if explicit >= 0 => explicit
-        case _ if declared.isEmpty => java.lang.Runtime.version().feature()
-        case _ => declared.min
+        case _ if declared.isEmpty && compilers.isEmpty => java.lang.Runtime.version().feature()
+        case _ => (declared ++ compilers).min
       }
       val jdkRelease = UikaCli.effectiveJdkRelease(wantedRelease, jdk, (line: String) => log.info(line))
       // LocalRootProject scope, not bare: this task lives in buildSettings, and a bare
@@ -300,7 +314,7 @@ object UikaPlugin extends AutoPlugin {
         classDirs.asJava,
         (internalArtifacts ++ artifacts ++ unmanagedArtifacts).asJava,
         if (declaredOverride != null) declaredOverride
-        else if (declared.isEmpty) null
+        else if (declared.isEmpty) compilerRelease((Compile / javaHome).value).orNull
         else declared.minBy(_.intValue)
       )
     },
