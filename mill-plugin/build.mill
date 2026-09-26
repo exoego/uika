@@ -112,7 +112,7 @@ object `package` extends ScalaModule, PublishModule {
     )
 
     // scoverage sees almost none of this module: Mill's task bodies are inline macros, and
-    // Scala 3 does not instrument inlined code. Measured on Uika.scala's 125 executable
+    // Scala 3 does not instrument inlined code. Measured on the entry point's 125 executable
     // lines, scoverage reached 25 and JaCoCo 74.
     def uikaJacocoArgs: T[Seq[String]] = Task.Input {
       (Task.env.get("UIKA_JACOCO_AGENT").filter(_.nonEmpty),

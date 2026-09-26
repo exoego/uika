@@ -142,8 +142,9 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   and shipping on 21, and it replaces every module's value rather than sitting beside
   them because it is a statement about the whole build. Zero keeps its old meaning of
   switching the API layer off and leaves the dump derived, so do not fold the two
-  meanings together. Mill and the Clojure tool take it on the dump command itself
-  (`--jdkRelease`, `:jdk-release`), since neither has a build-wide setting to read.
+  meanings together. The Clojure tool takes it on the dump command itself
+  (`:jdk-release`), since it has no build-wide setting to read. Mill reads it from the
+  one `UikaModule` setting both commands share.
 - Each plugin reads the spelling that pins the API, never the one that names the
   COMPILER. Gradle takes `compileJava`'s `options.release` else
   `targetCompatibility`, over `getAllprojects`, and deliberately NOT the
@@ -190,7 +191,7 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   `uika` prefix appears exactly where the namespace is flat and shared with the whole
   build. `-PuikaFailOn`, `uikaFailOn` and `-Duika.failOn` carry it (Gradle project
   properties, sbt's `autoImport`, and system properties are one space every plugin shares);
-  the Gradle task property, the Maven POM element, Mill's command parameters, the two
+  the Gradle task property, the Maven POM element, Mill's `UikaModule` settings, the two
   Clojure maps and Bazel's rule attributes do not, since each already sits inside something
   uika owns. Renaming a knob away from its flag would break the mechanical correspondence
   the clojure-tool sync test checks, so do not do it for readability alone -- rename the
@@ -383,16 +384,32 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
 - Both rules are enforced by `jvm-plugin-core`'s `DocPageContractTest` (run by the Gradle
   and the Maven build): the section order on all seven pages, and every knob scraped from
   each tool's source (Gradle property lookups, sbt keys, Maven `@Parameter` properties,
-  Mill command parameters, the two Clojure key sets, the Bazel macro parameters) named on
+  Mill `UikaModule` settings and command parameters, the two Clojure key sets, the Bazel macro parameters) named on
   its page. A new knob fails that test until its page names it. The tool-by-option table
   and the "one tool only" list in `docs/build-tools.md` are the parity contract the audits
   used to reconstruct by hand; keep them current when a knob is added or renamed.
 
 ## Mill Plugin Notes
 
-Most Mill invariants live as comments at their point of use (`Uika.scala`,
+Most Mill invariants live as comments at their point of use (`UikaModule.scala`,
 `UikaTestModule.scala`, `build.mill`) or are locked by tests in `UikaTests.scala`.
 This section keeps only what neither can hold.
+
+- The one entry point is the `UikaModule` trait the user declares as a top-level
+  object. Settings are its tasks and never command arguments, so the dump and the check
+  read one value. The earlier `ExternalModule` took every setting per command, and a
+  `--jdkRelease` given to the check but not the dump silently lost JDK-move detection.
+  Do not add a command argument that duplicates a setting. Verified on Mill 1.1.8: the
+  commands get the short selector (`uika.dumpClasspath`), read the object's settings,
+  and re-run on edits. A YAML build takes the object too (`extends:` plus the settings
+  as keys), with the plugin under `mill-build: mvnDeps:`. Custom `//|` header keys fail
+  or are silently ignored, so they are no way to pass settings.
+- In the command bodies `getClass` is the USER's object, in the build's package, so
+  the plugin's own manifest is read through `classOf[UikaModule]`.
+- JFR stays an environment variable (`UIKA_JFR`) read by both `UikaTestModule` and
+  `upgradeCheck`, not a setting. A test module has no public way to reach the build's
+  `UikaModule` (`ModuleCtx.enclosingModule` is `private[mill]`), and a value in the
+  build file would make every forked test run record.
 
 - `Task.ctx().workspace`, NEVER `BuildCtx.workspaceRoot`, for the default output
   path and for resolving relative arguments. The latter is the launcher's root and
@@ -402,8 +419,6 @@ This section keeps only what neither can hold.
   UNCONDITIONAL edge, so a `defaultResolver()` in a dead fallback branch is still
   built on every run. Tasks on runtime-valued modules cannot be lifted at all;
   collect them with `Task.traverse(...)` outside the body.
-- `mill.api.ExternalModule.Alias` does NOT give a working short selector (`uika/`,
-  `uika.`, and `build.uika/` all fail to resolve). Do not document one.
 - No mise backend installs the Mill launcher (`ubi:`/`github:` find no matching
   release asset). The committed `mill-plugin/mill` bootstrap script reads the
   `//| mill-version:` header in `build.mill`, so mise only supplies the JVM.

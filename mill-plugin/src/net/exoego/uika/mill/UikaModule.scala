@@ -2,7 +2,7 @@ package net.exoego.uika.mill
 
 import coursier.core as cs
 import mill.*
-import mill.api.{Discover, Evaluator, ExternalModule, SelectMode}
+import mill.api.{Evaluator, SelectMode}
 import mill.javalib.{BoundDep, CoursierModule, Dep, JavaModule, TestModule}
 import mill.scalalib.ScalaModule
 import net.exoego.uika.plugin.core.{ClasspathDump, DumpFormat, JfrEvidence, UikaCli}
@@ -11,14 +11,46 @@ import scala.annotation.nowarn
 import scala.jdk.CollectionConverters.*
 
 /**
- * Mill entry points for uika, invoked as `./mill net.exoego.uika.mill.Uika/dumpClasspath`.
+ * The one entry point to uika in a Mill build. The user declares it once as a top-level
+ * object, overrides the settings there, and runs `./mill uika.dumpClasspath` and
+ * `./mill uika.upgradeCheck`.
  *
- * An [[ExternalModule]] rather than a trait users mix in, so a build of any size is wired up by
- * the `//| mvnDeps` header alone: the commands find every non-test `JavaModule` through the
- * `Evaluator` themselves. The one thing this shape cannot reach is a test JVM's `forkArgs`, so
- * JFR class-load collection is the one part that does need a mixin ([[UikaTestModule]]).
+ * The commands find every non-test `JavaModule` through the `Evaluator` themselves, so nothing
+ * else in the build mixes anything in. The exception is JFR collection, which has to reach a
+ * test JVM's `forkArgs` ([[UikaTestModule]]).
+ *
+ * Settings live here and never on a command, so the dump and the check cannot disagree. As
+ * command arguments, a `--jdkRelease` given to the check and forgotten on the dump silently
+ * lost JDK-move detection.
  */
-object Uika extends ExternalModule {
+trait UikaModule extends mill.Module {
+
+  /**
+   * The JDK API release. Negative derives it: the check uses the lowest release any module
+   * compiles for, else the build JVM's, and the dump records each module's own. 0 switches the
+   * check's API layer off and leaves the dump derived. A positive value is also recorded as the
+   * release every module runs on, for a build whose runtime is not what it compiles against.
+   */
+  def jdkRelease: T[Int] = Task { -1 }
+
+  /** The check's `--fail-on` threshold. */
+  def failOn: T[String] = Task { "any" }
+
+  /** Exclude files for the check, relative to the workspace. */
+  def excludeFiles: T[Seq[String]] = Task { Seq.empty[String] }
+
+  /**
+   * Check the union of every module's classpath once instead of each module against its own
+   * resolution. A break only one module's resolution shows can hide behind another module's
+   * version of the same jar.
+   */
+  def mergedClasspath: T[Boolean] = Task { false }
+
+  /** Where the check writes draft exclude rules, relative to the workspace. Empty writes none. */
+  def draftExcludeFile: T[String] = Task { "" }
+
+  /** The uika-cli version to run. Empty runs the plugin's own version. */
+  def cliVersion: T[String] = Task { "" }
 
   /**
    * Writes every non-test module's resolved runtime classpath as a uika v2 dump.
@@ -27,19 +59,13 @@ object Uika extends ExternalModule {
    * at exist by the time the CLI scans them. That mirrors the sbt plugin; Mill has no
    * resolution-only mode to opt into because a Mill module cannot resolve its own runtime
    * classpath without its upstream modules' compile output existing anyway.
-   *
-   * @param jdkRelease the release to record every module as running on, instead of what each
-   *                   one compiles for. The same option upgradeCheck takes, for the case the
-   *                   derivation cannot see: a build compiling `--release 11` that ships on a
-   *                   21 runtime has no other way to say so.
    */
-  def dumpClasspath(ev: Evaluator, output: String = "", jdkRelease: Int = -1) =
-    Task.Command(exclusive = true) {
+  def dumpClasspath(ev: Evaluator, output: String = "") = Task.Command(exclusive = true) {
     val modules = javaModules(ev)
     if (modules.isEmpty) {
       Task.fail("uika: no JavaModule found in this build")
     }
-    val declaredOverride = UikaCli.overrideRelease(Int.box(jdkRelease))
+    val declaredOverride = UikaCli.overrideRelease(Int.box(jdkRelease()))
     val dumps = ev.execute(modules.map(moduleDumpTask(_, declaredOverride))).values.get
     val workspace = Task.ctx().workspace
     val out =
@@ -62,48 +88,26 @@ object Uika extends ExternalModule {
    * Runs `uika upgrade-check` over a before/after pair of dumps, fetching the CLI itself as
    * the `jvm` jar of `net.exoego.uika:uika-cli:<version>` through Mill's own resolution.
    *
-   * @param jdkRelease resolve JDK hierarchy escapes against this API release; 0 disables the
-   *                   layer and a negative value, the default, derives the lowest release any
-   *                   module compiles for, else the build JVM's, clamped by
-   *                   [[UikaCli.effectiveJdkRelease]] to what its ct.sym serves. dumpClasspath
-   *                   takes the same option for what it records as the application's release
-   * @param jfr        a directory of JFR recordings from a test run of the current, not yet
-   *                   upgraded build, or a single `.jfr` recording; defaults to `UIKA_JFR`,
-   *                   the variable that made the tests record, so one option serves both
-   *                   phases
-   * @param mergedClasspath check the union of every module's classpath once instead of each
-   *                   module against its own resolution. Per-module checking scans once per
-   *                   module, so a large build may want the union; the trade is that a break
-   *                   only one module's resolution shows can hide behind another module's
-   *                   version of the same jar
+   * Runtime load evidence comes from `UIKA_JFR`, the variable that made the tests record, so
+   * one value serves both phases. It is not a setting because a value in the build file
+   * would make every forked test run record.
    */
-  def upgradeCheck(
-      ev: Evaluator,
-      before: String,
-      after: String,
-      failOn: String = "any",
-      excludeFile: Seq[String] = Nil,
-      jdkRelease: Int = -1,
-      jfr: String = "",
-      draftExcludeFile: String = "",
-      cliVersion: String = "",
-      // mainargs.Flag, not Boolean: a Boolean parameter demands a value
-      // (`--mergedClasspath true`), while every sibling integration spells this knob as a
-      // bare switch.
-      mergedClasspath: mainargs.Flag = mainargs.Flag(false)
   // persistent so `Task.dest` survives: Mill wipes a non-persistent dest before every run,
   // which would defeat JfrEvidence.rewrite's stale-conversion sweep.
-  ) = Task.Command(exclusive = true, persistent = true) {
+  def upgradeCheck(ev: Evaluator, before: String, after: String) =
+    Task.Command(exclusive = true, persistent = true) {
     // Task.env, never System.getenv: the latter is the DAEMON's environment, captured when
     // the server started, so `UIKA_CLI_PATH=... ./mill` would be ignored against a warm
     // daemon. This file already reads UIKA_JFR that way.
     val overrideBinary = Option(UikaCli.overrideFrom(Task.env.getOrElse(UikaCli.CLI_PATH_ENV, null)))
+    val wantedVersion = cliVersion()
     // Demanded only when something has to be resolved: with an override there is no version
     // to want, and failing here would contradict the documented "it wins over the version".
-    lazy val version = cliVersion match {
+    lazy val version = wantedVersion match {
       case "" =>
-        Option(getClass.getPackage.getImplementationVersion).filter(_.nonEmpty).getOrElse(
-          Task.fail("uika-cli version is unknown; pass --cliVersion <version>")
+        // classOf, not getClass: the latter is the user's object, in the build's package.
+        Option(classOf[UikaModule].getPackage.getImplementationVersion).filter(_.nonEmpty).getOrElse(
+          Task.fail("uika-cli version is unknown; set cliVersion on the uika module")
         )
       case v => v
     }
@@ -111,8 +115,8 @@ object Uika extends ExternalModule {
     val log: java.util.function.Consumer[String] = line => Task.log.info(line)
     // The CLI jar goes through a build module's own resolver, so custom `repositories`,
     // mirrors and credentials are the build's. Any module will do: repositories are declared
-    // on a shared trait in practice. Failing rather than falling back to this ExternalModule's
-    // own resolver keeps that promise -- a `defaultResolver()` call here would be lifted into
+    // on a shared trait in practice. Failing rather than falling back to a resolver of this
+    // plugin's own keeps that promise -- a `defaultResolver()` call here would be lifted into
     // an unconditional task edge by the command macro and evaluated even on the Some branch.
     val modules = javaModules(ev)
     val binary = overrideBinary.getOrElse {
@@ -122,14 +126,9 @@ object Uika extends ExternalModule {
       }
       resolveCli(resolver, version)
     }
-    // Recordings are converted here, never handed to the CLI: the CLI must
-    // not read binary JFR. --jfr falls back to UIKA_JFR, the variable that made the tests
-    // record (UikaTestModule), so ONE option serves both phases the way the sibling tools'
-    // single option does. The flag stays the explicit override.
-    val jfrValue = Option(jfr).filter(_.nonEmpty)
-      .orElse(Task.env.get("UIKA_JFR").filter(_.nonEmpty))
+    // Recordings are converted here, never handed to the CLI: the CLI must not read binary JFR.
     val classLoadLogs = JfrEvidence.rewrite(
-      jfrValue.map(os.Path(_, workspace).toNIO).toSeq.asJava,
+      Task.env.get("UIKA_JFR").filter(_.nonEmpty).map(os.Path(_, workspace).toNIO).toSeq.asJava,
       (Task.dest / JfrEvidence.WORK_DIR_NAME).toNIO,
       log
     )
@@ -147,8 +146,9 @@ object Uika extends ExternalModule {
     // rather than the two halves: mandatoryScalacOptions is protected, and the combined
     // list is what Mill actually hands scalac.
     val jdk = UikaCli.JdkSource.current()
+    val setRelease = jdkRelease()
     val wantedRelease =
-      if (jdkRelease >= 0) jdkRelease
+      if (setRelease >= 0) setRelease
       else {
         val optionTasks = modules.map(_.javacOptions) ++ modules.map(_.mandatoryJavacOptions) ++
           modules.collect { case s: ScalaModule => s.allScalacOptions }
@@ -160,13 +160,13 @@ object Uika extends ExternalModule {
       binary,
       os.Path(before, workspace).toNIO,
       os.Path(after, workspace).toNIO,
-      failOn,
-      excludeFile.map(os.Path(_, workspace).toNIO).asJava,
+      failOn(),
+      excludeFiles().map(os.Path(_, workspace).toNIO).asJava,
       UikaCli.effectiveJdkRelease(wantedRelease, jdk, log),
       jdk,
       classLoadLogs,
-      Option(draftExcludeFile).filter(_.nonEmpty).map(os.Path(_, workspace).toNIO).orNull,
-      mergedClasspath.value,
+      Option(draftExcludeFile()).filter(_.nonEmpty).map(os.Path(_, workspace).toNIO).orNull,
+      mergedClasspath(),
       log
     )
     exit match {
@@ -297,6 +297,4 @@ object Uika extends ExternalModule {
 
   /** `:foo:bar`, the `:path` shape the dump format uses for Gradle and Maven modules too. */
   private def moduleLabel(m: JavaModule): String = ":" + m.moduleSegments.parts.mkString(":")
-
-  lazy val millDiscover: Discover = Discover[this.type]
 }

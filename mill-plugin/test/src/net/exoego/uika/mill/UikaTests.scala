@@ -26,6 +26,8 @@ object UikaTests extends TestSuite {
         override def mvnDeps = Seq(mvn"org.apache.commons:commons-collections4:4.5.0")
       }
     }
+    // Every default, as the setup docs show it.
+    object uika extends UikaModule
     lazy val millDiscover: Discover = Discover[this.type]
   }
 
@@ -52,6 +54,40 @@ object UikaTests extends TestSuite {
         override def testFramework = "com.novocode.junit.JUnitFramework"
       }
     }
+    // One build can hold several, so each test picks the settings it needs by object.
+    object uika extends UikaModule
+    object configured extends UikaModule {
+      override def jdkRelease = 11
+      override def failOn = "reachable"
+      // Relative, so the test also sees them resolved against the workspace.
+      override def excludeFiles = Seq("uika-exclude.toml")
+      override def draftExcludeFile = "draft-exclude.toml"
+      override def cliVersion = "9.9.9"
+    }
+    object derived extends UikaModule {
+      override def cliVersion = "9.9.9"
+    }
+    object merged extends UikaModule {
+      override def mergedClasspath = true
+      override def cliVersion = "9.9.9"
+    }
+    object finding extends UikaModule {
+      override def cliVersion = "9.9.8"
+    }
+    object errored extends UikaModule {
+      override def cliVersion = "9.9.7"
+    }
+    object pinned extends UikaModule {
+      override def jdkRelease = 17
+      override def cliVersion = "9.9.9"
+    }
+    object layerOff extends UikaModule {
+      override def jdkRelease = 0
+      override def cliVersion = "9.9.9"
+    }
+    object unpublished extends UikaModule {
+      override def cliVersion = "0.0.0-never-published"
+    }
     lazy val millDiscover: Discover = Discover[this.type]
   }
 
@@ -73,6 +109,9 @@ object UikaTests extends TestSuite {
         super.repositories() ++ Task.env.get("UIKA_TEST_REPO").toSeq
       }
     }
+    object uika extends UikaModule {
+      override def cliVersion = "9.9.9"
+    }
     lazy val millDiscover: Discover = Discover[this.type]
   }
 
@@ -80,10 +119,13 @@ object UikaTests extends TestSuite {
   // build's mirrors and credentials apply, which leaves a build with none nothing to
   // resolve it with.
   object noJavaBuild extends TestRootModule {
+    object uika extends UikaModule {
+      override def cliVersion = "9.9.9"
+    }
     lazy val millDiscover: Discover = Discover[this.type]
   }
 
-  // Minus UIKA_JFR: upgradeCheck falls back to that variable, so a developer's exported
+  // Minus UIKA_JFR: upgradeCheck reads that variable, so a developer's exported
   // collection directory must not leak into stub runs. Tests that want it add it back.
   private val systemEnv: Map[String, String] = System.getenv().asScala.toMap - "UIKA_JFR"
 
@@ -125,7 +167,8 @@ object UikaTests extends TestSuite {
         "package example; public final class App { public String message() { return new Core().name(); } }"
       )
 
-      val out = os.Path(value(tester(Uika.dumpClasspath(tester.evaluator))))
+      val out = os.Path(value(tester(multiModule.uika.dumpClasspath(tester.evaluator))))
+      assert(out == multiModule.moduleDir / "out" / "uika" / "classpath.json")
       val json = ujson.read(os.read(out))
 
       assert(json("version").num == 2)
@@ -176,31 +219,28 @@ object UikaTests extends TestSuite {
       // and it must not read like a finding.
       publishStubCli(repo, "9.9.7", 2)
 
+      val jfr = stubCliBuild.moduleDir / "jfr-logs"
       Using.resource(UnitTester(
         stubCliBuild,
         null,
-        env = systemEnv + ("UIKA_TEST_REPO" -> repo.toNIO.toUri.toASCIIString)
+        env = systemEnv ++ Map(
+          "UIKA_TEST_REPO" -> repo.toNIO.toUri.toASCIIString,
+          "UIKA_JFR" -> jfr.toString
+        )
       )) { tester =>
       val before = stubCliBuild.moduleDir / "before.json"
       val after = stubCliBuild.moduleDir / "after.json"
       val exclude = stubCliBuild.moduleDir / "uika-exclude.toml"
-      val jfr = stubCliBuild.moduleDir / "jfr-logs"
       val draft = stubCliBuild.moduleDir / "draft-exclude.toml"
       os.write.over(before, "{}", createFolders = true)
       os.write.over(after, "{}")
       os.write.over(exclude, "")
       os.makeDir.all(jfr)
 
-      value(tester(Uika.upgradeCheck(
+      value(tester(stubCliBuild.configured.upgradeCheck(
         tester.evaluator,
         before.toString,
-        after.toString,
-        failOn = "reachable",
-        excludeFile = Seq(exclude.toString),
-        jdkRelease = 11,
-        jfr = jfr.toString,
-        draftExcludeFile = draft.toString,
-        cliVersion = "9.9.9"
+        after.toString
       )))
 
       // Without the property the real jar starts a second JVM for its flags, and the one
@@ -219,21 +259,18 @@ object UikaTests extends TestSuite {
       assert(args.contains(s"--class-load-log $jfr"))
       assert(args.contains(s"--draft-exclude-file $draft"))
 
-      value(tester(Uika.upgradeCheck(
+      value(tester(stubCliBuild.merged.upgradeCheck(
         tester.evaluator,
         before.toString,
-        after.toString,
-        cliVersion = "9.9.9",
-        mergedClasspath = mainargs.Flag(true)
+        after.toString
       )))
       assert(os.read(os.Path(s"$before.args")).contains("--merged-classpath"))
 
       // A CLI that found violations must fail the command, not pass silently.
-      val failed = tester(Uika.upgradeCheck(
+      val failed = tester(stubCliBuild.finding.upgradeCheck(
         tester.evaluator,
         before.toString,
-        after.toString,
-        cliVersion = "9.9.8"
+        after.toString
       ))
       assert(failed.isLeft)
       assert(failed.fold(_.toString.contains("found broken references"), _ => false))
@@ -242,11 +279,10 @@ object UikaTests extends TestSuite {
       // message is all that separates a finding from a rejected flag or an unreadable
       // dump, and calling the second one "broken references" sends the reader looking for
       // a break that was never found.
-      val errored = tester(Uika.upgradeCheck(
+      val errored = tester(stubCliBuild.errored.upgradeCheck(
         tester.evaluator,
         before.toString,
-        after.toString,
-        cliVersion = "9.9.7"
+        after.toString
       ))
       assert(errored.isLeft)
       assert(errored.fold(_.toString.contains("failed with exit code 2"), _ => false))
@@ -259,7 +295,7 @@ object UikaTests extends TestSuite {
       // the jar carries the mise-pinned JDK's class-file version and dies with
       // UnsupportedClassVersionError on any older Mill daemon -- exactly how the released
       // sbt 0.8.0 jar shipped major 65.
-      for (cls <- Seq(classOf[UikaCli], Uika.getClass)) {
+      for (cls <- Seq(classOf[UikaCli], classOf[UikaModule])) {
         val in = cls.getResourceAsStream(cls.getName.split('.').last + ".class")
         val header = try in.readNBytes(8) finally in.close()
         val major = ((header(6) & 0xff) << 8) | (header(7) & 0xff)
@@ -280,8 +316,8 @@ object UikaTests extends TestSuite {
         os.write.over(before, "{}", createFolders = true)
         os.write.over(after, "{}")
 
-        value(tester(Uika.upgradeCheck(
-          tester.evaluator, before.toString, after.toString, cliVersion = "9.9.9")))
+        value(tester(stubCliBuild.derived.upgradeCheck(
+          tester.evaluator, before.toString, after.toString)))
 
         val args = os.read(os.Path(s"$before.args"))
         assert(args.contains("--jdk-release 11"))
@@ -293,7 +329,7 @@ object UikaTests extends TestSuite {
       // dump keeps every module's own, which is what lets upgrade-check scope a JDK move to
       // the modules that made it.
       Using.resource(UnitTester(stubCliBuild, null, env = systemEnv)) { tester =>
-        val out = os.Path(value(tester(Uika.dumpClasspath(tester.evaluator))))
+        val out = os.Path(value(tester(stubCliBuild.uika.dumpClasspath(tester.evaluator))))
         val json = ujson.read(os.read(out))
         def release(module: String): Option[Int] =
           json("modules").arr
@@ -328,37 +364,86 @@ object UikaTests extends TestSuite {
         val after = os.temp("{}", suffix = ".json")
         // A version that was never published: resolving it would fail, so the run passing
         // is what proves resolution was skipped.
-        value(tester(Uika.upgradeCheck(
+        value(tester(stubCliBuild.unpublished.upgradeCheck(
           tester.evaluator,
           before = before.toString,
-          after = after.toString,
-          cliVersion = "0.0.0-never-published"
+          after = after.toString
         )))
         assert(os.exists(os.Path(before.toString + ".args")))
       }
     }
 
-    test("--jdkRelease overrides what the modules declare in the dump") {
-      // The derivation only sees what the build declares, so a build compiling for 11 and
-      // shipping on 21 has no other way to say so. The override is a statement about the
-      // whole build, so it replaces every module's own value.
-      Using.resource(UnitTester(stubCliBuild, null, env = systemEnv)) { tester =>
-        val out = os.Path(value(tester(Uika.dumpClasspath(tester.evaluator, jdkRelease = 21))))
-        val json = ujson.read(os.read(out))
-        assert(json("jdkRelease").num.toInt == 21)
-        assert(json("modules").arr.forall(_.obj.get("jdkRelease").map(_.num.toInt).contains(21)))
+    test("an empty UikaModule checks with every default") {
+      val stub = os.temp(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$3.args\"\nexit 0\n",
+        prefix = "uika-stub",
+        perms = os.PermSet.fromString("rwxr-xr-x")
+      )
+      Using.resource(
+        UnitTester(stubCliBuild, null, env = systemEnv + (UikaCli.CLI_PATH_ENV -> stub.toString))
+      ) { tester =>
+        val before = os.temp("{}", suffix = ".json")
+        val after = os.temp("{}", suffix = ".json")
+        value(tester(stubCliBuild.uika.upgradeCheck(tester.evaluator, before.toString, after.toString)))
+        val args = os.read.lines(os.Path(before.toString + ".args"))
+        assert(args.containsSlice(Seq("--fail-on", "any")))
+        assert(args.containsSlice(Seq("--jdk-release", "11")))
+        assert(!args.exists(a => a == "--exclude-file" || a == "--draft-exclude-file" ||
+          a == "--merged-classpath" || a == "--class-load-log"))
       }
     }
 
-    test("--jdkRelease 0 leaves the dump's recorded release derived") {
-      // 0 only switches the API layer off. On the DUMP it has to keep the derived values:
-      // recording nothing there would take JDK move detection down with the layer, which is
-      // a different feature. This is the half docs/mill.md left unsaid.
-      Using.resource(UnitTester(stubCliBuild, null, env = systemEnv)) { tester =>
-        val out = os.Path(value(tester(Uika.dumpClasspath(tester.evaluator, jdkRelease = 0))))
+    test("a positive jdkRelease is the release the dump records and the check uses") {
+      // The derivation only sees what the build declares, so a build compiling for 11 and
+      // shipping on 17 has no other way to say so. The override is a statement about the
+      // whole build, so it replaces every module's own value, and one setting feeds both
+      // commands so they cannot disagree.
+      val repo = os.temp.dir(prefix = "uika-stub-repo")
+      publishStubCli(repo, "9.9.9", 0)
+      Using.resource(UnitTester(
+        stubCliBuild,
+        null,
+        env = systemEnv + ("UIKA_TEST_REPO" -> repo.toNIO.toUri.toASCIIString)
+      )) { tester =>
+        val out = os.Path(value(tester(stubCliBuild.pinned.dumpClasspath(tester.evaluator))))
+        val json = ujson.read(os.read(out))
+        assert(json("jdkRelease").num.toInt == 17)
+        assert(json("modules").arr.forall(_.obj.get("jdkRelease").map(_.num.toInt).contains(17)))
+
+        val after = stubCliBuild.moduleDir / "after.json"
+        os.write.over(after, "{}")
+        value(tester(stubCliBuild.pinned.upgradeCheck(tester.evaluator, out.toString, after.toString)))
+        assert(os.read(os.Path(s"$out.args")).contains("--jdk-release 17"))
+      }
+    }
+
+    test("jdkRelease 0 switches the check's layer off and leaves the dump derived") {
+      // On the DUMP 0 has to keep the derived values: recording nothing there would take
+      // JDK move detection down with the layer, which is a different feature.
+      val repo = os.temp.dir(prefix = "uika-stub-repo")
+      publishStubCli(repo, "9.9.9", 0)
+      Using.resource(UnitTester(
+        stubCliBuild,
+        null,
+        env = systemEnv + ("UIKA_TEST_REPO" -> repo.toNIO.toUri.toASCIIString)
+      )) { tester =>
+        val out = os.Path(value(tester(stubCliBuild.layerOff.dumpClasspath(tester.evaluator))))
         val json = ujson.read(os.read(out))
         assert(json("jdkRelease").num.toInt == 11)
         assert(json("modules").arr.exists(_.obj.get("jdkRelease").map(_.num.toInt).contains(11)))
+
+        val after = stubCliBuild.moduleDir / "after.json"
+        os.write.over(after, "{}")
+        value(tester(stubCliBuild.layerOff.upgradeCheck(tester.evaluator, out.toString, after.toString)))
+        assert(!os.read(os.Path(s"$out.args")).contains("--jdk-release"))
+      }
+    }
+
+    test("the dump writes to --output, relative to the workspace") {
+      Using.resource(UnitTester(stubCliBuild, null, env = systemEnv)) { tester =>
+        val out = os.Path(value(tester(stubCliBuild.uika.dumpClasspath(tester.evaluator, "dumps/after.json"))))
+        assert(out == stubCliBuild.moduleDir / "dumps" / "after.json")
+        assert(os.isFile(out))
       }
     }
 
@@ -378,8 +463,8 @@ object UikaTests extends TestSuite {
         os.write.over(before, "{}", createFolders = true)
         os.write.over(after, "{}")
 
-        value(tester(Uika.upgradeCheck(
-          tester.evaluator, before.toString, after.toString, cliVersion = "9.9.9")))
+        value(tester(mixedLangBuild.uika.upgradeCheck(
+          tester.evaluator, before.toString, after.toString)))
 
         val args = os.read(os.Path(s"$before.args"))
         assert(args.contains("--jdk-release 11"))
@@ -388,7 +473,7 @@ object UikaTests extends TestSuite {
 
     test("the dump records a Scala module's scalacOptions release") {
       Using.resource(UnitTester(mixedLangBuild, null, env = systemEnv)) { tester =>
-        val out = os.Path(value(tester(Uika.dumpClasspath(tester.evaluator))))
+        val out = os.Path(value(tester(mixedLangBuild.uika.dumpClasspath(tester.evaluator))))
         val json = ujson.read(os.read(out))
         def release(module: String): Option[Int] =
           json("modules").arr
@@ -446,10 +531,10 @@ object UikaTests extends TestSuite {
       }
     }
 
-    test("upgradeCheck --jfr falls back to UIKA_JFR") {
-      // One knob serving both phases, like the sibling tools' single option: the same
+    test("upgradeCheck reads UIKA_JFR back") {
+      // One value serving both phases, like the sibling tools' single option: the same
       // variable that made the tests record is read back by the check, so a CI recipe
-      // sets UIKA_JFR once. --jfr stays the explicit override.
+      // sets UIKA_JFR once.
       val repo = os.temp.dir(prefix = "uika-stub-repo")
       publishStubCli(repo, "9.9.9", 0)
       val jfrDir = os.temp.dir(prefix = "uika-jfr-consume")
@@ -466,21 +551,11 @@ object UikaTests extends TestSuite {
         os.write.over(before, "{}", createFolders = true)
         os.write.over(after, "{}")
 
-        value(tester(Uika.upgradeCheck(
-          tester.evaluator, before.toString, after.toString, cliVersion = "9.9.9")))
+        value(tester(stubCliBuild.derived.upgradeCheck(
+          tester.evaluator, before.toString, after.toString)))
 
         val args = os.read(os.Path(s"$before.args"))
         assert(args.contains(s"--class-load-log $jfrDir"))
-
-        // --jfr stays the explicit override: with both set, the flag's directory must
-        // reach the CLI and the variable's must not.
-        val explicit = os.temp.dir(prefix = "uika-jfr-explicit")
-        value(tester(Uika.upgradeCheck(
-          tester.evaluator, before.toString, after.toString,
-          jfr = explicit.toString, cliVersion = "9.9.9")))
-        val overridden = os.read(os.Path(s"$before.args"))
-        assert(overridden.contains(s"--class-load-log $explicit"))
-        assert(!overridden.contains(jfrDir.toString))
       }
     }
 
@@ -509,18 +584,18 @@ object UikaTests extends TestSuite {
     }
 
     test("the CLI version is demanded only once a binary has to be resolved") {
-      // Neither --cliVersion nor UIKA_CLI_PATH, and the classes directory the suite runs
+      // Neither cliVersion nor UIKA_CLI_PATH, and the classes directory the suite runs
       // the plugin from carries no Implementation-Version, so nothing names a version and
-      // the command has to say which option would.
+      // the command has to say which setting would.
       Using.resource(
         UnitTester(stubCliBuild, null, env = systemEnv - UikaCli.CLI_PATH_ENV)
       ) { tester =>
         val before = os.temp("{}", suffix = ".json")
         val after = os.temp("{}", suffix = ".json")
-        val failed = tester(Uika.upgradeCheck(tester.evaluator, before.toString, after.toString))
+        val failed = tester(stubCliBuild.uika.upgradeCheck(tester.evaluator, before.toString, after.toString))
         assert(failed.isLeft)
         assert(failed.fold(
-          _.toString.contains("uika-cli version is unknown; pass --cliVersion"),
+          _.toString.contains("uika-cli version is unknown; set cliVersion"),
           _ => false
         ))
       }
@@ -532,8 +607,8 @@ object UikaTests extends TestSuite {
       ) { tester =>
         val before = os.temp("{}", suffix = ".json")
         val after = os.temp("{}", suffix = ".json")
-        val failed = tester(Uika.upgradeCheck(
-          tester.evaluator, before.toString, after.toString, cliVersion = "9.9.9"))
+        val failed = tester(noJavaBuild.uika.upgradeCheck(
+          tester.evaluator, before.toString, after.toString))
         assert(failed.isLeft)
         assert(failed.fold(_.toString.contains("no JavaModule found in this build"), _ => false))
       }
