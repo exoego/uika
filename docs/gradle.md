@@ -31,6 +31,12 @@ every uika task reads it. Most settings also have a `-Puika*` property, such as
 `-PuikaFailOn` for `failOn`, and [Options](#options) names each one. The
 property wins over the block for that one invocation.
 
+`uikaUpgradeCheck` fetches the CLI jar, and `uikaResolveClasspath` fetches
+baseline JARs, through the root project's repositories. A build that declares
+repositories only in subprojects or convention plugins fails there with "no
+repositories are defined". Declare them in `settings.gradle.kts` under
+`dependencyResolutionManagement`, or in the root build script.
+
 ```console
 $ ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
 $ ./gradlew uikaUpgradeCheck \
