@@ -214,6 +214,14 @@ resolved local paths.
   an executable that runs it, such as a script that starts the jar on another
   JDK. It wins over the CLI version, nothing is downloaded, and a value that is
   not a file, or an executable that lost its bit, fails naming the variable.
+- The options are also properties of `UpgradeCheckTask`: `failOn`,
+  `excludeFiles`, `jdkRelease`, `mergedClasspath`, `classLoadLogs`,
+  `draftExcludeFile` and `cliVersion`. A value set on the task in the build
+  script wins over its `-P` form, so with `failOn.set("reachable")` above,
+  `-PuikaFailOn=never` changes nothing. `-PuikaExcludeFile` and `-PuikaJfr` add
+  to the task's files instead. To keep the command line in control, set the task
+  from the property, as in
+  `failOn.set(providers.gradleProperty("uikaFailOn").orElse("reachable"))`.
 
 ## Runtime load evidence (JFR)
 
