@@ -1,6 +1,7 @@
 package net.exoego.uika.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -237,6 +238,41 @@ class ScanTest {
             assertTrue(result.graph.contains(intern("Main")));
         } finally {
             provider.toFile().setReadable(true, false);
+        }
+    }
+
+    /** A build output with a subdirectory the check cannot list fails the check instead of passing with classes missing. */
+    @Test
+    void anUnreadableSubdirectoryFailsTheScan() throws Exception {
+        Path classes = Files.createDirectories(dir.resolve("app"));
+        Files.write(classes.resolve("Main.class"), classFile("Main", "lib/Base"));
+        Path sealed = Files.createDirectories(classes.resolve("sealed"));
+        Files.write(sealed.resolve("Inner.class"), classFile("sealed/Inner", "lib/Base"));
+        if (!sealed.toFile().setReadable(false, false) || sealed.toFile().canRead()) {
+            return; // A filesystem or user that cannot lock a directory (root, Windows).
+        }
+        try {
+            UikaException failed = assertThrows(UikaException.class, () -> scan(List.of(classes.toString()), false));
+            assertEquals("cannot read " + sealed + ": Permission denied", failed.getMessage());
+        } finally {
+            sealed.toFile().setReadable(true, false);
+        }
+    }
+
+    /** A build output with a class file the check cannot open fails the check instead of passing with classes missing. */
+    @Test
+    void anUnreadableClassFileFailsTheScan() throws Exception {
+        Path classes = Files.createDirectories(dir.resolve("app"));
+        Files.write(classes.resolve("Main.class"), classFile("Main", "lib/Base"));
+        Path locked = Files.write(classes.resolve("Locked.class"), classFile("Locked", "lib/Base"));
+        if (!locked.toFile().setReadable(false, false) || locked.toFile().canRead()) {
+            return; // A filesystem or user that cannot lock a file (root, Windows).
+        }
+        try {
+            UikaException failed = assertThrows(UikaException.class, () -> scan(List.of(classes.toString()), false));
+            assertEquals("cannot read " + locked + ": Permission denied", failed.getMessage());
+        } finally {
+            locked.toFile().setReadable(true, false);
         }
     }
 }
