@@ -44,6 +44,10 @@ $ exists before.json.marker
 > set ThisBuild / uikaJdkRelease := -1
 > uikaUpgradeCheck before.json after.json
 > checkJdkReleaseDerived
+> set legacy / javaHome := Some((ThisBuild / baseDirectory).value / "fake-jdk")
+> uikaUpgradeCheck before.json after.json
+> checkJdkReleaseFromJavaHome
+> set legacy / javaHome := None
 > set ThisBuild / uikaJdkRelease := 11
 
 # Root-project scope, the documented `set uikaFailOn := ...` shell form. The ThisBuild
