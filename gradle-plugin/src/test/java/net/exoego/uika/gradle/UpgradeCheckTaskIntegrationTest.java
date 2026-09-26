@@ -766,6 +766,22 @@ final class UpgradeCheckTaskIntegrationTest {
                 () -> "a missing dump was not reported with the knobs to set:\n" + result.getOutput());
     }
 
+    /// A CI step that computed only the base branch's dump passes -PuikaBefore alone.
+    @Test
+    void aMissingAfterDumpFailsEvenWhenTheBeforeDumpIsGiven() {
+        var result = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments("uikaUpgradeCheck",
+                        "-PuikaBefore=" + before,
+                        "-PuikaCliVersion=" + CLEAN_VERSION)
+                .withPluginClasspath()
+                .forwardOutput()
+                .buildAndFail();
+
+        assertTrue(result.getOutput().contains("uika upgrade-check needs both dumps"),
+                () -> "a missing after dump was not reported:\n" + result.getOutput());
+    }
+
     @Test
     void violationExitCodeFailsTheBuild() {
         var result = runner(VIOLATION_VERSION).buildAndFail();

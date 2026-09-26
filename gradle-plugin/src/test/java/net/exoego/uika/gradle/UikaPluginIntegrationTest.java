@@ -469,6 +469,39 @@ final class UikaPluginIntegrationTest {
         assertTrue(Files.exists(output), "dump was not written: " + output);
     }
 
+    /// An Android module has no java extension but does have a resolvable
+    /// releaseRuntimeClasspath. Its classpath is dumped without a release rather than
+    /// with one guessed from the build JVM.
+    @Test
+    void aModuleWithoutTheJavaExtensionIsDumpedWithoutARelease() throws Exception {
+        Files.createDirectories(projectDir.resolve("android/libs"));
+        Files.write(projectDir.resolve("android/libs/dep.jar"), new byte[0]);
+        write(projectDir.resolve("settings.gradle.kts"), """
+                rootProject.name = "mixed"
+                include("android")
+                """);
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins { id("net.exoego.uika") }
+                """);
+        write(projectDir.resolve("android/build.gradle.kts"), """
+                val releaseRuntimeClasspath by configurations.creating {
+                    isCanBeConsumed = false
+                }
+                dependencies { releaseRuntimeClasspath(files("libs/dep.jar")) }
+                """);
+
+        var output = projectDir.resolve("classpath.json");
+        runDump(output, "-PuikaConfiguration=releaseRuntimeClasspath");
+
+        @SuppressWarnings("unchecked")
+        var doc = (Map<String, Object>) new JsonSlurper().parse(output.toFile());
+        assertTrue(moduleReleases(doc).containsKey(":android"),
+                () -> "the module was not dumped: " + moduleReleases(doc));
+        assertEquals(null, moduleRelease(doc, ":android"));
+        assertTrue(artifactPaths(output).stream().anyMatch(p -> p.endsWith("dep.jar")),
+                () -> "the module's classpath was not dumped: " + artifactPaths(output));
+    }
+
 
     @SuppressWarnings("unchecked")
     private static Map<String, Integer> moduleReleases(Map<String, Object> doc) {
