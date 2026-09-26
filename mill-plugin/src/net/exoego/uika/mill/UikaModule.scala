@@ -287,7 +287,7 @@ trait UikaModule extends mill.Module {
       // A module declaring nothing compiles against its JDK's own API. Left empty, the CLI
       // would give it the dump-level value, which is a SIBLING's lowest declared release.
       val compilingJvm = m.javaHome() match {
-        case Some(home) => UikaModule.javaHomeRelease(home.path)
+        case Some(home) => javaHomeRelease(home.path)
         case None => Integer.valueOf(DumpFormat.buildJvmRelease())
       }
       new ClasspathDump.Module(
@@ -301,12 +301,6 @@ trait UikaModule extends mill.Module {
     }
   }
 
-  /** `:foo:bar`, the `:path` shape the dump format uses for Gradle and Maven modules too. */
-  private def moduleLabel(m: JavaModule): String = ":" + m.moduleSegments.parts.mkString(":")
-}
-
-object UikaModule {
-
   /**
    * The feature release a JDK names in its `release` file, or null when the file does not say.
    * Null leaves the module to the dump-level value.
@@ -315,15 +309,18 @@ object UikaModule {
     val file = home / "release"
     if (!os.isFile(file)) null
     else {
-      os.read.lines(file).collectFirst {
-        case line if line.startsWith("JAVA_VERSION=") =>
-          val version = line.stripPrefix("JAVA_VERSION=").stripPrefix("\"").stripSuffix("\"")
-          // 1.8.0_392 is release 8; 21.0.2 and a bare 25 are their leading number.
-          val major =
-            if (version.startsWith("1.")) version.split('.').lift(1).getOrElse("")
-            else version.takeWhile(_.isDigit)
-          UikaCli.parseRelease(major)
+      os.read.lines(file).find(_.startsWith("JAVA_VERSION=")).map { line =>
+        val version = line.stripPrefix("JAVA_VERSION=").stripPrefix("\"").stripSuffix("\"")
+        // 1.8.0_392 is release 8; 21.0.2 and a bare 25 are their leading number.
+        val major =
+          if (version.startsWith("1.")) version.split('.').lift(1).getOrElse("")
+          else version.takeWhile(_.isDigit)
+        UikaCli.parseRelease(major)
       }.orNull
     }
   }
+
+  /** `:foo:bar`, the `:path` shape the dump format uses for Gradle and Maven modules too. */
+  private def moduleLabel(m: JavaModule): String = ":" + m.moduleSegments.parts.mkString(":")
 }
+

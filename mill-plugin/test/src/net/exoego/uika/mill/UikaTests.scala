@@ -392,13 +392,16 @@ object UikaTests extends TestSuite {
       def releaseOf(content: String): Integer = {
         val home = os.temp.dir(prefix = "uika-jdk")
         os.write(home / "release", content)
-        UikaModule.javaHomeRelease(home)
+        stubCliBuild.uika.javaHomeRelease(home)
       }
       assert(releaseOf("JAVA_VERSION=\"21.0.2\"\n") == 21)
       assert(releaseOf("JAVA_VERSION=\"25\"\n") == 25)
       assert(releaseOf("JAVA_VERSION=\"1.8.0_392\"\n") == 8)
       assert(releaseOf("IMPLEMENTOR=\"x\"\n") == null)
-      assert(UikaModule.javaHomeRelease(os.temp.dir(prefix = "uika-jdk")) == null)
+      // "1." with nothing after it and a version with no leading number are no release.
+      assert(releaseOf("JAVA_VERSION=\"1.\"\n") == null)
+      assert(releaseOf("JAVA_VERSION=\"ea\"\n") == null)
+      assert(stubCliBuild.uika.javaHomeRelease(os.temp.dir(prefix = "uika-jdk")) == null)
     }
 
     test("UIKA_CLI_PATH runs a binary instead of resolving one") {
