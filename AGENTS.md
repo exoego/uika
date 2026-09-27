@@ -91,15 +91,28 @@ relearned by experiment.
   ignoring them: only one pair reaches `Commands.runCheckWithIndexes`, and checking
   a library pair and a JDK pair at once is two runs, which is what upgrade-check
   does from the dumps. The JDK indexes therefore go in with empty path lists
-  (nothing to exclude as stale, nothing to sweep for invocation evidence). A
-  `.jmod` is a zip of class files under `classes/`, and the running JDK's feature
-  version is read from its `release` file, never from the JVM running the CLI.
+  (nothing to exclude as stale, nothing to sweep for invocation evidence). A side
+  comes from ct.sym whenever ct.sym holds stubs for its release. From JDK 22 on it
+  holds the JDK's own release too (https://bugs.openjdk.org/browse/JDK-8318913),
+  so jmods is read only for the found JDK's own release on JDK 21 and earlier.
+  Reading ct.sym first is what lets a JEP 493 build that ships no jmods (Temurin
+  25) check a move to its own release. A JDK 21 ct.sym keeps an `L/system-modules`
+  entry, so only class stubs count as carrying a release, and an unreadable ct.sym
+  leaves the own release to jmods. A `.jmod` is a zip of class files under
+  `classes/`, and the running JDK's feature version is read from its `release`
+  file, never from the JVM running the CLI.
   jmods is a SUPERSET of ct.sym (unexported internals included), which only
   cancels removals while it is the new side; as the old side against a ct.sym
-  new side it would invent them, so that combination warns.
+  new side it would invent them, so that combination warns. The warning waits
+  until both sides have loaded, so a move above the found JDK ends with its error
+  alone.
   `Jdk.levelToCtSymFidelity` drops PermittedSubclasses from jmods classes because
-  stubs strip it (java.lang.constant.ConstantDesc has been sealed since 12 and its
-  stub carries none); without that, every sealed JDK class reads as newly sealed.
+  JDK 21 and earlier stubs lack it (java.lang.constant.ConstantDesc has been sealed
+  since 17 and a JDK 21 stub of it carries none); without that, every sealed JDK
+  class reads as newly sealed. Stubs from JDK 22 on keep it
+  (https://bugs.openjdk.org/browse/JDK-8321224) and both sides come from ct.sym
+  there, so a pair checked on JDK 22+ reports `class became sealed`. A class
+  compiled for 16 that implements ConstantDesc does fail to load on 25.
   NestHost IS in stubs, so it stays. Evidence: an app calling
   java.rmi.activation.ActivationGroup reports `class removed` on 11 -> 17, while a
   subclass of java.awt.event.ComponentAdapter reports nothing despite the 98

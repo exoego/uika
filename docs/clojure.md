@@ -11,15 +11,21 @@ with `-Ttools install` instead needs every call qualified, as in
 ;; deps.edn
 {:aliases
  {:uika {:deps {net.exoego.uika/clojure-uika {:mvn/version "VERSION_PLACEHOLDER"}}
-         :ns-default exoego.uika}}}
+         :ns-default exoego.uika
+         ;; optional: settings every call shares
+         :exec-args {:fail-on "reachable" :exclude-file "uika-exclude.toml"}}}}
 ```
 
 ```console
 $ clojure -T:uika dump-classpath                        # writes target/uika/classpath.json
 $ clojure -T:uika dump-classpath :output '"/tmp/after.json"' :aliases '[:prod]'
-$ clojure -T:uika upgrade-check :before '"/tmp/before.json"' :after '"/tmp/after.json"' \
-      :exclude-file '"uika-exclude.toml"'   # :cli-version to override
+$ clojure -T:uika upgrade-check :before '"/tmp/before.json"' :after '"/tmp/after.json"'
 ```
+
+Put your settings in the alias's `:exec-args` once. Every call accepts every
+option and ignores the ones it does not use, so `dump-classpath` runs fine with
+`:fail-on` set. A key on the command line overrides the same key in
+`:exec-args`.
 
 The dump records the resolved Maven coordinates from the project's own
 `deps.edn` basis (`:local/root` and git deps are coordinate-less, like the other
@@ -191,11 +197,13 @@ degrading to a warning. The cache save and restore close that gap.
 
 ## Options
 
-Every option is a keyword argument on the call, `upgrade-check` unless the
-entry says otherwise. A key neither call accepts is an error rather than a
-silent no-op, so a misspelling cannot quietly disable a flag. Watch for the
-Leiningen plugin's spellings: it says `:exclude-files` and `:class-load-logs`
-where this tool says `:exclude-file` and `:class-load-log`.
+Every option is a keyword argument, set in the alias's `:exec-args` or on the
+call. It is used by `upgrade-check` unless the entry says otherwise. Every call
+accepts every option below and ignores the ones it does not use. A key that no
+call knows is an error rather than a silent no-op, so a misspelling cannot
+quietly disable a flag. Watch for the Leiningen plugin's spellings: it says
+`:exclude-files` and `:class-load-logs` where this tool says `:exclude-file`
+and `:class-load-log`.
 
 - [`:fail-on`](../README.md#violation-tiers-and-the-failon-threshold) is `never`,
   `reachable` or `any`. `reachable` needs the AOT output in the dump. Without
@@ -205,8 +213,9 @@ where this tool says `:exclude-file` and `:class-load-log`.
 - There is no module model to read a compile target from, so
   [`:jdk-release`](build-tools.md#jdkrelease) defaults to the project's
   own JVM release. Set it to override that, or to 0 to disable the API layer.
-  `dump-classpath` takes it too, where it names the release the application is
-  recorded as running on. There 0 keeps the derived value instead.
+  `dump-classpath` uses it too, to record the release the application runs on,
+  so one value in `:exec-args` serves both calls. There 0 keeps the derived
+  value.
 - `:merged-classpath true` checks the union of every module's classpath once
   instead of [each module against its own
   resolution](../README.md#per-module-checking). A `deps.edn` project is one
@@ -219,15 +228,18 @@ where this tool says `:exclude-file` and `:class-load-log`.
   takes the jar, or an executable that runs it. A path that is not a file, or an
   executable that lost its bit, fails naming the one you set, `:cli-path` or the
   variable. `UIKA_CLI_URL` has to name the jar.
-- `dump-classpath` alone takes `:output` (default
+- `dump-classpath` alone uses `:output` (default
   `target/uika/classpath.json`), `:dir` to point at another project's
   `deps.edn` (default: where the tool was invoked), `:aliases` to include in
   the resolution, and `:class-dir` for the AOT output of a tools.build
   `compile-clj`. The project's own `:paths` are recorded too, but only those
   that exist as directories. A `:class-dir` is recorded even when it is missing,
-  and the check then warns that it skipped it.
-- `upgrade-check` alone takes `:evidence-work-dir`, where recordings are
+  and the check then warns that it skipped it. `upgrade-check` ignores `:dir`,
+  so its paths stay relative to where you run it.
+- `upgrade-check` alone uses `:evidence-work-dir`, where recordings are
   converted, defaulting to `target/uika`.
+- `:output`, `:before` and `:after` change on every call, so pass them on the
+  command line rather than in `:exec-args`.
 
 ## Runtime load evidence (JFR)
 

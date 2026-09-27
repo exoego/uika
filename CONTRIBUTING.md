@@ -41,7 +41,7 @@ Three numbers are over less than the whole component.
   uika`. `make lein-test` runs both halves.
 - The Bazel rules are measured by `//java:manifest_test` alone. The shell ITs
   drive `bazel run` in a temp workspace, so the three mains read as untested.
-- The Mill plugin is JaCoCo over Scala 3, which reaches 74 of `Uika.scala`'s 125
+- The Mill plugin is JaCoCo over Scala 3, which reached 74 of the entry point's 125
   executable lines. The rest sit in synthetic methods JaCoCo skips. scoverage
   reaches fewer still, 25, because Mill's task bodies are inline macros and Scala
   3 does not instrument inlined code. sbt does not have this problem: Scala 2.12

@@ -135,8 +135,9 @@ $ uika dump some.jar
 - [`--exclude-file`](../README.md#excluding-known-false-positives)
   is repeatable, and rules from every file given are merged.
 - [`--class-load-log`](runtime-load-evidence.md) is repeatable and takes text
-  evidence, or a directory of it. The CLI reads no binary JFR, which is why the
-  plugins convert recordings before invoking it. Without one, convert a
+  evidence, or a directory of it. The CLI does not decode JFR, which is why the
+  plugins convert recordings before invoking it. It skips a recording, with a
+  warning when the recording is passed directly. Without a plugin, convert a
   recording by hand:
 
   ```console
@@ -186,9 +187,9 @@ scanned 1 classes: ❌ 1 broken
 ```
 
 Both releases are read from the one JDK uika finds, so checking an upgrade *to*
-the JDK you now run needs only that JDK. [The JDK API
-layer](jdk.md#where-the-stubs-come-from) covers the two stub sources and the one
-change they cannot show, a class that became sealed.
+the JDK you now run needs only that JDK. That JDK cannot be older than release
+M. [The JDK API layer](jdk.md#where-the-stubs-come-from) covers the two stub
+sources and why only a JDK 22 or later shows a class that became sealed.
 
 From a build tool this needs no flag at all. Each dump records the API release
 the application runs on, per module, which is what lets `upgrade-check` see the

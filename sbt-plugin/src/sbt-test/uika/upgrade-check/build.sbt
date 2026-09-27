@@ -24,6 +24,27 @@ ThisBuild / uikaJdkRelease := 11
 lazy val older = project.settings(Compile / javacOptions ++= Seq("--release=12"))
 lazy val newer = project.settings(scalacOptions ++= Seq("-release", "17"))
 
+// Declares nothing, so it compiles for the JDK that compiles it. On the JVM running sbt that
+// cannot lower the result below 12. With javaHome naming an older JDK it has to.
+lazy val legacy = project
+
+lazy val checkJdkReleaseFromJavaHome = taskKey[Unit]("Asserts a javaHome JDK older than every declared release reached the CLI")
+
+checkJdkReleaseFromJavaHome := {
+  val args = IO.read(baseDirectory.value / "before.json.args")
+  if (!args.contains("--jdk-release 10"))
+    sys.error(s"expected the release of legacy's javaHome (10): $args")
+}
+
+lazy val checkJdkReleaseFromBuildJvm = taskKey[Unit]("Asserts the build JVM's release reached the CLI when nothing else could be read")
+
+checkJdkReleaseFromBuildJvm := {
+  val args = IO.read(baseDirectory.value / "before.json.args")
+  val ceiling = java.lang.Runtime.version().feature() - 1
+  if (!args.contains(s"--jdk-release $ceiling"))
+    sys.error(s"expected the build JVM's ct.sym ceiling ($ceiling): $args")
+}
+
 lazy val checkJdkReleaseDerived = taskKey[Unit]("Asserts the lowest subproject release reached the CLI")
 
 checkJdkReleaseDerived := {

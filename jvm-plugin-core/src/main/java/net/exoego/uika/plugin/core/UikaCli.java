@@ -178,6 +178,33 @@ public final class UikaCli {
     }
 
     /**
+     * The feature release of the JDK installed at {@code home}, read from its {@code release}
+     * file, or null when that file is missing, names no version, or names one below
+     * {@link #MIN_RELEASE}.
+     *
+     * <p>For a tool that compiles with a JDK other than the one running the build, such as
+     * sbt's {@code javaHome}. Starting that JDK to ask would work too, but costs a JVM boot per
+     * module for a number every JDK since 9 writes into this file.
+     */
+    public static Integer installedRelease(Path home) {
+        List<String> lines;
+        try {
+            lines = Files.readAllLines(home.resolve("release"), StandardCharsets.UTF_8);
+        } catch (IOException | RuntimeException unreadable) {
+            return null;
+        }
+        for (String line : lines) {
+            if (line.startsWith("JAVA_VERSION=")) {
+                var parts = line.substring("JAVA_VERSION=".length()).replace("\"", "").trim()
+                        .split("[._+-]");
+                // 1.8.0_402 names 8. Every later JDK leads with its feature release.
+                return parseRelease("1".equals(parts[0]) && parts.length > 1 ? parts[1] : parts[0]);
+            }
+        }
+        return null;
+    }
+
+    /**
      * The release an explicit override names for the DUMP, or null when it names none.
      *
      * <p>The plugins' {@code jdkRelease} knob answers two questions at once: which release
@@ -250,8 +277,8 @@ public final class UikaCli {
      * is spelled out because the triggers ({@code via ... from ...}) come from those
      * stacks and a custom JFC could have disabled the default. The Gradle, sbt and Mill
      * plugins compose the argument here so those three cannot drift. Maven users hand-write
-     * an argLine (no mojo can inject into surefire), so its documented recipe must be kept
-     * in sync with this format by hand.
+     * an argLine (the Maven plugin has no goal that sets it), so its documented recipe must
+     * be kept in sync with this format by hand.
      */
     public static String jfrClassLoadJvmArg(Path dir) {
         var filename = dir.toString();
