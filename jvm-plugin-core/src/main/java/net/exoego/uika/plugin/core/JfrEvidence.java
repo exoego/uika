@@ -111,7 +111,6 @@ public final class JfrEvidence {
         var events = 0L;
         try (var file = new RecordingFile(recording);
                 BufferedWriter out = Files.newBufferedWriter(output)) {
-            var frames = new ArrayList<String>();
             while (file.hasMoreEvents()) {
                 var event = file.readEvent();
                 if (!"jdk.ClassLoad".equals(event.getEventType().getName())) {
@@ -120,39 +119,41 @@ public final class JfrEvidence {
                 RecordedClass loaded = event.getValue("loadedClass");
                 events++;
                 var name = loaded.getName();
-                frames.clear();
-                var stack = event.getStackTrace();
-                if (stack != null) {
-                    // Unlike -Xlog:class+load+cause stacks, jdk.ClassLoad stacks start
-                    // at the loading call site (no ClassLoader.defineClass machinery on
-                    // top), so the CLI's trigger heuristics have less to skip, not more.
-                    for (RecordedFrame frame : stack.getFrames()) {
-                        var method = frame.getMethod();
-                        frames.add("\tat " + method.getType().getName() + "."
-                                + method.getName() + "(line " + frame.getLineNumber()
-                                + ")");
-                    }
+                var state = emitted.get(name);
+                if (Boolean.TRUE.equals(state)) {
+                    continue;
                 }
+                var stack = event.getStackTrace();
+                List<RecordedFrame> frames = stack == null ? List.of() : stack.getFrames();
                 if (frames.isEmpty()) {
-                    // Also the shape for a stack whose frames were all non-Java: a
-                    // header with no frames would not claim the CLI's stacked slot, so
-                    // the bare line keeps a later framed block eligible. The tags
+                    // A header with no frames would not claim the CLI's stacked slot,
+                    // so the bare line keeps a later framed block eligible. The tags
                     // decorator makes the line trusted, so a default-package class
                     // survives the CLI's single-segment rule.
-                    if (!emitted.containsKey(name)) {
-                        out.write("[class,load] " + name);
+                    if (state == null) {
+                        out.write("[class,load] ");
+                        out.write(name);
                         out.newLine();
                         emitted.put(name, Boolean.FALSE);
                     }
                     continue;
                 }
-                if (Boolean.TRUE.equals(emitted.get(name))) {
-                    continue;
-                }
-                out.write("Java stack when loading " + name + ":");
+                out.write("Java stack when loading ");
+                out.write(name);
+                out.write(':');
                 out.newLine();
-                for (String frame : frames) {
-                    out.write(frame);
+                // Unlike -Xlog:class+load+cause stacks, jdk.ClassLoad stacks start at the
+                // loading call site (no ClassLoader.defineClass machinery on top), so the
+                // CLI's trigger heuristics have less to skip, not more.
+                for (RecordedFrame frame : frames) {
+                    var method = frame.getMethod();
+                    out.write("\tat ");
+                    out.write(method.getType().getName());
+                    out.write('.');
+                    out.write(method.getName());
+                    out.write("(line ");
+                    out.write(Integer.toString(frame.getLineNumber()));
+                    out.write(')');
                     out.newLine();
                 }
                 emitted.put(name, Boolean.TRUE);

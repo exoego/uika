@@ -237,6 +237,23 @@ final class JfrEvidenceTest {
                 "a bare line after the framed block must be deduped");
     }
 
+    /// Every test fork re-records the same classes, and the CLI keeps only the first bare
+    /// line per class, so a second stackless recording must add nothing for them.
+    @Test
+    void aBareLineIsWrittenOncePerBatch() throws Exception {
+        var bare = dir.resolve("bare.jfr");
+        JfrTestRecordings.recordStacklessClassLoad(dir, bare, "UikaJfrProbeTwiceBare");
+        var bareAgain = Files.copy(bare, dir.resolve("bare-again.jfr"));
+
+        var rewritten = JfrEvidence.rewrite(List.of(bare, bareAgain), dir.resolve("work"), line -> {});
+
+        assertEquals(2, rewritten.size(), () -> "expected one conversion per recording: " + rewritten);
+        assertTrue(Files.readString(rewritten.get(0)).contains("[class,load] UikaJfrProbeTwiceBare"),
+                "the first bare line must be written");
+        assertFalse(Files.readString(rewritten.get(1)).contains("UikaJfrProbeTwiceBare"),
+                "a second bare line for the class must be deduped");
+    }
+
     /// The JDK's default profile leaves jdk.ClassLoad off, so such a recording converts to
     /// nothing, and the log line is the only symptom.
     @Test
