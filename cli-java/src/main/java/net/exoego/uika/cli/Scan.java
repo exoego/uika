@@ -1,6 +1,7 @@
 package net.exoego.uika.cli;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +41,19 @@ final class Scan {
 
         /** Folds one leaf in; duplicate class names are first-wins, which is classpath order. */
         void merge(Extract.ScanLeaf leaf) {
+            merge(leaf, true);
+        }
+
+        /** One path's provider files, and why they could not be read (null when they could). */
+        void addServices(List<Reach.ServiceFile> files, String warning) {
+            services.addAll(files);
+            if (warning != null) {
+                serviceWarnings.add(warning);
+            }
+        }
+
+        /** @param release false for a leaf another run merges again */
+        void merge(Extract.ScanLeaf leaf, boolean release) {
             int[] a = leaf.records.a;
             int end = leaf.records.n;
             int at = 0;
@@ -79,7 +93,57 @@ final class Scan {
                 warnings.addAll(leaf.warnings);
             }
             scannedClasses += leaf.scanned;
-            leaf.records.release();
+            if (release) {
+                leaf.records.release();
+            }
+        }
+    }
+
+    /**
+     * Pass-1 leaves of the paths several runs of one upgrade-check scan, kept from the first
+     * run that scans a path to the last that merges it. Runs share a cache only when their
+     * compared libraries and edge collection match, since both shape what a scan records.
+     *
+     * <p>A kept path is scanned whole: no entry is dropped as a duplicate of an earlier path
+     * and no class as a known loser, because the paths before it differ from run to run.
+     * First-wins is left to the merge, which applies it in each run's own path order.
+     */
+    static final class Shared {
+        private final Map<String, Integer> uses;
+        private final Map<String, Kept> kept = new HashMap<>();
+
+        /** @param uses per path, how many runs will scan it; only paths with two or more */
+        Shared(Map<String, Integer> uses) {
+            this.uses = uses;
+        }
+
+        boolean covers(String path) {
+            return uses.containsKey(path);
+        }
+
+        Kept get(String path) {
+            return kept.get(path);
+        }
+
+        /** Counts one run's merge of {@code path}, and frees its leaves after the last. */
+        private void merged(String path, Kept entry) {
+            int left = uses.merge(path, -1, Integer::sum);
+            if (left > 0) {
+                kept.putIfAbsent(path, entry);
+                return;
+            }
+            uses.remove(path);
+            kept.remove(path);
+        }
+
+        /** What one scan of a path left for the runs after it. */
+        static final class Kept {
+            List<Extract.ScanLeaf> leaves;
+            /** The scanned entries' (name, CRC) pairs, so later paths still skip their copies. */
+            int[] names = new int[0];
+            int[] crcs = new int[0];
+            List<Reach.ServiceFile> services = List.of();
+            String serviceWarning;
         }
     }
 
@@ -242,6 +306,12 @@ final class Scan {
      * @param ahead the first window's directory reads if they were started early, else null
      */
     static Result scanTargetPaths(List<String> paths, ApiIndex oldIndex, MemberProbe probe, boolean collectEdges, Ahead ahead) {
+        return scanTargetPaths(paths, oldIndex, probe, collectEdges, ahead, null);
+    }
+
+    /** @param shared leaves kept across the runs of one upgrade-check, or null */
+    static Result scanTargetPaths(
+            List<String> paths, ApiIndex oldIndex, MemberProbe probe, boolean collectEdges, Ahead ahead, Shared shared) {
         Result result = new Result(collectEdges);
         NameSet oldNames = oldIndex.classNameSet();
         boolean useAhead = ahead != null && ahead.paths.equals(paths) && ahead.collectEdges == collectEdges;
@@ -259,6 +329,9 @@ final class Scan {
             // Workers read the graph while this thread grows it: `contains` is the one read,
             // and a class not yet merged reads as absent.
             Extract.ScanSink sink = new Extract.ScanSink(oldNames, result.graph, collectEdges, probe);
+            Extract.ScanSink wholeSink = new Extract.ScanSink(oldNames, null, collectEdges, probe);
+            Shared.Kept[] reused = new Shared.Kept[n];
+            Shared.Kept[] keeping = new Shared.Kept[n];
             // Directories share a few lanes instead of getting a task each.
             Input.DirectoryScan<Extract.ScanLeaf> directories = new Input.DirectoryScan<>(sink);
             directories.start();
@@ -272,6 +345,12 @@ final class Scan {
             for (int mergeNext = 0; mergeNext < n; mergeNext++) {
                 while (prepareNext < n && prepareNext < mergeNext + window) {
                     int index = prepareNext++;
+                    if (shared != null) {
+                        reused[index] = shared.get(paths.get(index));
+                        if (reused[index] != null) {
+                            continue;
+                        }
+                    }
                     RecursiveAction prepare = new RecursiveAction() {
                         private static final long serialVersionUID = 1L;
 
@@ -285,45 +364,73 @@ final class Scan {
                 }
                 while (dedupNext < prepareNext) {
                     int index = dedupNext++;
+                    Shared.Kept again = reused[index];
+                    if (again != null) {
+                        dedup.register(again.names, again.crcs, again.names.length);
+                        result.addServices(again.services, again.serviceWarning);
+                        perPath[index] = again.leaves;
+                        continue;
+                    }
                     prepares[index].join();
                     prepares[index] = null;
                     Input.Prepared ready = prepared[index];
                     prepared[index] = null;
-                    if (ready.entries != null) {
+                    String path = paths.get(index);
+                    boolean keep = shared != null && !ready.directory && shared.covers(path);
+                    if (keep) {
+                        Shared.Kept kept = new Shared.Kept();
+                        if (ready.entries != null) {
+                            kept.names = Arrays.copyOf(ready.entries.name, ready.entries.count);
+                            kept.crcs = Arrays.copyOf(ready.entries.crc, ready.entries.count);
+                            dedup.register(kept.names, kept.crcs, kept.names.length);
+                        }
+                        kept.services = ready.services;
+                        kept.serviceWarning = ready.serviceWarning;
+                        keeping[index] = kept;
+                    } else if (ready.entries != null) {
                         dedup.apply(ready.entries);
                     }
-                    result.services.addAll(ready.services);
-                    if (ready.serviceWarning != null) {
-                        result.serviceWarnings.add(ready.serviceWarning);
-                    }
+                    result.addServices(ready.services, ready.serviceWarning);
                     List<Extract.ScanLeaf> leaves = new ArrayList<>();
                     perPath[index] = leaves;
-                    String path = paths.get(index);
                     if (ready.directory) {
                         roots[index] = directories.add(path, leaves);
                         continue;
                     }
+                    Extract.ScanSink pathSink = keep ? wholeSink : sink;
                     RecursiveAction scan = new RecursiveAction() {
                         private static final long serialVersionUID = 1L;
 
                         @Override
                         protected void compute() {
-                            Input.forEachClass(path, ready, sink, leaves);
+                            Input.forEachClass(path, ready, pathSink, leaves);
                         }
                     };
                     scan.fork();
                     scans[index] = scan;
                 }
+                Shared.Kept kept = reused[mergeNext] != null ? reused[mergeNext] : keeping[mergeNext];
                 if (scans[mergeNext] != null) {
                     scans[mergeNext].join();
                     scans[mergeNext] = null;
-                } else {
+                } else if (roots[mergeNext] != null) {
                     directories.finish(roots[mergeNext]);
                     roots[mergeNext] = null;
                 }
-                for (Extract.ScanLeaf leaf : perPath[mergeNext]) {
-                    result.merge(leaf);
+                if (keeping[mergeNext] != null) {
+                    for (Extract.ScanLeaf leaf : perPath[mergeNext]) {
+                        leaf.records.trim();
+                    }
+                    kept.leaves = perPath[mergeNext];
                 }
+                for (Extract.ScanLeaf leaf : perPath[mergeNext]) {
+                    result.merge(leaf, kept == null);
+                }
+                if (kept != null) {
+                    shared.merged(paths.get(mergeNext), kept);
+                }
+                reused[mergeNext] = null;
+                keeping[mergeNext] = null;
                 perPath[mergeNext] = null;
             }
             // The skipped byte-identical duplicates still count as scanned.

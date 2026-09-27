@@ -486,6 +486,54 @@ class ExtractTest {
     }
 
     /**
+     * Upgrade-check runs share a jar's scan, but the jars before it differ from run to run, so
+     * which copy of a class wins and which duplicates are skipped must still come out as if
+     * each run had scanned the jar itself. One shared jar has a Latin-1 entry name, which
+     * sends it to the fallback reader, the one kind of path with no directory to deduplicate.
+     */
+    @Test
+    void aSharedScanMergesLikeAFreshScanWhateverPrecedesIt(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        byte[] other = classNamed("app/Other", "m");
+        String first = writeJar(dir.resolve("first.jar"), "app/Main.class", referencingClass(), "app/Other.class", other);
+        java.nio.file.Path latin1 = dir.resolve("shared.jar");
+        try (java.util.zip.ZipOutputStream zip =
+                new java.util.zip.ZipOutputStream(java.nio.file.Files.newOutputStream(latin1), java.nio.charset.StandardCharsets.ISO_8859_1)) {
+            for (Object[] entry : List.of(
+                    new Object[] {"café.txt", new byte[] {1}},
+                    new Object[] {"app/Main.class", classNamed("app/Main", "shadowed")},
+                    new Object[] {"app/Other.class", other})) {
+                zip.putNextEntry(new java.util.zip.ZipEntry((String) entry[0]));
+                zip.write((byte[]) entry[1]);
+                zip.closeEntry();
+            }
+        }
+        String fallback = latin1.toString();
+        String fast = writeJar(dir.resolve("fast.jar"), "app/Main.class", classNamed("app/Main", "fast"), "app/Other.class", other);
+        ApiIndex library = libraryOf("lib/Owner", "lib/Elem");
+        MemberProbe probe = new MemberProbe(new long[0]);
+        Scan.Shared cache = new Scan.Shared(new java.util.HashMap<>(java.util.Map.of(fallback, 3, fast, 3)));
+
+        for (List<String> paths :
+                List.of(List.of(first, fast, fallback), List.of(fast, fallback), List.of(fallback, fast, first))) {
+            Scan.Result fresh = Scan.scanTargetPaths(paths, library, probe, true);
+            Scan.Result reused = Scan.scanTargetPaths(paths, library, probe, true, null, cache);
+            assertEquals(summaryOf(fresh), summaryOf(reused), paths.toString());
+        }
+        assertNull(cache.get(fast), "the last run frees the shared leaves");
+        assertNull(cache.get(fallback), "the last run frees the shared leaves");
+    }
+
+    private static List<String> summaryOf(Scan.Result result) {
+        List<String> out = new java.util.ArrayList<>(recordsOf(result));
+        out.add("scanned " + result.scannedClasses + ", warnings " + result.warnings);
+        for (String name : List.of("app/Main", "app/Other")) {
+            int node = result.graph.node(Intern.intern(name));
+            out.add(name + " from " + Intern.str(result.graph.sourceOf(node)) + ", edges " + edgesOf(result.graph, name));
+        }
+        return out;
+    }
+
+    /**
      * A class is inflated only as far as its header needs. The header here ends well past the
      * first slice and short of the whole file, and the one library reference sits at the very
      * end of the pool, so a header parsed from too few bytes would lose it.

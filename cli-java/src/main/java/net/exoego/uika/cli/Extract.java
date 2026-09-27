@@ -119,6 +119,7 @@ final class Extract {
         private final boolean collectEdges;
         private final MemberProbe probe;
 
+        /** @param known classes merged so far, or null to record every class whole */
         ScanSink(NameSet oldNames, ClassGraph known, boolean collectEdges, MemberProbe probe) {
             this.oldNames = oldNames;
             this.known = known;
@@ -143,8 +144,9 @@ final class Extract {
                 // The graph only ever holds classes merged from earlier paths, so a class it
                 // already has is a guaranteed first-wins loser and only evidence is swept:
                 // that must not depend on how far the merge got, or on which chunk a copy
-                // landed in, since chunk size scales with the thread count.
-                if (!known.contains(className)) {
+                // landed in, since chunk size scales with the thread count. Without a graph
+                // every class is kept, and the merge applies first-wins instead.
+                if (known == null || !known.contains(className)) {
                     // Member references always go through a Class constant of the same pool,
                     // so a pool naming no checked-library class holds no reference at all and
                     // the members (most of the remaining inflate) need not be read.

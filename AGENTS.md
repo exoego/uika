@@ -144,14 +144,16 @@ relearned by experiment.
   build may mix releases, so a module still on 11 must not be checked against a
   sibling's 17 -> 21 move. And a run is the unit the report counts and the `--fail-on`
   gate decides on, so only a module-shaped run can give a module its own scanned,
-  broken and unverified numbers. The cost is that a jar on several modules' classpaths
-  is scanned once per module, which an earlier per-pair union avoided. Measured and
-  accepted, with the numbers in the uika-performance skill: the union is flat in
-  module count and per module is linear, so a large monorepo pays minutes. It pays
-  them only on a PR that moves a JDK release, since `Commands.releaseChange` plans
-  nothing otherwise, and the run loop already keeps the other half of the cost,
-  reading a release out of ct.sym (`Commands.jdkReleasePair`), down to once per
-  distinct pair.
+  broken and unverified numbers. A jar on several modules' classpaths is still scanned
+  once, not once per module: runs that compare the same pair with the same edge
+  setting share pass 1 per path (`Commands.sharedScans`, `Scan.Shared`, for dependency
+  runs and JDK runs alike). A shared path is scanned WHOLE, with no entry dropped as a
+  duplicate and no class skipped as a known loser, because the paths before it differ
+  from run to run; each run's merge applies first-wins in its own path order. Its
+  leaves are kept from the first run to the last that merges them, and freed then. What
+  stays per run is the merge, pass 2 and the check. Numbers are in the
+  uika-performance skill. The run loop also keeps reading a release out of ct.sym
+  (`Commands.jdkReleasePair`) down to once per distinct pair.
 - A JDK run is named `:app (JDK 11 -> 17)`, module AND pair. That string is the key
   violations are attributed by, so a bare module name would fold the module's dependency
   run into the JDK run's broken count, and a bare pair would lose the attribution

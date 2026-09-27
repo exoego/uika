@@ -278,8 +278,9 @@ user time, and a per-class record cost ~35MB RSS.
 
 ## Deliberate Costs
 
-- Per-module JDK runs (`Commands.planJdkRuns`) scan each moved module's whole
-  classpath, so a jar shared by N modules is inflated and parsed N times. Measured on a
+- Per-module runs, dependency and JDK alike, each check a module's whole classpath. Until
+  2026-09-27 each also scanned it, so a jar shared by N modules was inflated and parsed N
+  times; the next bullet is how that went away. The table below is from then, measured on a
   synthetic monorepo worst case, every module carrying the same classpath, 11 -> 17,
   no dependency changes so the numbers are the JDK runs alone (Rust binary, one
   session, the shape is what holds):
@@ -296,25 +297,36 @@ user time, and a per-class record cost ~35MB RSS.
   the Gradle cache picks a different 300 jars once anything downloads, which moved the
   same 1 x 300 point from 0.29s to 0.61s.
 
-  The union is flat in module count and per module is linear, so a 50-module build on
-  a 2000-jar classpath extrapolates to minutes. User time confirms the work is
-  genuinely redundant rather than an overhead artifact: 3.96s at 1 module and 191s at
-  50, a factor of 48. Accepted on purpose. A run is the unit the report counts and the
+  The union was flat in module count and per module linear, so a 50-module build on a
+  2000-jar classpath extrapolated to minutes. User time confirmed the work was redundant
+  rather than an overhead artifact: 3.96s at 1 module and 191s at 50, a factor of 48.
+  Runs stay per module on purpose: a run is the unit the report counts and the
   `--fail-on` gate decides on, so only a module-shaped run gives a module its own
-  scanned, broken and unverified numbers, and the cost lands only on a PR that moves a
-  JDK release, never on a dependency upgrade. Real builds are cheaper than this table
-  because their module classpaths are not identical.
-
-  Where the remaining headroom is, measured rather than guessed:
+  scanned, broken and unverified numbers. What was weighed against the redundancy:
 
   - NOT in cross-run parallelism. One run already reaches user/real 6.5x on 12 cores
     and 50 sequential runs reach 6.8x, so running runs concurrently is worth under 2x
     wall and multiplies peak RSS by the concurrency.
   - The JDK release indexes are already read once per distinct pair
     (`Commands.jdkReleasePair`), which would otherwise repeat per module.
-  - Sharing the SCAN across runs would mean composing scan results per path, and
-    `Dedup` plus the parse both resolve duplicate classes first-wins in path order
-    WITHIN a run, so per-path pieces are not independent.
+  - Sharing the SCAN across runs looked impossible because `Dedup` and the loser skip
+    both resolve duplicate classes first-wins in path order WITHIN a run, so per-path
+    pieces are not independent. They are once a shared path is scanned whole: no entry
+    dropped as a duplicate, no class skipped as a known loser, first-wins left to each
+    run's merge. That is `Scan.Shared` (2026-09-27): only paths two or more runs of one
+    pair scan are kept, trimmed to exact arrays, and freed after their last run.
+    Measured on 300 cache jars with every module holding a random 80% of them plus its
+    own classes directory, coroutines 1.7.1 -> 1.11.0, output byte-identical:
+
+    | modules | before | shared |
+    |---------|-------:|-------:|
+    | 10 | 2.67s, 21.2s user, 343MB | 1.20s, 7.6s user, 289MB |
+    | 25 | 5.9-6.9s, 47-49s user, 461-473MB | 1.5-1.8s, 8.5-8.9s user, 341-368MB |
+    | 10, JDK 11 -> 17 | 3.78s, 31.3s user, 679MB | 1.96s, 10.0s user, 666MB |
+
+    RSS falls too, because the runs stop allocating and promoting a whole scan's leaves
+    each. The cost is the first run of a shared path: without dedup it inflates
+    duplicate copies a single run would skip, which on a real module classpath is a few
+    shaded classes.
   - Narrowing pass 1's owner filter looked promising and was tried in full. Measured
-    and rejected, above. Nothing else on this list is worth more than the linear factor
-    itself.
+    and rejected, above.
