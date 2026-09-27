@@ -347,9 +347,9 @@ final class Input {
             cs.ofBytes(cs.bytes, length);
         } else {
             cs.ofDeflate(view, (int) dataStart, (int) compressed, entries.inflated[i] & 0xffffffffL);
-            // Most of a class file is its constant pool, so the first slice aims past the
-            // typical header; the sink asks for more when the header runs longer.
-            cs.ensure(Math.max(1024, (int) (cs.expected * 3L / 4)));
+            // Enough for the magic and the first pool entries; the sink asks for the rest of
+            // the header in slices sized from what it has parsed.
+            cs.ensure(512);
         }
         if (hasClassMagic(cs.bytes, cs.available)) {
             sink.accept(leaf, scratch, source, entries.name[i], cs);

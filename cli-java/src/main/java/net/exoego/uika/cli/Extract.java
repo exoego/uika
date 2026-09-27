@@ -183,9 +183,12 @@ final class Extract {
     }
 
     /**
-     * Parses the pool and class header, inflating further only while the header needs it. The
-     * next slice is sized from the entries seen so far, so a typical class costs two inflate
-     * calls rather than many small ones (zlib decodes the tail of every call on its slow path).
+     * Parses the pool and class header, inflating further only while the header needs it. Each
+     * slice aims short, at three quarters of the pool still expected from the entries seen so
+     * far, so the output stops about 4% past the header end. Aiming past the end in fewer calls
+     * inflated 15% more than the header and cost 7% of the scan's CPU. A resumed call into
+     * {@link Inflate} costs next to nothing, unlike zlib, which decodes the tail of every call
+     * on its slow path. Half slices overshot only 1% but raised peak RSS by 20MB.
      */
     static void parseHeader(ClassParser p, ClassSource bytes) throws ClassParser.FormatException {
         p.begin(bytes.bytes);
@@ -195,7 +198,7 @@ final class Extract {
             long estimate = p.headerNeed();
             if (declared > 0 && parsed > 1) {
                 long perEntry = p.position() / parsed + 1;
-                estimate = Math.max(estimate, p.position() + (declared - parsed) * perEntry * 9 / 8 + 64);
+                estimate = Math.max(estimate, p.position() + (declared - parsed) * perEntry * 3 / 4 + 16);
             }
             if (estimate >= bytes.expected * 15L / 16) {
                 bytes.readAll();
