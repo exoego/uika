@@ -45,6 +45,16 @@ final class Dedup {
         }
     }
 
+    /**
+     * Marks entries as seen without dropping any, for a path whose scan must stay complete
+     * because another run reuses it. Later paths still skip their copies.
+     */
+    void register(int[] names, int[] crcs, int count) {
+        for (int i = 0; i < count; i++) {
+            firstSeen(names[i], crcs[i]);
+        }
+    }
+
     private boolean firstSeen(int name, int crc) {
         if (!hasFirst.get(name)) {
             hasFirst.set(name);

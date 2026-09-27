@@ -347,6 +347,19 @@ final class Commands {
             Jdk.Indexer jdk,
             Verdicts.Writer verdicts,
             Scan.Ahead ahead) {
+        return runCheckWithIndexes(oldIndex, newIndex, scan, appRoots, excludeRules, jdk, verdicts, ahead, null);
+    }
+
+    private static Check.Report runCheckWithIndexes(
+            ApiIndex oldIndex,
+            ApiIndex newIndex,
+            ScanTargets scan,
+            List<String> appRoots,
+            List<Exclude.Rule> excludeRules,
+            Jdk.Indexer jdk,
+            Verdicts.Writer verdicts,
+            Scan.Ahead ahead,
+            Scan.Shared shared) {
         boolean reachability = !appRoots.isEmpty();
         List<String> paths = scan.paths();
         List<String> oldJars = scan.oldJars();
@@ -356,7 +369,7 @@ final class Commands {
         MemberProbe probe = Check.selectionMemberProbe(oldIndex, newIndex);
         // With reachability on, pass 1 also collects class-load edges and the scan targets'
         // provider files.
-        Scan.Result scanned = Scan.scanTargetPaths(paths, oldIndex, probe, reachability, ahead);
+        Scan.Result scanned = Scan.scanTargetPaths(paths, oldIndex, probe, reachability, ahead, shared);
         Reach.Inputs reach = null;
         if (reachability) {
             Out.warnAll(scanned.serviceWarnings);
@@ -770,6 +783,7 @@ final class Commands {
             // modules of one build usually move together.
             Map<Long, ApiIndex[]> jdkIndexes = new HashMap<>();
             Map<MergeKey, Violation> mergedIndex = new HashMap<>();
+            Map<List<Object>, Scan.Shared> shared = sharedScans(plan.runs);
 
             for (ModuleRunPlan run : plan.runs) {
                 if (verdicts != null) {
@@ -788,8 +802,16 @@ final class Commands {
                 }
                 // Exclude rules are NOT applied per run: they filter the merged set below,
                 // so counts and unused-rule warnings appear once.
-                Check.Report result =
-                        runCheckWithIndexes(oldIndex, newIndex, run.oldJars, run.newJars, run.targets, run.appRoots, List.of(), jdk, verdicts);
+                Check.Report result = runCheckWithIndexes(
+                        oldIndex,
+                        newIndex,
+                        scanTargets(run.oldJars, run.newJars, run.targets),
+                        run.appRoots,
+                        List.of(),
+                        jdk,
+                        verdicts,
+                        null,
+                        shared.get(shareKey(run)));
                 merged.scannedClasses += result.scannedClasses;
                 merged.unknownRefs += result.unknownRefs;
                 merged.reachabilityComputed |= result.reachabilityComputed;
@@ -863,6 +885,38 @@ final class Commands {
         }
         printUpgrade(args.json(), changes.changes(), merged, moduleSummary(plan, moduleOutcomes));
         return failed ? 1 : 0;
+    }
+
+    /**
+     * Runs that compare the same pair and collect edges alike scan a path to the same leaves,
+     * so the modules of one build stop re-inflating the jars they share. Only paths that two
+     * or more such runs scan are kept, and each is freed after its last run.
+     */
+    private static Map<List<Object>, Scan.Shared> sharedScans(List<ModuleRunPlan> runs) {
+        Map<List<Object>, Map<String, Integer>> uses = new HashMap<>();
+        for (ModuleRunPlan run : runs) {
+            Map<String, Integer> counts = uses.computeIfAbsent(shareKey(run), k -> new HashMap<>());
+            Set<Path> old = new HashSet<>(pathKey(run.oldJars));
+            Set<String> once = new HashSet<>();
+            for (String target : run.targets) {
+                if (!old.contains(Path.of(target)) && once.add(target)) {
+                    counts.merge(target, 1, Integer::sum);
+                }
+            }
+        }
+        Map<List<Object>, Scan.Shared> out = new HashMap<>();
+        for (Map.Entry<List<Object>, Map<String, Integer>> e : uses.entrySet()) {
+            e.getValue().values().removeIf(count -> count < 2);
+            if (!e.getValue().isEmpty()) {
+                out.put(e.getKey(), new Scan.Shared(e.getValue()));
+            }
+        }
+        return out;
+    }
+
+    private static List<Object> shareKey(ModuleRunPlan run) {
+        Object pair = run.jdkPair == null ? List.of(pathKey(run.oldJars), pathKey(run.newJars)) : List.of(run.jdkPair[0], run.jdkPair[1]);
+        return List.of(pair, !run.appRoots.isEmpty());
     }
 
     private static List<Path> pathKey(List<String> paths) {

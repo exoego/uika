@@ -43,6 +43,14 @@ final class IntBuf {
         }
     }
 
+    /** Trades the pooled array for one of exactly {@link #n}, for a buffer kept a long time. */
+    void trim() {
+        int[] tight = Arrays.copyOf(a, n);
+        release();
+        a = tight;
+        pooled = false;
+    }
+
     boolean isEmpty() {
         return n == 0;
     }

@@ -85,9 +85,9 @@ pass-2 classes are typically below 0.1% of the scan.
   has changes=none but real per-module breaks;
   `perModuleCheckReportsBreakWhenGlobalVersionSetIsUnchanged`).
 - `scannedClasses`/`unknownRefs` in the aggregate are per-run sums (a jar on
-  several checked modules' classpaths is counted once per run; that rescan is
-  the accepted per-module cost -- old/new library indexes at least are built
-  once per distinct pair via the run loop's index cache in `Commands`). The per-run
+  several checked modules' classpaths is counted once per run, although runs of
+  one pair share its pass-1 scan through `Scan.Shared`; old/new library indexes
+  are built once per distinct pair via the run loop's index cache in `Commands`). The per-run
   broken counts in `Report.ModuleRunSummary` come from the merged post-exclusion set
   so they agree with the listing.
 - Dump artifact entries may carry a `"project"` key (additive in v2; written
