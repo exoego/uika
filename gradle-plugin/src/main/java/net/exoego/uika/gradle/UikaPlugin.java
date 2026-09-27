@@ -24,6 +24,10 @@ import java.util.List;
  * Gradle does not allow resolving other projects' configurations at execution time, so
  * resolution must happen in each module's own task.
  *
+ * <p>Users configure every task through the root {@code uika {}} extension
+ * ({@link UikaExtension}), and a {@code -Puika*} property overrides its twin for one
+ * invocation.
+ *
  * <p>All project state the tasks need is wired in as task properties after each project
  * evaluates ({@code afterEvaluate} + {@code TaskProvider.configure}, so user configuration
  * from the build script is already applied and the wiring only runs for realized tasks).
@@ -52,7 +56,7 @@ public class UikaPlugin implements Plugin<Project> {
      * member that exists at runtime into NotFound on both sides, which stays unreported as an
      * Unknown. Over-claiming makes a member the runtime does not have resolve cleanly and
      * loses the finding with nothing to show for it. The dump keeps each module's own
-     * release next to it ({@link DumpModuleClasspathTask#getJdkRelease}), which is what lets
+     * release next to it ({@link DumpModuleClasspathTask#jdkRelease}), which is what lets
      * upgrade-check scope a JDK move to the modules that made it; the flag stays one value
      * because the layer it switches on is process-wide.
      *
@@ -94,8 +98,9 @@ public class UikaPlugin implements Plugin<Project> {
     }
 
     /**
-     * The release ONE module records in the dump: {@code -PuikaJdkRelease} when it is set,
-     * else what that project compiles for.
+     * The release ONE module records in the dump: the stated release ({@code -PuikaJdkRelease},
+     * else the extension's {@code jdkRelease}) when there is one, else what that project
+     * compiles for.
      *
      * <p>The override replaces every module's own value rather than sitting beside them,
      * because it is a statement about the whole build. It exists here for the case the
@@ -103,9 +108,23 @@ public class UikaPlugin implements Plugin<Project> {
      * runtime has no other way to say so, and without it upgrade-check would never notice
      * that runtime moving.
      */
-    private static Integer dumpJdkRelease(Project root, Project project) {
-        Integer override = UikaCli.overrideRelease(jdkReleaseProperty(root));
+    private static Integer dumpJdkRelease(Integer stated, Project project) {
+        Integer override = UikaCli.overrideRelease(stated);
         return override != null ? override : declaredRelease(project);
+    }
+
+    /**
+     * {@code value} from a {@code -Puika*} property when it was passed, else the extension's
+     * setting. The property wins because it is the one-off override for a single invocation.
+     */
+    private static <T> org.gradle.api.provider.Provider<T> propertyOr(
+            Project root, Object value, java.util.function.Function<String, T> parse,
+            org.gradle.api.provider.Provider<T> extension) {
+        if (value == null) {
+            return extension;
+        }
+        var parsed = parse.apply(value.toString());
+        return root.getProviders().provider(() -> parsed);
     }
 
     /**
@@ -154,9 +173,29 @@ public class UikaPlugin implements Plugin<Project> {
 
     @Override
     public void apply(Project root) {
-        String configurationName = root.findProperty("uikaConfiguration") instanceof String s
-                ? s
-                : DEFAULT_CONFIGURATION;
+        var extension = root.getExtensions().create("uika", UikaExtension.class);
+        extension.getFailOn().convention("any");
+        extension.getMergedClasspath().convention(false);
+        extension.getConfiguration().convention(DEFAULT_CONFIGURATION);
+        extension.getBuildOutputs().convention(true);
+        // Default to the plugin's own version (Implementation-Version in the plugin jar), so
+        // bumping the plugin coordinate also bumps the CLI.
+        var ownVersion = UikaPlugin.class.getPackage().getImplementationVersion();
+        if (ownVersion != null) {
+            extension.getCliVersion().convention(ownVersion);
+        }
+
+        // Each -Puika* property is read once here and wins over its extension setting.
+        var configurationName = propertyOr(root, root.findProperty("uikaConfiguration"),
+                s -> s, extension.getConfiguration());
+        // Bare -PuikaBuildOutputs (the empty string) means true, like the other flag-shaped
+        // properties.
+        var buildOutputs = propertyOr(root, root.findProperty("uikaBuildOutputs"),
+                s -> !"false".equals(s), extension.getBuildOutputs());
+        // Parsed now, not lazily, so a malformed value fails every invocation with a uika
+        // message instead of surfacing only when a task reads it.
+        var statedJdkRelease = propertyOr(root, jdkReleaseProperty(root),
+                Integer::valueOf, extension.getJdkRelease());
 
         var merge =
                 root.getTasks().register("uikaDumpClasspath", MergeClasspathTask.class, task -> {
@@ -229,66 +268,61 @@ public class UikaPlugin implements Plugin<Project> {
                     task.setDescription("Run uika upgrade-check between two dumps (the CLI binary is fetched via this build's repositories)");
                     var before = root.findProperty("uikaBefore");
                     if (before != null) {
-                        task.getBeforeFile().set(root.file(before.toString()));
+                        task.beforeFile().set(root.file(before.toString()));
                     }
                     var after = root.findProperty("uikaAfter");
                     if (after != null) {
-                        task.getAfterFile().set(root.file(after.toString()));
+                        task.afterFile().set(root.file(after.toString()));
                     }
-                    var cliVersion = root.findProperty("uikaCliVersion");
-                    if (cliVersion != null) {
-                        task.getCliVersion().set(cliVersion.toString());
-                    } else {
-                        // Default to the plugin's own version (Implementation-Version in the plugin jar),
-                        // so bumping the plugin coordinate also bumps the CLI.
-                        var own = UikaPlugin.class.getPackage().getImplementationVersion();
-                        if (own != null) {
-                            task.getCliVersion().convention(own);
-                        }
-                    }
-                    var failOn = root.findProperty("uikaFailOn");
-                    task.getFailOn().convention(failOn != null ? failOn.toString() : "any");
+                    task.cliVersion().set(propertyOr(root, root.findProperty("uikaCliVersion"),
+                            s -> s, extension.getCliVersion()));
+                    task.failOn().set(propertyOr(root, root.findProperty("uikaFailOn"),
+                            s -> s, extension.getFailOn()));
+                    // The property replaces the extension's files rather than adding to
+                    // them, like every other knob it overrides. A blank one counts as unset,
+                    // so a CI interpolation of an empty input keeps the committed files.
                     var excludeFile = root.findProperty("uikaExcludeFile");
-                    if (excludeFile != null) {
-                        for (String path : splitPaths(excludeFile.toString())) {
-                            task.getExcludeFiles().from(root.file(path));
+                    var excludePaths = excludeFile == null
+                            ? List.<String>of()
+                            : splitPaths(excludeFile.toString());
+                    if (!excludePaths.isEmpty()) {
+                        for (String path : excludePaths) {
+                            task.excludeFiles().from(root.file(path));
                         }
+                    } else {
+                        task.excludeFiles().from(extension.getExcludeFiles());
                     }
+                    task.classLoadLogs().from(extension.getClassLoadLogs());
                     if (jfrDir != null) {
-                        task.getClassLoadLogs().from(jfrDir);
+                        task.classLoadLogs().from(jfrDir);
                     }
                     // Bare -PuikaMergedClasspath means true, like every other flag-shaped
                     // property Gradle exposes; "false" turns it back off so a CI script can
                     // pass a computed value.
-                    var mergedClasspath = root.findProperty("uikaMergedClasspath");
-                    if (mergedClasspath != null) {
-                        task.getMergedClasspath().set(
-                                !"false".equals(String.valueOf(mergedClasspath)));
-                    }
+                    task.mergedClasspath().set(propertyOr(root,
+                            root.findProperty("uikaMergedClasspath"),
+                            s -> !"false".equals(s), extension.getMergedClasspath()));
                     var draftExcludeFile = root.findProperty("uikaDraftExcludeFile");
                     if (draftExcludeFile != null) {
-                        task.getDraftExcludeFile().set(root.file(draftExcludeFile.toString()));
-                    }
-                    Integer jdkRelease = jdkReleaseProperty(root);
-                    if (jdkRelease != null) {
-                        task.getJdkRelease().set(jdkRelease);
+                        task.draftExcludeFile().set(root.file(draftExcludeFile.toString()));
                     } else {
-                        // The build knows its JDK, so the JDK API layer defaults ON here (the bare
-                        // CLI keeps it opt-in): the lowest release any project targets, else the
-                        // JVM running the build. UikaCli.effectiveJdkRelease clamps at execution
-                        // time to what the build JVM's ct.sym can actually serve.
-                        // The provider is an @Input, so the configuration cache evaluates it while
-                        // the project is still available.
-                        task.getJdkRelease().convention(
-                                root.getProviders().provider(() -> defaultJdkRelease(root)));
+                        task.draftExcludeFile().set(extension.getDraftExcludeFile());
                     }
+                    // The build knows its JDK, so the JDK API layer defaults ON here (the bare
+                    // CLI keeps it opt-in): the lowest release any project targets, else the
+                    // JVM running the build. UikaCli.effectiveJdkRelease clamps at execution
+                    // time to what the build JVM's ct.sym can actually serve. The configuration
+                    // cache evaluates the provider when it stores the task, while the project
+                    // is still available.
+                    task.jdkRelease().set(statedJdkRelease.orElse(
+                            root.getProviders().provider(() -> defaultJdkRelease(root))));
                     // Through the provider API, not System.getenv: reading the environment
                     // at configuration time makes it a configuration input and invalidates
                     // the whole cache entry when it changes. A provider is re-read at
                     // execution, so the entry survives.
-                    task.getCliPath().set(
+                    task.cliPath().set(
                             root.getProviders().environmentVariable(UikaCli.CLI_PATH_ENV));
-                    task.getJfrWorkDir().convention(
+                    task.jfrWorkDir().convention(
                             root.getLayout().getBuildDirectory()
                                     .dir("uika/" + net.exoego.uika.plugin.core.JfrEvidence.WORK_DIR_NAME));
                     // The root tasks carry no data dependencies on each other, but a single
@@ -302,12 +336,12 @@ public class UikaPlugin implements Plugin<Project> {
         // (convention, -PuikaCliVersion, or a build-script override) is final. Absent version
         // stays unwired; the action reports the friendly error.
         root.afterEvaluate(r -> upgradeCheck.configure(task -> {
-            if (!task.getCliVersion().isPresent()) {
+            if (!task.cliVersion().isPresent()) {
                 return;
             }
             var notation = UikaCli.GROUP + ":" + UikaCli.ARTIFACT + ":"
-                    + task.getCliVersion().get() + ":" + UikaCli.JAR_CLASSIFIER + "@jar";
-            task.getCliJar().from(detachedFor(root, notation));
+                    + task.cliVersion().get() + ":" + UikaCli.JAR_CLASSIFIER + "@jar";
+            task.cliJar().from(detachedFor(root, notation));
         }));
 
         // -PuikaJfr=<dir> makes every Test task record class loads into a JFR recording
@@ -362,13 +396,14 @@ public class UikaPlugin implements Plugin<Project> {
                         task.getOutputs().upToDateWhen(t -> false);
                         task.getOutputFile().convention(
                                 p.getLayout().getBuildDirectory().file("uika/module-classpath.json"));
-                        task.getConfigurationName().convention(configurationName);
+                        task.configurationName().set(configurationName);
                         task.getModulePath().set(p.getPath());
                         task.getEmptyDump().convention(false);
                         // Build the outputs the dump refers to (project dependencies'
                         // classes and resources, and this module's own classes) before
                         // dumping, so the CLI never scans a classpath with unbuilt holes.
-                        // Opt out with -PuikaBuildOutputs=false for a resolution-only dump.
+                        // Opt out with buildOutputs = false (or -PuikaBuildOutputs=false) for a
+                        // resolution-only dump.
                         // One lazy provider, evaluated at task-graph time: the java plugin
                         // may not be applied yet at registration, and the property may be
                         // set after apply. The two artifact views are Buildable and build
@@ -377,12 +412,12 @@ public class UikaPlugin implements Plugin<Project> {
                         // SourceSetOutput builds this module's classes (matching the
                         // dumped classesDirs).
                         task.dependsOn(p.provider(() -> {
-                            if (!buildOutputs(root)) {
+                            if (!buildOutputs.get()) {
                                 return java.util.List.of();
                             }
                             var dependencies = new java.util.ArrayList<>();
                             var conf = p.getConfigurations().findByName(
-                                    task.getConfigurationName().get());
+                                    task.configurationName().get());
                             if (conf != null && conf.isCanBeResolved()) {
                                 dependencies.add(elementsView(p, conf, LibraryElements.CLASSES).getArtifactFiles());
                                 dependencies.add(elementsView(p, conf, LibraryElements.RESOURCES).getArtifactFiles());
@@ -395,12 +430,12 @@ public class UikaPlugin implements Plugin<Project> {
                         }));
                     });
             // Wire the module's state in once every project is evaluated, so the java
-            // plugin, any build-script configuration (configurationName, uikaBuildOutputs),
+            // plugin, any build-script configuration (the uika extension),
             // and the dependency projects' outgoing variants are all settled. The lenient
             // artifact views list a project dependency's directories even when they have
             // not been built (the CLI falls back to the producing module's classesDirs).
             p.getGradle().projectsEvaluated(gradle -> moduleTask.configure(task -> {
-                var confName = task.getConfigurationName().get();
+                var confName = task.configurationName().get();
                 var conf = p.getConfigurations().findByName(confName);
                 var javaExt =
                         p.getExtensions().findByType(JavaPluginExtension.class);
@@ -410,18 +445,18 @@ public class UikaPlugin implements Plugin<Project> {
                 // Here rather than at registration: compileJava's options.release and the
                 // java extension's targetCompatibility are both build-script settable, so
                 // reading them before the project evaluates would see the plugin defaults.
-                task.getJdkRelease().set(dumpJdkRelease(root, p));
+                task.jdkRelease().set(dumpJdkRelease(statedJdkRelease.getOrNull(), p));
                 SourceSet main = DumpModuleClasspathTask.mainSourceSet(p);
                 if (main != null) {
                     task.getClassesDirs().from(main.getOutput().getClassesDirs());
                     task.getCompilableSources().from(
                             main.getAllSource().minus(main.getResources()));
                 }
-                task.getBuiltOutputs().set(buildOutputs(root));
+                task.builtOutputs().set(buildOutputs.get());
                 if (conf != null && conf.isCanBeResolved()) {
                     var classes = elementsView(p, conf, LibraryElements.CLASSES);
                     var resources = elementsView(p, conf, LibraryElements.RESOURCES);
-                    if (buildOutputs(root)) {
+                    if (buildOutputs.get()) {
                         // Default: the dependsOn wiring builds the producer tasks, so the
                         // resolution provider may resolve lazily at execution time (in
                         // parallel across module tasks).
@@ -474,7 +509,7 @@ public class UikaPlugin implements Plugin<Project> {
      * singular name because it is released; a comma is the delimiter because Maven's plexus
      * binding and Bazel's {@code -Duika.excludeFiles} already use one.
      *
-     * <p>A path containing a comma has to go through the build script's
+     * <p>A path containing a comma has to go through the uika extension's
      * {@code excludeFiles.from(...)} instead, the same escape hatch Maven's POM element is.
      *
      * <p>Dropping blanks also fixes the bare spelling: Gradle sets {@code -PuikaExcludeFile}
@@ -490,10 +525,6 @@ public class UikaPlugin implements Plugin<Project> {
             }
         }
         return paths;
-    }
-
-    private static boolean buildOutputs(Project root) {
-        return !"false".equals(String.valueOf(root.findProperty("uikaBuildOutputs")));
     }
 
     /**
@@ -524,13 +555,13 @@ public class UikaPlugin implements Plugin<Project> {
         }
         if (conf == null) {
             return "uika: project " + p.getPath() + " has no configuration \"" + name
-                    + "\". -PuikaConfiguration must name one every module resolves, or"
-                    + " override configurationName on that module's"
-                    + " uikaDumpModuleClasspath task.";
+                    + "\". The uika extension's configuration (or -PuikaConfiguration) must"
+                    + " name one every module resolves.";
         }
         if (!conf.isCanBeResolved()) {
             return "uika: configuration \"" + name + "\" of project " + p.getPath()
-                    + " cannot be resolved. -PuikaConfiguration wants a resolvable"
+                    + " cannot be resolved. The uika extension's configuration (or"
+                    + " -PuikaConfiguration) wants a resolvable"
                     + " configuration such as " + DEFAULT_CONFIGURATION + ".";
         }
         return null;

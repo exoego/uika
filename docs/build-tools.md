@@ -41,9 +41,10 @@ on the base branch and consume on the PR), `jdkRelease`, and
 `mergedClasspath`.
 
 One row per option, one column per tool. A cell is how that tool spells the
-option; the Gradle task property and the Maven POM element are the spelling a
-build script uses, and the `-P` and `-D` forms are the command line. A Mill
-`def` is a setting on the build's `UikaModule` object.
+option; the Gradle `uika {}` setting and the Maven POM element are the spelling
+a build script uses, and the `-P` and `-D` forms are the command line. A Gradle
+`-P` property wins over its `uika {}` setting. A Mill `def` is a setting on the
+build's `UikaModule` object.
 
 | Option | Gradle | sbt | Maven | Mill | Clojure CLI | Leiningen | Bazel |
 |---|---|---|---|---|---|---|---|
@@ -60,12 +61,14 @@ build script uses, and the `-P` and `-D` forms are the command line. A Mill
 
 Some options exist in a few tools only:
 
-- Gradle: `-PuikaConfiguration` picks the configuration the dump resolves.
+- Gradle: `-PuikaConfiguration` / `configuration` picks the configuration the
+  dump resolves.
   `uikaResolveClasspath` (`-PuikaInput`, `-PuikaResolveOutput`) rehydrates a
   baseline dump written on another machine, fetching the JARs it names through
   the build's own repositories.
 - Gradle and Bazel: the dump builds the modules' outputs, and a baseline dump
-  skips that with `-PuikaBuildOutputs=false` or `build_outputs = False`.
+  skips that with `-PuikaBuildOutputs=false` (`buildOutputs` in Gradle's
+  `uika {}`) or `build_outputs = False`.
 - Maven, Leiningen and the Clojure CLI: the JFR collection flag goes on the test
   JVM by hand. Gradle and sbt add it themselves, Mill through its test-module
   mixin, and Bazel prints it.
