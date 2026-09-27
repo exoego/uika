@@ -111,7 +111,7 @@ public final class UpgradeCheckMain {
      *
      * <p>Printed rather than documented, so the README recipe cannot drift from the format
      * the converter expects. The Maven plugin has the opposite arrangement, a hand-written
-     * argLine that has to be kept in step by hand, because no mojo can inject into surefire.
+     * argLine that has to be kept in step by hand, because that plugin has no goal to set it.
      * Bazel needs no injection at all, since --jvmopt already reaches every test JVM.
      *
      * <p>Creating the directory is part of the job. Given a MISSING PARENT, JFR aborts JVM

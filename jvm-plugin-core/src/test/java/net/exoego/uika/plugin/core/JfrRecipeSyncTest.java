@@ -10,11 +10,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /// Pins the hand-written copies of the JFR test-JVM flag against the composer.
 ///
-/// Maven cannot inject into surefire and the two Clojure front ends have nothing to inject
-/// into, so those three carry the flag as prose. docs/runtime-load-evidence.md shows the
-/// canonical form. Each file must contain the composed flag verbatim up to the filename
-/// value, so a change to the event settings or their order fails here instead of drifting
-/// silently into a recipe that records nothing.
+/// The Maven plugin has no goal that sets surefire's argLine and the two Clojure front ends
+/// have nothing to inject into, so those three carry the flag as prose.
+/// docs/runtime-load-evidence.md shows the canonical form. Each file must contain the composed
+/// flag verbatim up to the filename value, so a change to the event settings or their order
+/// fails here instead of drifting silently into a recipe that records nothing.
 ///
 /// In the core test source set rather than the Gradle one: the Maven build mounts only this
 /// directory, so a guard living next to the Gradle tests never ran in the build whose own
