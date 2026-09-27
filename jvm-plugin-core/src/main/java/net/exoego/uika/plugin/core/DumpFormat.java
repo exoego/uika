@@ -4,9 +4,10 @@ import net.exoego.uika.plugin.core.ClasspathDump.Artifact;
 import net.exoego.uika.plugin.core.ClasspathDump.Module;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Normalizes v1/v2 uika classpath dumps on read and writes v2.
@@ -148,71 +149,38 @@ public final class DumpFormat {
     public static String writeV2(List<Module> modules, List<String> preferredRoots, Integer jdkRelease) {
         var roots = new RootTable(preferredRoots);
 
-        var artifactIndex = new LinkedHashMap<String, Integer>();
+        var artifactIndex = new HashMap<Key, Integer>();
         var table = new ArrayList<Artifact>();
-        for (Module module : modules) {
-            for (Artifact a : module.artifacts()) {
-                if (artifactIndex.putIfAbsent(keyOf(a), table.size()) == null) {
+        var refs = new int[modules.size()][];
+        for (var m = 0; m < modules.size(); m++) {
+            var artifacts = modules.get(m).artifacts();
+            var moduleRefs = new int[artifacts.size()];
+            var i = 0;
+            for (Artifact a : artifacts) {
+                var index = artifactIndex.putIfAbsent(new Key(a), table.size());
+                if (index == null) {
+                    index = table.size();
                     table.add(a);
                 }
+                moduleRefs[i++] = index;
             }
+            refs[m] = moduleRefs;
         }
-
-        var artifactsJson = new StringBuilder();
+        // Roots are derived while paths are matched, and the roots array precedes both
+        // tables in the output, so every root is resolved before anything is written.
+        var artifactRoots = new int[table.size()];
         for (var i = 0; i < table.size(); i++) {
-            var a = table.get(i);
-            if (i > 0) {
-                artifactsJson.append(',');
-            }
-            artifactsJson.append('{');
-            if (a.group() != null) {
-                artifactsJson.append("\"group\":").append(quote(a.group()))
-                        .append(",\"name\":").append(quote(a.name()))
-                        .append(",\"version\":").append(quote(a.version()))
-                        .append(',');
-            }
-            if (a.project() != null) {
-                artifactsJson.append("\"project\":").append(quote(a.project())).append(',');
-            }
-            var root = roots.indexOf(a.file());
-            artifactsJson.append("\"root\":").append(root)
-                    .append(",\"path\":").append(quote(roots.suffixOf(a.file(), root)))
-                    .append('}');
+            artifactRoots[i] = roots.indexOf(table.get(i).file());
         }
-
-        var modulesJson = new StringBuilder();
-        var firstModule = true;
-        for (Module module : modules) {
-            if (!firstModule) {
-                modulesJson.append(',');
+        var dirRoots = new int[modules.size()][];
+        for (var m = 0; m < modules.size(); m++) {
+            var dirs = modules.get(m).classesDirs();
+            var moduleDirRoots = new int[dirs.size()];
+            var i = 0;
+            for (String dir : dirs) {
+                moduleDirRoots[i++] = roots.indexOf(dir);
             }
-            firstModule = false;
-            modulesJson.append("{\"module\":").append(quote(module.path()));
-            if (module.jdkRelease() != null) {
-                modulesJson.append(",\"jdkRelease\":").append(module.jdkRelease().intValue());
-            }
-            modulesJson.append(",\"classesDirs\":[");
-            var first = true;
-            for (String dir : module.classesDirs()) {
-                if (!first) {
-                    modulesJson.append(',');
-                }
-                first = false;
-                var root = roots.indexOf(dir);
-                modulesJson.append("{\"root\":").append(root)
-                        .append(",\"path\":").append(quote(roots.suffixOf(dir, root)))
-                        .append('}');
-            }
-            modulesJson.append("],\"artifactRefs\":[");
-            first = true;
-            for (Artifact a : module.artifacts()) {
-                if (!first) {
-                    modulesJson.append(',');
-                }
-                first = false;
-                modulesJson.append(artifactIndex.get(keyOf(a)));
-            }
-            modulesJson.append("]}");
+            dirRoots[m] = moduleDirRoots;
         }
 
         var json = new StringBuilder();
@@ -226,16 +194,78 @@ public final class DumpFormat {
             if (i > 0) {
                 json.append(',');
             }
-            json.append(quote(built.get(i)));
+            quote(json, built.get(i));
         }
-        json.append("],\"artifacts\":[").append(artifactsJson);
-        json.append("],\"modules\":[").append(modulesJson);
+        json.append("],\"artifacts\":[");
+        for (var i = 0; i < table.size(); i++) {
+            var a = table.get(i);
+            if (i > 0) {
+                json.append(',');
+            }
+            json.append('{');
+            if (a.group() != null) {
+                json.append("\"group\":");
+                quote(json, a.group());
+                json.append(",\"name\":");
+                quote(json, a.name());
+                json.append(",\"version\":");
+                quote(json, a.version());
+                json.append(',');
+            }
+            if (a.project() != null) {
+                json.append("\"project\":");
+                quote(json, a.project());
+                json.append(',');
+            }
+            var root = artifactRoots[i];
+            json.append("\"root\":").append(root).append(",\"path\":");
+            quote(json, roots.suffixOf(a.file(), root));
+            json.append('}');
+        }
+        json.append("],\"modules\":[");
+        for (var m = 0; m < modules.size(); m++) {
+            var module = modules.get(m);
+            if (m > 0) {
+                json.append(',');
+            }
+            json.append("{\"module\":");
+            quote(json, module.path());
+            if (module.jdkRelease() != null) {
+                json.append(",\"jdkRelease\":").append(module.jdkRelease().intValue());
+            }
+            json.append(",\"classesDirs\":[");
+            var i = 0;
+            for (String dir : module.classesDirs()) {
+                if (i > 0) {
+                    json.append(',');
+                }
+                var root = dirRoots[m][i++];
+                json.append("{\"root\":").append(root).append(",\"path\":");
+                quote(json, roots.suffixOf(dir, root));
+                json.append('}');
+            }
+            json.append("],\"artifactRefs\":[");
+            var moduleRefs = refs[m];
+            for (var r = 0; r < moduleRefs.length; r++) {
+                if (r > 0) {
+                    json.append(',');
+                }
+                json.append(moduleRefs[r]);
+            }
+            json.append("]}");
+        }
         json.append("]}");
         return json.toString();
     }
 
     public static String quote(String s) {
-        var sb = new StringBuilder(s.length() + 2).append('"');
+        var sb = new StringBuilder(s.length() + 2);
+        quote(sb, s);
+        return sb.toString();
+    }
+
+    private static void quote(StringBuilder sb, String s) {
+        sb.append('"');
         for (var i = 0; i < s.length(); i++) {
             var c = s.charAt(i);
             switch (c) {
@@ -253,11 +283,33 @@ public final class DumpFormat {
                 }
             }
         }
-        return sb.append('"').toString();
+        sb.append('"');
     }
 
-    private static String keyOf(Artifact a) {
-        return a.group() + " " + a.name() + " " + a.version() + " " + a.file() + " " + a.project();
+    /** Artifact identity for deduplication: every field, compared by value. */
+    private static final class Key {
+        private final Artifact a;
+        private final int hash;
+
+        Key(Artifact a) {
+            this.a = a;
+            this.hash = Objects.hash(a.group(), a.name(), a.version(), a.file(), a.project());
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof Key k
+                    && Objects.equals(a.group(), k.a.group())
+                    && Objects.equals(a.name(), k.a.name())
+                    && Objects.equals(a.version(), k.a.version())
+                    && Objects.equals(a.file(), k.a.file())
+                    && Objects.equals(a.project(), k.a.project());
+        }
+
+        @Override
+        public int hashCode() {
+            return hash;
+        }
     }
 
     private static final class RootTable {

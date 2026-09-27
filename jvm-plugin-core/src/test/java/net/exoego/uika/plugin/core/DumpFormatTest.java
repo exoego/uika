@@ -40,6 +40,26 @@ final class DumpFormatTest {
                 json);
     }
 
+    /// Plugins build a fresh Artifact per module, so equal fields must share one table entry.
+    /// The old space-joined string key also merged artifacts whose fields only differed in
+    /// where a space fell.
+    @Test
+    void artifactsAreSharedByValueAcrossModules() {
+        var jar = "/opt/lib/a.jar";
+        var app = new Module(":app", List.of(), List.of(
+                new Artifact("g", "a b", "1", jar),
+                new Artifact("g", "a", "b 1", jar)));
+        var lib = new Module(":lib", List.of(), List.of(
+                new Artifact("g", "a", "b 1", jar),
+                new Artifact("g", "a", "b 1", jar, ":shared")));
+
+        var json = DumpFormat.writeV2(List.of(app, lib), List.of(), null);
+
+        assertTrue(json.contains("\"artifactRefs\":[0,1]}"), json);
+        assertTrue(json.contains("\"artifactRefs\":[1,2]}"), json);
+        assertTrue(json.contains("\"project\":\":shared\""), json);
+    }
+
     @Test
     void quoteEscapesWhatJsonRequires() {
         assertEquals("\"C:\\\\Users\\\\dev\\\\lib.jar\"", DumpFormat.quote("C:\\Users\\dev\\lib.jar"));
