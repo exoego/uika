@@ -126,9 +126,8 @@ public final class JfrEvidence {
                 var stack = event.getStackTrace();
                 List<RecordedFrame> frames = stack == null ? List.of() : stack.getFrames();
                 if (frames.isEmpty()) {
-                    // Also the shape for a stack whose frames were all non-Java: a
-                    // header with no frames would not claim the CLI's stacked slot, so
-                    // the bare line keeps a later framed block eligible. The tags
+                    // A header with no frames would not claim the CLI's stacked slot,
+                    // so the bare line keeps a later framed block eligible. The tags
                     // decorator makes the line trusted, so a default-package class
                     // survives the CLI's single-segment rule.
                     if (state == null) {
