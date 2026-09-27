@@ -36,12 +36,13 @@ final class Input {
     static final int BATCH = 512;
 
     /**
-     * One positioned read per span. 1 MiB rather than more: a span is held for as long as its
-     * entries are being inflated, about one per worker at any time, so this bounds the read
-     * memory (12 MiB at 12 workers, half of what 2 MiB spans held), and the read count it
-     * costs is a rounding error next to inflate.
+     * One positioned read per span. A span is held for as long as its entries are being
+     * inflated, about one per worker at any time, and its direct buffer is zeroed and so
+     * resident from the start. 256 KiB spans cut peak RSS against 1 MiB by 12MB on a 100-jar
+     * check and 6-12MB on 2,750 jars at the same speed; the extra reads are a rounding error
+     * next to inflate. Below 256 KiB nothing more was saved.
      */
-    private static final long SPAN_MAX = 1024 * 1024;
+    private static final long SPAN_MAX = 256 * 1024;
     private static final long GAP_MAX = 1024 * 1024;
     /** Entries handled by one task. Small enough to balance, large enough to amortize the fork. */
     private static final int LEAF = 16;
