@@ -125,7 +125,7 @@ public final class ManifestSelfTest {
     }
 
     /**
-     * A {@code uika_dump} with no targets writes one empty line, which has to read as no
+     * A dump with no targets writes one empty line, which has to read as no
      * modules rather than as a record before any module.
      */
     private static void emptyManifestIsNoModules() throws IOException {
@@ -481,12 +481,12 @@ public final class ManifestSelfTest {
         Exception noCli = expectFailure("a check main without -Duika.cli",
                 IllegalStateException.class, UpgradeCheckMain::cliBinary);
         check(noCli != null && noCli.getMessage().contains("missing -Duika.cli")
-                        && noCli.getMessage().contains("uika_upgrade_check"),
+                        && noCli.getMessage().contains("uika macro"),
                 "the missing property and its rule should be named: " + noCli);
         Exception noManifest = expectFailure("a dump main without -Duika.manifest",
                 IllegalStateException.class, () -> DumpMain.required("uika.manifest"));
         check(noManifest != null && noManifest.getMessage().contains("missing -Duika.manifest")
-                        && noManifest.getMessage().contains("uika_dump"),
+                        && noManifest.getMessage().contains("uika macro"),
                 "the missing property and its rule should be named: " + noManifest);
     }
 

@@ -131,7 +131,7 @@ uika_classpath_aspect = aspect(
             default = Label("@rules_java//toolchains:current_java_toolchain"),
         ),
     },
-    # attrs carries no build_outputs switch for a sweep. //... matches the uika_dump targets
+    # attrs carries no build_outputs switch for a sweep. //... matches the uika macro's manifests
     # too, whose `targets` attribute applies this aspect with the default value, so a
     # parameterized instance from the command line is a second aspect over the same targets.
     # Both declare <name>.uika-manifest.tsv, and Bazel 9.2 rejects the pair as conflicting

@@ -195,7 +195,7 @@ public final class UpgradeCheckMain {
         String property = System.getProperty("uika.cli");
         if (property == null || property.isEmpty()) {
             throw new IllegalStateException(
-                    "missing -Duika.cli; use the uika_upgrade_check rule");
+                    "missing -Duika.cli; use the uika macro");
         }
         return Manifest.resolveRunfile(property);
     }

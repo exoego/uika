@@ -1,4 +1,4 @@
-"""The manifest records both the uika_dump rule and the sweep aspect emit.
+"""The manifest records both the uika dump targets and the sweep aspect emit.
 
 Shared so one code path decides what a module looks like. The two differ only in which
 path each jar is named by, which is what `path_of` selects. A `bazel run` target resolves

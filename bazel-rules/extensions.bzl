@@ -1,7 +1,7 @@
 """The module extension that declares `@uika_cli`.
 
 Declared by this module itself, so a build that only loads the rules gets a working
-`uika_upgrade_check` with nothing to wire up. A root module that wants to pin the version or
+a check target with nothing to wire up. A root module that wants to pin the version or
 its checksums repeats the `uika.cli` tag and wins, because its own declaration is read last.
 """
 

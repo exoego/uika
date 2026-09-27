@@ -1,4 +1,4 @@
-"""The manifest a uika_dump binary reads: one target's classpath per module, attributed."""
+"""The manifest a uika dump binary reads: one target's classpath per module, attributed."""
 
 load("@rules_java//java/common:java_common.bzl", "java_common")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
@@ -42,7 +42,7 @@ def _manifest_impl(ctx):
 
 uika_classpath_manifest = rule(
     implementation = _manifest_impl,
-    doc = "Internal: the classpath manifest that a uika_dump binary turns into a dump.",
+    doc = "Internal: the classpath manifest that a uika dump binary turns into a dump.",
     attrs = {
         "targets": attr.label_list(
             aspects = [uika_classpath_aspect],
