@@ -207,18 +207,22 @@ relearned by experiment.
 Read the relevant one before working in that area. Each is plain markdown, so
 an agent whose harness does not auto-load it can just read the path.
 
-- `cli-java/AGENTS.md` (symlinked as `cli-java/CLAUDE.md`) — check pipeline,
-  per-module upgrade-check, linkage semantics, reachability, evidence, SPI and
-  suggestions, then the off-heap and zero-allocation rules and the measured
-  numbers. Claude Code loads it automatically when working under `cli-java/`.
+There is no `CLAUDE.md` on purpose. Claude Code 2.1.277+ reads `AGENTS.md` only
+while no `CLAUDE.md` or `CLAUDE.local.md` exists in or above the working
+directory. Adding either one, even an uncommitted local one, silently hides
+every `AGENTS.md` in the repository.
+
+- `cli-java/AGENTS.md` — check pipeline, per-module upgrade-check, linkage
+  semantics, reachability, evidence, SPI and suggestions, then the off-heap and
+  zero-allocation rules and the measured numbers. Claude Code loads it
+  automatically when working under `cli-java/`.
 - `.claude/skills/uika-performance/SKILL.md` — benchmark workloads and expected
   numbers, optimization history, rejected approaches; before profiling or
   touching the hot path.
-- `.claude/skills/uika-jvm-plugins/SKILL.md` — Gradle/sbt/Maven/Mill/Leiningen
-  plugin, Clojure CLI tool, Bazel rules and `jvm-plugin-core` invariants; before
-  changing anything under `gradle-plugin/`, `sbt-plugin/`, `maven-plugin/`,
-  `mill-plugin/`, `clojure-tool/`, `lein-plugin/`, `bazel-rules/`, or
-  `jvm-plugin-core/`.
+- `jvm-plugin-core/AGENTS.md` — invariants every build-tool integration shares.
+  Each of `gradle-plugin/`, `sbt-plugin/`, `maven-plugin/`, `mill-plugin/`,
+  `clojure-tool/`, `lein-plugin/` and `bazel-rules/` has its own `AGENTS.md`
+  that imports it, so Claude Code loads both when working in that directory.
 
 Module layout is not documented here on purpose: `ls
 cli-java/src/main/java/net/exoego/uika/cli/` plus the "How it works" section of
