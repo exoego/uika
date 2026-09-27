@@ -255,12 +255,17 @@ class DumpTest {
         assertEquals(11, v2.module(":declares").jdkRelease);
         assertEquals(17, v2.module(":inherits").jdkRelease);
         assertEquals(17, v2.module(":null").jdkRelease);
+        assertFalse(v2.module(":declares").inheritsRelease);
+        assertTrue(v2.module(":inherits").inheritsRelease);
+        assertTrue(v2.module(":null").inheritsRelease);
 
         Dump.Universe v1 = Dump.loadDump(write("release-v1.json", """
                 {"jdkRelease":21,"modules":[{"module":":a","jdkRelease":8},{"module":":b"}]}"""));
         assertEquals(21, v1.jdkRelease);
         assertEquals(8, v1.module(":a").jdkRelease);
         assertEquals(21, v1.module(":b").jdkRelease);
+        assertFalse(v1.module(":a").inheritsRelease);
+        assertTrue(v1.module(":b").inheritsRelease);
         assertEquals(List.of(), v1.module(":b").artifacts);
         assertEquals(List.of(), v1.module(":b").classesDirs);
 

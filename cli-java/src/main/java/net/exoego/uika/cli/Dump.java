@@ -76,12 +76,19 @@ final class Dump {
          * before-dump from claiming a JDK change against a fresh after-dump.
          */
         final Integer jdkRelease;
+        /** True when {@link #jdkRelease} is the dump's value because the module named none. */
+        final boolean inheritsRelease;
 
         Module(String name, List<String> classesDirs, List<Artifact> artifacts, Integer jdkRelease) {
+            this(name, classesDirs, artifacts, jdkRelease, false);
+        }
+
+        Module(String name, List<String> classesDirs, List<Artifact> artifacts, Integer jdkRelease, boolean inheritsRelease) {
             this.name = name;
             this.classesDirs = classesDirs;
             this.artifacts = artifacts;
             this.jdkRelease = jdkRelease;
+            this.inheritsRelease = inheritsRelease;
         }
 
         /** Complete, project-attributed artifacts included; the diff excludes those. */
@@ -207,7 +214,7 @@ final class Dump {
                 universe.addTarget(d);
             }
             Integer release = release(module, at);
-            universe.modules.add(new Module(name, classesDirs, artifacts, release != null ? release : universe.jdkRelease));
+            universe.modules.add(new Module(name, classesDirs, artifacts, release != null ? release : universe.jdkRelease, release == null));
         }
         return universe;
     }
@@ -263,7 +270,7 @@ final class Dump {
                 continue;
             }
             Integer release = release(module, at);
-            universe.modules.add(new Module(name, classesDirs, artifacts, release != null ? release : universe.jdkRelease));
+            universe.modules.add(new Module(name, classesDirs, artifacts, release != null ? release : universe.jdkRelease, release == null));
         }
         if (unnamedModule) {
             universe.modules.clear();

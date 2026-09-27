@@ -155,6 +155,9 @@ relearned by experiment.
   run into the JDK run's broken count, and a bare pair would lose the attribution
   entirely. `releaseChange` requires BOTH sides to name a release, so a dump predating
   the field, or a module the before dump does not have, never manufactures a JDK move.
+  Nor does a module that named its own release on one side and inherited the dump's on
+  the other (`Dump.Module.inheritsRelease`). That is a plugin upgrade: older plugins left
+  an undeclared module to the lowest sibling's release, newer ones record its compiling JDK.
   The runs are excluded from the "N of M modules changed" count
   (`Report.ModuleOutcome.jdk`), since they are not the dump's modules, and they print in
   their OWN section rather than as more rows of the per-module table
