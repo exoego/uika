@@ -31,7 +31,11 @@ public final class MergeMain {
 
     private static final String FRAGMENT_SUFFIX = ".uika-manifest.tsv";
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws InterruptedException {
+        Manifest.runMain(() -> merge(args));
+    }
+
+    private static int merge(String[] args) throws IOException {
         Path execroot = null;
         var output = "uika/classpath.json";
         String materialize = null;
@@ -87,6 +91,7 @@ public final class MergeMain {
                 DumpFormat.writeV2(modules, roots, DumpFormat.dumpRelease(modules)),
                 StandardCharsets.UTF_8);
         System.out.println("uika classpath dump: " + target + " (" + modules.size() + " modules)");
+        return 0;
     }
 
     /**

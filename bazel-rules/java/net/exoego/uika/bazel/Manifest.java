@@ -13,7 +13,9 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.IntConsumer;
 
 /**
  * Reads the tab-separated manifest that a dump or check target of the
@@ -237,6 +239,49 @@ final class Manifest {
             }
         }
         return new ArrayList<>(roots);
+    }
+
+    /** A main's work, answering the exit code the process should end with. */
+    interface Body {
+        int run() throws IOException, InterruptedException;
+    }
+
+    /** Runs a main's work and exits with {@link #exitCode}. */
+    static void runMain(Body body) throws InterruptedException {
+        runMain(body, System.err::println, System::exit);
+    }
+
+    // The exit is a parameter because JaCoCo counts a call that never returns as missed.
+    static void runMain(Body body, Consumer<String> err, IntConsumer exit)
+            throws InterruptedException {
+        int code = exitCode(body, err);
+        // Returning already exits 0.
+        if (code != 0) {
+            exit.accept(code);
+        }
+    }
+
+    /**
+     * The exit code of {@code body}, with a usage or I/O error reported as one line and 2, the
+     * CLI's code for an error. Left to the JVM it was a stack trace and exit 1, which a CI step
+     * reads as violations found.
+     */
+    static int exitCode(Body body, Consumer<String> err) throws InterruptedException {
+        try {
+            return body.run();
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            err.accept("uika: " + e.getMessage());
+        } catch (IOException e) {
+            err.accept("uika: " + describe(e));
+        } catch (UncheckedIOException e) {
+            err.accept("uika: " + describe(e.getCause()));
+        }
+        return 2;
+    }
+
+    /** With the class name, since NoSuchFileException and its kin carry only a path. */
+    private static String describe(IOException e) {
+        return e.getClass().getSimpleName() + ": " + e.getMessage();
     }
 
     /**

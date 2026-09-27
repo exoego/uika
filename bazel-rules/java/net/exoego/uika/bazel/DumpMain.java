@@ -21,7 +21,11 @@ import java.util.ArrayList;
 public final class DumpMain {
     private DumpMain() {}
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws InterruptedException {
+        Manifest.runMain(() -> dump(args));
+    }
+
+    private static int dump(String[] args) throws IOException {
         Path manifest = Manifest.resolveRunfile(required("uika.manifest"));
         Integer override = UikaCli.overrideRelease(Integer.getInteger("uika.jdkRelease", 0));
 
@@ -53,6 +57,7 @@ public final class DumpMain {
                 DumpFormat.writeV2(modules, roots, DumpFormat.dumpRelease(modules)),
                 StandardCharsets.UTF_8);
         System.out.println("uika classpath dump: " + target);
+        return 0;
     }
 
     static String required(String property) {
