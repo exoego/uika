@@ -155,7 +155,7 @@ alternating pairs; the profile that found each is described under "Measuring"):
 | Central-directory names were 9% of CPU in the interner and 3% in monitor waits: every lookup took a shard lock | Lock-free lookups (release/acquire on the slot), per-thread arena slabs and id blocks. Monitor waits 4.1% to 1.5%. |
 | Per-thread directory columns re-grown by doubling from 256 for every large jar on every worker: 113MB of allocation | Parse into pooled columns sized by the end record's count; compact when the jar is mostly resources. |
 | Three `realpath` walks per scan target before the scan started, 60ms single-threaded on 2,800 targets | One attribute read per target: the file key (device and inode), real path only where a file system reports none. |
-| Span buffers: 12 workers holding 2 MiB spans, 24MB | 1 MiB spans. |
+| Span buffers: 12 workers holding 2 MiB spans, 24MB | 1 MiB spans, later 256 KiB (see the 2026-09-27 round). |
 | Dedup's (name, CRC) hash set: 8MB live plus as much promoted garbage from doubling | Per-name linked lists in two chunked arenas, 4MB, never copied. |
 | The chunk barrier: merge after the whole chunk, on one thread, with every leaf held; workers parked on the chunk's slowest jar | Cursors over one path list: reads a window ahead, dedup and fork as they land, join and merge the next path while executing other tasks. RSS 282MB to 260MB, wall the same, window 96 = 192 and 48 costs 4%. Workers read the graph while it grows: `contains` over release/acquire chunks. |
 | `collectAbstractWanted` walked every scanned class's supertype closure from scratch: 49ms on the main thread | Memoize per type whether the closure holds a probed owner; walk only the classes it says yes to. 49ms to 25ms, `collectFinalWanted` 19ms to 10ms. |
@@ -174,8 +174,32 @@ on a 16-core machine, so a fixed 3 would starve the queue there); `-Xmn16m` (RSS
 lower, wall 3% slower); 10 workers instead of 12 (the same wall, so the scan is not
 purely worker-bound); the directory parser's record body as a method invoked once per
 record so it compiles early (neutral: the reads run ahead of the merge and are off the
-critical path); a smaller first inflate slice (the parser already resumes; not measured
-worth the noise).
+critical path). A smaller first inflate slice was listed here as not worth the noise; the
+2026-09-27 round measured it and took it, below.
+
+The 2026-09-27 round (alternating pairs, medians, output byte-identical; the stress row
+ran in a session with another project's build loading the machine, so its user time is the
+quiet-session range):
+
+| Measured problem | Solution |
+|---|---|
+| Pass 1 inflated 15% more than the headers it parsed: the first slice asked for 75% of the file, later ones 9/8 past the extrapolated rest | First slice 512 bytes, later slices 3/4 of the extrapolated rest, about 4% overshoot. 100-jar user 1.58s to 1.47s; stress user 5-9% lower. Half slices overshot 1% but raised stress RSS by 20MB. |
+| Span buffers are zeroed direct memory, so each worker's span is resident from the start | 256 KiB spans: 100-jar RSS 109MB to 97MB, stress 234MB to 222-228MB, same speed. 128 and 64 KiB saved nothing more. |
+
+Measured and rejected in that round, with a stable decoder-only harness (60K real class
+entries from every ninth cache jar, partial targets like pass 1, about 510MB/s):
+litlen primary table of 9 bits (15% slower) or 11 bits (same), distance table of 7 or 9
+bits (same); reusing decode tables across entries (59,880 dynamic tables held 59,753
+distinct code-length sets); decoding five primary-table literals per refill instead of
+three (same); inflate input copied to a heap `byte[]` read by byte arithmetic, meant to
+help C1 (C2 decode 8% slower, 100-jar user 2% slower); forking central-directory reads a
+further 24-96 paths ahead of dedup (same wall, RSS up to 10MB higher); `-Xmn8m` for runs
+below the C1 threshold (RSS 110MB to 102MB, not enough alone to justify a second flag
+set). The single-worker stretches a pool-activity timeline showed during pass 1 did not
+survive A/B, so treat such a timeline as a lead, not a result.
+
+After that round the stress profile is: inflate 48% of CPU (`decodeHuffman` 30%, table
+build and code-length decode 15%), JIT compiler threads 19%, `pread` 7%, intern 5%.
 
 Where the remaining time is, for the next round: inflate is half of worker CPU
 (`decodeHuffman` 36%, the per-block table build and code-length decode 13%); C2
