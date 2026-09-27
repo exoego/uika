@@ -82,7 +82,7 @@ public final class UpgradeCheckMain {
         }
         if (before == null || after == null) {
             throw new IllegalArgumentException(
-                    "usage: bazel run //:your_check -- --before <a.json> --after <b.json>");
+                    "usage: bazel run //:uika_check -- --before <a.json> --after <b.json>");
         }
 
         List<Path> evidence = new ArrayList<>(classLoadLogs);
