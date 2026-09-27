@@ -337,7 +337,7 @@ class EvidenceTest {
      * {@code .jfr} files in a directory are the binary recordings the plugins convert and
      * leave in place. The walk skips them by NAME (never byte-scanning megabytes for
      * newlines, never fluke-registering pool strings), while an explicitly passed
-     * {@code .jfr} path is still read line by line.
+     * {@code .jfr} path that holds text is still read line by line.
      */
     @Test
     void jfrNamedFilesAreSkippedInTheDirectoryWalkOnly(@TempDir Path dir) throws IOException {
@@ -351,6 +351,39 @@ class EvidenceTest {
         assertNull(e.observed("com/example/FromRecording"), "a .jfr inside the directory must be skipped by name");
         Evidence.LoadEvidence direct = Evidence.load(List.of(jfr.toString()));
         assertNotNull(direct.observed("com/example/FromRecording"), "an explicitly passed .jfr path must still be read");
+    }
+
+    /**
+     * A recording is caught by its magic under any name. Read as text, the thread dump in
+     * every default-profile recording registered java.lang.Thread.State. Only a recording
+     * passed directly warns, because the plugins leave the ones they converted in the directory.
+     */
+    @Test
+    void recordingsAreSkippedByTheirMagicUnderAnyName(@TempDir Path dir) throws IOException {
+        byte[] recording = "FLR\0\n   java.lang.Thread.State: RUNNABLE\n".getBytes(StandardCharsets.UTF_8);
+        Path explicit = Files.write(dir.resolve("rec.jfr"), recording);
+        Path logs = Files.createDirectories(dir.resolve("logs"));
+        Files.write(logs.resolve("recording"), recording);
+        Files.write(logs.resolve("rec.JFR"), recording);
+        Files.writeString(logs.resolve("plain.log"), "com.example.FromLog\n");
+
+        Evidence.LoadEvidence[] loaded = new Evidence.LoadEvidence[2];
+        String warned = CommandsTest.stderrOf(() -> loaded[0] = Evidence.load(List.of(explicit.toString())));
+        assertEquals(0, loaded[0].distinctClasses());
+        assertEquals("warning: skipping JFR recording " + explicit
+                + " (convert recordings to text first, as the build-tool plugins do)\n", warned);
+
+        String walked = CommandsTest.stderrOf(() -> loaded[1] = Evidence.load(List.of(logs.toString())));
+        assertEquals(1, loaded[1].distinctClasses());
+        assertNotNull(loaded[1].observed("com/example/FromLog"));
+        assertEquals("", walked);
+    }
+
+    /** A file shorter than the magic is still read. */
+    @Test
+    void aFileShorterThanTheMagicIsStillRead(@TempDir Path dir) throws IOException {
+        Path tiny = Files.writeString(dir.resolve("tiny.log"), "a.b");
+        assertNotNull(Evidence.load(List.of(tiny.toString())).observed("a/b"));
     }
 
     /**

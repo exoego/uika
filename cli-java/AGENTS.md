@@ -475,15 +475,18 @@ pass-2 classes are typically below 0.1% of the scan.
   errored run leaves a fresh placeholder, never a stale draft from an earlier
   run; quiet runs (no changes, empty plan) write the empty draft through the
   same `applyEvidenceAndDraft` call as checked runs.
-- JFR recordings never reach this CLI: the build-tool plugins convert
+- The CLI never decodes JFR. The build-tool plugins convert
   `jdk.ClassLoad` events into this parser's own trusted text shapes
   (`jvm-plugin-core/JfrEvidence`, invariants in the uika-jvm-plugins skill), so
-  the CLI stays JFR-ignorant and needs no JDK module beyond `java.base`. A binary
-  `.jfr` inside a log directory is skipped by name in the directory walk (recordings
-  are large and guaranteed residents of the evidence directory, so byte-scanning them
-  for newlines every run was pure waste); any other binary is still absorbed by the
-  bounded reader, and an explicitly passed `.jfr` path is still read line by
-  line. The converter-parser contract is pinned by
+  the CLI stays JFR-ignorant and needs no JDK module beyond `java.base`. A recording
+  that reaches it anyway is skipped by its `FLR\0` magic under any name. Read as text,
+  every default-profile recording named `java.lang.Thread.State` from its thread dump,
+  which was enough to get `--draft-exclude-file` past its zero-evidence guard. A
+  recording passed directly gets a warning. The directory walk skips silently,
+  because the plugins leave the recordings they converted there, and it skips a
+  `.jfr` name without opening the file. Any other binary is still absorbed by the
+  bounded reader, and an explicitly passed `.jfr` path that holds text is still
+  read. The converter-parser contract is pinned by
   `IntegrationTest.aJfrRecordingConvertedByThePluginConverterPromotesTheViolation`,
   which compiles the real JfrEvidence from its source — the one deliberate
   cross-component test dependency, like scenarios.tsv.
