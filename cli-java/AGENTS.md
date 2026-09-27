@@ -1,6 +1,6 @@
 # Notes for Agents: cli-java/
 
-The pure-Java CLI. One jar instead of a binary per OS and CPU. The repo-root `CLAUDE.md`
+The pure-Java CLI. One jar instead of a binary per OS and CPU. The repo-root `AGENTS.md`
 holds the cross-cutting invariants. This file holds the check pipeline and linkage
 semantics, then what only matters on the JVM.
 
@@ -537,7 +537,7 @@ pass-2 classes are typically below 0.1% of the scan.
   (`IntegrationTest.anUnscannedProviderIsNotProvenUnreachable`). In upgrade-check, a
   suggestion whose referencing coordinate IS the changed coordinate is skipped as
   self-referential (`Suggest`).
-- Not in the verdicts stream (the root CLAUDE.md exclusion list names both reasons) and
+- Not in the verdicts stream (the root AGENTS.md exclusion list names both reasons) and
   not golden-coverable: `Check.check`, the goldens' entry point, has no JAR paths to read
   META-INF/services from. Coverage is `detectsAProviderThatBecameAbstract` (synthetic,
   not instantiable), `detectsKotestStaleEngineRegistrationInTheRelocationShim`
