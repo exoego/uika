@@ -191,7 +191,7 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   build. `-PuikaFailOn`, `uikaFailOn` and `-Duika.failOn` carry it (Gradle project
   properties, sbt's `autoImport`, and system properties are one space every plugin shares);
   the Gradle task property, the Maven POM element, Mill's command parameters, the two
-  Clojure maps and Bazel's rule attributes do not, since each already sits inside something
+  Clojure maps and the Bazel macro's parameters do not, since each already sits inside something
   uika owns. Renaming a knob away from its flag would break the mechanical correspondence
   the clojure-tool sync test checks, so do not do it for readability alone -- rename the
   CLI flag instead, which is how `--merged` became `--merged-classpath`.
