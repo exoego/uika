@@ -111,20 +111,21 @@ final class Commands {
     }
 
     /**
-     * Both sides of a JDK-pair check. Warns when the old side comes from jmods while the new
-     * side comes from ct.sym: jmods also holds unexported internals, so as the older side it
-     * would report every one of them as removed.
+     * Both sides of a JDK-pair check. Warns when the old side came from jmods and the new side
+     * from ct.sym. jmods also holds unexported internals, so as the older side it would report
+     * every one of them as removed. The warning waits until both sides have loaded, so a new
+     * side that fails ends the run with its error alone.
      */
     static ApiIndex[] jdkReleasePair(int[] pair) {
         int oldRelease = pair[0];
         int newRelease = pair[1];
-        if (Jdk.isInstalledRelease(oldRelease) && !Jdk.isInstalledRelease(newRelease)) {
-            Out.warn("--jdk-release-old " + oldRelease + " is this JDK's own release, read from jmods, "
-                    + "which also holds unexported internals; against a ct.sym new side those look removed");
-        }
         List<String> warnings = new ArrayList<>();
         ApiIndex oldIndex = Jdk.releaseIndex(oldRelease, warnings);
         ApiIndex newIndex = Jdk.releaseIndex(newRelease, warnings);
+        if (Jdk.servedFromJmods(oldRelease) && !Jdk.servedFromJmods(newRelease)) {
+            Out.warn("--jdk-release-old " + oldRelease + " is this JDK's own release, read from jmods, "
+                    + "which also holds unexported internals; against a ct.sym new side those look removed");
+        }
         Out.warnAll(warnings);
         return new ApiIndex[] {oldIndex, newIndex};
     }

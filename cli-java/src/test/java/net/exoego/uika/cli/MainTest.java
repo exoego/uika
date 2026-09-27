@@ -160,9 +160,10 @@ class MainTest {
         assertTrue(run.code() == 0 || run.code() == 1, run.stderr());
         assertTrue(run.stdout().startsWith("checked JDK 11 -> JDK 17 against 1 scan target\n"), run.stdout());
 
-        // The running JDK's own release comes from jmods, a superset of ct.sym, which only
-        // ever cancels removals on the new side. As the old side it would invent them.
-        assumeTrue(Files.isDirectory(home.resolve("jmods")), "needs a JDK that ships jmods");
+        // JDK 21 and earlier serve their own release from jmods, a superset of ct.sym, which
+        // only ever cancels removals on the new side. As the old side it would invent them.
+        assumeTrue(Runtime.version().feature() <= 21 && Files.isDirectory(home.resolve("jmods")),
+                "needs a JDK 21 or earlier that ships jmods");
         Run inverted = runUika("check", "--jdk-release-old", Integer.toString(Runtime.version().feature()),
                 "--jdk-release-new", "17", "--classpath", fixture(CONSUMER));
         assertTrue(inverted.stderr().contains("read from jmods"), inverted.stderr());

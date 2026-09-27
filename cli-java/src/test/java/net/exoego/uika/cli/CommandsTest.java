@@ -410,6 +410,39 @@ class CommandsTest {
         assertEquals(0, pair[0][1].classCount());
     }
 
+    /** A JDK whose ct.sym carries its own release reads both sides there, so there is nothing to warn about. */
+    @Test
+    void anOwnReleaseFromCtSymIsNotWarnedAbout(@TempDir Path dir) throws Exception {
+        JdkTest.realisticHome(dir, 25);
+        ApiIndex[][] pair = new ApiIndex[1][];
+        assertEquals("", stderrOf(() -> pair[0] = Commands.jdkReleasePair(new int[] {25, 17})));
+        int arrayList = Intern.intern("java/util/ArrayList");
+        assertTrue(pair[0][0].containsClass(arrayList));
+        assertTrue(pair[0][1].containsClass(arrayList));
+    }
+
+    /**
+     * A move above the JDK uika finds fails on its new side. A jmods warning printed first would
+     * describe a comparison that never ran, so the warning waits until both sides have loaded.
+     */
+    @Test
+    void theJmodsWarningWaitsForBothSides(@TempDir Path dir) throws Exception {
+        Path ctSym = JdkTest.realisticHome(dir, 21).resolve("lib").resolve("ct.sym");
+        UikaException[] thrown = new UikaException[1];
+        assertEquals(
+                "",
+                stderrOf(() -> thrown[0] = assertThrows(UikaException.class, () -> Commands.jdkReleasePair(new int[] {21, 25}))));
+        assertEquals(
+                "release 25 not present in " + ctSym + " (available: 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20;"
+                        + " a newer JDK carries it)",
+                thrown[0].getMessage());
+
+        assertEquals(
+                "warning: --jdk-release-old 21 is this JDK's own release, read from jmods, which also holds unexported"
+                        + " internals; against a ct.sym new side those look removed\n",
+                stderrOf(() -> Commands.jdkReleasePair(new int[] {21, 17})));
+    }
+
     /**
      * The JDK layer can only conclude references that escaped into the JDK. It never invents a
      * violation, since the same index sits under both sides.
