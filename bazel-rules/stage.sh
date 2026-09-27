@@ -34,6 +34,8 @@ cp -RL "$rules" "$stage/bazel-rules"
 # The integration test carries a local_path_override back into this repository, so it is
 # not only dead weight in the archive but actively misleading.
 rm -rf "$stage/bazel-rules/it" "$stage/bazel-rules/stage.sh"
+# Contributor notes, and they import ../jvm-plugin-core, which the archive does not carry.
+rm -f "$stage/bazel-rules/AGENTS.md" "$stage/bazel-rules/CLAUDE.md"
 # cp -RL dereferences symlinks, so a convenience symlink left by a hand-run bazel in
 # this directory would have folded a whole output base into the archive. The Makefile
 # suppresses them; this is the belt for anyone who ran bazel here directly. The lock

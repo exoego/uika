@@ -477,7 +477,7 @@ pass-2 classes are typically below 0.1% of the scan.
   same `applyEvidenceAndDraft` call as checked runs.
 - The CLI never decodes JFR. The build-tool plugins convert
   `jdk.ClassLoad` events into this parser's own trusted text shapes
-  (`jvm-plugin-core/JfrEvidence`, invariants in the uika-jvm-plugins skill), so
+  (`jvm-plugin-core/JfrEvidence`, invariants in `jvm-plugin-core/AGENTS.md`), so
   the CLI stays JFR-ignorant and needs no JDK module beyond `java.base`. A recording
   that reaches it anyway is skipped by its `FLR\0` magic under any name. Read as text,
   every default-profile recording named `java.lang.Thread.State` from its thread dump,

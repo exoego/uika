@@ -214,11 +214,11 @@ an agent whose harness does not auto-load it can just read the path.
 - `.claude/skills/uika-performance/SKILL.md` — benchmark workloads and expected
   numbers, optimization history, rejected approaches; before profiling or
   touching the hot path.
-- `.claude/skills/uika-jvm-plugins/SKILL.md` — Gradle/sbt/Maven/Mill/Leiningen
-  plugin, Clojure CLI tool, Bazel rules and `jvm-plugin-core` invariants; before
-  changing anything under `gradle-plugin/`, `sbt-plugin/`, `maven-plugin/`,
-  `mill-plugin/`, `clojure-tool/`, `lein-plugin/`, `bazel-rules/`, or
-  `jvm-plugin-core/`.
+- `jvm-plugin-core/AGENTS.md` — invariants every build-tool integration shares.
+  Each of `gradle-plugin/`, `sbt-plugin/`, `maven-plugin/`, `mill-plugin/`,
+  `clojure-tool/`, `lein-plugin/` and `bazel-rules/` has its own `AGENTS.md`
+  (symlinked as `CLAUDE.md`) that imports it, so Claude Code loads both when
+  working in that directory.
 
 Module layout is not documented here on purpose: `ls
 cli-java/src/main/java/net/exoego/uika/cli/` plus the "How it works" section of
