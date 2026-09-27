@@ -75,6 +75,31 @@ class CommandsTest {
         assertEquals(List.of(":app (JDK 11 -> 17)|11->17|/build:app/classes"), jdkRuns(before, after));
     }
 
+    private static Dump.Module inheriting(String name, Integer dumpRelease) {
+        return new Dump.Module(name, List.of("/build" + name + "/classes"), List.of(), dumpRelease, true);
+    }
+
+    /**
+     * An older plugin left a module that declares nothing to the dump's value, the lowest
+     * sibling's release, and a newer one records the JDK compiling it. The first check after
+     * the upgrade compares the two, and neither side moved.
+     */
+    @Test
+    void aModuleThatStartsRecordingItsOwnReleaseIsNoJdkMove() {
+        Dump.Universe before = modular(module(":lib", 11), inheriting(":app", 11));
+        Dump.Universe after = modular(module(":lib", 11), module(":app", 21));
+        assertEquals(List.of(), jdkRuns(before, after));
+        assertEquals(List.of(), jdkRuns(after, before));
+    }
+
+    /** Two dumps that both left the module to the dump's value still compare that value. */
+    @Test
+    void aModuleInheritingOnBothSidesFollowsTheDumpsMove() {
+        Dump.Universe before = modular(inheriting(":app", 11));
+        Dump.Universe after = modular(inheriting(":app", 17));
+        assertEquals(List.of(":app (JDK 11 -> 17)|11->17|/build:app/classes"), jdkRuns(before, after));
+    }
+
     /** One run per module, not one per move, so each module gets its own numbers. */
     @Test
     void eachMovedModuleGetsItsOwnRun() {

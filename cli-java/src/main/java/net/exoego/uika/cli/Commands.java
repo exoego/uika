@@ -548,6 +548,12 @@ final class Commands {
             if (beforeModule == null) {
                 continue;
             }
+            // A before dump from an older plugin left an undeclared module to the dump's value,
+            // the lowest sibling's, while a newer one records the JDK compiling it. That
+            // difference is a change in what the plugin records, not a JDK move.
+            if (beforeModule.inheritsRelease != module.inheritsRelease) {
+                continue;
+            }
             int[] pair = releaseChange(beforeModule.jdkRelease, module.jdkRelease);
             if (pair == null) {
                 continue;
