@@ -123,11 +123,13 @@ relearned by experiment.
   the file — that was issue #128, where a build-image JDK bump manufactured a JDK-pair
   run the application never had while a real application JDK upgrade went unseen. A
   module's is what it compiles for (the same per-tool derivation `--jdk-release`
-  defaults from, so the two cannot disagree), absent when it declares nothing; the
-  dump's is `DumpFormat.dumpRelease`, the lowest across the modules, else
-  `buildJvmRelease()`. That fallback is not a compromise: a module declaring no target
-  compiles against whatever JDK runs the build, so for it the build JVM IS the
-  application's release. The CLI applies the dump-level value as each module's fallback
+  defaults from, so the two cannot disagree). A module that declares nothing records the
+  JDK that compiles it, since that JDK's API is what it links against. It is absent only
+  when the plugin cannot read that JDK (a Maven toolchain or forked executable, an
+  unreadable javaHome). The dump's is `DumpFormat.dumpRelease`, the lowest across the
+  modules, else `buildJvmRelease()`. That fallback is not a compromise: a module
+  declaring no target compiles against whatever JDK runs the build, so for it the build
+  JVM IS the application's release. The CLI applies the dump-level value as each module's fallback
   at load time (`Dump.loadDump`), so `Dump.Universe.jdkRelease` always has the one
   answer. The derivation cannot see a runtime that differs from what the build
   declares, so the plugins' existing release knob doubles as the escape hatch:
