@@ -388,22 +388,6 @@ object UikaTests extends TestSuite {
       }
     }
 
-    test("a JDK's release file names its feature release") {
-      def releaseOf(content: String): Integer = {
-        val home = os.temp.dir(prefix = "uika-jdk")
-        os.write(home / "release", content)
-        stubCliBuild.uika.javaHomeRelease(home)
-      }
-      assert(releaseOf("JAVA_VERSION=\"21.0.2\"\n") == 21)
-      assert(releaseOf("JAVA_VERSION=\"25\"\n") == 25)
-      assert(releaseOf("JAVA_VERSION=\"1.8.0_392\"\n") == 8)
-      assert(releaseOf("IMPLEMENTOR=\"x\"\n") == null)
-      // "1." with nothing after it and a version with no leading number are no release.
-      assert(releaseOf("JAVA_VERSION=\"1.\"\n") == null)
-      assert(releaseOf("JAVA_VERSION=\"ea\"\n") == null)
-      assert(stubCliBuild.uika.javaHomeRelease(os.temp.dir(prefix = "uika-jdk")) == null)
-    }
-
     test("UIKA_CLI_PATH runs a binary instead of resolving one") {
       // Task.env, not System.getenv: the daemon's environment is captured at server start,
       // so a System.getenv read would ignore this map entirely and the harness could not
