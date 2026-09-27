@@ -162,6 +162,13 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   records nothing rather than guessing the build JVM. The flag takes the same compiling
   JDKs into its minimum, which only moves it when javaHome names a JDK older than every
   declared release, because a JDK cannot compile for a release newer than itself.
+  Mill writes, for a module that declares nothing, the
+  release in its `javaHome()`'s `release` file (what `jvmVersion` resolves to, and what
+  Mill compiles it with), else the Mill JVM's. Left empty, the CLI gave it the dump-level
+  value, a SIBLING's lowest declared release. The Mill `--jdk-release` default still reads
+  declared releases only, so an undeclared module on a lower `jvmVersion` can be
+  over-claimed by the flag. Kept that way for now: reading `javaHome()` in the check would
+  resolve, and may download, that JDK on the machine running the check.
 - Each tool's release knob (`jdkRelease` / `uikaJdkRelease` / `<jdkRelease>` /
   `:jdk-release`) feeds the DUMP as well as the flag, through
   `UikaCli.overrideRelease` (`core/override-release` in Clojure). It is the only way a

@@ -284,12 +284,18 @@ trait UikaModule extends mill.Module {
       // too, since a pure-Scala module states its target there alone.
       val declared = (Seq(m.javacOptions(), m.mandatoryJavacOptions()) ++ scalacDeclared())
         .flatMap(options => Option(UikaCli.declaredRelease(options.asJava)))
+      // A module declaring nothing compiles against its JDK's own API. Left empty, the CLI
+      // would give it the dump-level value, which is a SIBLING's lowest declared release.
+      val compilingJvm = m.javaHome() match {
+        case Some(home) => UikaCli.installedRelease(home.path.toNIO)
+        case None => Integer.valueOf(DumpFormat.buildJvmRelease())
+      }
       new ClasspathDump.Module(
         moduleLabel(m),
         classesDirs.map(_.toString).asJava,
         artifacts.asJava,
         if (declaredOverride != null) declaredOverride
-        else if (declared.isEmpty) null
+        else if (declared.isEmpty) compilingJvm
         else declared.minBy(_.intValue)
       )
     }
@@ -298,3 +304,4 @@ trait UikaModule extends mill.Module {
   /** `:foo:bar`, the `:path` shape the dump format uses for Gradle and Maven modules too. */
   private def moduleLabel(m: JavaModule): String = ":" + m.moduleSegments.parts.mkString(":")
 }
+
