@@ -56,19 +56,41 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
     @OutputFile
     public abstract RegularFileProperty getOutputFile();
 
-    /** Configuration name to resolve (default runtimeClasspath). */
-    @Input
-    public abstract Property<String> getConfigurationName();
-
     /** This module's project path, e.g. ":app". */
     @Input
     public abstract Property<String> getModulePath();
 
-    /** The API release this module compiles for, unset when it declares none. Wired in by
-     * {@link UikaPlugin} at configuration time, where the project is still available. */
-    @Input
-    @Optional
-    public abstract Property<Integer> getJdkRelease();
+    // The configuration to resolve and the release this module records, from the uika
+    // extension or their -Puika* properties. Private so the extension stays the one place a
+    // build script sets them, and still inputs, through the initializer below, because they
+    // change what the task writes.
+    private final Property<String> configurationName = getProject().getObjects().property(String.class);
+    private final Property<Integer> jdkRelease = getProject().getObjects().property(Integer.class);
+
+    // Whether the outputs the entries name were built before this task ran. Then a project
+    // directory that does not exist has no sources behind it (a module without resources
+    // never creates build/resources/main) and is dropped. In a resolution-only dump the
+    // unbuilt directories stay listed, so the CLI can fall back to the producing module.
+    private final Property<Boolean> builtOutputs = getProject().getObjects().property(Boolean.class);
+
+    // An initializer, not a constructor: Gradle instantiates tasks through a public or
+    // @Inject constructor, and the static-analysis recipe narrows a public one to protected.
+    {
+        getInputs().property("configurationName", configurationName);
+        getInputs().property("jdkRelease", jdkRelease).optional(true);
+    }
+
+    Property<String> configurationName() {
+        return configurationName;
+    }
+
+    Property<Integer> jdkRelease() {
+        return jdkRelease;
+    }
+
+    Property<Boolean> builtOutputs() {
+        return builtOutputs;
+    }
 
     /** True when the module has neither a Java-family plugin nor the configuration; the dump
      * is an empty file the merge side skips. */
@@ -98,15 +120,6 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
     /** The resolved lenient artifact views, mapped to serializable entries. */
     @Internal
     public abstract ListProperty<Entry> getArtifactEntries();
-
-    /**
-     * Whether the outputs the entries name were built before this task ran. Then a project
-     * directory that does not exist has no sources behind it (a module without resources
-     * never creates build/resources/main) and is dropped; in a resolution-only dump the
-     * unbuilt directories stay listed, so the CLI can fall back to the producing module.
-     */
-    @Internal
-    public abstract Property<Boolean> getBuiltOutputs();
 
     /** The main source set, or null without a Java-family plugin (one spelling for the
      * dump wiring and the uikaBuildOutputs dependsOn wiring). */
@@ -179,9 +192,9 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
 
         var json = new StringBuilder();
         json.append("{\"module\":").append(quote(getModulePath().get()));
-        var jdkRelease = getJdkRelease().getOrNull();
-        if (jdkRelease != null) {
-            json.append(",\"jdkRelease\":").append(jdkRelease.intValue());
+        var release = jdkRelease.getOrNull();
+        if (release != null) {
+            json.append(",\"jdkRelease\":").append(release.intValue());
         }
 
         json.append(",\"classesDirs\":[");
@@ -211,7 +224,7 @@ public abstract class DumpModuleClasspathTask extends DefaultTask {
 
         json.append(",\"artifacts\":[");
         first = true;
-        var built = getBuiltOutputs().getOrElse(false);
+        var built = builtOutputs.getOrElse(false);
         for (Entry entry : getArtifactEntries().get()) {
             if (built && entry.projectPath() != null && !new File(entry.file()).exists()) {
                 continue;

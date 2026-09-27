@@ -47,8 +47,8 @@ public final class JfrEvidence {
      * The {@code .jfr} suffix decides without I/O, but it is not required: {@code jcmd
      * JFR.dump filename=...} and {@code -XX:StartFlightRecording:filename=<file>} write
      * whatever name they were given verbatim, so suffixless files are sniffed by the
-     * {@code FLR\0} magic instead of being forwarded to the CLI as text it would
-     * silently skip.
+     * {@code FLR\0} magic instead of being forwarded to the CLI, which skips a
+     * recording.
      */
     public static boolean isRecording(Path path) {
         // getFileName() is null for filesystem roots — a degenerate but reachable knob
@@ -167,8 +167,8 @@ public final class JfrEvidence {
      * directory entry is kept as-is (its plain logs still matter) with conversions of any
      * recording found under it appended. Directories are walked following symlinks, the
      * same way the CLI reads the kept directory, so a linked artifact contributes its
-     * recordings and not only its text logs. The CLI skips a binary {@code .jfr} left
-     * inside a kept directory by its name, so leaving it there is harmless. Stale
+     * recordings and not only its text logs. The CLI skips a recording left inside a
+     * kept directory, by its name or its magic, so leaving it there is harmless. Stale
      * {@code jfr-*.log} conversions from earlier runs are deleted from {@code workDir}
      * first (recording names are pid-unique, so orphans would otherwise accumulate and
      * be re-read as evidence whenever the knob directory contains the workdir).

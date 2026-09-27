@@ -7,14 +7,14 @@ import net.exoego.uika.plugin.core.{JfrEvidence, UikaCli}
 
 /**
  * Makes a test module's forked JVMs record every class load into JFR, so
- * `Uika/upgradeCheck --jfr <dir>` can tell a reference that never loads at runtime from one
- * that does.
+ * [[UikaModule.upgradeCheck]] can tell a reference that never loads at runtime from one that
+ * does.
  *
- * The one part of the plugin that needs a mixin: `forkArgs` is a task on the test module
- * itself, out of reach of an [[ExternalModule]] command. Collection is keyed by the
- * `UIKA_JFR` environment variable because an ordinary test run has no task argument to
- * carry it, and `upgradeCheck` reads the same variable back when `--jfr` is not given, so
- * one option serves both phases.
+ * A mixin of its own because `forkArgs` is a task on the test module itself, and Mill gives a
+ * test module no public way to reach the build's [[UikaModule]]. Collection is keyed by the
+ * `UIKA_JFR` environment variable, not a setting: it is switched on per run, and a value in
+ * the build file would make every forked test run record. `upgradeCheck` reads the same
+ * variable back, so one value serves both phases.
  *
  * Mix this in LAST, and append to `super.forkArgs()` in any override of your own: `forkArgs`
  * is a plain list, so a `def forkArgs = Seq(...)` later in the linearization silently drops

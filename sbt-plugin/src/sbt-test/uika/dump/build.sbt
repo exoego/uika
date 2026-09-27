@@ -40,6 +40,28 @@ lazy val app = (project in file("app"))
     }.taskValue
   )
 
+// Two modules that declare no release. Each compiles for the JDK that compiles it: the one
+// running sbt, or the one javaHome names. fake-jdk is only a release file, which is all
+// the plugin reads, and nothing here has Java sources that would fork its javac.
+lazy val plain = (project in file("plain"))
+  .settings(
+    Compile / sourceGenerators += Def.task {
+      val out = (Compile / sourceManaged).value / "example" / "Plain.scala"
+      IO.write(out, "package example\n\nfinal class Plain\n")
+      Seq(out)
+    }.taskValue
+  )
+
+lazy val forked = (project in file("forked"))
+  .settings(
+    javaHome := Some((ThisBuild / baseDirectory).value / "fake-jdk"),
+    Compile / sourceGenerators += Def.task {
+      val out = (Compile / sourceManaged).value / "example" / "Forked.scala"
+      IO.write(out, "package example\n\nfinal class Forked\n")
+      Seq(out)
+    }.taskValue
+  )
+
 lazy val prepareVendoredJar = taskKey[Unit]("Writes an unmanaged jar into app/lib")
 
 // lib/ is sbt's default unmanagedBase, the everyday spelling of a vendored jar. It is on
@@ -114,7 +136,7 @@ checkDump := {
   // of its own with no application roots -- one that fails --fail-on reachable on breaks the
   // real modules proved unreachable.
   val moduleNames = json("modules").asInstanceOf[List[Map[String, Any]]].map(_("module")).toSet
-  assert(moduleNames == Set(":core", ":app"), s"unexpected modules: $moduleNames")
+  assert(moduleNames == Set(":core", ":app", ":plain", ":forked"), s"unexpected modules: $moduleNames")
 
   // Each module records the release IT compiles for, so upgrade-check can scope a JDK
   // move to the modules that made it; the dump-level value is the lowest of them.
@@ -130,6 +152,17 @@ checkDump := {
     roots(dir("root").asInstanceOf[Double].toInt) + dir("path") == coreClassesDir
   }, coreModule)
   assert(coreModule("jdkRelease") == 11.0, coreModule)
+
+  // A module that declares nothing records its compiling JDK. Without a value of its own it
+  // took the dump-level 11, so a JDK move for it went unseen and core's moves were
+  // checked for it instead.
+  def releaseOf(name: String) = json("modules")
+    .asInstanceOf[List[Map[String, Any]]]
+    .find(_("module") == name)
+    .getOrElse(sys.error(s"$name module is missing from $json"))
+    .get("jdkRelease")
+  assert(releaseOf(":plain") == Some(java.lang.Runtime.version().feature().toDouble), json)
+  assert(releaseOf(":forked") == Some(12.0), json)
 }
 
 lazy val checkDumpRanOnce = taskKey[Unit]("Asserts the shell invocation ran the merge once, not once per project")

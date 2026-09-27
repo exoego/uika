@@ -43,7 +43,7 @@ flag_management:
 #
 #   Leiningen plugin  its unit suite alone. it/run.sh forks `lein uika`, and cloverage
 #                     sees only namespaces loaded in the JVM it reports from.
-#   Mill plugin       JaCoCo over Scala 3, which reaches 74 of Uika.scala's 125 executable
+#   Mill plugin       JaCoCo over Scala 3, which reached 74 of the entry point's 125 executable
 #                     lines. The rest are in synthetic methods JaCoCo skips, and scoverage
 #                     reaches fewer still (Mill's task bodies are inline macros, which
 #                     Scala 3 does not instrument).

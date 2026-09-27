@@ -9,10 +9,12 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.function.IntSupplier;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import net.exoego.uika.cli.UpgradeCheckIntegrationTest.Run;
@@ -160,9 +162,10 @@ class MainTest {
         assertTrue(run.code() == 0 || run.code() == 1, run.stderr());
         assertTrue(run.stdout().startsWith("checked JDK 11 -> JDK 17 against 1 scan target\n"), run.stdout());
 
-        // The running JDK's own release comes from jmods, a superset of ct.sym, which only
-        // ever cancels removals on the new side. As the old side it would invent them.
-        assumeTrue(Files.isDirectory(home.resolve("jmods")), "needs a JDK that ships jmods");
+        // JDK 21 and earlier serve their own release from jmods, a superset of ct.sym, which
+        // only ever cancels removals on the new side. As the old side it would invent them.
+        assumeTrue(Runtime.version().feature() <= 21 && Files.isDirectory(home.resolve("jmods")),
+                "needs a JDK 21 or earlier that ships jmods");
         Run inverted = runUika("check", "--jdk-release-old", Integer.toString(Runtime.version().feature()),
                 "--jdk-release-new", "17", "--classpath", fixture(CONSUMER));
         assertTrue(inverted.stderr().contains("read from jmods"), inverted.stderr());
@@ -231,6 +234,62 @@ class MainTest {
         }
         // A child would have written to the inherited stdout, not to this buffer.
         assertTrue(out.toString(StandardCharsets.UTF_8).startsWith("class net/exoego/uika/cli/Main [public]\n"), out.toString());
+    }
+
+    /** A crash left main and exited 1, which every plugin reports as violations found, even under --fail-on never. */
+    @Test
+    void anUnexpectedThrowableExitsTwoWithAnErrorLine() {
+        Run bug = guarded(() -> {
+            throw new IllegalStateException("a bug");
+        });
+        assertEquals(2, bug.code());
+        assertTrue(bug.stderr().startsWith("error: java.lang.IllegalStateException: a bug\n"), bug.stderr());
+        assertTrue(bug.stderr().contains("\tat net.exoego.uika.cli.MainTest."), "a bug keeps its stack trace: " + bug.stderr());
+
+        // How ForkJoinTask.join rethrows a worker's OutOfMemoryError. A trace would only be noise.
+        OutOfMemoryError rethrown = new OutOfMemoryError();
+        rethrown.initCause(new OutOfMemoryError("Cannot reserve 131072 bytes of direct buffer memory"));
+        Run oom = guarded(() -> {
+            throw rethrown;
+        });
+        assertEquals(2, oom.code());
+        assertEquals("error: java.lang.OutOfMemoryError: Cannot reserve 131072 bytes of direct buffer memory\n", oom.stderr());
+
+        Run overflow = guarded(() -> {
+            throw new StackOverflowError();
+        });
+        assertEquals(2, overflow.code());
+        assertEquals("error: java.lang.StackOverflowError\n", overflow.stderr());
+    }
+
+    @Test
+    void aFailureWhileReportingTheCrashStillExitsTwo() {
+        PrintStream previous = Out.err;
+        Out.err = new PrintStream(new OutputStream() {
+            @Override
+            public void write(int b) {
+                throw new OutOfMemoryError("Java heap space");
+            }
+        }, true, StandardCharsets.UTF_8);
+        try {
+            assertEquals(2, Main.guarded(() -> {
+                throw new OutOfMemoryError("Java heap space");
+            }));
+        } finally {
+            Out.err = previous;
+        }
+    }
+
+    private static Run guarded(IntSupplier body) {
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        PrintStream previous = Out.err;
+        Out.err = new PrintStream(err, true, StandardCharsets.UTF_8);
+        try {
+            int code = Main.guarded(body);
+            return new Run(code, "", err.toString(StandardCharsets.UTF_8));
+        } finally {
+            Out.err = previous;
+        }
     }
 
     /** java/lang/Object is the one class without a superclass, as in a dump of an extracted JDK module. */

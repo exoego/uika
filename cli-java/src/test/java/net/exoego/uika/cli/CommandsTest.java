@@ -275,6 +275,13 @@ class CommandsTest {
                 assertThrows(UikaException.class, () -> Commands.applyEvidenceAndDraft(new ArrayList<>(), null, evidence, draft));
         assertTrue(refused.getMessage().contains("no class loads were observed"), refused.getMessage());
 
+        // A raw JFR recording, read as text, named java.lang.Thread.State and slipped past the guard.
+        Path recording = Files.writeString(dir.resolve("rec.jfr"), "FLR\0\n   java.lang.Thread.State: RUNNABLE\n");
+        Evidence.LoadEvidence raw = Evidence.load(List.of(recording.toString()));
+        UikaException rawRefused =
+                assertThrows(UikaException.class, () -> Commands.applyEvidenceAndDraft(new ArrayList<>(), null, raw, draft));
+        assertTrue(rawRefused.getMessage().contains("no class loads were observed"), rawRefused.getMessage());
+
         Files.writeString(log, "[class,load] com.example.Loaded\n");
         Evidence.LoadEvidence loaded = Evidence.load(List.of(log.toString()));
         assertEquals(1, loaded.distinctClasses());
@@ -303,7 +310,7 @@ class CommandsTest {
     }
 
     /** Runs {@code body} and returns what it printed to stderr. */
-    private static String stderrOf(Runnable body) {
+    static String stderrOf(Runnable body) {
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         PrintStream previous = Out.err;
         Out.err = new PrintStream(err, true, StandardCharsets.UTF_8);
@@ -408,6 +415,39 @@ class CommandsTest {
         assertEquals("", stderrOf(() -> pair[0] = Commands.jdkReleasePair(new int[] {21, 21})));
         assertEquals(0, pair[0][0].classCount());
         assertEquals(0, pair[0][1].classCount());
+    }
+
+    /** A JDK whose ct.sym carries its own release reads both sides there, so there is nothing to warn about. */
+    @Test
+    void anOwnReleaseFromCtSymIsNotWarnedAbout(@TempDir Path dir) throws Exception {
+        JdkTest.realisticHome(dir, 25);
+        ApiIndex[][] pair = new ApiIndex[1][];
+        assertEquals("", stderrOf(() -> pair[0] = Commands.jdkReleasePair(new int[] {25, 17})));
+        int arrayList = Intern.intern("java/util/ArrayList");
+        assertTrue(pair[0][0].containsClass(arrayList));
+        assertTrue(pair[0][1].containsClass(arrayList));
+    }
+
+    /**
+     * A move above the JDK uika finds fails on its new side. A jmods warning printed first would
+     * describe a comparison that never ran, so the warning waits until both sides have loaded.
+     */
+    @Test
+    void theJmodsWarningWaitsForBothSides(@TempDir Path dir) throws Exception {
+        Path ctSym = JdkTest.realisticHome(dir, 21).resolve("lib").resolve("ct.sym");
+        UikaException[] thrown = new UikaException[1];
+        assertEquals(
+                "",
+                stderrOf(() -> thrown[0] = assertThrows(UikaException.class, () -> Commands.jdkReleasePair(new int[] {21, 25}))));
+        assertEquals(
+                "release 25 not present in " + ctSym + " (available: 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20;"
+                        + " a newer JDK carries it)",
+                thrown[0].getMessage());
+
+        assertEquals(
+                "warning: --jdk-release-old 21 is this JDK's own release, read from jmods, which also holds unexported"
+                        + " internals; against a ct.sym new side those look removed\n",
+                stderrOf(() -> Commands.jdkReleasePair(new int[] {21, 17})));
     }
 
     /**

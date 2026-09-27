@@ -90,8 +90,21 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   entry is never reused for a changed dump). If the file appears mid-build, the
   task fails with an explicit message (`getWiredAtConfiguration()`), never
   silently skips fetching. The CLI jar's detached configuration is wired in
-  `afterEvaluate` from the final `cliVersion` (register action would miss
-  `configureEach` overrides).
+  `afterEvaluate` from the final `cliVersion` (the register action runs before the
+  root build script's `uika {}` block).
+- Users configure through ONE root extension, `uika {}` (`UikaExtension`), and every
+  task reads it. Each `-Puika*` property is read once in `apply()` and WINS over its
+  extension setting (`UikaPlugin.propertyOr`); a list knob (`excludeFiles`) is replaced,
+  not appended to. The tasks' settings are private `Property` fields with
+  package-private accessors, so a build script cannot set them and the extension stays
+  the one place. That closed two traps: a value both commands need (`jdkRelease`, which
+  the dump records and the check passes) lived on the check task alone, and a
+  build-script task value silently beat the `-P` property. A private field is not an
+  annotated input, so where the value changes a task's OUTPUT it is registered by hand
+  (`DumpModuleClasspathTask`'s initializer block, `getInputs().property`). The upgrade-check
+  task needs none: it has no outputs, so it always runs. No task setting stays public,
+  not even a per-module `configurationName`: the user chose one way to configure over a
+  per-module override, so `configuration` is build-wide.
 - `DumpFormat` changes propagate to all four plugins via source inclusion from
   `jvm-plugin-core/` — no core artifact to publish.
 - The upgrade-check tasks (`uikaUpgradeCheck`, Maven `uika:upgrade-check`)
@@ -134,7 +147,28 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   target really does compile against the build JVM. Gradle emits the release on every
   module it dumps (`getTargetCompatibility()` falls back to the toolchain, so a Java
   project always names one); the Clojure frontends write the same number on their
-  single module and on the dump.
+  single module and on the dump. Maven's dump (`JdkReleases.moduleRelease`) gives a
+  non-pom module that declares nothing the JVM running Maven, since in-process javac
+  targets it. Recording nothing left it on the dump-level value, a sibling's declared
+  release whenever one declared any. It still records nothing when javac may run on
+  another JDK (maven-toolchains-plugin present, `<jdkToolchain>`, or fork plus
+  `<executable>`), because that JDK's release is not read. The FLAG (`lowest`) stays
+  on declared releases only.
+  sbt gives a module that declares nothing the release of
+  its compiling JDK, read from the `release` file of `Compile / javaHome` when set
+  (`UikaCli.installedRelease`), else the JVM running sbt. Left without one, such a module
+  took the dump-level value, the LOWEST sibling's declaration, so a CI JDK move went
+  unchecked for it while a sibling's move was checked in its name. An unreadable javaHome
+  records nothing rather than guessing the build JVM. The flag takes the same compiling
+  JDKs into its minimum, which only moves it when javaHome names a JDK older than every
+  declared release, because a JDK cannot compile for a release newer than itself.
+  Mill writes, for a module that declares nothing, the
+  release in its `javaHome()`'s `release` file (what `jvmVersion` resolves to, and what
+  Mill compiles it with), else the Mill JVM's. Left empty, the CLI gave it the dump-level
+  value, a SIBLING's lowest declared release. The Mill `--jdk-release` default still reads
+  declared releases only, so an undeclared module on a lower `jvmVersion` can be
+  over-claimed by the flag. Kept that way for now: reading `javaHome()` in the check would
+  resolve, and may download, that JDK on the machine running the check.
 - Each tool's release knob (`jdkRelease` / `uikaJdkRelease` / `<jdkRelease>` /
   `:jdk-release`) feeds the DUMP as well as the flag, through
   `UikaCli.overrideRelease` (`core/override-release` in Clojure). It is the only way a
@@ -142,8 +176,9 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   and shipping on 21, and it replaces every module's value rather than sitting beside
   them because it is a statement about the whole build. Zero keeps its old meaning of
   switching the API layer off and leaves the dump derived, so do not fold the two
-  meanings together. Mill and the Clojure tool take it on the dump command itself
-  (`--jdkRelease`, `:jdk-release`), since neither has a build-wide setting to read.
+  meanings together. The Clojure tool takes it on the dump command itself
+  (`:jdk-release`), since it has no build-wide setting to read. Mill reads it from the
+  one `UikaModule` setting both commands share.
 - Each plugin reads the spelling that pins the API, never the one that names the
   COMPILER. Gradle takes `compileJava`'s `options.release` else
   `targetCompatibility`, over `getAllprojects`, and deliberately NOT the
@@ -190,7 +225,7 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   `uika` prefix appears exactly where the namespace is flat and shared with the whole
   build. `-PuikaFailOn`, `uikaFailOn` and `-Duika.failOn` carry it (Gradle project
   properties, sbt's `autoImport`, and system properties are one space every plugin shares);
-  the Gradle task property, the Maven POM element, Mill's command parameters, the two
+  the Gradle `uika {}` extension, the Maven POM element, Mill's `UikaModule` settings, the two
   Clojure maps and the Bazel macro's parameters do not, since each already sits inside something
   uika owns. Renaming a knob away from its flag would break the mechanical correspondence
   the clojure-tool sync test checks, so do not do it for readability alone -- rename the
@@ -209,7 +244,9 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   value must be a directory or a `.jfr` recording — any other existing-file
   value fails fast at configuration, and a DIRECTORY named `x.jfr` still
   counts as a directory), sbt `uikaJfr := Some(dir)`, Maven `-Duika.jfr` plus
-  a hand-written `argLine` for collection (no mojo can inject into surefire),
+  a hand-written `argLine` for collection (the plugin has no goal that sets
+  surefire's `argLine` the way jacoco's prepare-agent does, and a POM
+  `<argLine>` ignores both that property and a command-line `-DargLine`),
   so Maven alone bypasses the shared composer — its `docs/maven.md`/javadoc
   recipe must be kept in sync with it by hand. Collection is JFR, not -Xlog, on purpose:
   `jdk.ClassLoad` with stacks is an information superset of both -Xlog
@@ -243,7 +280,7 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   buildSettings task reads the keys via `LocalRootProject / ...` so the
   `docs/sbt.md`'s bare `uikaJfr := Some(...)` (root-project scope) reaches the
   check, not only ThisBuild.
-  `UpgradeCheckTask.getDraftExcludeFile` is `@Internal`, NOT `@OutputFile`:
+  `UpgradeCheckTask`'s `draftExcludeFile` must never be an output:
   declaring an output made a second invocation UP-TO-DATE and silently skipped
   the whole check (caught by `configurationCacheReusesUpgradeCheck`, which sets
   the draft property for exactly that reason).
@@ -259,8 +296,8 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   recording); recordings inside the directory are found following symlinks
   (the CLI follows them too) and by content, not name alone (`FLR\0` magic —
   `jcmd JFR.dump` and a file-valued `filename=` write suffixless recordings),
-  then converted with the binary left in place (the CLI skips `.jfr` names in
-  its directory walk), and any text logs in the directory still reach the CLI
+  then converted with the binary left in place (the CLI's walk skips them by
+  name or magic), and any text logs in the directory still reach the CLI
   as-is (bring-your-own -Xlog). Conversion dedups per batch to exactly what
   the CLI keeps (first bare line per class, first framed stack block —
   evidence.rs is or_insert / first-framed-wins, so every test fork repeating
@@ -367,7 +404,7 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
   everywhere and that test would empty the whole dump). The sbt filter must not
   move `DumpFormat.dumpRelease`, so the release is computed over ALL modules
   and only the emitted list is filtered; Maven needs no such care because
-  `JdkReleases.declaredRelease` already answers null for pom packaging.
+  `JdkReleases.moduleRelease` already answers null for pom packaging.
 
 
 ## Every Tool's Doc Page
@@ -383,16 +420,32 @@ description: Invariants for the uika Gradle, sbt, Maven, Mill and Leiningen buil
 - Both rules are enforced by `jvm-plugin-core`'s `DocPageContractTest` (run by the Gradle
   and the Maven build): the section order on all seven pages, and every knob scraped from
   each tool's source (Gradle property lookups, sbt keys, Maven `@Parameter` properties,
-  Mill command parameters, the two Clojure key sets, the Bazel macro parameters) named on
+  Mill `UikaModule` settings and command parameters, the two Clojure key sets, the Bazel macro parameters) named on
   its page. A new knob fails that test until its page names it. The tool-by-option table
   and the "one tool only" list in `docs/build-tools.md` are the parity contract the audits
   used to reconstruct by hand; keep them current when a knob is added or renamed.
 
 ## Mill Plugin Notes
 
-Most Mill invariants live as comments at their point of use (`Uika.scala`,
+Most Mill invariants live as comments at their point of use (`UikaModule.scala`,
 `UikaTestModule.scala`, `build.mill`) or are locked by tests in `UikaTests.scala`.
 This section keeps only what neither can hold.
+
+- The one entry point is the `UikaModule` trait the user declares as a top-level
+  object. Settings are its tasks and never command arguments, so the dump and the check
+  read one value. The earlier `ExternalModule` took every setting per command, and a
+  `--jdkRelease` given to the check but not the dump silently lost JDK-move detection.
+  Do not add a command argument that duplicates a setting. Verified on Mill 1.1.8: the
+  commands get the short selector (`uika.dumpClasspath`), read the object's settings,
+  and re-run on edits. A YAML build takes the object too (`extends:` plus the settings
+  as keys), with the plugin under `mill-build: mvnDeps:`. Custom `//|` header keys fail
+  or are silently ignored, so they are no way to pass settings.
+- In the command bodies `getClass` is the USER's object, in the build's package, so
+  the plugin's own manifest is read through `classOf[UikaModule]`.
+- JFR stays an environment variable (`UIKA_JFR`) read by both `UikaTestModule` and
+  `upgradeCheck`, not a setting. A test module has no public way to reach the build's
+  `UikaModule` (`ModuleCtx.enclosingModule` is `private[mill]`), and a value in the
+  build file would make every forked test run record.
 
 - `Task.ctx().workspace`, NEVER `BuildCtx.workspaceRoot`, for the default output
   path and for resolving relative arguments. The latter is the launcher's root and
@@ -402,8 +455,6 @@ This section keeps only what neither can hold.
   UNCONDITIONAL edge, so a `defaultResolver()` in a dead fallback branch is still
   built on every run. Tasks on runtime-valued modules cannot be lifted at all;
   collect them with `Task.traverse(...)` outside the body.
-- `mill.api.ExternalModule.Alias` does NOT give a working short selector (`uika/`,
-  `uika.`, and `build.uika/` all fail to resolve). Do not document one.
 - No mise backend installs the Mill launcher (`ubi:`/`github:` find no matching
   release asset). The committed `mill-plugin/mill` bootstrap script reads the
   `//| mill-version:` header in `build.mill`, so mise only supplies the JVM.
@@ -458,6 +509,12 @@ Same rule as the Mill section: point-of-use comments and the tests in
   likeliest typo is the sibling's spelling, since the two deliberately differ:
   `:exclude-file`/`:exclude-files` and `:class-load-log`/`:class-load-logs`. That is why
   the message lists the accepted keys rather than only naming the rejected one.
+  "Accepted" is the UNION over every command, for both front ends: tools.deps merges
+  the alias's `:exec-args` into every `-T` call, and lein reads one `:uika` map for
+  every subtask. A per-command set made `:fail-on` in `:exec-args` fail both dump steps
+  of the PR gate. The union only works while a shared key means the same thing to every
+  command that reads it. Today only `:jdk-release` is shared, and it names the stated
+  runtime in both (0 turns the check's layer off and leaves the dump's release derived).
 - The port of `UikaCli.runUpgradeCheck`'s COMMAND BUILDING is pinned mechanically, by
   `the-command-port-carries-every-uikacli-flag` in the clojure-tool suite. It scrapes the
   quoted `"--flag"` literals out of both sources (quoted only, since each file also names
@@ -476,7 +533,7 @@ Same rule as the Mill section: point-of-use comments and the tests in
   load on a source install without the class, taking the text-log flow down with it.
   Class absent or JVM below 17 (which throws UnsupportedClassVersionError, not
   ClassNotFoundException) degrades to text-only, and an explicit :jfr then fails
-  with the specific reason instead of forwarding a binary the CLI silently skips.
+  with the specific reason instead of forwarding a binary the CLI skips.
   The whole class-load list goes through JfrEvidence.rewrite when the class is
   present — the JVM plugins' shape — so a recording handed to :class-load-log
   converts too, and the workdir leaf comes from the class's own WORK_DIR_NAME.

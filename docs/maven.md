@@ -187,7 +187,13 @@ degrading to a warning. The cache save and restore close that gap.
 - [`jdkRelease`](build-tools.md#jdkrelease) is derived from
   maven-compiler-plugin's `<release>`/`<target>`, else
   `maven.compiler.release`/`maven.compiler.target`. Override with
-  `<jdkRelease>` or `-Duika.jdkRelease=`, or set 0 to disable the API layer.
+  `<jdkRelease>` or `-Duika.jdkRelease=` on both goals, or set 0 to disable
+  the API layer.
+  A module that declares neither is recorded in the dump with the release of
+  the JVM running Maven, since that is what javac targets. The plugin does not
+  read the release of a JDK toolchain or a forked `<executable>`, so a module
+  compiled that way records nothing and the check uses the lowest release any
+  module records.
 - `<mergedClasspath>` / `-Duika.mergedClasspath=true` checks the union of every
   module's classpath once instead of [each module against its own
   resolution](../README.md#per-module-checking). Per-module checking scans once
@@ -216,14 +222,16 @@ last. Quote the `filename` value when `<dir>` carries a comma — the comma is
 the option delimiter, and an unquoted one silently truncates `filename=` with
 exit 0, leaving the directory empty. Make it absolute in a multi-module build:
 surefire forks resolve a relative path against each module, the aggregator
-goal against the execution root. A command-line `-DargLine` replaces any
-POM-configured argLine (jacoco's agent included) — append to the POM's
-argLine instead when one exists. A build cache that replays test executions
-collects nothing: maven-build-cache-extension and the Develocity extension
-both skip surefire on a cache hit, so disable caching for the collect run,
-the same reason the Bazel recipe needs `--nocache_test_results`.
-[`--draft-exclude-file`](runtime-load-evidence.md) maps to
-`-Duika.draftExcludeFile=`.
+goal against the execution root. When the POM or a parent POM configures
+surefire's `<argLine>`, Maven ignores a command-line `-DargLine`, so nothing
+records and the build still passes. Put the flag in that `<argLine>` instead.
+A `-DargLine` does replace an `argLine` property, such as the one jacoco's
+prepare-agent sets, and drops jacoco's agent with it. A build cache that
+replays test executions collects nothing: maven-build-cache-extension and the
+Develocity extension both skip surefire on a cache hit, so disable caching for
+the collect run, the same reason the Bazel recipe needs
+`--nocache_test_results`. [`--draft-exclude-file`](runtime-load-evidence.md)
+maps to `-Duika.draftExcludeFile=`.
 
 The [base-branch-to-PR CI wiring](runtime-load-evidence.md#collecting-on-the-base-branch-consuming-on-the-pr)
 is the same for every tool, with this page's two commands inside it.

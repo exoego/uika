@@ -93,8 +93,8 @@ public final class UpgradeCheckMain {
             // Recordings are converted HERE, never by the CLI: the CLI must
             // not read binary JFR. The WHOLE list goes through the converter, the shape
             // every sibling integration uses: a recording handed to --classLoadLog converts
-            // too (the CLI skips .jfr names silently, so forwarding it raw loses the
-            // evidence with no symptom), while a text log or a directory entry passes
+            // too (the CLI skips a raw recording, so forwarding it would lose the
+            // evidence), while a text log or a directory entry passes
             // through with any recordings found under it appended. The conversions land
             // under the knob directory itself, which rewrite() handles by design (it
             // deletes its own stale output first).
@@ -114,7 +114,7 @@ public final class UpgradeCheckMain {
      *
      * <p>Printed rather than documented, so the README recipe cannot drift from the format
      * the converter expects. The Maven plugin has the opposite arrangement, a hand-written
-     * argLine that has to be kept in step by hand, because no mojo can inject into surefire.
+     * argLine that has to be kept in step by hand, because that plugin has no goal to set it.
      * Bazel needs no injection at all, since --jvmopt already reaches every test JVM.
      *
      * <p>Creating the directory is part of the job. Given a MISSING PARENT, JFR aborts JVM
