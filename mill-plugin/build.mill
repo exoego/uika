@@ -113,7 +113,9 @@ object `package` extends ScalaModule, PublishModule {
 
     // scoverage sees almost none of this module: Mill's task bodies are inline macros, and
     // Scala 3 does not instrument inlined code. Measured on the entry point's 125 executable
-    // lines, scoverage reached 25 and JaCoCo 74.
+    // lines, scoverage reached 25 and JaCoCo 74. JaCoCo drops the task bodies too, from the
+    // report rather than as misses. They compile to synthetic `$$anonfun$` methods, and
+    // JaCoCo 0.8.15 keeps a synthetic Scala method only under Scala 2's `$anonfun$` prefix.
     def uikaJacocoArgs: T[Seq[String]] = Task.Input {
       (Task.env.get("UIKA_JACOCO_AGENT").filter(_.nonEmpty),
        Task.env.get("UIKA_JACOCO_EXEC").filter(_.nonEmpty)) match {
