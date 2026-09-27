@@ -1,5 +1,7 @@
 load("@uika//:defs.bzl", "uika")
 
+# rules_jvm_external's jars are generated files, and :uika_baseline_dump has to record them
+# without building //app.
 uika(
     name = "uika",
     targets = ["//app"],

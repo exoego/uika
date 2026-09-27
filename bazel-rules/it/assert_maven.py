@@ -45,7 +45,15 @@ def broken(path):
     return None
 
 
-before_path, after_path, materialized_path, materialized_report, external_report = sys.argv[1:6]
+(
+    before_path,
+    after_path,
+    materialized_path,
+    materialized_report,
+    external_report,
+    resolution_path,
+    resolution_report,
+) = sys.argv[1:8]
 
 before, after = coordinates(load(before_path)), coordinates(load(after_path))
 if before.get("com.google.guava:guava", (None,))[0] != "22.0":
@@ -89,5 +97,21 @@ if status(external_report) != 2:
 with open(external_report, encoding="utf-8") as handle:
     if "cannot open" not in handle.read():
         fail("expected a 'cannot open' error without --materialize")
-print("materialized baseline found {} breaks; without it the check exits 2".format(
-    count_materialized))
+
+# The PR gate's baseline builds none of the workspace's code but must record the same Maven
+# artifacts. rules_jvm_external's jars are generated files, and an is_source test dropped them.
+resolution = load(resolution_path)
+if any(module["classesDirs"] for module in resolution["modules"]):
+    fail("the baseline dump recorded build outputs")
+recorded = {name: version for name, (version, _) in coordinates(resolution).items()}
+expected = {name: version for name, (version, _) in before.items()}
+if recorded != expected:
+    fail("the baseline dump recorded {}, expected {}".format(recorded, expected))
+count_resolution, resolution_text = broken(resolution_report)
+if status(resolution_report) != 1 or count_resolution != count_materialized:
+    fail("the baseline dump found {} breaks with exit {}, expected {}".format(
+        count_resolution, status(resolution_report), count_materialized))
+if "CHANGED com.google.guava:guava 22.0 -> 23.0-rc1" not in resolution_text:
+    fail("the baseline dump did not see the guava change")
+print("materialized baseline found {} breaks, as did the baseline dump, and"
+      " without --materialize the check exits 2".format(count_materialized))
