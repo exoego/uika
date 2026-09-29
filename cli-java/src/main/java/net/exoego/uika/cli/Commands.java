@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -638,6 +639,43 @@ final class Commands {
         return targets;
     }
 
+    /**
+     * The jars in the module's resolution order, which is its classpath order. The library
+     * indexes are first-wins like the scan, so coordinate order would let a library shadow an
+     * uber jar that bundles it and comes first (https://github.com/exoego/uika/issues/427).
+     */
+    static List<String> inResolutionOrder(List<String> jars, List<Dump.Artifact> artifacts) {
+        Map<String, Integer> position = new HashMap<>();
+        for (int i = 0; i < artifacts.size(); i++) {
+            position.putIfAbsent(artifacts.get(i).file(), i);
+        }
+        return byPosition(jars, position);
+    }
+
+    /**
+     * Old jars of a module the before dump does not have, ordered by where their coordinate
+     * sits in the module's after resolution, the closest stand-in for their classpath order.
+     */
+    static List<String> inSuccessorOrder(List<String> oldJars, Dump.VersionMap before, List<Dump.Artifact> artifacts) {
+        Map<Dump.Coord, Integer> coordPosition = new HashMap<>();
+        for (int i = 0; i < artifacts.size(); i++) {
+            Dump.Artifact a = artifacts.get(i);
+            if (a.hasCoordinate()) {
+                coordPosition.putIfAbsent(new Dump.Coord(a.group(), a.name()), i);
+            }
+        }
+        Map<String, Integer> position = new HashMap<>();
+        // The before map is scoped to the module's own coordinates, so every one has a position.
+        before.forEach((coord, versions) -> versions.values().forEach(file -> position.putIfAbsent(file, coordPosition.get(coord))));
+        return byPosition(oldJars, position);
+    }
+
+    private static List<String> byPosition(List<String> jars, Map<String, Integer> position) {
+        List<String> sorted = new ArrayList<>(jars);
+        sorted.sort(Comparator.comparingInt(jar -> position.getOrDefault(jar, Integer.MAX_VALUE)));
+        return sorted;
+    }
+
     private static ModulePlan planDependencyRuns(Dump.Universe before, Dump.Universe after, TargetNotes notes) {
         TreeSet<Dump.Coord> projectCoords = Dump.projectCoordsUnion(before, after);
         ModulePlan plan = new ModulePlan();
@@ -660,7 +698,11 @@ final class Commands {
                     plan.incompleteModules++;
                     continue;
                 }
-                moduleChanges = Dump.diffVersionMaps(beforeVersions, moduleVersions, projectCoords);
+                Dump.DependencyChanges diff = Dump.diffVersionMaps(beforeVersions, moduleVersions, projectCoords);
+                moduleChanges = new Dump.DependencyChanges(
+                        diff.changes(),
+                        inResolutionOrder(diff.oldJars(), beforeModule.artifacts),
+                        inResolutionOrder(diff.newJars(), module.artifacts));
             } else {
                 // Renamed or added module. Diff its own coordinates against the union's
                 // before versions, so a rename+upgrade is still checked.
@@ -678,7 +720,10 @@ final class Commands {
                 }
                 Out.warn("module " + module.name + " is not in the before dump (renamed or new); "
                         + "checking it against the union's before versions");
-                moduleChanges = fallback;
+                moduleChanges = new Dump.DependencyChanges(
+                        fallback.changes(),
+                        inSuccessorOrder(fallback.oldJars(), scopedBefore, module.artifacts),
+                        inResolutionOrder(fallback.newJars(), module.artifacts));
             }
             if (moduleChanges.oldJars().isEmpty()) {
                 plan.unchangedModules++;
