@@ -1218,6 +1218,8 @@ class IntegrationTest {
         Check.Report report = Commands.runCheck(
                 List.of(oldJar), List.of(newJar), List.of(bundle.toString(), newJar), List.of(), List.of(), null, null);
         assertTrue(report.violations.isEmpty(), "violations: " + describe(report.violations));
+        String prefix = bundle + " comes before " + newJar + " on the classpath and defines ";
+        assertEquals(1, report.warnings.stream().filter(w -> w.startsWith(prefix)).count(), "warnings: " + report.warnings);
     }
 
     /**

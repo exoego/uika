@@ -174,7 +174,9 @@ pass-2 classes are typically below 0.1% of the scan.
   different target. So a new jar left off the classpath stays first (the
   goldens' `Check.check` scans none), and one new jar can shadow another, since
   `--new` order (coordinate order in upgrade-check) need not match classpath
-  order. One limit remains. The invocation probe is built from the unreplaced
+  order. Each pair of winner and shadowed new jar gets one warning
+  (`Check.shadowWarnings`), since a fully shadowed upgrade is otherwise a silent
+  clean pass. One limit remains. The invocation probe is built from the unreplaced
   new index before pass 1.
 - `InvokeDynamic` NameAndType entries are bootstrap synthetic names, not symbol
   references. `MethodHandle` entries point at Methodref-like constants, so

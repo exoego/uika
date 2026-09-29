@@ -1535,6 +1535,11 @@ final class CheckTest {
         int[] expected = {intern("lib/A"), intern("lib/D")};
         Arrays.sort(expected);
         assertArrayEquals(expected, names);
+        assertEquals(
+                List.of(
+                        "lib/new.jar comes before lib/second.jar on the classpath and defines 1 of its classes. The JVM loads them from lib/new.jar, so the upgrade does not reach them.",
+                        "uber.jar comes before lib/new.jar on the classpath and defines 1 of its classes. The JVM loads them from uber.jar, so the upgrade does not reach them."),
+                Check.shadowWarnings(graph, newLib, scanned, shadowed));
         ApiIndex runtime = newLib.replacing(shadowed, index(finalClass("lib/A")));
         assertEquals(Acc.PUBLIC | Acc.FINAL, runtime.classAccess(intern("lib/A")));
         assertTrue(runtime.permits(runtime.entry(intern("lib/B")), intern("lib/X")));

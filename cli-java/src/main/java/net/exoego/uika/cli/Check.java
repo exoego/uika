@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ForkJoinTask;
 import java.util.concurrent.RecursiveAction;
 
@@ -429,6 +430,26 @@ final class Check {
         return shadowed;
     }
 
+    /** One line per pair of winning target and shadowed new jar, sorted by text. */
+    static List<String> shadowWarnings(ClassGraph graph, ApiIndex newIndex, SymMap scannedNewJars, IntSet shadowed) {
+        Map<String, Integer> counts = new TreeMap<>(Text::compareUtf8);
+        for (int e = 0; e < newIndex.classCount(); e++) {
+            int name = newIndex.nameOf(e);
+            if (shadowed.contains(name)) {
+                String winner = Intern.str(graph.sourceOf(graph.node(name)));
+                String loser = Intern.str(scannedNewJars.get(newIndex.sourceOf(e)));
+                counts.merge(winner + "\0" + loser, 1, Integer::sum);
+            }
+        }
+        List<String> out = new ArrayList<>();
+        counts.forEach((pair, n) -> {
+            String[] names = pair.split("\0", 2);
+            out.add("%s comes before %s on the classpath and defines %d of its classes. The JVM loads them from %s, so the upgrade does not reach them."
+                    .formatted(names[0], names[1], n, names[0]));
+        });
+        return out;
+    }
+
     // ---- pass 2 ----
 
     /** Re-reads only the classes resolution needs from their origin and indexes their members. */
@@ -525,6 +546,7 @@ final class Check {
         List<String> warnings = new ArrayList<>(scan.warnings);
         IntSet shadowed = shadowedNewClasses(graph, newIndex, scannedNewJars);
         if (!shadowed.isEmpty()) {
+            warnings.addAll(shadowWarnings(graph, newIndex, scannedNewJars, shadowed));
             // Replaced rather than dropped. The graph walks compare old with new directly, so
             // dropping hid the breaks of a winning copy that has them too.
             newIndex = newIndex.replacing(shadowed, fetchMembers(scan, shadowed, warnings));
