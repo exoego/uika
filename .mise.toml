@@ -1,5 +1,5 @@
 [tools]
-gradle = "9.7.1"
+gradle = "9.8.0"
 # The default backends (conda, asdf plugin) lag behind sbt releases and have
 # no 1.12.13 or later, so install the launcher from the GitHub release.
 "github:sbt/sbt" = "1.13.0"
