@@ -10,7 +10,7 @@ module(
     bazel_compatibility = [">=7.0.0"],
 )
 
-bazel_dep(name = "rules_java", version = "9.1.0")
+bazel_dep(name = "rules_java", version = "9.9.0")
 
 # rules_java resolves protobuf 33.4 (rules_cc asks for it), and every protobuf before 34.0
 # depends on rules_apple, which brings rules_swift. Its local_config repository runs the
