@@ -12,7 +12,7 @@ import java.util.List;
  * fetches, which is small next to the scan.
  */
 final class ApiIndex {
-    private static final int STRIDE = 13;
+    private static final int STRIDE = 12;
     private static final int NAME = 0;
     private static final int ACCESS = 1;
     private static final int SUPER = 2;
@@ -26,7 +26,6 @@ final class ApiIndex {
     private static final int METHOD_LEN = 9;
     private static final int FIELD_START = 10;
     private static final int FIELD_LEN = 11;
-    private static final int SOURCE = 12;
     private static final int SEALING_UNKNOWN_BIT = 1 << 16;
 
     private final SymMap classes = new SymMap();
@@ -67,7 +66,6 @@ final class ApiIndex {
         rows[row + METHOD_LEN] = api.methodKeys.length;
         rows[row + FIELD_START] = appendMembers(api.fieldKeys, api.fieldAccess, 0, api.fieldKeys.length);
         rows[row + FIELD_LEN] = api.fieldKeys.length;
-        rows[row + SOURCE] = api.source;
         classes.put(api.name, classCount);
         classCount++;
     }
@@ -161,11 +159,6 @@ final class ApiIndex {
     /** {@link Intern#NONE} when the class has no superclass. */
     int superOf(int entry) {
         return rows[entry * STRIDE + SUPER];
-    }
-
-    /** The path the class was read from, {@link Intern#NONE} when unknown. */
-    int sourceOf(int entry) {
-        return rows[entry * STRIDE + SOURCE];
     }
 
     int nestHostOf(int entry) {

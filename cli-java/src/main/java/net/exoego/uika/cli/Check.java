@@ -408,21 +408,19 @@ final class Check {
     }
 
     /**
-     * New-library classes whose scanned copy is not the one the new index holds, such as an
-     * uber jar bundling an unrelocated copy (https://github.com/exoego/uika/issues/427) or
-     * another new jar that comes first on the classpath. The JVM loads the scanned winner, so
-     * every check must judge it. A class of a new jar that is not scanned stays as it is,
-     * since the scan does not place that jar on the classpath.
+     * New-library classes that an earlier scan target defines too, such as an uber jar
+     * bundling an unrelocated copy (https://github.com/exoego/uika/issues/427). The JVM
+     * loads that copy, so every check must judge it. Without a scanned new jar the scan does
+     * not place the library on the classpath, and the library stays first.
      */
-    static IntSet shadowedNewClasses(ClassGraph graph, ApiIndex newIndex, SymMap scannedNewJars) {
+    static IntSet shadowedNewClasses(ClassGraph graph, ApiIndex newIndex, IntSet upgradedSources) {
         IntSet shadowed = new IntSet();
-        if (scannedNewJars.isEmpty()) {
+        if (upgradedSources.isEmpty()) {
             return shadowed;
         }
         for (int e = 0; e < newIndex.classCount(); e++) {
-            int target = scannedNewJars.get(newIndex.sourceOf(e));
             int node = graph.node(newIndex.nameOf(e));
-            if (target != SymMap.ABSENT && node >= 0 && graph.sourceOf(node) != target) {
+            if (node >= 0 && !upgradedSources.contains(graph.sourceOf(node))) {
                 shadowed.add(newIndex.nameOf(e));
             }
         }
@@ -516,14 +514,13 @@ final class Check {
             ApiIndex oldIndex,
             ApiIndex newIndex,
             IntSet upgradedSources,
-            SymMap scannedNewJars,
             Jdk.Indexer jdk,
             Reach.Inputs reach,
             SpiServices services,
             Verdicts.Writer verdicts) {
         ClassGraph graph = scan.graph;
         List<String> warnings = new ArrayList<>(scan.warnings);
-        IntSet shadowed = shadowedNewClasses(graph, newIndex, scannedNewJars);
+        IntSet shadowed = shadowedNewClasses(graph, newIndex, upgradedSources);
         if (!shadowed.isEmpty()) {
             // Replaced rather than dropped. The graph walks compare old with new directly, so
             // dropping hid the breaks of a winning copy that has them too.
@@ -662,7 +659,7 @@ final class Check {
         MemberProbe probe = selectionMemberProbe(oldIndex, newIndex);
         Scan.Result scan = Scan.scanTargetPaths(targetPaths, oldIndex, probe, false);
         libraryInvocationEvidence(libraryPaths, probe, scan.invocations);
-        return checkScanned(scan, oldIndex, newIndex, new IntSet(), new SymMap(), null, null, SpiServices.NONE, null);
+        return checkScanned(scan, oldIndex, newIndex, new IntSet(), null, null, SpiServices.NONE, null);
     }
 
     // ---- reference verdicts ----

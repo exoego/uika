@@ -169,13 +169,11 @@ pass-2 classes are typically below 0.1% of the scan.
   breaks when an earlier copy of koin-core 3.3.0 won
   (`IntegrationTest.earlierCopyOfTheNewVersionKeepsItsBreaks`). The old side
   keeps the old index, so a winning copy that differs from old still reports
-  what it breaks. The test is per class: the jar the new index took it from
-  (`ApiIndex.sourceOf`) must be scanned, and the scan's winner must come from a
-  different target. So a new jar left off the classpath stays first (the
-  goldens' `Check.check` scans none), and one new jar can shadow another, since
-  `--new` order (coordinate order in upgrade-check) need not match classpath
-  order. One limit remains. The invocation probe is built from the unreplaced
-  new index before pass 1.
+  what it breaks. Without a scanned new jar (the goldens' `Check.check`) the
+  library stays first. Two limits remain. Upgraded jars are never treated as
+  shadowing each other, although `--new` order (coordinate order in
+  upgrade-check) can differ from classpath order. The invocation probe is built
+  from the unreplaced new index before pass 1.
 - `InvokeDynamic` NameAndType entries are bootstrap synthetic names, not symbol
   references. `MethodHandle` entries point at Methodref-like constants, so
   constant-pool scanning covers them naturally.

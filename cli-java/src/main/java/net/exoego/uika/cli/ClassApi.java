@@ -21,8 +21,6 @@ final class ClassApi {
     int[] permitted;
     /** Sealing could not be read, so neither side may claim this class is unsealed. */
     boolean sealingUnknown;
-    /** The jar or directory the class was read from, {@link Intern#NONE} when built by hand. */
-    int source = Intern.NONE;
 
     static final int[] EMPTY = new int[0];
     static final long[] NO_KEYS = new long[0];

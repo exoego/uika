@@ -85,9 +85,7 @@ final class Extract {
             try {
                 bytes.readAll();
                 scratch.parser.parse(bytes.bytes, bytes.available);
-                ClassApi api = extractApi(scratch.parser, scratch);
-                api.source = source;
-                leaf.apis.add(api);
+                leaf.apis.add(extractApi(scratch.parser, scratch));
             } catch (ClassParser.FormatException e) {
                 leaf.warnings.add(context(source, entry, e));
             }

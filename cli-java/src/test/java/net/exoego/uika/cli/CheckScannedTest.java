@@ -78,7 +78,7 @@ final class CheckScannedTest {
     }
 
     private static Check.Report check(Scan.Result scan, ApiIndex oldLib, ApiIndex newLib, Reach.Inputs reach, Check.SpiServices services) {
-        return Check.checkScanned(scan, oldLib, newLib, new IntSet(), new SymMap(), null, reach, services, null);
+        return Check.checkScanned(scan, oldLib, newLib, new IntSet(), null, reach, services, null);
     }
 
     private static SymbolRef fieldRead(String owner, String name, String descriptor) {

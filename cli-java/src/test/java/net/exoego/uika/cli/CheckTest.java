@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -123,11 +122,6 @@ final class CheckTest {
         ClassApi c = classApi(name);
         c.access = Acc.PUBLIC | Acc.FINAL;
         return c;
-    }
-
-    private static ClassApi from(String source, ClassApi api) {
-        api.source = intern(source);
-        return api;
     }
 
     private static ApiIndex index(ClassApi... apis) {
@@ -1508,33 +1502,19 @@ final class CheckTest {
         assertTrue(wanted.isEmpty());
     }
 
-    /**
-     * lib/C belongs to a new jar that is not scanned. lib/D belongs to a second new jar that
-     * another new jar precedes on the classpath.
-     */
+    /** lib/C stands for a class of a second new jar that is not on the classpath. */
     @Test
-    void onlyNewClassesAScannedEarlierCopyDefinesAreShadowed() {
-        ApiIndex newLib = index(
-                from("new.jar", classApi("lib/A")),
-                from("new.jar", sealedInterface("lib/B", "lib/X")),
-                from("extras.jar", classApi("lib/C", "m", "()V")),
-                from("second.jar", classApi("lib/D")));
+    void onlyNewClassesAnEarlierTargetDefinesAreShadowed() {
+        ApiIndex newLib = index(classApi("lib/A"), sealedInterface("lib/B", "lib/X"), classApi("lib/C", "m", "()V"));
         ClassGraph graph = new ClassGraph();
         insert(graph, "lib/A", Intern.NONE, new int[0], Intern.NONE, "uber.jar");
-        insert(graph, "lib/B", Intern.NONE, new int[0], Intern.NONE, "lib/new.jar");
-        insert(graph, "lib/C", Intern.NONE, new int[0], Intern.NONE, "uber.jar");
-        insert(graph, "lib/D", Intern.NONE, new int[0], Intern.NONE, "lib/new.jar");
-        SymMap scanned = new SymMap();
+        insert(graph, "lib/B", Intern.NONE, new int[0], Intern.NONE, "lib-new.jar");
+        IntSet upgraded = new IntSet();
 
-        assertTrue(Check.shadowedNewClasses(graph, newLib, scanned).isEmpty());
-        scanned.put(intern("new.jar"), intern("lib/new.jar"));
-        scanned.put(intern("second.jar"), intern("lib/second.jar"));
-        IntSet shadowed = Check.shadowedNewClasses(graph, newLib, scanned);
-        int[] names = shadowed.toArray();
-        Arrays.sort(names);
-        int[] expected = {intern("lib/A"), intern("lib/D")};
-        Arrays.sort(expected);
-        assertArrayEquals(expected, names);
+        assertTrue(Check.shadowedNewClasses(graph, newLib, upgraded).isEmpty());
+        upgraded.add(intern("lib-new.jar"));
+        IntSet shadowed = Check.shadowedNewClasses(graph, newLib, upgraded);
+        assertArrayEquals(new int[] {intern("lib/A")}, shadowed.toArray());
         ApiIndex runtime = newLib.replacing(shadowed, index(finalClass("lib/A")));
         assertEquals(Acc.PUBLIC | Acc.FINAL, runtime.classAccess(intern("lib/A")));
         assertTrue(runtime.permits(runtime.entry(intern("lib/B")), intern("lib/X")));
