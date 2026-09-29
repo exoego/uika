@@ -410,8 +410,8 @@ final class Check {
     /**
      * New-library classes that an earlier scan target defines too, such as an uber jar
      * bundling an unrelocated copy (https://github.com/exoego/uika/issues/427). The JVM
-     * loads that copy, so resolution must use it. Without a scanned new jar the scan does not
-     * place the library on the classpath, and the library stays first.
+     * loads that copy, so every check must judge it. Without a scanned new jar the scan does
+     * not place the library on the classpath, and the library stays first.
      */
     static IntSet shadowedNewClasses(ClassGraph graph, ApiIndex newIndex, IntSet upgradedSources) {
         IntSet shadowed = new IntSet();
@@ -519,7 +519,13 @@ final class Check {
             SpiServices services,
             Verdicts.Writer verdicts) {
         ClassGraph graph = scan.graph;
-        newIndex = newIndex.without(shadowedNewClasses(graph, newIndex, upgradedSources));
+        List<String> warnings = new ArrayList<>(scan.warnings);
+        IntSet shadowed = shadowedNewClasses(graph, newIndex, upgradedSources);
+        if (!shadowed.isEmpty()) {
+            // Replaced rather than dropped. The graph walks compare old with new directly, so
+            // dropping hid the breaks of a winning copy that has them too.
+            newIndex = newIndex.replacing(shadowed, fetchMembers(scan, shadowed, warnings));
+        }
         Reach.Result reachResult = reach == null ? null : Reach.reachableClasses(graph, reach);
         IntSet escapes = jdk == null ? null : new IntSet();
         IntSet wanted = collectWanted(scan, oldIndex, newIndex, escapes);
@@ -528,7 +534,6 @@ final class Check {
         collectSpiWanted(services, oldIndex, newIndex, graph, wanted);
         List<LagEdge> lagEdges = collectUpgradedSuperEdges(graph, upgradedSources, newIndex, wanted, escapes);
 
-        List<String> warnings = new ArrayList<>(scan.warnings);
         ApiIndex fetched = fetchMembers(scan, wanted, warnings);
         // The JDK index sits in BOTH scopes, so ct.sym incompleteness resolves NotFound on
         // both sides and the old-relative gate keeps it unreported.

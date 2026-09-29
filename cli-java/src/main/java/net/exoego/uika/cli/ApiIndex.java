@@ -58,61 +58,74 @@ final class ApiIndex {
         rows[row + ACCESS] = api.access | (api.sealingUnknown ? SEALING_UNKNOWN_BIT : 0);
         rows[row + SUPER] = api.superName;
         rows[row + NEST_HOST] = api.nestHost;
-        rows[row + IFACE_START] = appendSyms(api.interfaces);
+        rows[row + IFACE_START] = appendSyms(api.interfaces, 0, api.interfaces.length);
         rows[row + IFACE_LEN] = api.interfaces.length;
-        rows[row + PERMIT_START] = api.permitted == null ? -1 : appendSyms(api.permitted);
+        rows[row + PERMIT_START] = api.permitted == null ? -1 : appendSyms(api.permitted, 0, api.permitted.length);
         rows[row + PERMIT_LEN] = api.permitted == null ? 0 : api.permitted.length;
-        rows[row + METHOD_START] = appendMembers(api.methodKeys, api.methodAccess);
+        rows[row + METHOD_START] = appendMembers(api.methodKeys, api.methodAccess, 0, api.methodKeys.length);
         rows[row + METHOD_LEN] = api.methodKeys.length;
-        rows[row + FIELD_START] = appendMembers(api.fieldKeys, api.fieldAccess);
+        rows[row + FIELD_START] = appendMembers(api.fieldKeys, api.fieldAccess, 0, api.fieldKeys.length);
         rows[row + FIELD_LEN] = api.fieldKeys.length;
         classes.put(api.name, classCount);
         classCount++;
     }
 
-    /** A copy without the named classes, or this index when there is none to drop. */
-    ApiIndex without(IntSet drop) {
-        if (drop.isEmpty()) {
-            return this;
-        }
+    /**
+     * A copy in which each class of {@code shadowed} takes its row from {@code winners}. A
+     * shadowed class that {@code winners} could not read is left out.
+     */
+    ApiIndex replacing(IntSet shadowed, ApiIndex winners) {
         ApiIndex out = new ApiIndex();
-        out.rows = new int[rows.length];
-        out.memberKeys = Arrays.copyOf(memberKeys, memberKeys.length);
-        out.memberAccess = Arrays.copyOf(memberAccess, memberAccess.length);
-        out.memberCount = memberCount;
-        out.symArena = Arrays.copyOf(symArena, symArena.length);
-        out.symCount = symCount;
         for (int e = 0; e < classCount; e++) {
-            if (drop.contains(nameOf(e))) {
-                continue;
+            int name = nameOf(e);
+            if (!shadowed.contains(name)) {
+                out.appendRow(this, e);
+            } else if (winners.containsClass(name)) {
+                out.appendRow(winners, winners.entry(name));
             }
-            System.arraycopy(rows, e * STRIDE, out.rows, out.classCount * STRIDE, STRIDE);
-            out.classes.put(nameOf(e), out.classCount);
-            out.classCount++;
         }
         return out;
     }
 
-    private int appendSyms(int[] syms) {
-        int start = symCount;
-        if (symCount + syms.length > symArena.length) {
-            symArena = Arrays.copyOf(symArena, Math.max(symArena.length * 2, symCount + syms.length));
+    private void appendRow(ApiIndex from, int entry) {
+        if ((classCount + 1) * STRIDE > rows.length) {
+            rows = Arrays.copyOf(rows, rows.length * 2);
         }
-        System.arraycopy(syms, 0, symArena, symCount, syms.length);
-        symCount += syms.length;
+        int src = entry * STRIDE;
+        int row = classCount * STRIDE;
+        System.arraycopy(from.rows, src, rows, row, STRIDE);
+        rows[row + IFACE_START] = appendSyms(from.symArena, from.rows[src + IFACE_START], from.rows[src + IFACE_LEN]);
+        if (from.rows[src + PERMIT_START] >= 0) {
+            rows[row + PERMIT_START] = appendSyms(from.symArena, from.rows[src + PERMIT_START], from.rows[src + PERMIT_LEN]);
+        }
+        rows[row + METHOD_START] =
+                appendMembers(from.memberKeys, from.memberAccess, from.rows[src + METHOD_START], from.rows[src + METHOD_LEN]);
+        rows[row + FIELD_START] =
+                appendMembers(from.memberKeys, from.memberAccess, from.rows[src + FIELD_START], from.rows[src + FIELD_LEN]);
+        classes.put(from.nameOf(entry), classCount);
+        classCount++;
+    }
+
+    private int appendSyms(int[] syms, int from, int length) {
+        int start = symCount;
+        if (symCount + length > symArena.length) {
+            symArena = Arrays.copyOf(symArena, Math.max(symArena.length * 2, symCount + length));
+        }
+        System.arraycopy(syms, from, symArena, symCount, length);
+        symCount += length;
         return start;
     }
 
-    private int appendMembers(long[] keys, char[] access) {
+    private int appendMembers(long[] keys, char[] access, int from, int length) {
         int start = memberCount;
-        if (memberCount + keys.length > memberKeys.length) {
-            int capacity = Math.max(memberKeys.length * 2, memberCount + keys.length);
+        if (memberCount + length > memberKeys.length) {
+            int capacity = Math.max(memberKeys.length * 2, memberCount + length);
             memberKeys = Arrays.copyOf(memberKeys, capacity);
             memberAccess = Arrays.copyOf(memberAccess, capacity);
         }
-        System.arraycopy(keys, 0, memberKeys, memberCount, keys.length);
-        System.arraycopy(access, 0, memberAccess, memberCount, keys.length);
-        memberCount += keys.length;
+        System.arraycopy(keys, from, memberKeys, memberCount, length);
+        System.arraycopy(access, from, memberAccess, memberCount, length);
+        memberCount += length;
         return start;
     }
 

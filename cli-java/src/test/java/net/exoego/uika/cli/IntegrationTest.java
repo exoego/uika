@@ -1221,6 +1221,30 @@ class IntegrationTest {
     }
 
     /**
+     * The reverse of https://github.com/exoego/uika/issues/427. The earlier jar bundles the new
+     * version itself, as a fat jar built against the same release does. A copy of koin-core
+     * 3.3.0 stands in for it. Both SLF4JLogger breaks come from graph walks, and dropping the
+     * shadowed classes lost them.
+     */
+    @Test
+    void earlierCopyOfTheNewVersionKeepsItsBreaks(@TempDir Path dir) throws Exception {
+        String oldJar = fixture("koin-core-jvm-3.2.2.jar");
+        String newJar = fixture("koin-core-jvm-3.3.0.jar");
+        String logger = fixture("koin-logger-slf4j-3.2.2.jar");
+        Path bundle = dir.resolve("uber.jar");
+        Files.copy(Path.of(newJar), bundle);
+
+        Check.Report report = Commands.runCheck(
+                List.of(oldJar), List.of(newJar), List.of(bundle.toString(), newJar, logger), List.of(), List.of(), null, null);
+        for (Reason reason : List.of(Reason.METHOD_BECAME_FINAL, Reason.METHOD_BECAME_ABSTRACT)) {
+            assertTrue(
+                    report.violations.stream()
+                            .anyMatch(v -> sourceClass(v).equals("org/koin/logger/SLF4JLogger") && v.reason == reason),
+                    reason + " missing, violations: " + describe(report.violations));
+        }
+    }
+
+    /**
      * Locates ct.sym for the JDK-layer test. The same environment lookup the CLI uses, then
      * the mise-pinned JDK as a fallback (CI and this repo's dev setup), then the JDK running
      * the tests, which the Rust test does not have.

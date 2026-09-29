@@ -1,11 +1,11 @@
 package net.exoego.uika.cli;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -1505,7 +1505,7 @@ final class CheckTest {
     /** lib/C stands for a class of a second new jar that is not on the classpath. */
     @Test
     void onlyNewClassesAnEarlierTargetDefinesAreShadowed() {
-        ApiIndex newLib = index(classApi("lib/A"), classApi("lib/B"), classApi("lib/C"));
+        ApiIndex newLib = index(classApi("lib/A"), sealedInterface("lib/B", "lib/X"), classApi("lib/C", "m", "()V"));
         ClassGraph graph = new ClassGraph();
         insert(graph, "lib/A", Intern.NONE, new int[0], Intern.NONE, "uber.jar");
         insert(graph, "lib/B", Intern.NONE, new int[0], Intern.NONE, "lib-new.jar");
@@ -1514,9 +1514,11 @@ final class CheckTest {
         assertTrue(Check.shadowedNewClasses(graph, newLib, upgraded).isEmpty());
         upgraded.add(intern("lib-new.jar"));
         IntSet shadowed = Check.shadowedNewClasses(graph, newLib, upgraded);
-        assertEquals(List.of(intern("lib/A")), Arrays.stream(shadowed.toArray()).boxed().toList());
-        ApiIndex runtime = newLib.without(shadowed);
-        assertFalse(runtime.containsClass(intern("lib/A")));
-        assertTrue(runtime.containsClass(intern("lib/B")) && runtime.containsClass(intern("lib/C")));
+        assertArrayEquals(new int[] {intern("lib/A")}, shadowed.toArray());
+        ApiIndex runtime = newLib.replacing(shadowed, index(finalClass("lib/A")));
+        assertEquals(Acc.PUBLIC | Acc.FINAL, runtime.classAccess(intern("lib/A")));
+        assertTrue(runtime.permits(runtime.entry(intern("lib/B")), intern("lib/X")));
+        assertEquals(Acc.PUBLIC, runtime.directMethodAccess(intern("lib/C"), MemberKey.of("m", "()V")));
+        assertFalse(newLib.replacing(shadowed, index()).containsClass(intern("lib/A")));
     }
 }
