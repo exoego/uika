@@ -54,6 +54,14 @@ pass-2 classes are typically below 0.1% of the scan.
   coordinate, which produced false brokens (observed on a real multi-module
   monorepo whose modules resolve two netty lines) AND false negatives. Both are
   pinned by `UpgradeCheckIntegrationTest.perModuleUpgradeCheckGatesOnEachModulesOwnResolution`.
+- A module run lists its old and new jars in that module's resolution order
+  (`Commands.inResolutionOrder`), not coordinate order. The library indexes are
+  first-wins like the scan, so the order decides which copy of a duplicated class
+  each side holds. Coordinate order let gson shadow an upgraded uber jar that
+  bundles it and comes first on the classpath
+  (`UpgradeCheckIntegrationTest.anUpgradedUberJarAheadOfTheLibraryItBundlesIsJudgedAsItsCopy`).
+  Both sides are ordered, so a class duplicated across two changed artifacts is
+  compared winner to winner. Merged mode and the CLI keep the given order.
 - Gating is per-module "the old jar list is empty" -- the same old-version-
   disappeared gate as merged mode, over the module's own version maps.
   Unchanged modules are skipped. An after-only module (renamed or added) is
@@ -170,10 +178,10 @@ pass-2 classes are typically below 0.1% of the scan.
   (`IntegrationTest.earlierCopyOfTheNewVersionKeepsItsBreaks`). The old side
   keeps the old index, so a winning copy that differs from old still reports
   what it breaks. Without a scanned new jar (the goldens' `Check.check`) the
-  library stays first. Two limits remain. Upgraded jars are never treated as
-  shadowing each other, although `--new` order (coordinate order in
-  upgrade-check) can differ from classpath order. The invocation probe is built
-  from the unreplaced new index before pass 1.
+  library stays first. Upgraded jars are never treated as shadowing each other.
+  Their order comes from `--new`, which upgrade-check sets to classpath order
+  (see Per-Module upgrade-check). One limit remains. The invocation probe is
+  built from the unreplaced new index before pass 1.
 - `InvokeDynamic` NameAndType entries are bootstrap synthetic names, not symbol
   references. `MethodHandle` entries point at Methodref-like constants, so
   constant-pool scanning covers them naturally.

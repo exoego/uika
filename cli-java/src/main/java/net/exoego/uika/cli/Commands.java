@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -638,6 +639,21 @@ final class Commands {
         return targets;
     }
 
+    /**
+     * The jars in the module's resolution order, which is its classpath order. The library
+     * indexes are first-wins like the scan, so coordinate order would let a library shadow an
+     * uber jar that bundles it and comes first (https://github.com/exoego/uika/issues/427).
+     */
+    static List<String> inResolutionOrder(List<String> jars, List<Dump.Artifact> artifacts) {
+        Map<String, Integer> position = new HashMap<>();
+        for (int i = 0; i < artifacts.size(); i++) {
+            position.putIfAbsent(artifacts.get(i).file(), i);
+        }
+        List<String> sorted = new ArrayList<>(jars);
+        sorted.sort(Comparator.comparingInt(jar -> position.getOrDefault(jar, Integer.MAX_VALUE)));
+        return sorted;
+    }
+
     private static ModulePlan planDependencyRuns(Dump.Universe before, Dump.Universe after, TargetNotes notes) {
         TreeSet<Dump.Coord> projectCoords = Dump.projectCoordsUnion(before, after);
         ModulePlan plan = new ModulePlan();
@@ -683,6 +699,12 @@ final class Commands {
             if (moduleChanges.oldJars().isEmpty()) {
                 plan.unchangedModules++;
                 continue;
+            }
+            if (beforeModule != null) {
+                moduleChanges = new Dump.DependencyChanges(
+                        moduleChanges.changes(),
+                        inResolutionOrder(moduleChanges.oldJars(), beforeModule.artifacts),
+                        inResolutionOrder(moduleChanges.newJars(), module.artifacts));
             }
 
             List<String> targets = moduleTargets(module, after, notes);

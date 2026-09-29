@@ -407,6 +407,32 @@ class UpgradeCheckIntegrationTest {
     }
 
     /**
+     * https://github.com/exoego/uika/issues/427 when the uber jar is upgraded in the same
+     * change as the library it bundles unrelocated. The library's coordinate sorts first, but
+     * the uber jar comes first on the classpath, so its copy is what loads. A copy of the old
+     * asm stands in for the uber jar on both sides.
+     */
+    @Test
+    void anUpgradedUberJarAheadOfTheLibraryItBundlesIsJudgedAsItsCopy() throws Exception {
+        Path uberOld = Files.copy(Path.of(fixture("asm-8.0.1.jar")), tempDir.resolve("uber-1.0.jar"));
+        Path uberNew = Files.copy(Path.of(fixture("asm-8.0.1.jar")), tempDir.resolve("uber-2.0.jar"));
+        String before = dump(module(
+                ":app",
+                List.of(),
+                artifact("zz.example", "uber", "1.0", uberOld.toString()),
+                artifact("org.ow2.asm", "asm", "8.0.1", fixture("asm-8.0.1.jar"))));
+        String after = dump(module(
+                ":app",
+                List.of(),
+                artifact("zz.example", "uber", "2.0", uberNew.toString()),
+                artifact("org.ow2.asm", "asm", "9.10.1", fixture("asm-9.10.1.jar"))));
+
+        Run run = runUpgradeCheckWithDumps("uber-upgraded", before, after, "--json");
+        assertEquals(0, run.code(), "stdout:\n" + run.stdout() + "\nstderr:\n" + run.stderr());
+        assertTrue(array(parse(run.stdout()).get("violations")).isEmpty(), run.stdout());
+    }
+
+    /**
      * Modules with identical inputs share one run, and a break two runs both find is one
      * violation attributed to all their modules. The per-run broken counts still give each
      * run its own number.
