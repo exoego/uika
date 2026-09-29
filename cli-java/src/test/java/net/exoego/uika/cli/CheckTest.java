@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -1499,5 +1500,23 @@ final class CheckTest {
         assertEquals(List.of(new Check.LagEdge(intern("lib/C"), intern("javax/swing/JPanel"), intern("lib-new.jar"))), edges);
         assertTrue(escapes.contains(intern("javax/swing/JPanel")));
         assertTrue(wanted.isEmpty());
+    }
+
+    /** lib/C stands for a class of a second new jar that is not on the classpath. */
+    @Test
+    void onlyNewClassesAnEarlierTargetDefinesAreShadowed() {
+        ApiIndex newLib = index(classApi("lib/A"), classApi("lib/B"), classApi("lib/C"));
+        ClassGraph graph = new ClassGraph();
+        insert(graph, "lib/A", Intern.NONE, new int[0], Intern.NONE, "uber.jar");
+        insert(graph, "lib/B", Intern.NONE, new int[0], Intern.NONE, "lib-new.jar");
+        IntSet upgraded = new IntSet();
+
+        assertTrue(Check.shadowedNewClasses(graph, newLib, upgraded).isEmpty());
+        upgraded.add(intern("lib-new.jar"));
+        IntSet shadowed = Check.shadowedNewClasses(graph, newLib, upgraded);
+        assertEquals(List.of(intern("lib/A")), Arrays.stream(shadowed.toArray()).boxed().toList());
+        ApiIndex runtime = newLib.without(shadowed);
+        assertFalse(runtime.containsClass(intern("lib/A")));
+        assertTrue(runtime.containsClass(intern("lib/B")) && runtime.containsClass(intern("lib/C")));
     }
 }

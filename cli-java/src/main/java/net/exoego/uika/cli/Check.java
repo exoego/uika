@@ -407,6 +407,26 @@ final class Check {
         return edges;
     }
 
+    /**
+     * New-library classes that an earlier scan target defines too, such as an uber jar
+     * bundling an unrelocated copy (https://github.com/exoego/uika/issues/427). The JVM
+     * loads that copy, so resolution must use it. Without a scanned new jar the scan does not
+     * place the library on the classpath, and the library stays first.
+     */
+    static IntSet shadowedNewClasses(ClassGraph graph, ApiIndex newIndex, IntSet upgradedSources) {
+        IntSet shadowed = new IntSet();
+        if (upgradedSources.isEmpty()) {
+            return shadowed;
+        }
+        for (int e = 0; e < newIndex.classCount(); e++) {
+            int node = graph.node(newIndex.nameOf(e));
+            if (node >= 0 && !upgradedSources.contains(graph.sourceOf(node))) {
+                shadowed.add(newIndex.nameOf(e));
+            }
+        }
+        return shadowed;
+    }
+
     // ---- pass 2 ----
 
     /** Re-reads only the classes resolution needs from their origin and indexes their members. */
@@ -499,6 +519,7 @@ final class Check {
             SpiServices services,
             Verdicts.Writer verdicts) {
         ClassGraph graph = scan.graph;
+        newIndex = newIndex.without(shadowedNewClasses(graph, newIndex, upgradedSources));
         Reach.Result reachResult = reach == null ? null : Reach.reachableClasses(graph, reach);
         IntSet escapes = jdk == null ? null : new IntSet();
         IntSet wanted = collectWanted(scan, oldIndex, newIndex, escapes);

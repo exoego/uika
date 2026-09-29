@@ -159,6 +159,14 @@ pass-2 classes are typically below 0.1% of the scan.
   `IntegrationTest.refsFromShadowedDuplicateJarCopiesAreNotReported` on real JARs.
   This also means the verdicts stream only carries references from winning
   definitions.
+- The mirror case: when a scanned new jar LOSES to an earlier copy (an uber jar
+  bundling the library unrelocated, https://github.com/exoego/uika/issues/427),
+  `Check.shadowedNewClasses` drops those classes from the new index for the whole
+  check, so the runtime side resolves them against the winning copy fetched in
+  pass 2. Without it, the winner's own internal references were judged against
+  the new version they never meet. The old side keeps the old index, so a
+  winning copy that differs from old still reports what it breaks. Without a
+  scanned new jar (the goldens' `Check.check`) the library stays first.
 - `InvokeDynamic` NameAndType entries are bootstrap synthetic names, not symbol
   references. `MethodHandle` entries point at Methodref-like constants, so
   constant-pool scanning covers them naturally.

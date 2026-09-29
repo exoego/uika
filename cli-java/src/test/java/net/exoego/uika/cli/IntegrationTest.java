@@ -1203,6 +1203,24 @@ class IntegrationTest {
     }
 
     /**
+     * Minimizes https://github.com/exoego/uika/issues/427, where an uber jar bundles the old
+     * gson unrelocated and sits ahead of the upgraded gson. The bundled copy wins as a whole,
+     * so its internal references never meet the new version. A copy of the old asm stands in
+     * for the uber jar. Judged against the new index, it gave 10 false breaks.
+     */
+    @Test
+    void earlierBundledCopyShadowsTheUpgradedLibrary(@TempDir Path dir) throws Exception {
+        String oldJar = fixture("asm-8.0.1.jar");
+        String newJar = fixture("asm-9.10.1.jar");
+        Path bundle = dir.resolve("uber.jar");
+        Files.copy(Path.of(oldJar), bundle);
+
+        Check.Report report = Commands.runCheck(
+                List.of(oldJar), List.of(newJar), List.of(bundle.toString(), newJar), List.of(), List.of(), null, null);
+        assertTrue(report.violations.isEmpty(), "violations: " + describe(report.violations));
+    }
+
+    /**
      * Locates ct.sym for the JDK-layer test. The same environment lookup the CLI uses, then
      * the mise-pinned JDK as a fallback (CI and this repo's dev setup), then the JDK running
      * the tests, which the Rust test does not have.

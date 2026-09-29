@@ -70,6 +70,29 @@ final class ApiIndex {
         classCount++;
     }
 
+    /** A copy without the named classes, or this index when there is none to drop. */
+    ApiIndex without(IntSet drop) {
+        if (drop.isEmpty()) {
+            return this;
+        }
+        ApiIndex out = new ApiIndex();
+        out.rows = new int[rows.length];
+        out.memberKeys = Arrays.copyOf(memberKeys, memberKeys.length);
+        out.memberAccess = Arrays.copyOf(memberAccess, memberAccess.length);
+        out.memberCount = memberCount;
+        out.symArena = Arrays.copyOf(symArena, symArena.length);
+        out.symCount = symCount;
+        for (int e = 0; e < classCount; e++) {
+            if (drop.contains(nameOf(e))) {
+                continue;
+            }
+            System.arraycopy(rows, e * STRIDE, out.rows, out.classCount * STRIDE, STRIDE);
+            out.classes.put(nameOf(e), out.classCount);
+            out.classCount++;
+        }
+        return out;
+    }
+
     private int appendSyms(int[] syms) {
         int start = symCount;
         if (symCount + syms.length > symArena.length) {
