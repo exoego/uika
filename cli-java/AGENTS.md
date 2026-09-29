@@ -159,6 +159,21 @@ pass-2 classes are typically below 0.1% of the scan.
   `IntegrationTest.refsFromShadowedDuplicateJarCopiesAreNotReported` on real JARs.
   This also means the verdicts stream only carries references from winning
   definitions.
+- The mirror case: when a scanned new jar LOSES to an earlier copy (an uber jar
+  bundling the library unrelocated, https://github.com/exoego/uika/issues/427),
+  `Check.shadowedNewClasses` finds those classes, and the new index takes the
+  winning copy's rows for the whole check, read by an extra pass-2 fetch.
+  Without it, the winner's own internal references were judged against the new
+  version they never meet. Replacing rather than dropping matters to the graph
+  walks, which compare the old and new indexes directly. Dropping hid both koin
+  breaks when an earlier copy of koin-core 3.3.0 won
+  (`IntegrationTest.earlierCopyOfTheNewVersionKeepsItsBreaks`). The old side
+  keeps the old index, so a winning copy that differs from old still reports
+  what it breaks. Without a scanned new jar (the goldens' `Check.check`) the
+  library stays first. Two limits remain. Upgraded jars are never treated as
+  shadowing each other, although `--new` order (coordinate order in
+  upgrade-check) can differ from classpath order. The invocation probe is built
+  from the unreplaced new index before pass 1.
 - `InvokeDynamic` NameAndType entries are bootstrap synthetic names, not symbol
   references. `MethodHandle` entries point at Methodref-like constants, so
   constant-pool scanning covers them naturally.

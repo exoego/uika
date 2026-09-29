@@ -1203,6 +1203,48 @@ class IntegrationTest {
     }
 
     /**
+     * Minimizes https://github.com/exoego/uika/issues/427, where an uber jar bundles the old
+     * gson unrelocated and sits ahead of the upgraded gson. The bundled copy wins as a whole,
+     * so its internal references never meet the new version. A copy of the old asm stands in
+     * for the uber jar. Judged against the new index, it gave 10 false breaks.
+     */
+    @Test
+    void earlierBundledCopyShadowsTheUpgradedLibrary(@TempDir Path dir) throws Exception {
+        String oldJar = fixture("asm-8.0.1.jar");
+        String newJar = fixture("asm-9.10.1.jar");
+        Path bundle = dir.resolve("uber.jar");
+        Files.copy(Path.of(oldJar), bundle);
+
+        Check.Report report = Commands.runCheck(
+                List.of(oldJar), List.of(newJar), List.of(bundle.toString(), newJar), List.of(), List.of(), null, null);
+        assertTrue(report.violations.isEmpty(), "violations: " + describe(report.violations));
+    }
+
+    /**
+     * The reverse of https://github.com/exoego/uika/issues/427. The earlier jar bundles the new
+     * version itself, as a fat jar built against the same release does. A copy of koin-core
+     * 3.3.0 stands in for it. Both SLF4JLogger breaks come from graph walks, and dropping the
+     * shadowed classes lost them.
+     */
+    @Test
+    void earlierCopyOfTheNewVersionKeepsItsBreaks(@TempDir Path dir) throws Exception {
+        String oldJar = fixture("koin-core-jvm-3.2.2.jar");
+        String newJar = fixture("koin-core-jvm-3.3.0.jar");
+        String logger = fixture("koin-logger-slf4j-3.2.2.jar");
+        Path bundle = dir.resolve("uber.jar");
+        Files.copy(Path.of(newJar), bundle);
+
+        Check.Report report = Commands.runCheck(
+                List.of(oldJar), List.of(newJar), List.of(bundle.toString(), newJar, logger), List.of(), List.of(), null, null);
+        for (Reason reason : List.of(Reason.METHOD_BECAME_FINAL, Reason.METHOD_BECAME_ABSTRACT)) {
+            assertTrue(
+                    report.violations.stream()
+                            .anyMatch(v -> sourceClass(v).equals("org/koin/logger/SLF4JLogger") && v.reason == reason),
+                    reason + " missing, violations: " + describe(report.violations));
+        }
+    }
+
+    /**
      * Locates ct.sym for the JDK-layer test. The same environment lookup the CLI uses, then
      * the mise-pinned JDK as a fallback (CI and this repo's dev setup), then the JDK running
      * the tests, which the Rust test does not have.
