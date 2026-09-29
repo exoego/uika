@@ -414,16 +414,27 @@ class UpgradeCheckIntegrationTest {
      */
     @Test
     void anUpgradedUberJarAheadOfTheLibraryItBundlesIsJudgedAsItsCopy() throws Exception {
+        assertUberJarCopyJudged(":app");
+    }
+
+    /** The same through the renamed-module path, whose old jars have no before module to order them. */
+    @Test
+    void aRenamedModuleOrdersItsJarsByTheAfterResolution() throws Exception {
+        assertUberJarCopyJudged(":old-app");
+    }
+
+    private void assertUberJarCopyJudged(String beforeName) throws Exception {
         Path uberOld = Files.copy(Path.of(fixture("asm-8.0.1.jar")), tempDir.resolve("uber-1.0.jar"));
         Path uberNew = Files.copy(Path.of(fixture("asm-8.0.1.jar")), tempDir.resolve("uber-2.0.jar"));
         String before = dump(module(
-                ":app",
+                beforeName,
                 List.of(),
                 artifact("zz.example", "uber", "1.0", uberOld.toString()),
                 artifact("org.ow2.asm", "asm", "8.0.1", fixture("asm-8.0.1.jar"))));
         String after = dump(module(
                 ":app",
                 List.of(),
+                "{\"file\":\"" + UNRELATED + "\"}",
                 artifact("zz.example", "uber", "2.0", uberNew.toString()),
                 artifact("org.ow2.asm", "asm", "9.10.1", fixture("asm-9.10.1.jar"))));
 

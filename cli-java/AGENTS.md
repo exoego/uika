@@ -61,7 +61,9 @@ pass-2 classes are typically below 0.1% of the scan.
   bundles it and comes first on the classpath
   (`UpgradeCheckIntegrationTest.anUpgradedUberJarAheadOfTheLibraryItBundlesIsJudgedAsItsCopy`).
   Both sides are ordered, so a class duplicated across two changed artifacts is
-  compared winner to winner. Merged mode and the CLI keep the given order.
+  compared winner to winner. A renamed module has no before resolution, so its old
+  jars take the after position of their coordinate (`Commands.inSuccessorOrder`).
+  Merged mode and the CLI keep the given order.
 - Gating is per-module "the old jar list is empty" -- the same old-version-
   disappeared gate as merged mode, over the module's own version maps.
   Unchanged modules are skipped. An after-only module (renamed or added) is
