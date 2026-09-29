@@ -1221,6 +1221,29 @@ class IntegrationTest {
     }
 
     /**
+     * https://github.com/exoego/uika/issues/427 when the uber jar is upgraded in the same
+     * change. upgrade-check lists new jars by coordinate, so the bundled library comes first
+     * in --new while the uber jar comes first on the classpath.
+     */
+    @Test
+    void upgradedUberJarShadowsAnotherUpgradedJar(@TempDir Path dir) throws Exception {
+        String oldJar = fixture("asm-8.0.1.jar");
+        String newJar = fixture("asm-9.10.1.jar");
+        Path bundle = dir.resolve("uber.jar");
+        Files.copy(Path.of(oldJar), bundle);
+
+        Check.Report report = Commands.runCheck(
+                List.of(oldJar),
+                List.of(newJar, bundle.toString()),
+                List.of(bundle.toString(), newJar),
+                List.of(),
+                List.of(),
+                null,
+                null);
+        assertTrue(report.violations.isEmpty(), "violations: " + describe(report.violations));
+    }
+
+    /**
      * The reverse of https://github.com/exoego/uika/issues/427. The earlier jar bundles the new
      * version itself, as a fat jar built against the same release does. A copy of koin-core
      * 3.3.0 stands in for it. Both SLF4JLogger breaks come from graph walks, and dropping the
@@ -1313,6 +1336,7 @@ class IntegrationTest {
                 oldIndex,
                 newIndex,
                 new IntSet(),
+                new SymMap(),
                 null,
                 null,
                 Check.SpiServices.NONE,
@@ -1339,6 +1363,7 @@ class IntegrationTest {
                     oldIndex,
                     newIndex,
                     new IntSet(),
+                    new SymMap(),
                     jdk,
                     null,
                     Check.SpiServices.NONE,

@@ -306,8 +306,11 @@ final class Commands {
     /**
      * The scan targets minus the old library versions, and the symbols of those that are the
      * new versions.
+     *
+     * @param scannedNewJars each new jar found among the targets, to the target spelling the
+     *     scan interns its classes' source as
      */
-    record ScanTargets(List<String> oldJars, List<String> newJars, List<String> paths, IntSet upgradedSources) {}
+    record ScanTargets(List<String> oldJars, List<String> newJars, List<String> paths, IntSet upgradedSources, SymMap scannedNewJars) {}
 
     /**
      * Old-version libraries mixed into the scan targets are skipped: after the upgrade they
@@ -316,10 +319,17 @@ final class Commands {
      */
     static ScanTargets scanTargets(List<String> oldJars, List<String> newJars, List<String> targets) {
         Set<Object> excluded = identities(oldJars);
-        Set<Object> upgraded = identities(newJars);
+        Map<Object, String> upgraded = new HashMap<>();
+        for (String newJar : newJars) {
+            Object identity = identity(Path.of(newJar));
+            if (identity != null) {
+                upgraded.putIfAbsent(identity, newJar);
+            }
+        }
         Set<Path> seen = new HashSet<>();
         List<String> paths = new ArrayList<>();
         IntSet upgradedSources = new IntSet();
+        SymMap scannedNewJars = new SymMap();
         for (String target : targets) {
             Path path = Path.of(target);
             Object identity = identity(path);
@@ -331,11 +341,13 @@ final class Commands {
                 continue;
             }
             paths.add(target);
-            if (upgraded.contains(identity)) {
+            String newJar = upgraded.get(identity);
+            if (newJar != null) {
                 upgradedSources.add(Intern.intern(target));
+                scannedNewJars.put(Intern.intern(newJar), Intern.intern(target));
             }
         }
-        return new ScanTargets(oldJars, newJars, paths, upgradedSources);
+        return new ScanTargets(oldJars, newJars, paths, upgradedSources, scannedNewJars);
     }
 
     private static Check.Report runCheckWithIndexes(
@@ -389,7 +401,7 @@ final class Commands {
         Out.warnAll(serviceWarnings);
 
         Check.Report result = Check.checkScanned(
-                scanned, oldIndex, newIndex, upgradedSources, jdk, reach, new Check.SpiServices(oldServices, newServices), verdicts);
+                scanned, oldIndex, newIndex, upgradedSources, scan.scannedNewJars(), jdk, reach, new Check.SpiServices(oldServices, newServices), verdicts);
         result.scanTargets = paths.size();
         Out.warnAll(result.warnings);
         applyExcludes(result, excludeRules);
