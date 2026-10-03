@@ -1,5 +1,6 @@
 package net.exoego.uika.cli;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -427,6 +428,118 @@ final class Check {
         return shadowed;
     }
 
+    /**
+     * The module's classpath before the upgrade, against the order the check scans. It decides
+     * whether a copy that wins over the new jar is what the JVM loaded before the upgrade as
+     * well, in which case nothing it breaks is new. {@link #UNKNOWN} for the CLI check and the
+     * merged universe, which have no single before order. There the old jar is taken to have
+     * been first, so a winning copy still reports what it breaks against the old version.
+     */
+    static final class BeforeClasspath {
+        static final BeforeClasspath UNKNOWN = new BeforeClasspath(List.of(), List.of());
+
+        private final List<String> before;
+        private final Map<Path, Integer> beforePosition = new HashMap<>();
+        /** Each before entry's position among the scan targets, -1 when it is not scanned. */
+        private final int[] afterPosition;
+        /** Class names of the entries the scan could not have chosen, read on first use. Null when the entry cannot be read. */
+        private final Map<Integer, IntSet> names = new HashMap<>();
+
+        BeforeClasspath(List<String> before, List<String> after) {
+            this.before = before;
+            Map<Path, Integer> scanned = new HashMap<>();
+            for (int i = 0; i < after.size(); i++) {
+                scanned.putIfAbsent(Path.of(after.get(i)), i);
+            }
+            afterPosition = new int[before.size()];
+            for (int i = 0; i < before.size(); i++) {
+                Path path = Path.of(before.get(i));
+                beforePosition.putIfAbsent(path, i);
+                afterPosition[i] = scanned.getOrDefault(path, -1);
+            }
+        }
+
+        /**
+         * Whether the copy of {@code className} in {@code winner} is the one the JVM loaded
+         * before the upgrade too. That holds when the winner sat ahead of {@code oldJar} and no
+         * entry ahead of it that the scan could not have chosen instead defines the class. An
+         * entry ahead of the winner on both sides defined the same thing on both sides, so it
+         * is never read. One the upgrade removed or moved behind the winner is read to find
+         * out. One that cannot be read is taken to define it, since what it defined cannot be
+         * known.
+         */
+        boolean shadows(int winner, int oldJar, int className) {
+            if (before.isEmpty() || oldJar == Intern.NONE) {
+                return false;
+            }
+            Integer w = beforePosition.get(Path.of(Intern.str(winner)));
+            Integer o = beforePosition.get(Path.of(Intern.str(oldJar)));
+            if (w == null || o == null || w >= o) {
+                return false;
+            }
+            for (int i = 0; i < w; i++) {
+                if (afterPosition[i] >= 0 && afterPosition[i] < afterPosition[w]) {
+                    continue;
+                }
+                if (!names.containsKey(i)) {
+                    names.put(i, classNames(before.get(i)));
+                }
+                IntSet defined = names.get(i);
+                if (defined == null || defined.contains(className)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /**
+         * Null when the entry cannot be read in full. Names are looked up, not interned. A name
+         * nothing interned cannot be in the old index this is queried for, and every queried
+         * name exists before the first read, since the instance is per run.
+         */
+        private static IntSet classNames(String path) {
+            List<String> names;
+            try {
+                names = Input.classEntryNamesOrFail(path);
+            } catch (UikaException e) {
+                return null;
+            }
+            IntSet set = new IntSet();
+            for (String name : names) {
+                int sym = Intern.find(name);
+                if (sym != Intern.NONE) {
+                    set.add(sym);
+                }
+            }
+            return set;
+        }
+    }
+
+    /**
+     * Old-library classes whose copy on the runtime classpath, an earlier scan target that is
+     * not an upgraded jar, is also what loaded before the upgrade. The old index takes that copy
+     * too, so the compare is winner to winner and only a copy the upgrade put in front reports.
+     * A class the new version dropped counts as well. The runtime side resolves it from that
+     * copy, so the old row alone would report what the copy lacked on both sides.
+     */
+    static IntSet shadowedOldClasses(ClassGraph graph, ApiIndex oldIndex, IntSet upgradedSources, BeforeClasspath before) {
+        IntSet shadowed = new IntSet();
+        if (upgradedSources.isEmpty()) {
+            return shadowed;
+        }
+        for (int e = 0; e < oldIndex.classCount(); e++) {
+            int name = oldIndex.nameOf(e);
+            int node = graph.node(name);
+            if (node < 0 || upgradedSources.contains(graph.sourceOf(node))) {
+                continue;
+            }
+            if (before.shadows(graph.sourceOf(node), oldIndex.sourceOf(e), name)) {
+                shadowed.add(name);
+            }
+        }
+        return shadowed;
+    }
+
     // ---- pass 2 ----
 
     /** Re-reads only the classes resolution needs from their origin and indexes their members. */
@@ -467,7 +580,9 @@ final class Check {
                             Scratch scratch = Scratch.current();
                             try {
                                 scratch.parser.parse(bytes, length);
-                                out.add(Extract.extractApi(scratch.parser, scratch));
+                                ClassApi api = Extract.extractApi(scratch.parser, scratch);
+                                api.source = source;
+                                out.add(api);
                             } catch (ClassParser.FormatException e) {
                                 w.add(path + "!" + Intern.str(name) + ": " + e.getMessage());
                             }
@@ -505,6 +620,7 @@ final class Check {
      * classpath" rather than new alone, because real linking runs against the whole runtime
      * classpath. The old side is composed the same way.
      *
+     * @param before the module's classpath before the upgrade, or {@link BeforeClasspath#UNKNOWN}
      * @param jdk opt-in JDK API layer, or null
      * @param reach reachability inputs, or null when there are no application roots
      * @param verdicts evaluation stream, or null
@@ -514,6 +630,7 @@ final class Check {
             ApiIndex oldIndex,
             ApiIndex newIndex,
             IntSet upgradedSources,
+            BeforeClasspath before,
             Jdk.Indexer jdk,
             Reach.Inputs reach,
             SpiServices services,
@@ -521,10 +638,24 @@ final class Check {
         ClassGraph graph = scan.graph;
         List<String> warnings = new ArrayList<>(scan.warnings);
         IntSet shadowed = shadowedNewClasses(graph, newIndex, upgradedSources);
-        if (!shadowed.isEmpty()) {
+        IntSet shadowedOld = shadowedOldClasses(graph, oldIndex, upgradedSources, before);
+        if (!shadowed.isEmpty() || !shadowedOld.isEmpty()) {
             // Replaced rather than dropped. The graph walks compare old with new directly, so
             // dropping hid the breaks of a winning copy that has them too.
-            newIndex = newIndex.replacing(shadowed, fetchMembers(scan, shadowed, warnings));
+            IntSet winning = new IntSet();
+            for (int name : shadowed.toArray()) {
+                winning.add(name);
+            }
+            for (int name : shadowedOld.toArray()) {
+                winning.add(name);
+            }
+            ApiIndex winners = fetchMembers(scan, winning, warnings);
+            if (!shadowed.isEmpty()) {
+                newIndex = newIndex.replacing(shadowed, winners);
+            }
+            if (!shadowedOld.isEmpty()) {
+                oldIndex = oldIndex.replacing(shadowedOld, winners);
+            }
         }
         Reach.Result reachResult = reach == null ? null : Reach.reachableClasses(graph, reach);
         IntSet escapes = jdk == null ? null : new IntSet();
@@ -659,7 +790,7 @@ final class Check {
         MemberProbe probe = selectionMemberProbe(oldIndex, newIndex);
         Scan.Result scan = Scan.scanTargetPaths(targetPaths, oldIndex, probe, false);
         libraryInvocationEvidence(libraryPaths, probe, scan.invocations);
-        return checkScanned(scan, oldIndex, newIndex, new IntSet(), null, null, SpiServices.NONE, null);
+        return checkScanned(scan, oldIndex, newIndex, new IntSet(), BeforeClasspath.UNKNOWN, null, null, SpiServices.NONE, null);
     }
 
     // ---- reference verdicts ----

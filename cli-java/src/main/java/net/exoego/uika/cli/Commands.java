@@ -305,17 +305,22 @@ final class Commands {
     }
 
     /**
-     * The scan targets minus the old library versions, and the symbols of those that are the
-     * new versions.
+     * The scan targets minus the old library versions, the symbols of those that are the new
+     * versions, and the classpath the module had before the upgrade.
      */
-    record ScanTargets(List<String> oldJars, List<String> newJars, List<String> paths, IntSet upgradedSources) {}
+    record ScanTargets(
+            List<String> oldJars, List<String> newJars, List<String> paths, IntSet upgradedSources, Check.BeforeClasspath before) {}
+
+    static ScanTargets scanTargets(List<String> oldJars, List<String> newJars, List<String> targets) {
+        return scanTargets(oldJars, newJars, targets, Check.BeforeClasspath.UNKNOWN);
+    }
 
     /**
      * Old-version libraries mixed into the scan targets are skipped: after the upgrade they
      * are no longer on the runtime classpath. The new versions stay scanned, and get the
      * extra version-lag check, keyed by the string a class's source is interned as.
      */
-    static ScanTargets scanTargets(List<String> oldJars, List<String> newJars, List<String> targets) {
+    static ScanTargets scanTargets(List<String> oldJars, List<String> newJars, List<String> targets, Check.BeforeClasspath before) {
         Set<Object> excluded = identities(oldJars);
         Set<Object> upgraded = identities(newJars);
         Set<Path> seen = new HashSet<>();
@@ -336,7 +341,7 @@ final class Commands {
                 upgradedSources.add(Intern.intern(target));
             }
         }
-        return new ScanTargets(oldJars, newJars, paths, upgradedSources);
+        return new ScanTargets(oldJars, newJars, paths, upgradedSources, before);
     }
 
     private static Check.Report runCheckWithIndexes(
@@ -390,7 +395,15 @@ final class Commands {
         Out.warnAll(serviceWarnings);
 
         Check.Report result = Check.checkScanned(
-                scanned, oldIndex, newIndex, upgradedSources, jdk, reach, new Check.SpiServices(oldServices, newServices), verdicts);
+                scanned,
+                oldIndex,
+                newIndex,
+                upgradedSources,
+                scan.before(),
+                jdk,
+                reach,
+                new Check.SpiServices(oldServices, newServices),
+                verdicts);
         result.scanTargets = paths.size();
         Out.warnAll(result.warnings);
         applyExcludes(result, excludeRules);
@@ -506,8 +519,10 @@ final class Commands {
     }
 
     /**
-     * One deduplicated per-module check run: modules whose (old, new, targets, roots) are
-     * identical share a single run.
+     * One deduplicated per-module check run. Modules whose old jars, new jars, targets, roots
+     * and before classpath are all identical share a single run. The before classpath is in
+     * the key because it decides which old rows a winning copy replaces, so two modules that
+     * differ only there can report different breaks.
      */
     static final class ModuleRunPlan {
         final List<String> names = new ArrayList<>();
@@ -517,6 +532,8 @@ final class Commands {
         List<String> newJars = List.of();
         List<String> targets = List.of();
         List<String> appRoots = List.of();
+        /** The module's own outputs and classpath before the upgrade. Empty when the before dump lacks the module. */
+        List<String> beforeClasspath = List.of();
         /** Set for a run that compares JDK releases rather than JARs; its jar lists stay empty. */
         int[] jdkPair;
         /** For a JDK run, the modules that made the move. {@link #names} is the attribution key. */
@@ -622,21 +639,45 @@ final class Commands {
      * artifact that was never built falls back to the producing module's classesDirs.
      */
     private static List<String> moduleTargets(Dump.Module module, Dump.Universe after, TargetNotes notes) {
-        List<String> targets = new ArrayList<>(module.classesDirs);
+        return classpathOf(module, after, notes);
+    }
+
+    /**
+     * The module's classpath before the upgrade as the scan would see it, substituted like
+     * {@link #moduleTargets}. A missing file stays as its own path, which
+     * {@link Check.BeforeClasspath} reads as defining every class.
+     */
+    private static List<String> beforeClasspathOf(Dump.Module beforeModule, Dump.Universe after) {
+        return classpathOf(beforeModule, after, null);
+    }
+
+    /** @param notes scan-target bookkeeping, or null to record nothing and keep a missing file as its own path */
+    private static List<String> classpathOf(Dump.Module module, Dump.Universe after, TargetNotes notes) {
+        List<String> paths = new ArrayList<>(module.classesDirs);
         for (Dump.Artifact artifact : module.artifacts) {
             if (Files.exists(Path.of(artifact.file()))) {
-                targets.add(artifact.file());
+                paths.add(artifact.file());
                 continue;
             }
-            Dump.Module producer = artifact.project() == null ? null : after.module(artifact.project());
-            if (producer != null && !producer.classesDirs.isEmpty()) {
-                notes.substituted.put(artifact.file(), producer.name);
-                targets.addAll(producer.classesDirs);
+            Dump.Module producer = producerOf(artifact, after);
+            if (producer != null) {
+                if (notes != null) {
+                    notes.substituted.put(artifact.file(), producer.name);
+                }
+                paths.addAll(producer.classesDirs);
+            } else if (notes == null) {
+                paths.add(artifact.file());
             } else {
                 notes.missing.computeIfAbsent(artifact.file(), k -> new TreeSet<>(Text::compareUtf8)).add(module.name);
             }
         }
-        return targets;
+        return paths;
+    }
+
+    /** The module whose classesDirs stand in for a project jar that is not on disk, else null. */
+    private static Dump.Module producerOf(Dump.Artifact artifact, Dump.Universe after) {
+        Dump.Module producer = artifact.project() == null ? null : after.module(artifact.project());
+        return producer != null && !producer.classesDirs.isEmpty() ? producer : null;
     }
 
     /**
@@ -687,8 +728,10 @@ final class Commands {
             }
             Dump.VersionMap moduleVersions = module.versions();
             Dump.DependencyChanges moduleChanges;
+            List<String> beforeClasspath = List.of();
             Dump.Module beforeModule = before.module(module.name);
             if (beforeModule != null) {
+                beforeClasspath = beforeClasspathOf(beforeModule, after);
                 Dump.VersionMap beforeVersions = beforeModule.versions();
                 // A module that lost its ENTIRE resolution is missing data, not an upgrade
                 // that removed every dependency.
@@ -736,7 +779,8 @@ final class Commands {
                 if (samePaths(run.oldJars, moduleChanges.oldJars())
                         && samePaths(run.newJars, moduleChanges.newJars())
                         && samePaths(run.targets, targets)
-                        && samePaths(run.appRoots, module.classesDirs)) {
+                        && samePaths(run.appRoots, module.classesDirs)
+                        && samePaths(run.beforeClasspath, beforeClasspath)) {
                     match = run;
                     break;
                 }
@@ -751,6 +795,7 @@ final class Commands {
                 run.newJars = moduleChanges.newJars();
                 run.targets = targets;
                 run.appRoots = module.classesDirs;
+                run.beforeClasspath = beforeClasspath;
                 plan.runs.add(run);
             }
         }
@@ -850,7 +895,7 @@ final class Commands {
                 Check.Report result = runCheckWithIndexes(
                         oldIndex,
                         newIndex,
-                        scanTargets(run.oldJars, run.newJars, run.targets),
+                        scanTargets(run.oldJars, run.newJars, run.targets, new Check.BeforeClasspath(run.beforeClasspath, run.targets)),
                         run.appRoots,
                         List.of(),
                         jdk,

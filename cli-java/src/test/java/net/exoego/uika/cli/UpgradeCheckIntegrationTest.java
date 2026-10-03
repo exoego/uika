@@ -424,23 +424,104 @@ class UpgradeCheckIntegrationTest {
     }
 
     private void assertUberJarCopyJudged(String beforeName) throws Exception {
-        Path uberOld = Files.copy(Path.of(fixture("asm-8.0.1.jar")), tempDir.resolve("uber-1.0.jar"));
-        Path uberNew = Files.copy(Path.of(fixture("asm-8.0.1.jar")), tempDir.resolve("uber-2.0.jar"));
+        Path uberOld = copyFixture("asm-8.0.1.jar", "uber-1.0.jar");
+        Path uberNew = copyFixture("asm-8.0.1.jar", "uber-2.0.jar");
         String before = dump(module(
                 beforeName,
                 List.of(),
-                artifact("zz.example", "uber", "1.0", uberOld.toString()),
+                uberJar("1.0", uberOld),
                 artifact("org.ow2.asm", "asm", "8.0.1", fixture("asm-8.0.1.jar"))));
         String after = dump(module(
                 ":app",
                 List.of(),
                 "{\"file\":\"" + UNRELATED + "\"}",
-                artifact("zz.example", "uber", "2.0", uberNew.toString()),
+                uberJar("2.0", uberNew),
                 artifact("org.ow2.asm", "asm", "9.10.1", fixture("asm-9.10.1.jar"))));
 
         Run run = runUpgradeCheckWithDumps("uber-upgraded", before, after, "--json");
         assertEquals(0, run.code(), "stdout:\n" + run.stdout() + "\nstderr:\n" + run.stderr());
         assertTrue(array(parse(run.stdout()).get("violations")).isEmpty(), run.stdout());
+    }
+
+    /**
+     * An unchanged uber jar that bundles the library unrelocated and sat ahead of it before
+     * the upgrade too. The JVM loaded its copy on both sides, so what that copy breaks is not
+     * new. A copy of koin-core 3.3.0 stands in for the uber jar. Against the old index alone
+     * it reports both SLF4JLogger breaks, which is what
+     * {@code IntegrationTest.earlierCopyOfTheNewVersionKeepsItsBreaks} pins for the CLI check,
+     * where no before classpath exists. The real case was java-function-invoker 2.0.2, whose
+     * bundled jackson-annotations 2.15.2 turned a 2.20 -> 2.22 move into 19 removals of
+     * members 2.22 has.
+     */
+    @Test
+    void anUberJarAheadOfTheLibraryOnBothSidesIsPreExisting() throws Exception {
+        Path uber = copyFixture("koin-core-jvm-3.3.0.jar", "uber-1.0.jar");
+        String before = dump(module(":app", List.of(), uberJar("1.0", uber), koinCore("3.2.2"), unrelated()));
+        String after = dump(module(":app", List.of(), uberJar("1.0", uber), koinCore("3.3.0"), unrelated()));
+
+        Run run = runUpgradeCheckWithDumps("uber-unchanged", before, after, "--json");
+        assertEquals(0, run.code(), "stdout:\n" + run.stdout() + "\nstderr:\n" + run.stderr());
+        assertTrue(array(parse(run.stdout()).get("violations")).isEmpty(), run.stdout());
+    }
+
+    /**
+     * The same with a copy of the OLD version ahead on both sides. The old rows must take the
+     * copy's rows and not the new jar's, or koin-core 3.3.0's own classes, which the copy does
+     * not shadow, report members the copy lacks against a 3.3.0-shaped old side.
+     */
+    @Test
+    void anUberJarBundlingTheOldVersionAheadOnBothSidesIsPreExisting() throws Exception {
+        Path uber = copyFixture("koin-core-jvm-3.2.2.jar", "uber-1.0.jar");
+        String before = dump(module(":app", List.of(), uberJar("1.0", uber), koinCore("3.2.2"), unrelated()));
+        String after = dump(module(":app", List.of(), uberJar("1.0", uber), koinCore("3.3.0"), unrelated()));
+
+        Run run = runUpgradeCheckWithDumps("uber-old-copy", before, after, "--json");
+        assertEquals(0, run.code(), "stdout:\n" + run.stdout() + "\nstderr:\n" + run.stderr());
+        assertTrue(array(parse(run.stdout()).get("violations")).isEmpty(), run.stdout());
+    }
+
+    /** The same copy, but the upgrade moved it ahead of the library. The JVM now loads it where it loaded the old version. */
+    @Test
+    void anUberJarTheUpgradeMovesAheadOfTheLibraryStillReports() throws Exception {
+        Path uber = copyFixture("koin-core-jvm-3.3.0.jar", "uber-1.0.jar");
+        String before = dump(module(":app", List.of(), koinCore("3.2.2"), unrelated(), uberJar("1.0", uber)));
+        String after = dump(module(":app", List.of(), uberJar("1.0", uber), koinCore("3.3.0"), unrelated()));
+
+        Run run = runUpgradeCheckWithDumps("uber-moved", before, after, "--json");
+        assertEquals(1, run.code(), "stdout:\n" + run.stdout() + "\nstderr:\n" + run.stderr());
+        assertTrue(hasViolation(array(parse(run.stdout()).get("violations")), "org/koin/logger/SLF4JLogger", List.of(":app")), run.stdout());
+    }
+
+    /**
+     * The uber jar is a project dependency whose jar is unbuilt, so the producer's classesDirs
+     * stand in for it on the after side. The before classpath substitutes them the same way,
+     * or the winner would sit on no before position and the copy would read as new.
+     */
+    @Test
+    void anUnbuiltProjectJarAheadOfTheLibraryOnBothSidesIsPreExisting() throws Exception {
+        Path uber = copyFixture("koin-core-jvm-3.3.0.jar", "uber-lib.jar");
+        String uberProject = "{\"file\":\"/nonexistent/uika-test/uber-lib.jar\",\"project\":\":uber-lib\"}";
+        String producer = module(":uber-lib", List.of(uber.toString()));
+        String before = dump(module(":app", List.of(), uberProject, koinCore("3.2.2"), unrelated()), producer);
+        String after = dump(module(":app", List.of(), uberProject, koinCore("3.3.0"), unrelated()), producer);
+
+        Run run = runUpgradeCheckWithDumps("uber-unbuilt", before, after, "--json");
+        assertEquals(0, run.code(), "stdout:\n" + run.stdout() + "\nstderr:\n" + run.stderr());
+        assertTrue(run.stderr().contains("is not built; scanning module :uber-lib's classesDirs"), run.stderr());
+        assertTrue(array(parse(run.stdout()).get("violations")).isEmpty(), run.stdout());
+    }
+
+    /** The group sorts after every real one, so coordinate order and classpath order disagree. */
+    private static String uberJar(String version, Path file) {
+        return artifact("zz.example", "uber", version, file.toString());
+    }
+
+    private Path copyFixture(String name, String as) throws IOException {
+        return Files.copy(Path.of(fixture(name)), tempDir.resolve(as));
+    }
+
+    private static String koinCore(String version) {
+        return artifact("io.insert-koin", "koin-core-jvm", version, fixture("koin-core-jvm-" + version + ".jar"));
     }
 
     /**

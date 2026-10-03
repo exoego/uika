@@ -78,7 +78,7 @@ final class CheckScannedTest {
     }
 
     private static Check.Report check(Scan.Result scan, ApiIndex oldLib, ApiIndex newLib, Reach.Inputs reach, Check.SpiServices services) {
-        return Check.checkScanned(scan, oldLib, newLib, new IntSet(), null, reach, services, null);
+        return Check.checkScanned(scan, oldLib, newLib, new IntSet(), Check.BeforeClasspath.UNKNOWN, null, reach, services, null);
     }
 
     private static SymbolRef fieldRead(String owner, String name, String descriptor) {
@@ -440,6 +440,49 @@ final class CheckScannedTest {
         assertEquals(fieldRead("lib/C", "x", "I"), report.violations.get(0).reference);
         assertEquals(fieldRead("lib/C", "y", "I"), report.violations.get(1).reference);
         assertEquals(0, report.unknownRefs);
+    }
+
+    /**
+     * An unchanged uber jar ahead of the library on both sides bundles an older lib/D, without
+     * m, and the new version drops lib/D. The runtime side resolves D from that copy, so with
+     * the old row kept the call to m read as removed, although it never linked before the
+     * upgrade either. Behind the library before, the old jar's D is what loaded, and the
+     * removal is real.
+     */
+    @Test
+    void aClassTheNewVersionDropsIsJudgedAgainstTheCopyThatLoadedBefore() throws Exception {
+        String libOld = jar(
+                "lib-old.jar", "lib/D.class", new ClassWriter("lib/D", JAVA_LANG_OBJECT).method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
+        String libNew = jar("lib-new.jar", "lib/K.class", new ClassWriter("lib/K", JAVA_LANG_OBJECT).bytes());
+        String uber = jar("uber.jar", "lib/D.class", new ClassWriter("lib/D", JAVA_LANG_OBJECT).bytes());
+        String app = jar("app.jar", "app/Use.class", callingMethod("app/Use", "lib/D", "m", "()V").bytes());
+        List<String> warnings = new ArrayList<>();
+        ApiIndex oldLib = ApiIndex.fromPaths(List.of(libOld), warnings);
+        ApiIndex newLib = ApiIndex.fromPaths(List.of(libNew), warnings);
+        assertEquals(List.of(), warnings);
+        List<String> targets = List.of(app, uber, libNew);
+
+        Check.Report ahead = checkModule(targets, oldLib, newLib, libNew, new Check.BeforeClasspath(List.of(app, uber, libOld), targets));
+        assertEquals(List.of(), ahead.warnings);
+        assertEquals(List.of(), ahead.violations);
+        assertEquals(0, ahead.unknownRefs);
+
+        Check.Report behind = checkModule(targets, oldLib, newLib, libNew, new Check.BeforeClasspath(List.of(app, libOld, uber), targets));
+        assertEquals(List.of(), behind.warnings);
+        assertEquals(1, behind.violations.size());
+        assertEquals("app/Use", Intern.str(behind.violations.get(0).sourceClass));
+        assertEquals(Reason.METHOD_REMOVED, behind.violations.get(0).reason);
+    }
+
+    /** {@link Check#check} with a before classpath, the way upgrade-check runs one module. */
+    private static Check.Report checkModule(
+            List<String> targets, ApiIndex oldLib, ApiIndex newLib, String newJar, Check.BeforeClasspath before) {
+        MemberProbe probe = Check.selectionMemberProbe(oldLib, newLib);
+        Scan.Result scan = Scan.scanTargetPaths(targets, oldLib, probe, false);
+        Check.libraryInvocationEvidence(List.of(newJar), probe, scan.invocations);
+        IntSet upgraded = new IntSet();
+        upgraded.add(intern(newJar));
+        return Check.checkScanned(scan, oldLib, newLib, upgraded, before, null, null, Check.SpiServices.NONE, null);
     }
 
     /**

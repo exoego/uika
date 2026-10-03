@@ -73,7 +73,10 @@ pass-2 classes are typically below 0.1% of the scan.
   that finds nothing is it counted new. An after module whose artifact list
   vanished while its before had one is skipped as `incomplete` (partial
   dump, e.g. `mvn -pl`), never diffed as total removal. Runs with identical
-  (old, new, targets, roots) share one run.
+  (old, new, targets, roots, before classpath) share one run. The before
+  classpath is in the key because `Check.BeforeClasspath` decides which old
+  rows a winning copy replaces, so two modules that differ only there can
+  report different breaks and must keep their own rows.
 - The version diff excludes `Dump.projectCoordsUnion(before, after)` -- the
   UNION of both dumps' project-attributed coordinates -- not a per-side
   filter. One-sided exclusion made a before dump from an older plugin diff an
@@ -178,12 +181,42 @@ pass-2 classes are typically below 0.1% of the scan.
   walks, which compare the old and new indexes directly. Dropping hid both koin
   breaks when an earlier copy of koin-core 3.3.0 won
   (`IntegrationTest.earlierCopyOfTheNewVersionKeepsItsBreaks`). The old side
-  keeps the old index, so a winning copy that differs from old still reports
-  what it breaks. Without a scanned new jar (the goldens' `Check.check`) the
-  library stays first. Upgraded jars are never treated as shadowing each other.
-  Their order comes from `--new`, which upgrade-check sets to classpath order
-  (see Per-Module upgrade-check). One limit remains. The invocation probe is
-  built from the unreplaced new index before pass 1.
+  follows the module's before classpath (`Check.BeforeClasspath`). A winning
+  copy that was ahead of the old jar there too replaces the old rows as well
+  (`Check.shadowedOldClasses`), so the compare is winner to winner and an
+  unchanged uber jar that wins on both sides reports nothing. That covers a
+  class the new version dropped too, since the runtime side resolves it from
+  the copy (`CheckScannedTest.aClassTheNewVersionDropsIsJudgedAgainstTheCopyThatLoadedBefore`).
+  Position alone is not enough. An entry ahead of the winner that the upgrade
+  removed or moved behind it may have been what loaded, so it is read, and one
+  that cannot be read counts as defining the class
+  (`CheckTest.theOldSideIsShadowedOnlyWhereTheCopyWasAheadOfTheOldJarBefore`).
+  With the old side kept pure, java-function-invoker 2.0.2, which bundles
+  jackson-annotations 2.15.2 unrelocated, turned a jackson-annotations
+  2.20 -> 2.22 move into 19 removals of members 2.22 has
+  (`UpgradeCheckIntegrationTest.anUberJarAheadOfTheLibraryOnBothSidesIsPreExisting`).
+  A copy the upgrade put in front, or added, keeps the old index and still
+  reports (`anUberJarTheUpgradeMovesAheadOfTheLibraryStillReports`). An unbuilt
+  project jar is substituted on the before side the way the scan substitutes it
+  (`anUnbuiltProjectJarAheadOfTheLibraryOnBothSidesIsPreExisting`). The CLI
+  check has no before classpath, and the merged universe has only the dump-wide
+  target list, which is not one module's load order, so both pass
+  `BeforeClasspath.UNKNOWN` and keep the old index. Without a scanned new jar
+  (the goldens' `Check.check`) the library stays first. Upgraded jars are never
+  treated as shadowing each other. Their order comes from `--new`, which
+  upgrade-check sets to classpath order (see Per-Module upgrade-check). Four
+  limits remain. The invocation probe is built from the unreplaced new index
+  before pass 1. A copy that loaded before but loses to the library after (the
+  upgrade moved the library ahead of it) is compared as the old version, not as
+  itself, since only an after-side winner can replace old rows. Positions
+  match by path, so a before dump that spells a jar differently (the Bazel gate
+  materializes the baseline under `/tmp/uika-baseline`) leaves the old index
+  pure and reports as before. And a path is taken to hold the same bytes in
+  both builds. A module's own classesDirs, a sibling project's outputs and an
+  in-place SNAPSHOT jar that the same change rebuilt count as unchanged, so a
+  copy the change itself put there is compared with itself (demonstrated with
+  a 3.3.0-shaped Logger.class vendored into app classes during a koin
+  3.2.2 -> 3.3.0 move, which reports nothing). No real witness yet.
 - `InvokeDynamic` NameAndType entries are bootstrap synthetic names, not symbol
   references. `MethodHandle` entries point at Methodref-like constants, so
   constant-pool scanning covers them naturally.

@@ -827,15 +827,26 @@ final class Input {
      * anything. Best effort: an unreadable input lists nothing.
      */
     static List<String> classEntryNames(String path) {
+        return classEntryNames(path, false);
+    }
+
+    /** {@link #classEntryNames}, but an input that cannot be read in full fails instead of listing less. */
+    static List<String> classEntryNamesOrFail(String path) {
+        return classEntryNames(path, true);
+    }
+
+    private static List<String> classEntryNames(String path, boolean strict) {
         List<String> names = new ArrayList<>();
         Path root = Path.of(path);
         if (Files.isDirectory(root)) {
             try {
-                Files.walkFileTree(root, new SimpleFileVisitor<>() {
+                // The scan reads a linked root through. The walk alone would visit the link as a file.
+                Path dir = root.toRealPath();
+                Files.walkFileTree(dir, new SimpleFileVisitor<>() {
                     @Override
                     public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
                         if (attrs.isRegularFile()) {
-                            String name = new String(relativeName(root, file), StandardCharsets.UTF_8);
+                            String name = new String(relativeName(dir, file), StandardCharsets.UTF_8);
                             if (isScannable(name)) {
                                 names.add(name.substring(0, name.length() - 6));
                             }
@@ -844,12 +855,17 @@ final class Input {
                     }
 
                     @Override
-                    public FileVisitResult visitFileFailed(Path file, IOException e) {
+                    public FileVisitResult visitFileFailed(Path file, IOException e) throws IOException {
+                        if (strict) {
+                            throw e;
+                        }
                         return FileVisitResult.CONTINUE;
                     }
                 });
             } catch (IOException e) {
-                // best effort
+                if (strict) {
+                    throw new UikaException("cannot read " + path, e);
+                }
             }
             Collections.sort(names);
             return names;
@@ -863,7 +879,9 @@ final class Input {
                 }
             }
         } catch (IOException | UikaException e) {
-            // best effort
+            if (strict) {
+                throw new UikaException("cannot read " + path, e);
+            }
         }
         return names;
     }
