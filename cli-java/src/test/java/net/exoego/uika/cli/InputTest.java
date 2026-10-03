@@ -865,6 +865,42 @@ class InputTest {
         assertEquals(List.of("Real"), Input.classEntryNames(classes.toString()));
     }
 
+    /** A root that is a link is read through, as the scan reads it. */
+    @Test
+    void listingNamesReadsThroughALinkedRoot() throws Exception {
+        Path target = Files.createDirectories(dir.resolve("linked-target/p"));
+        Files.write(target.resolve("A.class"), classLike("a"));
+        Path link = dir.resolve("linked");
+        try {
+            Files.createSymbolicLink(link, dir.resolve("linked-target"));
+        } catch (UnsupportedOperationException | IOException e) {
+            return; // A file system without symbolic links.
+        }
+        assertEquals(List.of("p/A"), Input.classEntryNamesOrFail(link.toString()));
+        assertEquals(List.of("p/A"), Input.classEntryNames(link.toString()));
+    }
+
+    /** The strict listing fails wherever the best-effort one would list less. */
+    @Test
+    void strictListingFailsOnWhatItCannotRead() throws Exception {
+        assertThrows(UikaException.class, () -> Input.classEntryNamesOrFail(dir.resolve("absent.jar").toString()));
+        Files.write(dir.resolve("garbage-strict.jar"), "not a zip".getBytes(StandardCharsets.UTF_8));
+        assertThrows(UikaException.class, () -> Input.classEntryNamesOrFail(dir.resolve("garbage-strict.jar").toString()));
+        Path root = Files.createDirectories(dir.resolve("partly-strict"));
+        Files.write(root.resolve("A.class"), classLike("a"));
+        Path sealed = Files.createDirectories(root.resolve("sealed"));
+        Files.write(sealed.resolve("Hidden.class"), classLike("hidden"));
+        if (!sealed.toFile().setReadable(false, false) || sealed.toFile().canRead()) {
+            return; // A filesystem or user that cannot lock a directory (root, Windows).
+        }
+        try {
+            assertThrows(UikaException.class, () -> Input.classEntryNamesOrFail(root.toString()));
+            assertEquals(List.of("A"), Input.classEntryNames(root.toString()));
+        } finally {
+            sealed.toFile().setReadable(true, false);
+        }
+    }
+
     @Test
     void anUnreadableClassFileEndsTheScan() throws Exception {
         Path classes = Files.createDirectories(dir.resolve("private"));

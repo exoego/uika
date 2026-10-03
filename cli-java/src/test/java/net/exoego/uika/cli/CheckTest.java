@@ -1521,4 +1521,69 @@ final class CheckTest {
         assertEquals(Acc.PUBLIC, runtime.directMethodAccess(intern("lib/C"), MemberKey.of("m", "()V")));
         assertFalse(newLib.replacing(shadowed, index()).containsClass(intern("lib/A")));
     }
+
+    /**
+     * The uber jar defines org/objectweb/asm/ClassVisitor, which asm-8.0.1.jar also defines
+     * and koin-core does not, and lib/B, which neither does. lib/C is a class the new version
+     * added, so the old index has no row to replace. lib/E is one the new jar itself wins.
+     */
+    @Test
+    void theOldSideIsShadowedOnlyWhereTheCopyWasAheadOfTheOldJarBefore() {
+        String visitor = "org/objectweb/asm/ClassVisitor";
+        ClassApi a = classApi(visitor);
+        a.source = intern("lib-old.jar");
+        ClassApi b = classApi("lib/B");
+        b.source = intern("lib-old.jar");
+        ClassApi e = classApi("lib/E");
+        e.source = intern("lib-old.jar");
+        ApiIndex oldLib = index(a, b, e);
+        ClassGraph graph = new ClassGraph();
+        insert(graph, visitor, Intern.NONE, new int[0], Intern.NONE, "uber.jar");
+        insert(graph, "lib/B", Intern.NONE, new int[0], Intern.NONE, "uber.jar");
+        insert(graph, "lib/C", Intern.NONE, new int[0], Intern.NONE, "uber.jar");
+        insert(graph, "lib/E", Intern.NONE, new int[0], Intern.NONE, "lib-new.jar");
+        IntSet upgraded = new IntSet();
+        upgraded.add(intern("lib-new.jar"));
+        List<String> after = List.of("app/classes", "uber.jar", "lib-new.jar");
+        java.util.function.BiFunction<List<String>, List<String>, int[]> shadowedOld = (before, scanned) -> {
+            int[] out = Check.shadowedOldClasses(graph, oldLib, upgraded, new Check.BeforeClasspath(before, scanned)).toArray();
+            java.util.Arrays.sort(out);
+            return out;
+        };
+        int[] both = {intern(visitor), intern("lib/B")};
+        java.util.Arrays.sort(both);
+        int[] bOnly = {intern("lib/B")};
+        int[] none = {};
+        List<String> ahead = List.of("app/classes", "uber.jar", "lib-old.jar");
+
+        assertArrayEquals(both, shadowedOld.apply(ahead, after));
+        assertArrayEquals(none, shadowedOld.apply(List.of("lib-old.jar", "uber.jar"), after));
+        assertArrayEquals(none, shadowedOld.apply(List.of("lib-old.jar"), after));
+        // The old jar is not on the before classpath.
+        assertArrayEquals(none, shadowedOld.apply(List.of("uber.jar"), after));
+        // A renamed module has no before module, so its before classpath is empty.
+        assertArrayEquals(none, shadowedOld.apply(List.of(), after));
+        assertTrue(Check.shadowedOldClasses(graph, oldLib, upgraded, Check.BeforeClasspath.UNKNOWN).isEmpty());
+        // An index not built from paths (ct.sym stubs) has no old jar to place.
+        assertTrue(Check.shadowedOldClasses(graph, index(classApi(visitor)), upgraded, new Check.BeforeClasspath(after, after)).isEmpty());
+        // Without an upgraded jar among the targets nothing is shadowed, as in the CLI check.
+        assertTrue(Check.shadowedOldClasses(graph, oldLib, new IntSet(), new Check.BeforeClasspath(ahead, after)).isEmpty());
+
+        // An entry ahead of the winner on both sides is never read. It defined the same thing
+        // on both sides. One the upgrade removed is read, and decides by what it defines. One
+        // that cannot be read is taken to define everything.
+        String asm = GoldenTest.fixture("asm-8.0.1.jar");
+        String koin = GoldenTest.fixture("koin-core-jvm-3.2.2.jar");
+        String notAJar = GoldenTest.fixture("README.md");
+        assertArrayEquals(
+                both,
+                shadowedOld.apply(
+                        List.of("app/classes", "first.jar", "uber.jar", "lib-old.jar"), List.of("app/classes", "first.jar", "uber.jar", "lib-new.jar")));
+        assertArrayEquals(bOnly, shadowedOld.apply(List.of(asm, "uber.jar", "lib-old.jar"), after));
+        assertArrayEquals(both, shadowedOld.apply(List.of(koin, "uber.jar", "lib-old.jar"), after));
+        assertArrayEquals(none, shadowedOld.apply(List.of("gone.jar", "uber.jar", "lib-old.jar"), after));
+        assertArrayEquals(none, shadowedOld.apply(List.of(notAJar, "uber.jar", "lib-old.jar"), after));
+        // One the upgrade moved behind the winner is read too.
+        assertArrayEquals(bOnly, shadowedOld.apply(List.of(asm, "uber.jar", "lib-old.jar"), List.of("uber.jar", asm, "lib-new.jar")));
+    }
 }
