@@ -48,6 +48,25 @@
     (is (some #(str/ends-with? (get % "path") "src")
               (get module "classesDirs")))))
 
+(deftest dump-resolves-the-requested-aliases
+  (let [dir (temp-dir)
+        shared (.getCanonicalPath (io/file fixture "shared"))
+        _ (spit (io/file dir "deps.edn")
+                (pr-str {:paths []
+                         :aliases {:extra {:extra-deps {'shared/shared {:local/root shared}}}}}))
+        paths (fn [args]
+                (let [out (str (io/file dir "dump.json"))]
+                  (uika/dump-classpath (merge {:dir (str dir) :output out} args))
+                  (set (map #(get % "path") (get (json/read-str (slurp out)) "artifacts")))))]
+    (is (not-any? #(str/starts-with? % shared) (paths {})))
+    (is (some #(str/starts-with? % shared) (paths {:aliases [:extra]})))))
+
+(deftest dump-fails-when-the-cli-cannot-resolve
+  (let [dir (temp-dir)]
+    (spit (io/file dir "deps.edn") "{:deps")
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"-X:deps basis` exited with"
+                          (uika/dump-classpath {:dir (str dir)})))))
+
 (deftest jdk-release-option-overrides-the-running-jvm
   ;; The tool runs project code on its own JVM, so that is the right default, but a
   ;; project built here and shipped on another release can only say so by hand. 0 keeps

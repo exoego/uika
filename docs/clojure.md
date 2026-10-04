@@ -39,6 +39,11 @@ is taken from the tool's own coordinate in the runtime basis, so the one
 `:mvn/version` in the alias pins the tool and the CLI together;
 `:cli-version` and `UIKA_CLI_VERSION` override it, in that order.
 
+`dump-classpath` asks the Clojure CLI for the basis with `clojure -X:deps basis`,
+so it resolves exactly what your `clojure -M` and `-X` runs do. That needs Clojure
+CLI 1.12.1.1558 or newer, with `clojure` on `PATH`. Your `~/.clojure/deps.edn` is
+left out, because the application ships without it.
+
 AOT-compile your namespaces before the dump. uika checks class files, so
 Clojure code that is only source on the classpath is invisible to it. Run the
 tools.build `compile-clj` and point `:class-dir` at its output. Interop calls
