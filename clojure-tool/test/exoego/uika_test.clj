@@ -1,5 +1,6 @@
 (ns exoego.uika-test
   (:require [clojure.data.json :as json]
+            [clojure.edn :as edn]
             [clojure.java.basis :as basis]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
@@ -29,15 +30,18 @@
         _ (uika/dump-classpath {:dir fixture :output out})
         dump (json/read-str (slurp out))
         artifacts (get dump "artifacts")
-        module (first (get dump "modules"))]
+        module (first (get dump "modules"))
+        ;; Renovate bumps the fixture's commons-lang3, so the expected version follows it.
+        lang3 (get-in (edn/read-string (slurp (io/file fixture "deps.edn")))
+                      [:deps 'org.apache.commons/commons-lang3 :mvn/version])]
     (is (= 2 (get dump "version")))
     (is (pos? (get dump "jdkRelease")))
     (is (= ":fixture" (get module "module")))
     ;; Maven libs carry full coordinates and the resolved jar path.
     (is (some (fn [a] (and (= "org.apache.commons" (get a "group"))
                            (= "commons-lang3" (get a "name"))
-                           (= "3.20.0" (get a "version"))
-                           (str/ends-with? (get a "path") "commons-lang3-3.20.0.jar")))
+                           (= lang3 (get a "version"))
+                           (str/ends-with? (get a "path") (str "commons-lang3-" lang3 ".jar"))))
               artifacts))
     ;; A :local/root dep has no Maven coordinates the version diff could compare,
     ;; so it is emitted coordinate-less, like the JVM plugins' project deps.
