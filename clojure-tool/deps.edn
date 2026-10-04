@@ -2,8 +2,7 @@
  :deps {org.clojure/clojure {:mvn/version "1.12.6"}
         ;; The same resolver the project itself uses, so the dump can never disagree
         ;; with what `clojure -M`/`-X` actually puts on the classpath.
-        org.clojure/tools.deps {:mvn/version "0.31.1646"}
-        org.clojure/data.json {:mvn/version "2.5.2"}}
+        org.clojure/tools.deps {:mvn/version "0.31.1646"}}
  ;; For a development `-Ttools install` from :local/root (or git), so unqualified
  ;; calls behave like the documented alias flow. The Maven flow does not read this:
  ;; tools.deps has no usage lookup for :mvn coordinates (coord-usage :mvn is TBD
@@ -16,14 +15,17 @@
   ;; target/core-classes holds the vendored JfrEvidence compiled by
   ;; `clojure -T:build javac` (the Makefile's clojure-test runs it first); the
   ;; published jar carries the same class at its root.
+  ;; data.json only reads the dumps back. The tool writes them itself.
   :test {:extra-paths ["test" "target/core-classes"]
          :extra-deps {io.github.cognitect-labs/test-runner
-                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}
+                      org.clojure/data.json {:mvn/version "2.5.2"}}
          :main-opts ["-m" "cognitect.test-runner"]}
   ;; Cloverage drives clojure.test itself, so it replaces the test-runner rather than
   ;; wrapping it, and needs the same javac'd JfrEvidence on the path that :test does.
   :coverage {:extra-paths ["test" "target/core-classes"]
-             :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}}
+             :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}
+                          org.clojure/data.json {:mvn/version "2.5.2"}}
              :main-opts ["-m" "cloverage.coverage"
                          "-p" "src" "-p" "src-core" "-s" "test"
                          "--lcov" "--no-html"]}}}

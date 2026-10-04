@@ -3,8 +3,7 @@
   CLI fetch and execution, and the --jdk-release clamp. Deliberately free of
   tools.deps so the Leiningen plugin does not drag a second resolver onto its
   plugin classpath. Ports of jvm-plugin-core carry keep-in-sync markers."
-  (:require [clojure.data.json :as json]
-            [clojure.java.io :as io]
+  (:require [clojure.java.io :as io]
             [clojure.string :as str])
   (:import (java.nio.file Files StandardCopyOption)
            (java.util.jar JarFile)))
@@ -21,6 +20,47 @@
     {"group" (or (namespace lib) (name lib)) "name" (name lib) "version" version
      "root" 0 "path" (str path)}
     {"root" 0 "path" (str path)}))
+
+(defn- write-json
+  "Appends `x` as compact JSON. Only the shapes a dump holds are accepted: strings,
+  integers, maps with string keys, and sequential collections. Non-ASCII is escaped, so
+  the file reads the same whatever charset the reader assumes."
+  [^StringBuilder sb x]
+  (cond
+    (string? x)
+    (let [^String s x]
+      (.append sb \")
+      (dotimes [i (.length s)]
+        (let [c (.charAt s i)]
+          (case c
+            \" (.append sb "\\\"")
+            \\ (.append sb "\\\\")
+            (if (or (< (int c) 0x20) (> (int c) 0x7e))
+              (.append sb (format "\\u%04x" (int c)))
+              (.append sb c)))))
+      (.append sb \"))
+
+    (integer? x)
+    (.append sb (str x))
+
+    (map? x)
+    (do (.append sb \{)
+        (doseq [[i [k v]] (map-indexed vector x)]
+          (when (pos? i) (.append sb \,))
+          (write-json sb (str k))
+          (.append sb \:)
+          (write-json sb v))
+        (.append sb \}))
+
+    (sequential? x)
+    (do (.append sb \[)
+        (doseq [[i v] (map-indexed vector x)]
+          (when (pos? i) (.append sb \,))
+          (write-json sb v))
+        (.append sb \]))
+
+    :else
+    (throw (ex-info (str "uika: cannot write " (pr-str x) " as dump JSON") {:value x}))))
 
 (defn dump-json
   "The v2 dump as a string: one module, one empty root (paths stay absolute).
@@ -44,11 +84,12 @@
                         "classesDirs" (mapv (fn [^String p] {"root" 0 "path" p}) class-dirs)
                         "artifactRefs" (vec (range (count artifact-maps)))}
                  jdk-release (assoc "jdkRelease" jdk-release))]
-    (json/write-str (cond-> {"version" 2
-                             "roots" [""]
-                             "artifacts" artifact-maps
-                             "modules" [module]}
-                      jdk-release (assoc "jdkRelease" jdk-release)))))
+    (str (write-json (StringBuilder.)
+                     (cond-> {"version" 2
+                              "roots" [""]
+                              "artifacts" artifact-maps
+                              "modules" [module]}
+                       jdk-release (assoc "jdkRelease" jdk-release))))))
 
 (defn- env
   "An environment variable, treating blank as unset. A CI `env:` block whose value
