@@ -292,6 +292,20 @@
     (is (not (contains? dump "jdkRelease")))
     (is (not (contains? (first (get dump "modules")) "jdkRelease")))))
 
+(deftest dump-json-escapes-what-paths-can-hold
+  ;; A Windows path brings backslashes, and a home directory can hold quotes, control
+  ;; characters or non-ASCII names.
+  (let [path "C:\\Users\\Jos\u00e9 \"J\"\t\u65e5\u672c\ud83d\ude00\\x.jar"
+        text (uika.core/dump-json ":m" [(uika.core/lib->artifact 'g/a "1" path)] [path] 21)
+        dump (json/read-str text)]
+    (is (= path (get-in dump ["artifacts" 0 "path"])))
+    (is (= path (get-in dump ["modules" 0 "classesDirs" 0 "path"])))
+    (is (every? #(< (int %) 0x7f) text))))
+
+(deftest dump-json-rejects-a-value-it-cannot-write
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"cannot write 1\.5"
+                        (uika.core/dump-json ":m" [] [] 1.5))))
+
 (deftest upgrade-check-forwards-flags-and-fails-on-violations
   (let [dir (temp-dir)
         stub (io/file dir "uika")

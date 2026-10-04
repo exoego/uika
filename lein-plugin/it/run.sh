@@ -57,8 +57,7 @@ grep -q '"version":"3.20.0"' target/after.json
 if [ ! -f target/classes/example/Consumer.class ]; then
   echo "FAIL: javac did not run (:prep-tasks skipped?)" >&2; exit 1
 fi
-# tr: data.json escapes every / as \/, so unescape before matching paths.
-if ! tr -d '\\' < target/before.json | grep -q '"path":"[^"]*/target/classes"'; then
+if ! grep -q '"path":"[^"]*/target/classes"' target/before.json; then
   echo "FAIL: compiled classes missing from classesDirs" >&2
   cat target/before.json >&2; exit 1
 fi

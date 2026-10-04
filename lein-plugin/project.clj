@@ -28,7 +28,6 @@
   ;; answered with a message rather than an UnsupportedClassVersionError trace.
   :java-source-paths ["java-src"]
   :javac-options ["--release" "17"]
-  :dependencies [[org.clojure/data.json "2.5.2"]]
   ;; get-dependencies grew its :managed-dependencies arity in 2.7.0. Without a floor
   ;; an older lein answers with a raw ArityException instead of lein's own message.
   :min-lein-version "2.9.0"
@@ -45,7 +44,9 @@
   :eval-in-leiningen true
   ;; A profile rather than a plain dependency, so the published plugin classpath never
   ;; carries cloverage and its tools.cli/data.xml tail. `make lein-coverage` activates it.
-  :profiles {:coverage {:dependencies [[cloverage "1.2.4"]]}}
+  ;; data.json only reads the dumps back in the tests. The plugin writes them itself.
+  :profiles {:dev {:dependencies [[org.clojure/data.json "2.5.2"]]}
+             :coverage {:dependencies [[cloverage "1.2.4"]]}}
   ;; :no-auth, not just </dev/null in the Makefile: lein skips its credentials probe
   ;; only for a URL matching #"(file|scp|scpexe)://", and a single-slash relative
   ;; file: URL does not match, so `lein deploy staging` prompts for a username and
