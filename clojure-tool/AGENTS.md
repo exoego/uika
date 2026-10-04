@@ -9,11 +9,12 @@ The shared plugin rules are in `jvm-plugin-core/AGENTS.md`. Claude Code imports 
 Same rule as `mill-plugin/AGENTS.md`: point-of-use comments and the tests in
 `clojure-tool/test/` hold the invariants. Only the experiment-only lessons live here.
 
-- To resolve ANOTHER project's basis, wrap `create-basis` in
-  `clojure.tools.deps.util.dir/with-dir` and keep `:project "deps.edn"` bare. Every
-  relative path resolves against `*the-dir*` -- a dir-joined `:project` resolves twice
-  and silently falls back to the root deps (org.clojure/clojure alone in the dump is
-  the symptom). Relative `:local/root` entries need the same binding.
+- The project's basis comes from `clojure -X:deps basis`, run as a child process, so the
+  tool carries no tools.deps of its own (it brought about 50 Java jars). The basis
+  program first shipped in CLI 1.12.1.1558; 1.12.1.1550 answers "function not found:
+  basis". `-Srepro` does NOT reach the basis program, so the user config is excluded by
+  passing `:user nil` to it. `:dir` resolves relative `:local/root` entries against the
+  project, which `create-basis` needed `with-dir` for.
 - The tool and the lein plugin download the CLI jar from Maven Central directly
   (`UIKA_CLI_URL` overrides), unlike the JVM plugins, which reuse the build's resolver.
   That started because tools.deps and lein resolve jars only and the CLI was a

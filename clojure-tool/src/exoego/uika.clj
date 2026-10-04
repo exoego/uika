@@ -6,13 +6,13 @@
   usage data for :mvn coordinates (coord-usage :mvn is TBD upstream), so a
   `-Ttools`-installed Maven tool would need every function call qualified. The
   tool's own :mvn/version in the runtime basis names the matching uika-cli
-  release, so the alias pins both. Everything not specific to tools.deps lives
+  release, so the alias pins both. Everything not specific to the Clojure CLI lives
   in exoego.uika.core, shared with the Leiningen plugin."
-  (:require [clojure.java.basis :as basis]
+  (:require [clojure.edn :as edn]
+            [clojure.java.basis :as basis]
             [clojure.java.io :as io]
-            [clojure.tools.deps :as deps]
-            [clojure.tools.deps.util.dir :as deps-dir]
-            [exoego.uika.core :as core]))
+            [exoego.uika.core :as core])
+  (:import (java.lang ProcessBuilder$Redirect)))
 
 (set! *warn-on-reflection* true)
 
@@ -46,18 +46,33 @@
                          "; known: " (pr-str (vec (sort option-keys))))
                     {:unknown (vec unknown)}))))
 
+(def ^:private min-cli-version
+  "The first Clojure CLI whose -X:deps carries the basis program (TDEPS-264)."
+  "1.12.1.1558")
+
 (defn- project-basis
-  "The PROJECT's basis, not this tool's own. `create-basis` re-resolves exactly the
-  way `clojure -M`/`-X` would; the user config is excluded because the application
-  ships without it. `:aliases` widens the resolution the same way the user's run
-  alias would (e.g. `:aliases [:prod]`)."
+  "The PROJECT's basis, not this tool's own, resolved by the Clojure CLI that runs this
+  tool, so it matches what `clojure -M`/`-X` puts on the classpath. The user config is
+  excluded because the application ships without it. -Srepro would not do that: it
+  never reaches the basis program. `:aliases` widens the resolution the same way the
+  user's run alias would (e.g. `:aliases [:prod]`)."
   [dir {:keys [aliases]}]
-  ;; with-dir rebinds the directory EVERY relative path resolves against -- the
-  ;; :project file and the deps.edn's own :local/root entries alike -- so :project
-  ;; stays the bare file name. A dir-joined :project would resolve twice.
-  (deps-dir/with-dir (.getCanonicalFile (io/file dir))
-    (deps/create-basis (cond-> {:user nil :project "deps.edn"}
-                         (seq aliases) (assoc :aliases (mapv keyword aliases))))))
+  (let [command (cond-> ["clojure" "-X:deps" "basis"
+                         ":dir" (pr-str (str (.getCanonicalFile (io/file dir))))
+                         ":user" "nil"]
+                  (seq aliases) (conj ":aliases" (pr-str (mapv keyword aliases))))
+        ;; stderr carries the download progress, so the user sees it as it happens.
+        process (-> (ProcessBuilder. ^java.util.List command)
+                    (.redirectError ProcessBuilder$Redirect/INHERIT)
+                    (.start))
+        out (slurp (.getInputStream process))
+        exit (.waitFor process)]
+    (when-not (zero? exit)
+      (throw (ex-info (str "uika: `clojure -X:deps basis` exited with " exit
+                           " (its error is above). It needs Clojure CLI " min-cli-version
+                           " or newer.")
+                      {:command command :exit exit})))
+    (edn/read-string out)))
 
 (defn dump-classpath
   "Writes the project's resolved classpath as a uika v2 dump.

@@ -1,8 +1,5 @@
 {:paths ["src" "src-core"]
- :deps {org.clojure/clojure {:mvn/version "1.12.6"}
-        ;; The same resolver the project itself uses, so the dump can never disagree
-        ;; with what `clojure -M`/`-X` actually puts on the classpath.
-        org.clojure/tools.deps {:mvn/version "0.31.1646"}}
+ :deps {org.clojure/clojure {:mvn/version "1.12.6"}}
  ;; For a development `-Ttools install` from :local/root (or git), so unqualified
  ;; calls behave like the documented alias flow. The Maven flow does not read this:
  ;; tools.deps has no usage lookup for :mvn coordinates (coord-usage :mvn is TBD
