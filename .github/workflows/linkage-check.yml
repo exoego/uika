@@ -1,0 +1,73 @@
+name: linkage-check
+
+# The Clojure tool is the only uika front end whose runtime classpath is its own. Every
+# other plugin runs on the classes its host build tool provides, and cli-java has no
+# runtime dependency. tools.deps pulls in about 50 Java jars (maven-resolver, httpclient,
+# asm), so a bump there can leave one of them linking against a member another removed.
+on:
+  pull_request:
+    paths:
+      - clojure-tool/deps.edn
+      - .github/workflows/linkage-check.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  clojure:
+    name: Clojure tool
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clojure-tool
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+        with:
+          cache_save: false
+
+      # The CI workflow's clojure job owns this cache.
+      - name: Cache Maven and gitlibs
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 25
+          set-default: false
+          cache: maven
+          cache-read-only: true
+          cache-path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          cache-dependency-path: clojure-tool/deps.edn
+
+      - name: Dump PR classpath
+        run: clojure -T:uika dump-classpath :output "\"$RUNNER_TEMP/after.json\""
+
+      - name: Dump baseline classpath
+        id: baseline
+        # A base without the :uika alias cannot dump, so the check skips instead of failing.
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --depth=1 origin "$BASE_SHA"
+          git checkout "$BASE_SHA"
+          if clojure -T:uika dump-classpath :output "\"$RUNNER_TEMP/before.json\""; then
+            status=0
+          else
+            status=1
+          fi
+          git checkout -
+          exit $status
+
+      - name: Check broken references
+        if: steps.baseline.outcome == 'success'
+        run: >-
+          clojure -T:uika upgrade-check
+          :before "\"$RUNNER_TEMP/before.json\""
+          :after "\"$RUNNER_TEMP/after.json\""

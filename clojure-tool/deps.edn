@@ -11,7 +11,10 @@
  ;; :ns-default itself instead.
  :tools/usage {:ns-default exoego.uika}
  :aliases
- {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}}
+ {;; The released tool, run on this project's own classpath by .github/workflows/linkage-check.yml.
+  :uika {:deps {net.exoego.uika/clojure-uika {:mvn/version "0.12.1"}}
+         :ns-default exoego.uika}
+  :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}}
           :ns-default build}
   ;; target/core-classes holds the vendored JfrEvidence compiled by
   ;; `clojure -T:build javac` (the Makefile's clojure-test runs it first); the
