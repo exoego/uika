@@ -19,9 +19,6 @@
     // leiningen manager matches by name anywhere in the tree.
     "lein-plugin/it/**",
   ],
-  lockFileMaintenance: {
-    enabled: true,
-  },
   // The mise manager skips a tool written as a full asdf plugin path
   // (asdf:owner/plugin), so annotated lines in .mise.toml come through here.
   customManagers: [
