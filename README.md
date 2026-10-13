@@ -92,10 +92,15 @@ common and tool-specific setup on one page per tool:
       <a href="docs/leiningen.md"><b>Leiningen</b></a>
     </td>
   </tr>
+  <tr>
+    <td align="center" colspan="3">
+      <a href="docs/bazel.md"><img src="docs/logos/bazel.svg" alt="Bazel" height="64"></a><br>
+      <a href="docs/bazel.md"><b>Bazel</b></a>
+    </td>
+  </tr>
 </table>
 
-[Bazel](docs/bazel.md) is covered too, and there's a [CLI](docs/cli.md) in
-case you want to run it by hand.
+There's also [CLI](docs/cli.md) in case you want to run it by hand.
 [What every integration shares](docs/build-tools.md) covers the dump format, how the CLI
 is fetched, and where `jdkRelease` comes from.
 
