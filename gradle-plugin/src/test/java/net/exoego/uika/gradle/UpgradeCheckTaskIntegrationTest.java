@@ -642,6 +642,63 @@ final class UpgradeCheckTaskIntegrationTest {
                 "UIKA_JDK changed on the cache-reuse run");
     }
 
+    /// A JDK 21 ct.sym stops at 20, so a module on 21 is as far out of a 21 daemon's reach
+    /// as one on 25. Gating the lookup on the daemon's own release left such a module
+    /// clamped to 20 with its stubs one toolchain away. From JDK 22 on the daemon serves
+    /// its own release and the toolchain is never asked.
+    @Test
+    void aModuleAtTheBuildJvmsReleaseNeedsItsToolchainOnlyBelowJdk22() throws Exception {
+        var newer = newerJdk();
+        var own = Runtime.version().feature();
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    java
+                    id("net.exoego.uika")
+                }
+
+                java { toolchain { languageVersion = JavaLanguageVersion.of(%d) } }
+                tasks.compileJava { options.release = %d }
+
+                repositories {
+                    maven {
+                        url = uri("%s")
+                        metadataSources { artifact() }
+                    }
+                }
+                """.formatted(newer.feature(), own, repoDir.toUri()));
+
+        var result = runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION,
+                        "-Porg.gradle.java.installations.paths=" + newer.home(),
+                        "-Porg.gradle.java.installations.auto-detect=false",
+                        "-Porg.gradle.java.installations.auto-download=false")
+                .build();
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(args.contains("--jdk-release " + own),
+                () -> "the module's own release " + own + " was clamped: " + args);
+        var env = Files.readString(Path.of(before + ".env")).trim();
+        var switched = result.getOutput().contains(
+                "uika: reading ct.sym from the JDK " + newer.feature() + " at ");
+        if (own < 22) {
+            assertEquals(newer.feature(), UikaCli.installedRelease(Path.of(env)),
+                    () -> "UIKA_JDK must name the JDK " + newer.feature() + " toolchain, not " + env);
+            assertTrue(switched,
+                    () -> "the switch to the toolchain was not announced:\n" + result.getOutput());
+        } else {
+            assertEquals(System.getProperty("java.home"), env,
+                    "UIKA_JDK must stay the build JVM, whose ct.sym carries its own release");
+            assertFalse(switched,
+                    () -> "a toolchain the build JVM stands in for was announced:\n" + result.getOutput());
+        }
+    }
+
     /// With the layer off nothing reads ct.sym and no UIKA_JDK is exported, so the check
     /// must not resolve a toolchain it would never use. The same unresolvable toolchain as
     /// below, this time above the build JVM, so a lookup fails the build.

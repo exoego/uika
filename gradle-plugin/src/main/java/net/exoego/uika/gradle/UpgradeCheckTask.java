@@ -124,10 +124,10 @@ public abstract class UpgradeCheckTask extends DefaultTask {
      * The JDK whose ct.sym the check reads. The build JVM, unless a module compiles with a
      * newer one.
      *
-     * <p>A JDK's ct.sym stops at its own release (one below it on JDK 21 and earlier), so a
-     * module compiling for a release above the build JVM cannot be served by the build JVM at
-     * all. The layer was clamped down, and a JDK move to that release failed for want of its
-     * stubs. That happens whenever the Gradle daemon is pinned below the toolchain, which
+     * <p>A JDK's ct.sym stops at {@link UikaCli#ctSymCeiling}, so a module compiling for a
+     * release above the build JVM's ceiling cannot be served by the build JVM at all. The
+     * layer was clamped down, and a JDK move to that release failed for want of its stubs.
+     * That happens whenever the Gradle daemon is pinned below the toolchain, which
      * {@code gradle-daemon-jvm.properties} exists to do. The newest compiler JDK serves every
      * module, because a JDK compiles for nothing above itself. A tie goes to the build JVM,
      * so a build whose toolchain matches its daemon behaves as before.

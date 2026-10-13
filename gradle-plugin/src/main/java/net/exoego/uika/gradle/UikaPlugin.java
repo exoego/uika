@@ -344,18 +344,20 @@ public class UikaPlugin implements Plugin<Project> {
                     + task.cliVersion().get() + ":" + UikaCli.JAR_CLASSIFIER + "@jar";
             task.cliJar().from(detachedFor(root, notation));
         }));
-        // Only the modules whose recorded release is above the build JVM. Resolving a
-        // toolchain can provision a JDK, and a module the build JVM can stand in for is not
-        // worth that. The lookup itself stays lazy (a mapped provider on the task), so it
-        // runs when the check does and never for `gradle tasks`. Once every project is
+        // Only the modules whose recorded release the build JVM's ct.sym cannot serve.
+        // Resolving a toolchain can provision a JDK, and a module the build JVM can stand in
+        // for is not worth that. The gate is the ceiling and not the build JVM's own release,
+        // since a JDK 21 daemon serves nothing above 20 and a module on 21 needs its
+        // toolchain as well. The lookup itself stays lazy (a mapped provider on the task), so
+        // it runs when the check does and never for `gradle tasks`. Once every project is
         // evaluated, like the dump, because the release and the toolchain are both
         // build-script settable.
         root.getGradle().projectsEvaluated(gradle -> upgradeCheck.configure(task -> {
-            var buildJvm = Runtime.version().feature();
+            var served = UikaCli.ctSymCeiling(Runtime.version().feature());
             var stated = statedJdkRelease.getOrNull();
             for (Project p : root.getAllprojects()) {
                 Integer release = dumpJdkRelease(stated, p);
-                if (release == null || release <= buildJvm) {
+                if (release == null || release <= served) {
                     continue;
                 }
                 var compile = p.getTasks().findByName(JavaPlugin.COMPILE_JAVA_TASK_NAME);

@@ -38,10 +38,11 @@ The JDK uika finds has to be at least as new as the release you move to. By
 default a plugin hands uika the JDK the build runs on, so a change that moves a
 module above that JDK fails the check with exit code 2 until the build runs on
 the newer one. The Gradle plugin also knows the JDK each module compiles with.
-A module whose release is above the JVM running Gradle is read from its
-toolchain's JDK instead, so a daemon pinned to an older JDK still checks the
-move. A module at or below the daemon's release keeps the daemon's `ct.sym`,
-whatever toolchain compiles it.
+A module whose release the `ct.sym` of the JVM running Gradle does not carry is
+read from its toolchain's JDK instead, so a daemon pinned to an older JDK still
+checks the move. On a JDK 21 daemon that includes a module on 21, since a JDK
+21 `ct.sym` stops at 20. A module whose release the daemon's `ct.sym` carries
+keeps it, whatever toolchain compiles it.
 
 Stubs from JDK 22 on carry `PermittedSubclasses`, so a JDK upgrade check sees a
 class that became sealed when the JDK uika finds is 22 or later. Stubs from JDK
