@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
+import java.util.zip.ZipFile;
 
 /**
  * Runs the uika CLI, the pure-Java jar published as the {@code jvm} classifier of
@@ -123,9 +124,40 @@ public final class UikaCli {
      */
     public static final int OWN_RELEASE_IN_CT_SYM = 22;
 
-    /** The highest release the ct.sym of a JDK at {@code feature} can serve. */
+    /**
+     * The highest release the ct.sym of a JDK at {@code feature} can serve, by the version
+     * rule alone. {@link #effectiveJdkRelease} reads the file where the rule can be wrong.
+     */
     public static int ctSymCeiling(int feature) {
         return feature >= OWN_RELEASE_IN_CT_SYM ? feature : feature - 1;
+    }
+
+    /**
+     * Whether {@code ctSym} can be read and holds no class stub for {@code release}. The
+     * JDK 22 early-access builds before JDK-8318913 ship an M/system-modules entry and no M
+     * stubs, the shape a JDK 21 has with its L. A file that cannot be read is left to the
+     * CLI, which fails naming it, rather than reported as lacking a release.
+     */
+    static boolean ctSymLacks(Path ctSym, int release) {
+        var code = Character.toUpperCase(Character.forDigit(release, 36));
+        try (var archive = new ZipFile(ctSym.toFile())) {
+            return archive.stream().noneMatch(entry -> isStubFor(entry.getName(), code));
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /**
+     * A {@code <codes>/<module>/<name>.sig} or {@code <codes>/<name>.sig} entry whose codes
+     * dir names {@code code}. Codes dirs are base-36 digits, one per release, and a file
+     * shared by several releases sits in a joint dir such as {@code MNO}. Every stub in
+     * ct.sym sits under one, so unlike the CLI's parser this does not validate the dir.
+     */
+    private static boolean isStubFor(String entry, char code) {
+        var codes = entry.substring(0, Math.max(0, entry.indexOf('/')));
+        return entry.endsWith(".sig")
+                && !entry.endsWith("/module-info.sig")
+                && codes.indexOf(code) >= 0;
     }
 
     /**
@@ -262,9 +294,15 @@ public final class UikaCli {
                     + " is below the lowest release ct.sym serves, " + MIN_RELEASE + ")");
             return null;
         }
-        if (!Files.isRegularFile(jdk.home().resolve("lib").resolve("ct.sym"))) {
+        var ctSym = jdk.home().resolve("lib").resolve("ct.sym");
+        if (!Files.isRegularFile(ctSym)) {
             log.accept("uika: skipping the JDK API layer (no usable ct.sym in " + jdk.home() + ")");
             return null;
+        }
+        // Only the JDK's own release is read off the file. Every release below the JDK is
+        // in every ct.sym, so the version rule is exact there.
+        if (effective == jdk.feature() && ctSymLacks(ctSym, effective)) {
+            effective = jdk.feature() - 1;
         }
         if (effective < target) {
             log.accept("uika: JDK API layer clamped to release " + effective

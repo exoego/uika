@@ -9,6 +9,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -164,7 +166,7 @@ final class ReleaseDerivationTest {
     /// every member 25 added stayed Unknown on a JDK that could have resolved it.
     @Test
     void aJdk22OrLaterServesItsOwnRelease(@TempDir Path home) throws IOException {
-        withCtSym(home);
+        withCtSym(home, "P");
         var log = new ArrayList<String>();
 
         assertEquals(25, UikaCli.effectiveJdkRelease(25, jdk(home, 25), log::add));
@@ -174,6 +176,48 @@ final class ReleaseDerivationTest {
         assertEquals(1, log.size(), () -> "expected exactly one line: " + log);
         assertTrue(log.get(0).contains("clamped to release 25"),
                 () -> "a release above the JDK was not clamped to it: " + log);
+    }
+
+    /// The JDK 22 early-access builds before JDK-8318913 are 22 by version and 21 by
+    /// content, with an M/system-modules entry and no M stubs. The version rule alone sent
+    /// `--jdk-release 22` to a file without it, and the CLI exited 2 where the old clamp
+    /// had passed. The module-info stub in the M dir must not count as carrying 22.
+    @Test
+    void aJdkWhoseCtSymLacksItsOwnReleaseIsClampedOneBelow(@TempDir Path home) throws IOException {
+        withCtSym(home);
+        var log = new ArrayList<String>();
+
+        assertEquals(21, UikaCli.effectiveJdkRelease(22, jdk(home, 22), log::add));
+        assertEquals(1, log.size(), () -> "expected exactly one line: " + log);
+        assertTrue(log.get(0).contains("clamped to release 21") && log.get(0).contains("has no release 22"),
+                () -> "the missing own release was not announced: " + log);
+
+        // Below the own release the file is not consulted, so the same file serves 21.
+        log.clear();
+        assertEquals(21, UikaCli.effectiveJdkRelease(21, jdk(home, 22), log::add));
+        assertTrue(log.isEmpty(), () -> "a release every ct.sym carries was announced: " + log);
+    }
+
+    /// A stub in a joint dir is shared by every release the dir names, so "MP" carries 22.
+    @Test
+    void aStubInAJointDirCountsForEveryReleaseItNames(@TempDir Path home) throws IOException {
+        withCtSym(home, "MP");
+        var log = new ArrayList<String>();
+
+        assertEquals(22, UikaCli.effectiveJdkRelease(22, jdk(home, 22), log::add));
+        assertTrue(log.isEmpty(), () -> "a carried release was announced as clamped: " + log);
+    }
+
+    /// A ct.sym that is not a zip is the CLI's to refuse, naming the file. Clamping it
+    /// would blame a release instead and send the CLI to the same unreadable file.
+    @Test
+    void anUnreadableCtSymIsLeftToTheCli(@TempDir Path home) throws IOException {
+        Files.createDirectories(home.resolve("lib"));
+        Files.writeString(home.resolve("lib").resolve("ct.sym"), "not a zip");
+        var log = new ArrayList<String>();
+
+        assertEquals(25, UikaCli.effectiveJdkRelease(25, jdk(home, 25), log::add));
+        assertTrue(log.isEmpty(), () -> "an unreadable ct.sym was reported as lacking a release: " + log);
     }
 
     @Test
@@ -191,7 +235,7 @@ final class ReleaseDerivationTest {
     /// under-claiming only turns it into an Unknown.
     @Test
     void clampingNeverRoundsUp(@TempDir Path home) throws IOException {
-        withCtSym(home);
+        withCtSym(home, "MP");
 
         // Explicit ceilings, not ctSymCeiling. The sweep guards the direction of that rule,
         // so its expectation cannot come from it. 22 is the first JDK whose ct.sym carries
@@ -215,9 +259,22 @@ final class ReleaseDerivationTest {
         return new UikaCli.JdkSource(home, feature);
     }
 
-    /// Only its presence is read, so an empty file is enough to stand in for a real one.
-    private static void withCtSym(Path home) throws IOException {
+    /// A ct.sym holding one class stub per codes dir in `stubDirs`, over the shape of a JDK
+    /// 22 early-access file. That is a 21 stub and the two M entries that are not stubs. The
+    /// clamp reads the file at the JDK's own release, so an empty file no longer stands in.
+    /// "MP" is a joint dir, a file shared by 22 and 25.
+    private static void withCtSym(Path home, String... stubDirs) throws IOException {
         Files.createDirectories(home.resolve("lib"));
-        Files.createFile(home.resolve("lib").resolve("ct.sym"));
+        try (var zip = new ZipOutputStream(Files.newOutputStream(home.resolve("lib").resolve("ct.sym")))) {
+            for (var entry : List.of("L/java.base/java/lang/Object.sig",
+                    "M/system-modules", "M/java.base/module-info.sig")) {
+                zip.putNextEntry(new ZipEntry(entry));
+                zip.closeEntry();
+            }
+            for (var dir : stubDirs) {
+                zip.putNextEntry(new ZipEntry(dir + "/java.base/java/lang/Object.sig"));
+                zip.closeEntry();
+            }
+        }
     }
 }

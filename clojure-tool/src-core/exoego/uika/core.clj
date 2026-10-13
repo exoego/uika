@@ -6,7 +6,8 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str])
   (:import (java.nio.file Files StandardCopyOption)
-           (java.util.jar JarFile)))
+           (java.util.jar JarFile)
+           (java.util.zip ZipEntry ZipFile)))
 
 (set! *warn-on-reflection* true)
 
@@ -147,6 +148,22 @@
   [feature]
   (let [feature (long feature)]
     (if (>= feature own-release-in-ct-sym) feature (dec feature))))
+
+(defn- ct-sym-lacks?
+  "Port of UikaCli.ctSymLacks; keep the two in sync. Whether `ct-sym` can be read and holds
+  no class stub for `release`. A file that cannot be read is left to the CLI, which fails
+  naming it."
+  [ct-sym release]
+  (let [code (Character/toUpperCase (Character/forDigit (int release) 36))
+        stub? (fn [^String entry]
+                (let [codes (.substring entry 0 (max 0 (.indexOf entry "/")))]
+                  (and (.endsWith entry ".sig")
+                       (not (.endsWith entry "/module-info.sig"))
+                       (<= 0 (.indexOf codes (int code))))))]
+    (try
+      (with-open [archive (ZipFile. ^java.io.File (io/file ct-sym))]
+        (not (some #(stub? (.getName ^ZipEntry %)) (enumeration-seq (.entries archive)))))
+      (catch java.io.IOException _ false))))
 
 (defn- runnable-jar?
   [^java.io.File file]
@@ -367,25 +384,32 @@
   [target' {:keys [home feature]}]
   (when-let [target (release-number target')]
     (when (pos? target)
-      (let [effective (min target (ct-sym-ceiling feature))]
+      (let [feature (long feature)
+            ct-sym (io/file home "lib" "ct.sym")
+            ceiling (min target (ct-sym-ceiling feature))]
         ;; The messages name `home`, never "the build JVM". For the Leiningen plugin the two
         ;; differ by design, and blaming lein's own JVM sends the user to inspect a ct.sym
         ;; that was never consulted. Two reasons, two messages, for the same reason.
         (cond
-          (< effective min-release)
-          (do (println (str "uika: skipping the JDK API layer (release " effective
+          (< ceiling min-release)
+          (do (println (str "uika: skipping the JDK API layer (release " ceiling
                             " is below the lowest release ct.sym serves, " min-release ")"))
               nil)
 
-          (not (.isFile (io/file home "lib" "ct.sym")))
+          (not (.isFile ct-sym))
           (do (println (str "uika: skipping the JDK API layer (no usable ct.sym in " home ")"))
               nil)
 
           :else
-          (do (when (< effective target)
-                (println (str "uika: JDK API layer clamped to release " effective
-                              " (the ct.sym in " home " has no release " target ")")))
-              effective))))))
+          ;; Only the JDK's own release is read off the file. Every release below the JDK
+          ;; is in every ct.sym, so the version rule is exact there.
+          (let [effective (if (and (= ceiling feature) (ct-sym-lacks? ct-sym feature))
+                            (dec feature)
+                            ceiling)]
+            (when (< effective target)
+              (println (str "uika: JDK API layer clamped to release " effective
+                            " (the ct.sym in " home " has no release " target ")")))
+            effective))))))
 
 (defn- jfr-evidence-class
   "The lookup on its own, so a test can stand in for a classpath or a JVM this one is not."
