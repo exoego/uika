@@ -37,9 +37,10 @@ experiment-only lessons live here.
   `(or (:java-cmd project) JAVA_CMD "java")` (leiningen.core.eval, eval.clj:254).
   Both the dump's `jdkRelease` and the `--jdk-release` default have to describe the
   latter, so the plugin probes it with `-XshowSettings:properties -version`.
-  Measured before the fix, with `:java-cmd` on a 25 and lein on a 21: the dump said
-  21 and the flag came out 20 instead of 24. The ct.sym ceiling and the `UIKA_JDK`
-  export must come from that same JVM, since UIKA_JDK is the ct.sym the CLI reads.
+  Measured before the fix, with `:java-cmd` on a 25 and lein on a 21. The dump said
+  21 and the flag came out 20, the ceiling of lein's own JVM. The ct.sym ceiling and
+  the `UIKA_JDK` export must come from that same JVM, since UIKA_JDK is the ct.sym the
+  CLI reads.
   All of that holds while the probe SUCCEEDS; a JVM that cannot be run or whose
   output carries no `java.home` falls back to lein's own with a warning, because a
   failed probe must not fail the check. The parse lives in

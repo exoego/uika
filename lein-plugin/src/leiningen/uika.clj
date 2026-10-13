@@ -45,9 +45,9 @@
   release. The command is the one leiningen.core.eval picks at eval.clj:254,
   `(or (:java-cmd project) JAVA_CMD \"java\")`, which is NOT the JVM this plugin
   runs on -- :eval-in-leiningen pins that to lein's own launcher. Measured on a
-  project with :java-cmd on a 25 while lein ran on a 21: the dump claimed 21 and
-  --jdk-release came out 20 instead of 24, resolving escapes against a JDK four
-  releases off.
+  project with :java-cmd on a 25 while lein ran on a 21. The dump claimed 21 and
+  --jdk-release came out 20, the ceiling of lein's own JVM, resolving escapes
+  against a JDK four releases off.
 
   -XshowSettings:properties writes both values to stderr in one cheap start-up. A
   JVM that cannot be probed (not on PATH, or not a HotSpot-family launcher) falls

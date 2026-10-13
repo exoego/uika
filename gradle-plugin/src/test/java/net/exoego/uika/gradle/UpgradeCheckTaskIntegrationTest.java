@@ -437,13 +437,13 @@ final class UpgradeCheckTaskIntegrationTest {
     }
 
     @Test
-    void jdkReleaseDefaultsToTheBuildJvmClamped() throws Exception {
+    void jdkReleaseDefaultsToWhatTheBuildJvmServes() throws Exception {
         // No java plugin in the test project, so the default derivation falls to the JVM
-        // running the build (the TestKit daemon uses this JVM), clamped by one because a
-        // JDK's ct.sym never contains its own release.
+        // running the build (the TestKit daemon uses this JVM), clamped to what its ct.sym
+        // carries.
         runner(CLEAN_VERSION).build();
 
-        var expected = Runtime.version().feature() - 1;
+        var expected = UikaCli.ctSymCeiling(Runtime.version().feature());
         String args = Files.readString(Path.of(before + ".args"));
         assertTrue(args.contains("--jdk-release " + expected),
                 () -> "expected derived --jdk-release " + expected + " in CLI invocation: " + args);
@@ -612,13 +612,21 @@ final class UpgradeCheckTaskIntegrationTest {
                 () -> "UIKA_JDK must name the JDK " + newer.feature() + " toolchain, not " + env);
         assertNotEquals(System.getProperty("java.home"), env,
                 "UIKA_JDK still names the build JVM");
-        // The release is no longer clamped to what the build JVM serves; whatever the exact
-        // ceiling of the toolchain's ct.sym, it is at or above the build JVM's own release.
+        // The toolchain's ct.sym serves the module's release, so the flag names it. From JDK
+        // 22 on that is the toolchain's own release and nothing is clamped. The expected value
+        // is written out rather than taken from ctSymCeiling, so a ceiling that slipped back
+        // to feature - 1 fails here and not only in the unit tests.
         String args = Files.readString(Path.of(before + ".args"));
         var release = java.util.regex.Pattern.compile("--jdk-release (\\d+)").matcher(args);
         assertTrue(release.find(), () -> "no --jdk-release in CLI invocation: " + args);
-        assertTrue(Integer.parseInt(release.group(1)) >= Runtime.version().feature(),
+        var ownReleaseInCtSym = newer.feature() >= 22;
+        var expected = ownReleaseInCtSym ? newer.feature() : newer.feature() - 1;
+        assertEquals(expected, Integer.parseInt(release.group(1)),
                 () -> "the release was clamped to the build JVM: " + args);
+        if (ownReleaseInCtSym) {
+            assertFalse(result.getOutput().contains("JDK API layer clamped to release"),
+                    () -> "the toolchain's own release was announced as clamped:\n" + result.getOutput());
+        }
         assertTrue(result.getOutput().contains(
                         "uika: reading ct.sym from the JDK " + newer.feature() + " at "),
                 () -> "the switch to the toolchain was not announced:\n" + result.getOutput());

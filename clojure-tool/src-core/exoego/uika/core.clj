@@ -135,6 +135,19 @@
   layer can serve, since ct.sym carries no older stubs."
   8)
 
+(def own-release-in-ct-sym
+  "Port of UikaCli.OWN_RELEASE_IN_CT_SYM; keep the two in sync. The first JDK whose ct.sym
+  carries the JDK's own release (https://bugs.openjdk.org/browse/JDK-8318913). Earlier
+  JDKs stop one release below their own."
+  22)
+
+(defn- ct-sym-ceiling
+  "Port of UikaCli.ctSymCeiling; keep the two in sync. The highest release the ct.sym of a
+  JDK at `feature` serves."
+  [feature]
+  (let [feature (long feature)]
+    (if (>= feature own-release-in-ct-sym) feature (dec feature))))
+
 (defn- runnable-jar?
   [^java.io.File file]
   (try
@@ -354,8 +367,7 @@
   [target' {:keys [home feature]}]
   (when-let [target (release-number target')]
     (when (pos? target)
-      (let [ct-sym-max (dec (long feature))
-            effective (min target ct-sym-max)]
+      (let [effective (min target (ct-sym-ceiling feature))]
         ;; The messages name `home`, never "the build JVM". For the Leiningen plugin the two
         ;; differ by design, and blaming lein's own JVM sends the user to inspect a ct.sym
         ;; that was never consulted. Two reasons, two messages, for the same reason.

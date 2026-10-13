@@ -152,6 +152,8 @@
         scrape (fn [re] (second (re-find re java-src)))]
     (is (= @#'uika.core/min-release
            (some-> (scrape #"int MIN_RELEASE = (\d+);") parse-long)))
+    (is (= @#'uika.core/own-release-in-ct-sym
+           (some-> (scrape #"int OWN_RELEASE_IN_CT_SYM = (\d+);") parse-long)))
     (is (= @#'uika.core/cli-group (scrape #"String GROUP = \"([^\"]+)\";")))
     (is (= @#'uika.core/cli-artifact (scrape #"String ARTIFACT = \"([^\"]+)\";")))
     (is (= @#'uika.core/cli-jar-classifier (scrape #"String JAR_CLASSIFIER = \"([^\"]+)\";")))
@@ -626,6 +628,25 @@
     (testing "a JVM without lib/ct.sym"
       (let [out (with-out-str (is (nil? (effective 17))))]
         (is (str/includes? out (str "no usable ct.sym in " home)))))))
+
+(deftest the-ct-sym-ceiling-is-the-jdks-own-release-from-22-on
+  ;; Pinned on both sides of 22 (JDK-8318913). Clamping a JDK 25 to 24 announced a release
+  ;; the file has as missing.
+  (let [home (temp-dir)
+        effective (fn [target feature]
+                    (#'uika.core/effective-jdk-release target {:home home :feature feature}))]
+    (io/make-parents (io/file home "lib" "ct.sym"))
+    (spit (io/file home "lib" "ct.sym") "")
+    (testing "22 is the first JDK whose ct.sym carries its own release"
+      (is (= "" (with-out-str (is (= 22 (effective 22 22)))))))
+    (testing "a JDK 25 serves its own release without a word"
+      (is (= "" (with-out-str (is (= 25 (effective 25 25)))))))
+    (testing "a release above the JDK is still clamped down to it"
+      (let [out (with-out-str (is (= 25 (effective 26 25))))]
+        (is (str/includes? out "clamped to release 25"))))
+    (testing "a JDK 21 keeps its ceiling one below"
+      (let [out (with-out-str (is (= 20 (effective 21 21))))]
+        (is (str/includes? out "clamped to release 20"))))))
 
 (deftest jfr-conversion-says-why-the-converter-is-unavailable
   ;; The compiled class is looked up reflectively so that a source install without it
