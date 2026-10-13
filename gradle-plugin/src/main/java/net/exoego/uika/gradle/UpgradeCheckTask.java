@@ -164,8 +164,8 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         // The toolchain lookups resolve here, inside the one task that needs them. With the
         // layer off (0) nothing reads ct.sym and no UIKA_JDK is exported, so a lookup there
         // would only cost a possible JDK provisioning and announce a JDK nothing uses.
-        var target = jdkRelease().getOrNull();
-        UikaCli.JdkSource jdk = target == null || target <= 0
+        var target = jdkRelease().getOrElse(0);
+        UikaCli.JdkSource jdk = target <= 0
                 ? UikaCli.JdkSource.current()
                 : ctSymSource(UikaCli.JdkSource.current(), compilerJdks().get(), getLogger()::lifecycle);
         Integer jdkRelease = UikaCli.effectiveJdkRelease(target, jdk, getLogger()::lifecycle);

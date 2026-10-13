@@ -34,10 +34,12 @@ final class CtSymSourceTest {
     void theNewestCompilerWinsAndIsAnnounced() {
         var log = new ArrayList<String>();
 
+        // In this order, 23 takes the lead, 25 overtakes it, and 24 fails to.
         var chosen = UpgradeCheckTask.ctSymSource(build, List.of(
                 new CompilerJdk("/jdk/17", 17),
+                new CompilerJdk("/jdk/23", 23),
                 new CompilerJdk("/jdk/25", 25),
-                new CompilerJdk("/jdk/23", 23)), log::add);
+                new CompilerJdk("/jdk/24", 24)), log::add);
 
         assertEquals(Path.of("/jdk/25"), chosen.home());
         assertEquals(25, chosen.feature());

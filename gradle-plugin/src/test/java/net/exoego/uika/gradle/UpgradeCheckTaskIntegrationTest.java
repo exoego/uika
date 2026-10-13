@@ -675,6 +675,36 @@ final class UpgradeCheckTaskIntegrationTest {
                 () -> "a JDK nothing reads was announced:\n" + result.getOutput());
     }
 
+    /// A stated release is a statement about the whole build, so it reaches projects that
+    /// compile nothing, such as the root of a multi-module build. One above the build JVM
+    /// has no compileJava there to name a JDK, and the build JVM stays in charge.
+    @Test
+    void aStatedReleaseAboveTheBuildJvmNeedsCompileJavaToNameAJdk() throws Exception {
+        var above = Runtime.version().feature() + 1;
+        var result = runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION,
+                        "-PuikaJdkRelease=" + above)
+                .build();
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
+        assertEquals(System.getProperty("java.home"),
+                Files.readString(Path.of(before + ".env")).trim(),
+                "UIKA_JDK must stay the build JVM when no module names a JDK");
+        // Clamped to what the build JVM serves, whatever its exact ceiling.
+        String args = Files.readString(Path.of(before + ".args"));
+        var release = java.util.regex.Pattern.compile("--jdk-release (\\d+)").matcher(args);
+        assertTrue(release.find(), () -> "no --jdk-release in CLI invocation: " + args);
+        assertTrue(Integer.parseInt(release.group(1)) <= Runtime.version().feature(),
+                () -> "the stated " + above + " was not clamped to the build JVM: " + args);
+        assertFalse(result.getOutput().contains("uika: reading ct.sym from"),
+                () -> "the check named a JDK no module compiles with:\n" + result.getOutput());
+    }
+
     /// Resolving a toolchain can provision a JDK, so the check must not touch one the build
     /// JVM can stand in for. With detection off and no installation registered, this
     /// toolchain cannot resolve at all, and the check still passes because it never asks.
