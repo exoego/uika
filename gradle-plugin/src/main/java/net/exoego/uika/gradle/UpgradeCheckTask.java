@@ -6,14 +6,18 @@ import org.gradle.api.GradleException;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.file.RegularFileProperty;
+import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.TaskAction;
+import org.gradle.jvm.toolchain.JavaCompiler;
 import org.gradle.work.DisableCachingByDefault;
 
 import java.io.File;
+import java.io.Serializable;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Runs {@code uika upgrade-check} between two classpath dumps. The CLI is the pure-Java jar,
@@ -49,6 +53,13 @@ public abstract class UpgradeCheckTask extends DefaultTask {
     // From providers.environmentVariable rather than System.getenv, which the configuration
     // cache would record as a configuration input and invalidate the whole entry on.
     private final Property<String> cliPath = getProject().getObjects().property(String.class);
+    // The JDKs of the modules whose release the build JVM cannot serve (UikaPlugin wires
+    // only those). Each is a lazy toolchain lookup, resolved when the check runs.
+    private final ListProperty<CompilerJdk> compilerJdks =
+            getProject().getObjects().listProperty(CompilerJdk.class);
+
+    /** A JDK a module compiles with, in a shape the configuration cache can store. */
+    record CompilerJdk(String home, int feature) implements Serializable {}
 
     RegularFileProperty beforeFile() {
         return beforeFile;
@@ -98,6 +109,46 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         return cliPath;
     }
 
+    ListProperty<CompilerJdk> compilerJdks() {
+        return compilerJdks;
+    }
+
+    /** Static so the mapped provider captures nothing the configuration cache cannot store. */
+    static CompilerJdk compilerJdk(JavaCompiler compiler) {
+        var metadata = compiler.getMetadata();
+        return new CompilerJdk(metadata.getInstallationPath().getAsFile().getAbsolutePath(),
+                metadata.getLanguageVersion().asInt());
+    }
+
+    /**
+     * The JDK whose ct.sym the check reads. The build JVM, unless a module compiles with a
+     * newer one.
+     *
+     * <p>A JDK's ct.sym stops at its own release (one below it on JDK 21 and earlier), so a
+     * module compiling for a release above the build JVM cannot be served by the build JVM at
+     * all. The layer was clamped down, and a JDK move to that release failed for want of its
+     * stubs. That happens whenever the Gradle daemon is pinned below the toolchain, which
+     * {@code gradle-daemon-jvm.properties} exists to do. The newest compiler JDK serves every
+     * module, because a JDK compiles for nothing above itself. A tie goes to the build JVM,
+     * so a build whose toolchain matches its daemon behaves as before.
+     */
+    static UikaCli.JdkSource ctSymSource(
+            UikaCli.JdkSource build, List<CompilerJdk> compilers, Consumer<String> log) {
+        CompilerJdk newest = null;
+        for (CompilerJdk compiler : compilers) {
+            if (compiler.feature() > build.feature()
+                    && (newest == null || compiler.feature() > newest.feature())) {
+                newest = compiler;
+            }
+        }
+        if (newest == null) {
+            return build;
+        }
+        log.accept("uika: reading ct.sym from the JDK " + newest.feature() + " at " + newest.home()
+                + " that the modules compile with (the build runs on JDK " + build.feature() + ")");
+        return new UikaCli.JdkSource(Path.of(newest.home()), newest.feature());
+    }
+
     @TaskAction
     public void run() throws Exception {
         // Undeclared as inputs, so Gradle no longer names a missing dump; say it here.
@@ -110,12 +161,14 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         List<Path> excludeFiles = excludeFiles().getFiles().stream()
                 .map(File::toPath)
                 .toList();
-        // The build JVM supplies ct.sym: Gradle can name a module's toolchain but resolving it
-        // to an installation would provision a JDK the build never asked for, so a release
-        // above what this JVM serves is clamped down rather than chased.
-        UikaCli.JdkSource jdk = UikaCli.JdkSource.current();
-        Integer jdkRelease = UikaCli.effectiveJdkRelease(
-                jdkRelease().getOrNull(), jdk, getLogger()::lifecycle);
+        // The toolchain lookups resolve here, inside the one task that needs them. With the
+        // layer off (0) nothing reads ct.sym and no UIKA_JDK is exported, so a lookup there
+        // would only cost a possible JDK provisioning and announce a JDK nothing uses.
+        var target = jdkRelease().getOrElse(0);
+        UikaCli.JdkSource jdk = target <= 0
+                ? UikaCli.JdkSource.current()
+                : ctSymSource(UikaCli.JdkSource.current(), compilerJdks().get(), getLogger()::lifecycle);
+        Integer jdkRelease = UikaCli.effectiveJdkRelease(target, jdk, getLogger()::lifecycle);
         // JFR recordings on the knob (a .jfr value, or recordings inside a directory) are
         // converted to the CLI's text format here: the CLI never reads
         // binary JFR, while this task always runs on a full JDK.

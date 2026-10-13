@@ -20,6 +20,7 @@ import java.util.Objects;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -566,6 +567,232 @@ final class UpgradeCheckTaskIntegrationTest {
         String disabled = Files.readString(Path.of(before + ".args"));
         assertTrue(!disabled.contains("--jdk-release"),
                 () -> "-PuikaJdkRelease=0 must disable the JDK API layer: " + disabled);
+    }
+
+    /// A daemon pinned below the toolchain (gradle-daemon-jvm.properties, or a CI image on
+    /// an older JDK) left the check reading the daemon's ct.sym, which stops at the daemon's
+    /// release. A module compiling for a newer release was clamped down, and a JDK move to
+    /// that release failed with exit 2 for want of its stubs. The check now reads the JDK
+    /// such a module compiles with. Under the configuration cache, because the lookup is a
+    /// mapped toolchain provider on the task and that is what an entry has to store.
+    @Test
+    void aToolchainNewerThanTheBuildJvmSuppliesCtSym() throws Exception {
+        var newer = newerJdk();
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    java
+                    id("net.exoego.uika")
+                }
+
+                java { toolchain { languageVersion = JavaLanguageVersion.of(%d) } }
+
+                repositories {
+                    maven {
+                        url = uri("%s")
+                        metadataSources { artifact() }
+                    }
+                }
+                """.formatted(newer.feature(), repoDir.toUri()));
+
+        String[] arguments = {
+                "uikaUpgradeCheck",
+                "--configuration-cache",
+                "--stacktrace",
+                "-PuikaBefore=" + before,
+                "-PuikaAfter=" + after,
+                "-PuikaCliVersion=" + CLEAN_VERSION,
+                "-Porg.gradle.java.installations.paths=" + newer.home(),
+                "-Porg.gradle.java.installations.auto-detect=false",
+                "-Porg.gradle.java.installations.auto-download=false"};
+        var result = runner(CLEAN_VERSION).withArguments(arguments).build();
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
+        var env = Files.readString(Path.of(before + ".env")).trim();
+        assertEquals(newer.feature(), UikaCli.installedRelease(Path.of(env)),
+                () -> "UIKA_JDK must name the JDK " + newer.feature() + " toolchain, not " + env);
+        assertNotEquals(System.getProperty("java.home"), env,
+                "UIKA_JDK still names the build JVM");
+        // The release is no longer clamped to what the build JVM serves; whatever the exact
+        // ceiling of the toolchain's ct.sym, it is at or above the build JVM's own release.
+        String args = Files.readString(Path.of(before + ".args"));
+        var release = java.util.regex.Pattern.compile("--jdk-release (\\d+)").matcher(args);
+        assertTrue(release.find(), () -> "no --jdk-release in CLI invocation: " + args);
+        assertTrue(Integer.parseInt(release.group(1)) >= Runtime.version().feature(),
+                () -> "the release was clamped to the build JVM: " + args);
+        assertTrue(result.getOutput().contains(
+                        "uika: reading ct.sym from the JDK " + newer.feature() + " at "),
+                () -> "the switch to the toolchain was not announced:\n" + result.getOutput());
+
+        // The stored entry carries the resolved record, so a reuse run must hand the CLI the
+        // same JDK with no project left to look it up from.
+        Files.delete(Path.of(before + ".env"));
+        var reused = runner(CLEAN_VERSION).withArguments(arguments).build();
+        assertEquals(TaskOutcome.SUCCESS, reused.task(":uikaUpgradeCheck").getOutcome());
+        assertTrue(reused.getOutput().contains("Configuration cache entry reused"),
+                () -> "the configuration cache entry was not reused:\n" + reused.getOutput());
+        assertEquals(env, Files.readString(Path.of(before + ".env")).trim(),
+                "UIKA_JDK changed on the cache-reuse run");
+    }
+
+    /// With the layer off nothing reads ct.sym and no UIKA_JDK is exported, so the check
+    /// must not resolve a toolchain it would never use. The same unresolvable toolchain as
+    /// below, this time above the build JVM, so a lookup fails the build.
+    @Test
+    void aDisabledLayerResolvesNoToolchain() throws Exception {
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    java
+                    id("net.exoego.uika")
+                }
+
+                java { toolchain { languageVersion = JavaLanguageVersion.of(%d) } }
+
+                repositories {
+                    maven {
+                        url = uri("%s")
+                        metadataSources { artifact() }
+                    }
+                }
+                """.formatted(Runtime.version().feature() + 1, repoDir.toUri()));
+
+        var result = runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION,
+                        "-PuikaJdkRelease=0",
+                        "-Porg.gradle.java.installations.auto-detect=false",
+                        "-Porg.gradle.java.installations.auto-download=false")
+                .build();
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
+        String args = Files.readString(Path.of(before + ".args"));
+        assertFalse(args.contains("--jdk-release"),
+                () -> "-PuikaJdkRelease=0 must disable the JDK API layer: " + args);
+        assertFalse(result.getOutput().contains("uika: reading ct.sym from"),
+                () -> "a JDK nothing reads was announced:\n" + result.getOutput());
+    }
+
+    /// A stated release is a statement about the whole build, so it reaches projects that
+    /// compile nothing, such as the root of a multi-module build. One above the build JVM
+    /// has no compileJava there to name a JDK, and the build JVM stays in charge.
+    @Test
+    void aStatedReleaseAboveTheBuildJvmNeedsCompileJavaToNameAJdk() throws Exception {
+        var above = Runtime.version().feature() + 1;
+        var result = runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION,
+                        "-PuikaJdkRelease=" + above)
+                .build();
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
+        assertEquals(System.getProperty("java.home"),
+                Files.readString(Path.of(before + ".env")).trim(),
+                "UIKA_JDK must stay the build JVM when no module names a JDK");
+        // Clamped to what the build JVM serves, whatever its exact ceiling.
+        String args = Files.readString(Path.of(before + ".args"));
+        var release = java.util.regex.Pattern.compile("--jdk-release (\\d+)").matcher(args);
+        assertTrue(release.find(), () -> "no --jdk-release in CLI invocation: " + args);
+        assertTrue(Integer.parseInt(release.group(1)) <= Runtime.version().feature(),
+                () -> "the stated " + above + " was not clamped to the build JVM: " + args);
+        assertFalse(result.getOutput().contains("uika: reading ct.sym from"),
+                () -> "the check named a JDK no module compiles with:\n" + result.getOutput());
+    }
+
+    /// Resolving a toolchain can provision a JDK, so the check must not touch one the build
+    /// JVM can stand in for. With detection off and no installation registered, this
+    /// toolchain cannot resolve at all, and the check still passes because it never asks.
+    @Test
+    void aToolchainTheBuildJvmCanStandInForIsNeverResolved() throws Exception {
+        var older = Math.max(UikaCli.MIN_RELEASE, Runtime.version().feature() - 1);
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    java
+                    id("net.exoego.uika")
+                }
+
+                java { toolchain { languageVersion = JavaLanguageVersion.of(%d) } }
+
+                repositories {
+                    maven {
+                        url = uri("%s")
+                        metadataSources { artifact() }
+                    }
+                }
+                """.formatted(older, repoDir.toUri()));
+
+        var result = runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION,
+                        "-Porg.gradle.java.installations.auto-detect=false",
+                        "-Porg.gradle.java.installations.auto-download=false")
+                .build();
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
+        assertEquals(System.getProperty("java.home"),
+                Files.readString(Path.of(before + ".env")).trim(),
+                "UIKA_JDK must stay the build JVM for a release it can serve");
+        String args = Files.readString(Path.of(before + ".args"));
+        assertTrue(args.contains("--jdk-release " + older),
+                () -> "expected --jdk-release " + older + " from the toolchain's release: " + args);
+        assertFalse(result.getOutput().contains("uika: reading ct.sym from"),
+                () -> "the check switched away from the build JVM:\n" + result.getOutput());
+    }
+
+    /// A JDK newer than this JVM, installed where Gradle can be pointed at it. CI exports one
+    /// as JAVA_HOME_<n>_<arch> (ci.yml's setup-java step is there for this), so on CI a
+    /// missing one is a failure rather than a skip.
+    private static UpgradeCheckTask.CompilerJdk newerJdk() throws IOException {
+        var current = Runtime.version().feature();
+        var roots = new java.util.ArrayList<Path>();
+        for (var entry : System.getenv().entrySet()) {
+            if (entry.getKey().startsWith("JAVA_HOME_") && !entry.getValue().isBlank()) {
+                roots.add(Path.of(entry.getValue()));
+            }
+        }
+        var home = Path.of(System.getProperty("user.home"));
+        for (String dir : List.of(".gradle/jdks", ".local/share/mise/installs/java", ".jdks",
+                ".sdkman/candidates/java")) {
+            roots.add(home.resolve(dir));
+        }
+        roots.add(Path.of("/Library/Java/JavaVirtualMachines"));
+        roots.add(Path.of("/usr/lib/jvm"));
+        for (Path root : roots) {
+            if (!Files.isDirectory(root)) {
+                continue;
+            }
+            java.util.Optional<UpgradeCheckTask.CompilerJdk> found;
+            try (var walk = Files.walk(root, 4)) {
+                found = walk
+                        .filter(p -> Files.isRegularFile(p.resolve("lib").resolve("ct.sym")))
+                        .map(p -> new UpgradeCheckTask.CompilerJdk(
+                                p.toString(), Objects.requireNonNullElse(UikaCli.installedRelease(p), 0)))
+                        .filter(jdk -> jdk.feature() > current)
+                        .findFirst();
+            } catch (java.io.UncheckedIOException unreadable) {
+                // One unreadable directory under a root must not end the search.
+                continue;
+            }
+            if (found.isPresent()) {
+                return found.get();
+            }
+        }
+        if (System.getenv("CI") != null) {
+            throw new AssertionError("no JDK newer than " + current + " on this runner; JAVA_HOME_* are: "
+                    + System.getenv().keySet().stream().filter(k -> k.startsWith("JAVA_HOME_")).toList());
+        }
+        Assumptions.abort("no JDK newer than " + current + " installed here");
+        throw new AssertionError("unreachable");
     }
 
     /// The root tasks have no data dependencies on each other, so a single invocation must
