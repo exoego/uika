@@ -94,7 +94,6 @@ common and tool-specific setup on one page per tool:
   </tr>
   <tr>
     <td align="center" colspan="3">
-      <a href="docs/bazel.md"><img src="docs/logos/bazel.svg" alt="Bazel" height="64"></a><br>
       <a href="docs/bazel.md"><b>Bazel</b></a>
     </td>
   </tr>
