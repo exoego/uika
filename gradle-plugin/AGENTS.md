@@ -79,8 +79,10 @@ The shared plugin rules are in `jvm-plugin-core/AGENTS.md`. Claude Code imports 
   JVM running Gradle plus `options.release = 17`, because toolchain
   auto-resolution is not available in every target environment.
 - The check reads ct.sym from the newest compiler JDK among the modules whose recorded
-  release is above the JVM running Gradle, else from that JVM (`UpgradeCheckTask.ctSymSource`,
-  rationale in `jvm-plugin-core/AGENTS.md`). The wiring is per module in `projectsEvaluated`:
+  release is above what the JVM running Gradle serves (`UikaCli.ctSymCeiling`), else from
+  that JVM (`UpgradeCheckTask.ctSymSource`, rationale in `jvm-plugin-core/AGENTS.md`).
+  `aModuleAtTheBuildJvmsReleaseNeedsItsToolchainOnlyBelowJdk22` pins the ceiling as the
+  gate. The wiring is per module in `projectsEvaluated`:
   `compileJava.getJavaCompiler().map(UpgradeCheckTask::compilerJdk)` into a `ListProperty`
   of a serializable record, resolved only in the task action. The mapper must stay a static
   method reference, and nothing may query those providers at configuration time. That is
