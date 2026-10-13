@@ -437,13 +437,13 @@ final class UpgradeCheckTaskIntegrationTest {
     }
 
     @Test
-    void jdkReleaseDefaultsToTheBuildJvmClamped() throws Exception {
+    void jdkReleaseDefaultsToWhatTheBuildJvmServes() throws Exception {
         // No java plugin in the test project, so the default derivation falls to the JVM
-        // running the build (the TestKit daemon uses this JVM), clamped by one because a
-        // JDK's ct.sym never contains its own release.
+        // running the build (the TestKit daemon uses this JVM), clamped to what its ct.sym
+        // carries: its own release from JDK 22 on, one below it before.
         runner(CLEAN_VERSION).build();
 
-        var expected = Runtime.version().feature() - 1;
+        var expected = UikaCli.ctSymCeiling(Runtime.version().feature());
         String args = Files.readString(Path.of(before + ".args"));
         assertTrue(args.contains("--jdk-release " + expected),
                 () -> "expected derived --jdk-release " + expected + " in CLI invocation: " + args);

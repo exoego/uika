@@ -627,6 +627,26 @@
       (let [out (with-out-str (is (nil? (effective 17))))]
         (is (str/includes? out (str "no usable ct.sym in " home)))))))
 
+(deftest the-ct-sym-ceiling-is-the-jdks-own-release-from-22-on
+  ;; Port of UikaCli.ctSymCeiling, pinned on both sides of 22: a JDK 21 ct.sym stops at
+  ;; 20, a JDK 25 ct.sym carries 25 (JDK-8318913). Clamping 25 to 24 announced a release
+  ;; the file has as missing.
+  (let [home (temp-dir)
+        effective (fn [target feature]
+                    (#'uika.core/effective-jdk-release target {:home home :feature feature}))]
+    (io/make-parents (io/file home "lib" "ct.sym"))
+    (spit (io/file home "lib" "ct.sym") "")
+    (is (= 22 (#'uika.core/ct-sym-ceiling 22)))
+    (is (= 20 (#'uika.core/ct-sym-ceiling 21)))
+    (testing "a JDK 25 serves its own release without a word"
+      (is (= "" (with-out-str (is (= 25 (effective 25 25)))))))
+    (testing "a release above the JDK is still clamped down to it"
+      (let [out (with-out-str (is (= 25 (effective 26 25))))]
+        (is (str/includes? out "clamped to release 25"))))
+    (testing "a JDK 21 keeps its ceiling one below"
+      (let [out (with-out-str (is (= 20 (effective 21 21))))]
+        (is (str/includes? out "clamped to release 20"))))))
+
 (deftest jfr-conversion-says-why-the-converter-is-unavailable
   ;; The compiled class is looked up reflectively so that a source install without it
   ;; still runs the text-log flow. The two ways it can be absent get their own reasons:

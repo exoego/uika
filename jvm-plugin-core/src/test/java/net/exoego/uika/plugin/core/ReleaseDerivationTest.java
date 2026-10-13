@@ -110,7 +110,7 @@ final class ReleaseDerivationTest {
         withCtSym(home);
         var log = new ArrayList<String>();
 
-        // The ceiling is feature - 1, so a JDK 8 clamps every target to 7, under the floor.
+        // A JDK 8 ct.sym stops at 7, under the floor, so every target is clamped there.
         assertNull(UikaCli.effectiveJdkRelease(11, jdk(home, 8), log::add));
 
         assertEquals(1, log.size(), () -> "expected exactly one line: " + log);
@@ -150,12 +150,33 @@ final class ReleaseDerivationTest {
         withCtSym(home);
         var log = new ArrayList<String>();
 
-        // A JDK's own ct.sym never carries its own release, so the ceiling is feature - 1.
+        // A JDK 21 ct.sym stops one release below its own, so the ceiling is 20.
         assertEquals(20, UikaCli.effectiveJdkRelease(21, jdk(home, 21), log::add));
 
         assertEquals(1, log.size(), () -> "expected exactly one line: " + log);
         assertTrue(log.get(0).contains("clamped to release 20"),
                 () -> "clamp was not announced: " + log);
+    }
+
+    /// From JDK 22 on, ct.sym carries the JDK's own release (JDK-8318913), so a JDK 25
+    /// serves 25. Clamping it to 24 announced a release the file does have as missing, and
+    /// every member 25 added stayed Unknown on a JDK that could have resolved it.
+    @Test
+    void aJdk22OrLaterServesItsOwnRelease(@TempDir Path home) throws IOException {
+        withCtSym(home);
+        var log = new ArrayList<String>();
+
+        assertEquals(25, UikaCli.effectiveJdkRelease(25, jdk(home, 25), log::add));
+        assertTrue(log.isEmpty(), () -> "the JDK's own release was announced as clamped: " + log);
+
+        assertEquals(25, UikaCli.effectiveJdkRelease(26, jdk(home, 25), log::add));
+        assertEquals(1, log.size(), () -> "expected exactly one line: " + log);
+        assertTrue(log.get(0).contains("clamped to release 25"),
+                () -> "a release above the JDK was not clamped to it: " + log);
+
+        // 22 is the first such JDK; 21 keeps its classes in jmods, which the layer does not read.
+        assertEquals(22, UikaCli.ctSymCeiling(22));
+        assertEquals(20, UikaCli.ctSymCeiling(21));
     }
 
     @Test
@@ -175,14 +196,18 @@ final class ReleaseDerivationTest {
     void clampingNeverRoundsUp(@TempDir Path home) throws IOException {
         withCtSym(home);
 
-        for (var target = UikaCli.MIN_RELEASE; target <= 30; target++) {
-            Integer effective = UikaCli.effectiveJdkRelease(target, jdk(home, 21), line -> { });
-            var wanted = target;
-            // The exact value, not `<= wanted`: with a ceiling of 20 and a floor of 8 this
-            // can never legitimately answer null, so tolerating null would admit the
-            // "silently switched the layer off" regression the test exists for.
-            assertEquals(Math.min(wanted, 20), effective,
-                    () -> "release " + wanted + " came back as " + effective);
+        // One JDK on each side of 22, where the ceiling moves from one below to the JDK's own.
+        for (var feature : List.of(21, 25)) {
+            var ceiling = UikaCli.ctSymCeiling(feature);
+            for (var target = UikaCli.MIN_RELEASE; target <= 30; target++) {
+                Integer effective = UikaCli.effectiveJdkRelease(target, jdk(home, feature), line -> { });
+                var wanted = target;
+                // The exact value, not `<= wanted`: with a ceiling above the floor of 8 this
+                // can never legitimately answer null, so tolerating null would admit the
+                // "silently switched the layer off" regression the test exists for.
+                assertEquals(Math.min(wanted, ceiling), effective,
+                        () -> "release " + wanted + " on JDK " + feature + " came back as " + effective);
+            }
         }
     }
 

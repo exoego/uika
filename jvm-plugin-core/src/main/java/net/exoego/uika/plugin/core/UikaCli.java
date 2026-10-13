@@ -117,6 +117,18 @@ public final class UikaCli {
     public static final int MIN_RELEASE = 8;
 
     /**
+     * The first JDK whose ct.sym carries the JDK's own release
+     * (https://bugs.openjdk.org/browse/JDK-8318913). Earlier JDKs stop one release below
+     * their own and keep that release's classes in jmods, which the layer does not read.
+     */
+    public static final int OWN_RELEASE_IN_CT_SYM = 22;
+
+    /** The highest release the ct.sym of a JDK at {@code feature} can serve. */
+    public static int ctSymCeiling(int feature) {
+        return feature >= OWN_RELEASE_IN_CT_SYM ? feature : feature - 1;
+    }
+
+    /**
      * The API release a compiler-option list targets, or null when it declares none.
      *
      * <p>Shared by every plugin that has only the raw option list to go on, so one parser
@@ -228,11 +240,11 @@ public final class UikaCli {
      * Clamps a wanted {@code --jdk-release} value to what {@code jdk}'s ct.sym can serve,
      * logging the decision through {@code log}. The plugins run on a JVM by definition, so the
      * JDK API layer defaults ON there (unlike the opt-in CLI flag): the build knows its JDK
-     * authoritatively. A JDK's ct.sym does not contain its own release, so the highest servable
-     * release is that JDK's feature release minus one; clamping DOWN is the conservative
-     * direction (members added after the clamped release resolve NotFound on both sides of the
-     * check and stay unreported, the same direction as Unknown). Over-claiming is the direction
-     * that loses findings silently, which is why nothing here ever rounds up.
+     * authoritatively. The highest servable release is {@link #ctSymCeiling}: the JDK's own
+     * from 22 on, one below it before; clamping DOWN is the conservative direction (members
+     * added after the clamped release resolve NotFound on both sides of the check and stay
+     * unreported, the same direction as Unknown). Over-claiming is the direction that loses
+     * findings silently, which is why nothing here ever rounds up.
      *
      * @param target the wanted release, or null/&lt;=0 to disable the layer
      * @param jdk the JDK supplying ct.sym, normally {@link JdkSource#current()}
@@ -242,8 +254,7 @@ public final class UikaCli {
         if (target == null || target <= 0) {
             return null;
         }
-        var ctSymMax = jdk.feature() - 1;
-        var effective = Math.min(target, ctSymMax);
+        var effective = Math.min(target, ctSymCeiling(jdk.feature()));
         // Two different reasons, two different messages. Folding them made a below-floor
         // release report a missing ct.sym, sending the user to inspect a JDK that was fine.
         if (effective < MIN_RELEASE) {
