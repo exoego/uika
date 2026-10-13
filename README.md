@@ -244,8 +244,9 @@ Both releases' APIs are read from the one JDK uika finds, so checking an upgrade
 *to* the JDK you now run needs only that JDK. That JDK cannot be older than the
 release you move to. By default a plugin hands uika the JDK the build runs on,
 so a change that moves a module above that JDK fails the check with exit code 2
-until the build runs on the newer one. The Gradle plugin reads a newer
-toolchain's JDK instead, so a daemon pinned below it still checks the move.
+until the build runs on the newer one. For a module whose release is above the
+JVM running Gradle, the Gradle plugin reads its toolchain's JDK instead, so a
+daemon pinned below it still checks the move.
 [The JDK API layer](docs/jdk.md#where-the-stubs-come-from) covers the two stub
 sources and why only a JDK 22 or later shows a class that became sealed.
 
