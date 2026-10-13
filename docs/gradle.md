@@ -50,7 +50,10 @@ The dump task builds the module outputs by default. Pass
 
 `uikaUpgradeCheck` fetches the CLI as the `jvm` jar of
 `net.exoego.uika:uika-cli:<version>` and runs it on the JVM that runs Gradle. So
-it works wherever that JVM does.
+it works wherever that JVM does. [The JDK API layer](jdk.md) reads that JVM's
+`ct.sym` too, unless a module compiles for a newer release through a
+toolchain. Then it reads that toolchain's, so a daemon pinned to an older JDK
+in `gradle-daemon-jvm.properties` still checks a move to the newer one.
 
 ## PR gate on GitHub Actions
 

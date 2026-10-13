@@ -311,9 +311,10 @@ public class UikaPlugin implements Plugin<Project> {
                     // The build knows its JDK, so the JDK API layer defaults ON here (the bare
                     // CLI keeps it opt-in): the lowest release any project targets, else the
                     // JVM running the build. UikaCli.effectiveJdkRelease clamps at execution
-                    // time to what the build JVM's ct.sym can actually serve. The configuration
-                    // cache evaluates the provider when it stores the task, while the project
-                    // is still available.
+                    // time to what the ct.sym the check reads can actually serve (the build
+                    // JVM's, or a newer compiler JDK's, see below). The configuration cache
+                    // evaluates the provider when it stores the task, while the project is
+                    // still available.
                     task.jdkRelease().set(statedJdkRelease.orElse(
                             root.getProviders().provider(() -> defaultJdkRelease(root))));
                     // Through the provider API, not System.getenv: reading the environment
@@ -342,6 +343,26 @@ public class UikaPlugin implements Plugin<Project> {
             var notation = UikaCli.GROUP + ":" + UikaCli.ARTIFACT + ":"
                     + task.cliVersion().get() + ":" + UikaCli.JAR_CLASSIFIER + "@jar";
             task.cliJar().from(detachedFor(root, notation));
+        }));
+        // Only the modules whose recorded release is above the build JVM: resolving a
+        // toolchain can provision a JDK, and a module the build JVM can stand in for is not
+        // worth that. The lookup itself stays lazy (a mapped provider on the task), so it
+        // runs when the check does and never for `gradle tasks`. Once every project is
+        // evaluated, like the dump, because the release and the toolchain are both
+        // build-script settable.
+        root.getGradle().projectsEvaluated(gradle -> upgradeCheck.configure(task -> {
+            var buildJvm = Runtime.version().feature();
+            for (Project p : root.getAllprojects()) {
+                Integer release = dumpJdkRelease(statedJdkRelease.getOrNull(), p);
+                if (release == null || release <= buildJvm) {
+                    continue;
+                }
+                var compile = p.getTasks().findByName(JavaPlugin.COMPILE_JAVA_TASK_NAME);
+                if (compile instanceof JavaCompile javaCompile) {
+                    task.compilerJdks().add(
+                            javaCompile.getJavaCompiler().map(UpgradeCheckTask::compilerJdk));
+                }
+            }
         }));
 
         // -PuikaJfr=<dir> makes every Test task record class loads into a JFR recording

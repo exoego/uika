@@ -136,6 +136,18 @@ Rules every integration shares. Each tool's own notes live in its directory's
   clamp for the lein plugin and the Clojure tool; its messages name the JDK's
   home, never "the build JVM", because for lein those two differ by design.
   Opt out with 0.
+  The JdkSource is the build JVM except in Gradle, where `UpgradeCheckTask.ctSymSource`
+  takes the newest JDK among the modules whose recorded release is ABOVE the build JVM,
+  read from `compileJava`'s `javaCompiler` (the toolchain). A daemon pinned below the
+  toolchain (`gradle-daemon-jvm.properties`, kept on 21 while some build plugin cannot
+  start on 25) clamped the layer and failed a 21 -> 25 JDK move with exit 2, since the
+  daemon's ct.sym has no 25. Only those modules, because resolving a toolchain can
+  provision a JDK and a module the build JVM can stand in for is not worth that; the
+  lookup is a mapped provider resolved inside the task action, so `gradle tasks` never
+  pays it. A tie goes to the build JVM, so an unpinned build behaves as before. The
+  newest serves every module (a JDK compiles for nothing above itself), while the
+  lowest release's toolchain would fail a sibling's JDK run. The other tools still
+  pass the build JVM; Mill's note above records the same provisioning concern.
 - A knob's name is its CLI FLAG's name, written the way the tool writes names, and the
   `uika` prefix appears exactly where the namespace is flat and shared with the whole
   build. `-PuikaFailOn`, `uikaFailOn` and `-Duika.failOn` carry it (Gradle project
