@@ -594,18 +594,17 @@ final class UpgradeCheckTaskIntegrationTest {
                 }
                 """.formatted(newer.feature(), repoDir.toUri()));
 
-        var result = runner(CLEAN_VERSION)
-                .withArguments(
-                        "uikaUpgradeCheck",
-                        "--configuration-cache",
-                        "--stacktrace",
-                        "-PuikaBefore=" + before,
-                        "-PuikaAfter=" + after,
-                        "-PuikaCliVersion=" + CLEAN_VERSION,
-                        "-Porg.gradle.java.installations.paths=" + newer.home(),
-                        "-Porg.gradle.java.installations.auto-detect=false",
-                        "-Porg.gradle.java.installations.auto-download=false")
-                .build();
+        String[] arguments = {
+                "uikaUpgradeCheck",
+                "--configuration-cache",
+                "--stacktrace",
+                "-PuikaBefore=" + before,
+                "-PuikaAfter=" + after,
+                "-PuikaCliVersion=" + CLEAN_VERSION,
+                "-Porg.gradle.java.installations.paths=" + newer.home(),
+                "-Porg.gradle.java.installations.auto-detect=false",
+                "-Porg.gradle.java.installations.auto-download=false"};
+        var result = runner(CLEAN_VERSION).withArguments(arguments).build();
 
         assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
         var env = Files.readString(Path.of(before + ".env")).trim();
@@ -623,6 +622,57 @@ final class UpgradeCheckTaskIntegrationTest {
         assertTrue(result.getOutput().contains(
                         "uika: reading ct.sym from the JDK " + newer.feature() + " at "),
                 () -> "the switch to the toolchain was not announced:\n" + result.getOutput());
+
+        // The stored entry carries the resolved record, so a reuse run must hand the CLI the
+        // same JDK with no project left to look it up from.
+        Files.delete(Path.of(before + ".env"));
+        var reused = runner(CLEAN_VERSION).withArguments(arguments).build();
+        assertEquals(TaskOutcome.SUCCESS, reused.task(":uikaUpgradeCheck").getOutcome());
+        assertTrue(reused.getOutput().contains("Configuration cache entry reused"),
+                () -> "the configuration cache entry was not reused:\n" + reused.getOutput());
+        assertEquals(env, Files.readString(Path.of(before + ".env")).trim(),
+                "UIKA_JDK changed on the cache-reuse run");
+    }
+
+    /// With the layer off nothing reads ct.sym and no UIKA_JDK is exported, so the check
+    /// must not resolve a toolchain it would never use. The same unresolvable toolchain as
+    /// below, this time above the build JVM, so a lookup fails the build.
+    @Test
+    void aDisabledLayerResolvesNoToolchain() throws Exception {
+        write(projectDir.resolve("build.gradle.kts"), """
+                plugins {
+                    java
+                    id("net.exoego.uika")
+                }
+
+                java { toolchain { languageVersion = JavaLanguageVersion.of(%d) } }
+
+                repositories {
+                    maven {
+                        url = uri("%s")
+                        metadataSources { artifact() }
+                    }
+                }
+                """.formatted(Runtime.version().feature() + 1, repoDir.toUri()));
+
+        var result = runner(CLEAN_VERSION)
+                .withArguments(
+                        "uikaUpgradeCheck",
+                        "--stacktrace",
+                        "-PuikaBefore=" + before,
+                        "-PuikaAfter=" + after,
+                        "-PuikaCliVersion=" + CLEAN_VERSION,
+                        "-PuikaJdkRelease=0",
+                        "-Porg.gradle.java.installations.auto-detect=false",
+                        "-Porg.gradle.java.installations.auto-download=false")
+                .build();
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":uikaUpgradeCheck").getOutcome());
+        String args = Files.readString(Path.of(before + ".args"));
+        assertFalse(args.contains("--jdk-release"),
+                () -> "-PuikaJdkRelease=0 must disable the JDK API layer: " + args);
+        assertFalse(result.getOutput().contains("uika: reading ct.sym from"),
+                () -> "a JDK nothing reads was announced:\n" + result.getOutput());
     }
 
     /// Resolving a toolchain can provision a JDK, so the check must not touch one the build
@@ -691,16 +741,20 @@ final class UpgradeCheckTaskIntegrationTest {
             if (!Files.isDirectory(root)) {
                 continue;
             }
+            java.util.Optional<UpgradeCheckTask.CompilerJdk> found;
             try (var walk = Files.walk(root, 4)) {
-                var found = walk
+                found = walk
                         .filter(p -> Files.isRegularFile(p.resolve("lib").resolve("ct.sym")))
                         .map(p -> new UpgradeCheckTask.CompilerJdk(
                                 p.toString(), Objects.requireNonNullElse(UikaCli.installedRelease(p), 0)))
                         .filter(jdk -> jdk.feature() > current)
                         .findFirst();
-                if (found.isPresent()) {
-                    return found.get();
-                }
+            } catch (java.io.UncheckedIOException unreadable) {
+                // One unreadable directory under a root must not end the search.
+                continue;
+            }
+            if (found.isPresent()) {
+                return found.get();
             }
         }
         if (System.getenv("CI") != null) {

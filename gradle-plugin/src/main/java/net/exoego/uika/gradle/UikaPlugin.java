@@ -344,7 +344,7 @@ public class UikaPlugin implements Plugin<Project> {
                     + task.cliVersion().get() + ":" + UikaCli.JAR_CLASSIFIER + "@jar";
             task.cliJar().from(detachedFor(root, notation));
         }));
-        // Only the modules whose recorded release is above the build JVM: resolving a
+        // Only the modules whose recorded release is above the build JVM. Resolving a
         // toolchain can provision a JDK, and a module the build JVM can stand in for is not
         // worth that. The lookup itself stays lazy (a mapped provider on the task), so it
         // runs when the check does and never for `gradle tasks`. Once every project is
@@ -352,8 +352,9 @@ public class UikaPlugin implements Plugin<Project> {
         // build-script settable.
         root.getGradle().projectsEvaluated(gradle -> upgradeCheck.configure(task -> {
             var buildJvm = Runtime.version().feature();
+            var stated = statedJdkRelease.getOrNull();
             for (Project p : root.getAllprojects()) {
-                Integer release = dumpJdkRelease(statedJdkRelease.getOrNull(), p);
+                Integer release = dumpJdkRelease(stated, p);
                 if (release == null || release <= buildJvm) {
                     continue;
                 }

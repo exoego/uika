@@ -121,12 +121,12 @@ public abstract class UpgradeCheckTask extends DefaultTask {
     }
 
     /**
-     * The JDK whose ct.sym the check reads: the build JVM, unless a module compiles with a
+     * The JDK whose ct.sym the check reads. The build JVM, unless a module compiles with a
      * newer one.
      *
      * <p>A JDK's ct.sym stops at its own release (one below it on JDK 21 and earlier), so a
      * module compiling for a release above the build JVM cannot be served by the build JVM at
-     * all: the layer was clamped down, and a JDK move to that release failed for want of its
+     * all. The layer was clamped down, and a JDK move to that release failed for want of its
      * stubs. That happens whenever the Gradle daemon is pinned below the toolchain, which
      * {@code gradle-daemon-jvm.properties} exists to do. The newest compiler JDK serves every
      * module, because a JDK compiles for nothing above itself. A tie goes to the build JVM,
@@ -161,11 +161,14 @@ public abstract class UpgradeCheckTask extends DefaultTask {
         List<Path> excludeFiles = excludeFiles().getFiles().stream()
                 .map(File::toPath)
                 .toList();
-        // The toolchain lookups resolve here, inside the one task that needs them.
-        UikaCli.JdkSource jdk = ctSymSource(
-                UikaCli.JdkSource.current(), compilerJdks().get(), getLogger()::lifecycle);
-        Integer jdkRelease = UikaCli.effectiveJdkRelease(
-                jdkRelease().getOrNull(), jdk, getLogger()::lifecycle);
+        // The toolchain lookups resolve here, inside the one task that needs them. With the
+        // layer off (0) nothing reads ct.sym and no UIKA_JDK is exported, so a lookup there
+        // would only cost a possible JDK provisioning and announce a JDK nothing uses.
+        var target = jdkRelease().getOrNull();
+        UikaCli.JdkSource jdk = target == null || target <= 0
+                ? UikaCli.JdkSource.current()
+                : ctSymSource(UikaCli.JdkSource.current(), compilerJdks().get(), getLogger()::lifecycle);
+        Integer jdkRelease = UikaCli.effectiveJdkRelease(target, jdk, getLogger()::lifecycle);
         // JFR recordings on the knob (a .jfr value, or recordings inside a directory) are
         // converted to the CLI's text format here: the CLI never reads
         // binary JFR, while this task always runs on a full JDK.

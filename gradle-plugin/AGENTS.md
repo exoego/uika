@@ -83,8 +83,10 @@ The shared plugin rules are in `jvm-plugin-core/AGENTS.md`. Claude Code imports 
   rationale in `jvm-plugin-core/AGENTS.md`). The wiring is per module in `projectsEvaluated`:
   `compileJava.getJavaCompiler().map(UpgradeCheckTask::compilerJdk)` into a `ListProperty`
   of a serializable record, resolved only in the task action. The mapper must stay a static
-  method reference, and nothing may query those providers at configuration time: that is
-  where a toolchain lookup would provision a JDK for `gradle tasks`.
+  method reference, and nothing may query those providers at configuration time. That is
+  where a toolchain lookup would provision a JDK for `gradle tasks`. The action skips them
+  when the layer is off (`jdkRelease` 0), since `UIKA_JDK` is exported only with the flag
+  (`aDisabledLayerResolvesNoToolchain`).
   `aToolchainTheBuildJvmCanStandInForIsNeverResolved` pins the no-lookup half with
   detection off and no installation registered, so a lookup there fails the build.
 - The module dump task depends on its configuration and the main source-set

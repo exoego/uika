@@ -37,8 +37,8 @@ module above that JDK fails the check with exit code 2 until the build runs on
 the newer one. The Gradle plugin also knows the JDK each module compiles with.
 A module whose release is above the JVM running Gradle is read from its
 toolchain's JDK instead, so a daemon pinned to an older JDK still checks the
-move. A module the daemon can serve keeps the daemon's `ct.sym`, whatever
-toolchain compiles it.
+move. A module at or below the daemon's release keeps the daemon's `ct.sym`,
+whatever toolchain compiles it.
 
 Stubs from JDK 22 on carry `PermittedSubclasses`, so a JDK upgrade check sees a
 class that became sealed when the JDK uika finds is 22 or later. Stubs from JDK
