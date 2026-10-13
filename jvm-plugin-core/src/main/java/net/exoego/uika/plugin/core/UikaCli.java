@@ -81,13 +81,13 @@ public final class UikaCli {
      * the symptom is "not found: type JdkSource" at the first USE, which reads like a missing
      * import rather than an unparsed declaration.
      *
-     * <p>Not necessarily the JVM running the build. A module targeting a release NEWER than
-     * the build JVM cannot be served by the build JVM's ct.sym at all (a JDK's ct.sym stops
-     * one release below its own), so a plugin that can name the module's actual JDK should
-     * pass it instead of accepting the clamp. Whatever is passed here has to be the same JDK
-     * the release is measured against: the ceiling, the ct.sym existence check and the
-     * UIKA_JDK export are one decision, and splitting them claims a release the CLI's ct.sym
-     * cannot serve.
+     * <p>Not necessarily the JVM running the build. A module targeting a release above
+     * {@link UikaCli#ctSymCeiling} of the build JVM cannot be served by the build JVM's
+     * ct.sym at all, so a plugin that can name the module's actual JDK should pass it
+     * instead of accepting the clamp. Whatever is passed here has to be the same JDK the
+     * release is measured against: the ceiling, the ct.sym existence check and the UIKA_JDK
+     * export are one decision, and splitting them claims a release the CLI's ct.sym cannot
+     * serve.
      */
     public static final class JdkSource {
         private final Path home;
@@ -240,11 +240,11 @@ public final class UikaCli {
      * Clamps a wanted {@code --jdk-release} value to what {@code jdk}'s ct.sym can serve,
      * logging the decision through {@code log}. The plugins run on a JVM by definition, so the
      * JDK API layer defaults ON there (unlike the opt-in CLI flag): the build knows its JDK
-     * authoritatively. The highest servable release is {@link #ctSymCeiling}: the JDK's own
-     * from 22 on, one below it before; clamping DOWN is the conservative direction (members
-     * added after the clamped release resolve NotFound on both sides of the check and stay
-     * unreported, the same direction as Unknown). Over-claiming is the direction that loses
-     * findings silently, which is why nothing here ever rounds up.
+     * authoritatively. The highest servable release is {@link #ctSymCeiling}. Clamping DOWN
+     * is the conservative direction (members added after the clamped release resolve
+     * NotFound on both sides of the check and stay unreported, the same direction as
+     * Unknown). Over-claiming is the direction that loses findings silently, which is why
+     * nothing here ever rounds up.
      *
      * @param target the wanted release, or null/&lt;=0 to disable the layer
      * @param jdk the JDK supplying ct.sym, normally {@link JdkSource#current()}

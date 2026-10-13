@@ -129,10 +129,10 @@ Rules every integration shares. Each tool's own notes live in its directory's
   delegation runs Compile -> Zero and never the reverse; Mill must read
   `mandatoryJavacOptions` as well as `javacOptions`, since it compiles with both.
 - The result is clamped by `UikaCli.effectiveJdkRelease` to the ct.sym ceiling of
-  the `JdkSource` passed in (`UikaCli.ctSymCeiling`: the JDK's own release from 22 on,
-  whose ct.sym carries it per https://bugs.openjdk.org/browse/JDK-8318913, and one
-  below it before, since those JDKs keep their own release in jmods, which the layer
-  does not read) and skipped with a log line when that JDK has no ct.sym. A flat
+  the `JdkSource` passed in and skipped with a log line when that JDK has no ct.sym.
+  The ceiling is `UikaCli.ctSymCeiling`, the JDK's own release from 22 on
+  (https://bugs.openjdk.org/browse/JDK-8318913) and one below it before, since those
+  JDKs keep their own release in jmods, which the layer does not read. A flat
   feature - 1 clamped a JDK 25 to 24 and announced release 25 as missing from a file
   that has it. That same JdkSource's home is exported as UIKA_JDK, and the
   two must never be split, or the flag claims a release the CLI's ct.sym cannot

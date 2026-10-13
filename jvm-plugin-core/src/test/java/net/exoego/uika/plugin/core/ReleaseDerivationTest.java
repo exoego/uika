@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -173,10 +174,6 @@ final class ReleaseDerivationTest {
         assertEquals(1, log.size(), () -> "expected exactly one line: " + log);
         assertTrue(log.get(0).contains("clamped to release 25"),
                 () -> "a release above the JDK was not clamped to it: " + log);
-
-        // 22 is the first such JDK; 21 keeps its classes in jmods, which the layer does not read.
-        assertEquals(22, UikaCli.ctSymCeiling(22));
-        assertEquals(20, UikaCli.ctSymCeiling(21));
     }
 
     @Test
@@ -196,13 +193,16 @@ final class ReleaseDerivationTest {
     void clampingNeverRoundsUp(@TempDir Path home) throws IOException {
         withCtSym(home);
 
-        // One JDK on each side of 22, where the ceiling moves from one below to the JDK's own.
-        for (var feature : List.of(21, 25)) {
-            var ceiling = UikaCli.ctSymCeiling(feature);
+        // Explicit ceilings, not ctSymCeiling. The sweep guards the direction of that rule,
+        // so its expectation cannot come from it. 22 is the first JDK whose ct.sym carries
+        // its own release.
+        for (var pair : List.of(Map.entry(21, 20), Map.entry(22, 22), Map.entry(25, 25))) {
+            var feature = pair.getKey();
+            var ceiling = pair.getValue();
             for (var target = UikaCli.MIN_RELEASE; target <= 30; target++) {
                 Integer effective = UikaCli.effectiveJdkRelease(target, jdk(home, feature), line -> { });
                 var wanted = target;
-                // The exact value, not `<= wanted`: with a ceiling above the floor of 8 this
+                // The exact value, not `<= wanted`. With a ceiling above the floor of 8 this
                 // can never legitimately answer null, so tolerating null would admit the
                 // "silently switched the layer off" regression the test exists for.
                 assertEquals(Math.min(wanted, ceiling), effective,

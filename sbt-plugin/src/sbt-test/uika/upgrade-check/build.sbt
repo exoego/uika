@@ -40,7 +40,7 @@ lazy val checkJdkReleaseFromBuildJvm = taskKey[Unit]("Asserts the build JVM's re
 
 checkJdkReleaseFromBuildJvm := {
   val args = IO.read(baseDirectory.value / "before.json.args")
-  val ceiling = java.lang.Runtime.version().feature() - 1
+  val ceiling = net.exoego.uika.plugin.core.UikaCli.ctSymCeiling(java.lang.Runtime.version().feature())
   if (!args.contains(s"--jdk-release $ceiling"))
     sys.error(s"expected the build JVM's ct.sym ceiling ($ceiling): $args")
 }

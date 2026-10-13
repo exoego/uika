@@ -142,9 +142,11 @@
   22)
 
 (defn- ct-sym-ceiling
-  "Port of UikaCli.ctSymCeiling: the highest release the ct.sym of a JDK at `feature` serves."
+  "Port of UikaCli.ctSymCeiling; keep the two in sync. The highest release the ct.sym of a
+  JDK at `feature` serves."
   [feature]
-  (if (>= (long feature) own-release-in-ct-sym) (long feature) (dec (long feature))))
+  (let [feature (long feature)]
+    (if (>= feature own-release-in-ct-sym) feature (dec feature))))
 
 (defn- runnable-jar?
   [^java.io.File file]
