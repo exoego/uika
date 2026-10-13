@@ -22,7 +22,10 @@ or a `ct.sym` file, and the plugins export it themselves so that the release
 they pass and the `ct.sym` the CLI reads come from one JVM.
 
 `ct.sym` carries every release below the JDK that ships it, and from JDK 22 on
-that JDK's own release too. The layered release has to be one of those, so it
+that JDK's own release too. The plugins read the file to confirm the latter, so
+a JDK 22 or later whose `ct.sym` lacks its own release, as early JDK 22 access
+builds did, is clamped one below instead of failing the check. The layered
+release has to be one of those, so it
 cannot be newer than the JDK uika finds, and on JDK 21 and earlier it has to be
 older. A JDK upgrade check reads both of its sides from `ct.sym` as well. Only
 on JDK 21 and earlier does a side that names the JDK's own release come from

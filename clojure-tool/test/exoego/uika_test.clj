@@ -16,6 +16,22 @@
 (defn- temp-dir []
   (str (Files/createTempDirectory "uika-test" (make-array FileAttribute 0))))
 
+(defn- ct-sym-with
+  "A ct.sym under `home` holding one class stub per codes dir in `stub-dirs`, over the
+  shape of a JDK 22 early-access file. That is a 21 stub and the two M entries that are
+  not stubs. The clamp reads the file at the JDK's own release, so an empty file no
+  longer stands in."
+  [home & stub-dirs]
+  (let [file (io/file home "lib" "ct.sym")]
+    (io/make-parents file)
+    (with-open [zip (java.util.zip.ZipOutputStream. (io/output-stream file))]
+      (doseq [entry (concat ["L/java.base/java/lang/Object.sig"
+                             "M/system-modules" "M/java.base/module-info.sig"]
+                            (map #(str % "/java.base/java/lang/Object.sig") stub-dirs))]
+        (.putNextEntry zip (java.util.zip.ZipEntry. ^String entry))
+        (.closeEntry zip)))
+    file))
+
 (defn- executable-stub
   "A runnable no-op binary under `dir`. resolve-binary now refuses a path that is not an
   executable file, so a test that only needs \"some binary\" has to create a real one."
@@ -635,8 +651,8 @@
   (let [home (temp-dir)
         effective (fn [target feature]
                     (#'uika.core/effective-jdk-release target {:home home :feature feature}))]
-    (io/make-parents (io/file home "lib" "ct.sym"))
-    (spit (io/file home "lib" "ct.sym") "")
+    ;; One joint dir, a stub shared by 22 and 25.
+    (ct-sym-with home "MP")
     (testing "22 is the first JDK whose ct.sym carries its own release"
       (is (= "" (with-out-str (is (= 22 (effective 22 22)))))))
     (testing "a JDK 25 serves its own release without a word"
@@ -647,6 +663,24 @@
     (testing "a JDK 21 keeps its ceiling one below"
       (let [out (with-out-str (is (= 20 (effective 21 21))))]
         (is (str/includes? out "clamped to release 20"))))))
+
+(deftest a-jdk-whose-ct-sym-lacks-its-own-release-is-clamped-one-below
+  ;; The JDK 22 early-access builds before JDK-8318913 are 22 by version and 21 by content.
+  ;; The version rule alone sent --jdk-release 22 to a file without it. The module-info
+  ;; stub in the M dir must not count as carrying 22.
+  (let [home (temp-dir)
+        effective (fn [target feature]
+                    (#'uika.core/effective-jdk-release target {:home home :feature feature}))]
+    (ct-sym-with home)
+    (testing "the own release is clamped and the missing release named"
+      (let [out (with-out-str (is (= 21 (effective 22 22))))]
+        (is (str/includes? out "clamped to release 21"))
+        (is (str/includes? out "has no release 22"))))
+    (testing "below the own release the file is not consulted"
+      (is (= "" (with-out-str (is (= 21 (effective 21 22)))))))
+    (testing "a ct.sym that is not a zip is left to the CLI"
+      (spit (io/file home "lib" "ct.sym") "not a zip")
+      (is (= "" (with-out-str (is (= 25 (effective 25 25)))))))))
 
 (deftest jfr-conversion-says-why-the-converter-is-unavailable
   ;; The compiled class is looked up reflectively so that a source install without it

@@ -134,7 +134,16 @@ Rules every integration shares. Each tool's own notes live in its directory's
   (https://bugs.openjdk.org/browse/JDK-8318913) and one below it before, since those
   JDKs keep their own release in jmods, which the layer does not read. A flat
   feature - 1 clamped a JDK 25 to 24 and announced release 25 as missing from a file
-  that has it. That same JdkSource's home is exported as UIKA_JDK, and the
+  that has it. The version rule is read off the file only at the JDK's own release
+  (`UikaCli.ctSymLacks`, the CLI's `Jdk.carries` without its codes-dir validation,
+  since every stub sits under one), because the JDK 22 early-access builds 1 to 25
+  predate JDK-8318913 and ship an M/system-modules entry with no M stubs. Below the
+  own release every ct.sym carries the release, so the file is not opened. An
+  unreadable file is left to the CLI, which fails naming it, instead of a clamp line
+  blaming a release. The test stand-ins for ct.sym are therefore small zips in the
+  shape of that early-access file plus one stub per codes dir, never empty files, in
+  `ReleaseDerivationTest` and the Clojure suite alike. That same JdkSource's home is
+  exported as UIKA_JDK, and the
   two must never be split, or the flag claims a release the CLI's ct.sym cannot
   serve. `clojure-tool/src-core/exoego/uika/core.clj` carries a hand port of the
   clamp for the lein plugin and the Clojure tool; its messages name the JDK's
