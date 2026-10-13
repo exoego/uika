@@ -63,13 +63,41 @@ tools on the same inputs (wall time, peak memory, and what each one reports).
 Declare uika in your build, then run its dump and check tasks. Find the
 common and tool-specific setup on one page per tool:
 
-- [Gradle](docs/gradle.md)
-- [sbt](docs/sbt.md)
-- [Maven](docs/maven.md)
-- [Mill](docs/mill.md)
-- [Clojure CLI](docs/clojure.md)
-- [Leiningen](docs/leiningen.md)
-- [Bazel](docs/bazel.md)
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <a href="docs/gradle.md"><img src="docs/logos/gradle.svg" alt="Gradle" height="64"></a><br>
+      <a href="docs/gradle.md"><b>Gradle</b></a>
+    </td>
+    <td align="center" width="33%">
+      <a href="docs/sbt.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/logos/sbt-dark.svg"><img src="docs/logos/sbt.svg" alt="sbt" height="64"></picture></a><br>
+      <a href="docs/sbt.md"><b>sbt</b></a>
+    </td>
+    <td align="center" width="33%">
+      <a href="docs/maven.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/logos/maven-dark.svg"><img src="docs/logos/maven.svg" alt="Maven" width="200"></picture></a><br>
+      <a href="docs/maven.md"><b>Maven</b></a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="docs/mill.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/logos/mill-dark.svg"><img src="docs/logos/mill.svg" alt="Mill" height="64"></picture></a><br>
+      <a href="docs/mill.md"><b>Mill</b></a>
+    </td>
+    <td align="center">
+      <a href="docs/clojure.md"><img src="docs/logos/clojure.png" alt="Clojure CLI" height="64"></a><br>
+      <a href="docs/clojure.md"><b>Clojure CLI</b></a>
+    </td>
+    <td align="center">
+      <a href="docs/leiningen.md"><img src="docs/logos/leiningen.jpg" alt="Leiningen" height="64"></a><br>
+      <a href="docs/leiningen.md"><b>Leiningen</b></a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" colspan="3">
+      <a href="docs/bazel.md"><b>Bazel</b></a>
+    </td>
+  </tr>
+</table>
 
 There's also [CLI](docs/cli.md) in case you want to run it by hand.
 [What every integration shares](docs/build-tools.md) covers the dump format, how the CLI
