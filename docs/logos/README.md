@@ -15,4 +15,3 @@ uses a single file for both themes.
 | `mill.svg`, `mill-dark.svg` | [com-lihaoyi/mill](https://github.com/com-lihaoyi/mill/blob/main/website/docs/logo.svg) and [mill-build.org](https://mill-build.org/_/logo-white.svg); a `viewBox` was added so the 24px mark scales | MIT repository |
 | `clojure.png` | [clojure.org](https://clojure.org/images/clojure-logo-120b.png) | Clojure trademark |
 | `leiningen.jpg` | [leiningen.org](https://leiningen.org/img/leiningen.jpg) | Copyright 2010 Phil Hagelberg, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) |
-| `bazel.svg` | [bazelbuild/bazel](https://github.com/bazelbuild/bazel/blob/master/docs/logo/Bazel_logo.svg) | Google trademark, [Bazel brand guidelines](https://bazel.build/brand) |
