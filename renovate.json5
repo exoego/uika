@@ -18,6 +18,9 @@
     // The lein fixture has no src/ segment, and its project.clj is a file the
     // leiningen manager matches by name anywhere in the tree.
     "lein-plugin/it/**",
+    // The Gradle e2e project resolves only the fixture jars run.sh lays out, so
+    // any other version fails to resolve, or silently drops out of the dump.
+    "tools/gradle-e2e/**",
   ],
   // The mise manager skips a tool written as a full asdf plugin path
   // (asdf:owner/plugin), so annotated lines in .mise.toml come through here.
