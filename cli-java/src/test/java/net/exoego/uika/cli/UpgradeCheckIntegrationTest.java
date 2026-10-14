@@ -693,6 +693,23 @@ class UpgradeCheckIntegrationTest {
         assertTrue(hasViolation(array(parse(run.stdout()).get("violations")), BLOCKING_ADAPTER, List.of(":a", ":b")), run.stdout());
     }
 
+    /**
+     * An old jar the before dump names but the runner lacks stops the run. A gone scan
+     * target degrades to a warning above because the rest is still checked; a gone old
+     * jar leaves nothing to check against.
+     */
+    @Test
+    void aBeforeDumpNamingAMissingOldJarStopsTheCheck() throws Exception {
+        String gone = "/nonexistent/uika-test/kotlinx-coroutines-core-jvm-1.7.1.jar";
+        String before = dump(module(":a", List.of(), coroutines("1.7.1", gone), ktorIo()));
+        String after = dump(module(":a", List.of(), coroutines("1.11.0", NEW_COROUTINES), ktorIo()));
+
+        Run run = runUpgradeCheckWithDumps("missing-old-e2e", before, after, "--json");
+        assertEquals(2, run.code(), "stdout:\n" + run.stdout() + "\nstderr:\n" + run.stderr());
+        assertTrue(run.stderr().startsWith("error: cannot open " + gone), run.stderr());
+        assertEquals("", run.stdout());
+    }
+
     /** A renamed module that also gained a dependency is still checked for the upgrade it made. */
     @Test
     void aRenamedModuleWithANewDependencyIsStillChecked() throws Exception {

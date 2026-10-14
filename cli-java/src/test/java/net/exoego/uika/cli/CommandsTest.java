@@ -429,6 +429,23 @@ class CommandsTest {
         assertTrue(scan.upgradedSources().isEmpty());
     }
 
+    /**
+     * An old or new jar that is gone stops the run. Degrading it to a warning the way a
+     * gone scan target is would pass the check against an empty side.
+     */
+    @Test
+    void aComparedPairJarThatIsGoneStopsTheCheck(@TempDir Path dir) {
+        String missing = dir.resolve("missing.jar").toString();
+        for (String[] args : new String[][] {
+                {"check", "--old", missing, "--new", NEW, "--classpath", CONSUMER},
+                {"check", "--old", OLD, "--new", missing, "--classpath", CONSUMER}}) {
+            UpgradeCheckIntegrationTest.Run run = UpgradeCheckIntegrationTest.runUika(args);
+            assertEquals(2, run.code(), run.stderr());
+            assertTrue(run.stderr().startsWith("error: cannot open " + missing), run.stderr());
+            assertEquals("", run.stdout());
+        }
+    }
+
     /** One release on both sides reads jmods twice, so neither side has internals the other lacks. */
     @Test
     void theRunningReleaseOnBothSidesIsNotWarnedAbout(@TempDir Path dir) throws Exception {
