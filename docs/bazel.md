@@ -146,11 +146,11 @@ at the price of a job on every push, so the example does not do it.
 
 Where that trade is worth it, pass `--materialize` so the artifact carries the
 JARs themselves, and unpack it at the same absolute path the base run wrote,
-because Bazel has no shared dependency cache to restore. Fetch it for same-
-repo PRs only, since the artifact carries the JARs themselves and a fork PR's
-build code could read private dependencies out of it. A missing old-side JAR
-exits 2 rather than degrading to a warning, as [What a dump names](#what-a-
-dump-names) explains.
+because Bazel has no shared dependency cache to restore. Fetch it for
+same-repo PRs only, since the artifact carries the JARs themselves and a fork
+PR's build code could read private dependencies out of it. A missing old-side
+JAR exits 2 rather than degrading to a warning, as [What a dump
+names](#what-a-dump-names) explains.
 
 ## Options
 
