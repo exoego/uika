@@ -97,3 +97,11 @@ The shared plugin rules are in `jvm-plugin-core/AGENTS.md`. Claude Code imports 
   providers because the java plugin may not be applied at registration time.
   Project-dependency artifacts are written with a `"project"` key
   (ProjectComponentIdentifier path); external ones keep coordinates only.
+- `make gradle-e2e` (`tools/gradle-e2e/run.sh`) is the one place the PUBLISHED plugin, the
+  published CLI and a real build meet. Both go to mavenLocal under one version, which is
+  how the plugin finds its CLI, and a two-module project moves koin-core 3.2.2 -> 3.3.0
+  out of the CLI's fixtures (a Maven layout without POMs) through the documented three
+  steps. It asserts what the unit tests cannot: the resolution-only dump compiles nothing,
+  the PR dump does, the check fails on `which became final` marked reachable from the
+  module's own class, and the same dump on both sides passes. The plugin tests keep
+  stubbing the CLI; do not fold this into them.
