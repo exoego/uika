@@ -60,10 +60,8 @@ daemon's release changes nothing.
 
 ## PR gate on GitHub Actions
 
-The `linkage-check` job dumps a baseline from the PR's base branch and the
-PR's own classpath, and fails on broken references between the two. The
-`dump-baseline` job and the marked steps are the optional caching half,
-explained in [Caching the baseline](#caching-the-baseline).
+The `linkage-check` job dumps the PR's classpath and a baseline from the PR's
+base branch, and fails on broken references between the two.
 
 ```yaml
 # .github/workflows/linkage-check.yml
@@ -78,86 +76,34 @@ on:
       - '**/gradle.properties'
       - '**/gradle.lockfile'
       - .github/workflows/linkage-check.yml
-  push:
-    branches: [develop]
-  workflow_dispatch:   # backfill the current tip
 
-# a PR update supersedes the running check, and baseline dumps get per-SHA
-# groups so a develop push never cancels one
+# a PR update supersedes the running check
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  # Optional: dumps the baseline once per push so the PR job can fetch it
-  # instead of resolving the base branch. To opt out, delete this job, the
-  # push and workflow_dispatch triggers, and the marked steps in
-  # linkage-check.
-  dump-baseline:
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      # ... You may need to setup Java/Gradle here ....
-
-      - run: ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/classpath.json -PuikaBuildOutputs=false
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: uika-baseline-${{ github.sha }}
-          path: /tmp/classpath.json
-          retention-days: 30   # a PR's base.sha is always a recent tip
-
   linkage-check:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read   # to read the baseline artifact
     steps:
       - uses: actions/checkout@v7
 
       # ... You may need to setup Java/Gradle here ....
-
-      # Cached-baseline fast path. These steps skip while no artifact
-      # exists. Delete them together with the dump-baseline job if you do
-      # not cache.
-      - name: Fetch baseline artifact
-        id: baseline-artifact
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # To look up the artifact from another run (the develop push)
-          id=$(gh api \
-            "repos/${{ github.repository }}/actions/artifacts?name=uika-baseline-${{ github.event.pull_request.base.sha }}&per_page=5" \
-            --jq '[.artifacts[] | select(.expired == false)][0].id // empty')
-          test -n "$id"
-          gh api "repos/${{ github.repository }}/actions/artifacts/$id/zip" > /tmp/baseline.zip
-          unzip -o /tmp/baseline.zip -d /tmp/baseline
-          mv /tmp/baseline/classpath.json /tmp/before-remote.json
-
-      - name: Rehydrate baseline to local paths
-        id: rehydrate
-        if: steps.baseline-artifact.outcome == 'success'
-        continue-on-error: true
-        run: >
-          ./gradlew uikaResolveClasspath
-          -PuikaInput=/tmp/before-remote.json -PuikaResolveOutput=/tmp/before.json
 
       - name: Dump PR classpath
         run: ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/after.json
 
-      - name: Dump baseline classpath (fallback)
-        id: baseline-fallback
-        if: steps.rehydrate.outcome != 'success'
+      - name: Dump baseline classpath
+        id: baseline
         # a PR whose base cannot produce a baseline skips the check instead
         # of failing it
         continue-on-error: true
         run: |
           git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
           git checkout ${{ github.event.pull_request.base.sha }}
+          # the baseline only feeds the version diff, so build nothing
           if ./gradlew uikaDumpClasspath -PuikaOutput=/tmp/before.json -PuikaBuildOutputs=false; then
             status=0
           else
@@ -167,30 +113,40 @@ jobs:
           exit $status
 
       - name: Check broken references
-        if: steps.rehydrate.outcome == 'success' || steps.baseline-fallback.outcome == 'success'
+        if: steps.baseline.outcome == 'success'
         run: >
           ./gradlew uikaUpgradeCheck
           -PuikaBefore=/tmp/before.json -PuikaAfter=/tmp/after.json
 ```
 
+If the PR workflow already compiles the project and later jobs can reuse that
+work, through a remote build cache or by running on the same runner, give this
+job a `needs:` on those jobs, in the same workflow file. The PR dump then
+takes its compiled classes from them instead of compiling again. On an
+85-module build, that took a dependency bump's dump from 7 minutes to 76
+seconds.
+
+`paths:` keeps the check off PRs that touch no dependency declaration. A
+required status check cannot use it, because a skipped workflow creates no
+check run and the PR waits on it forever. For a required check, trigger on
+every PR and skip the job from a job-level `if:` that reads the changed files.
+A skipped job counts as passed.
+
 ### Caching the baseline
 
-The fallback resolves the base branch on the PR runner, which puts a
-second checkout and a cold Gradle start on the PR's critical path every time.
-The baseline only feeds the version diff, so the `dump-baseline` job
-produces it once per push instead. The fallback stays for SHAs with no
-usable baseline. Those are SHAs predating the job, expired artifacts, and
-PRs not targeting `develop`. Deleting the marked blocks is also safe,
-because an `if:` reads a missing step's outcome as empty, never as
-`success`.
+The baseline dump runs on the daemon the PR dump started, and took 5 to 9
+seconds on an 85-module build. Dumping it once per push to the base branch
+instead, as an artifact named by SHA that the PR job fetches by `base.sha`,
+moves that invocation off the PR's critical path at the price of a job on
+every push, so the example does not do it.
 
-A fetched dump names JARs by absolute path, and the old versions it names
-are not on the PR runner, because the PR job resolves the new versions and
-nothing pulls the old ones in on its own. A compared-pair JAR uika cannot
-open exits 2 rather than degrading to a warning. The rehydrate step closes
-both gaps by fetching what is missing through the build's own
-repositories, mirrors, and credentials, and rewriting the dump to the
-resolved local paths.
+Where that trade is worth it, a fetched dump names JARs by absolute path and
+the old versions are not on the PR runner. `uikaResolveClasspath` rewrites a
+fetched dump's absolute paths to the PR runner and fetches the old JARs it
+names through the build's own repositories, mirrors and credentials, since the
+PR job resolves the new versions and nothing pulls the old ones in on its own.
+A compared-pair JAR uika cannot open exits 2 rather than degrading to a
+warning.
 
 ## Options
 

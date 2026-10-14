@@ -28,10 +28,8 @@ you run it from. It is assembled from `uikaModuleClasspath`, one per subproject.
 
 ## PR gate on GitHub Actions
 
-The `linkage-check` job dumps a baseline from the PR's base branch and the
-PR's own classpath, and fails on broken references between the two. The
-`dump-baseline` job and the marked steps are the optional caching half,
-explained in [Caching the baseline](#caching-the-baseline).
+The `linkage-check` job dumps the PR's classpath and a baseline from the PR's
+base branch, and fails on broken references between the two.
 
 ```yaml
 # .github/workflows/linkage-check.yml
@@ -43,94 +41,25 @@ on:
       - 'project/**.scala'
       - project/build.properties
       - .github/workflows/linkage-check.yml
-  push:
-    branches: [develop]
-  workflow_dispatch:   # backfill the current tip
 
-# a PR update supersedes the running check, and baseline dumps get per-SHA
-# groups so a develop push never cancels one
+# a PR update supersedes the running check
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  # Optional: dumps the baseline once per push so the PR job can fetch it
-  # instead of resolving the base branch. To opt out, delete this job, the
-  # push and workflow_dispatch triggers, and the marked steps in
-  # linkage-check.
-  dump-baseline:
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      # ... You may need to setup Java/sbt here ....
-
-      # sbt compiles as a side effect of evaluating the dump task
-      - run: sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/classpath.json
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: uika-baseline-${{ github.sha }}
-          path: /tmp/classpath.json
-          retention-days: 30   # a PR's base.sha is always a recent tip
-
-      # the dump names JARs by absolute path, and these caches are the only
-      # place the old versions are guaranteed to exist
-      - uses: actions/cache/save@v6
-        with:
-          path: |
-            ~/.cache/coursier
-            ~/.ivy2/cache
-          key: uika-baseline-deps-${{ github.sha }}
-
   linkage-check:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read   # to read the baseline artifact
     steps:
       - uses: actions/checkout@v7
 
       # ... You may need to setup Java/sbt here ....
 
-      # Cached-baseline fast path. These steps skip while no artifact
-      # exists. Delete them together with the dump-baseline job if you do
-      # not cache.
-      - name: Restore baseline dependencies
-        id: baseline-deps
-        # a fork PR's build code could read private dependencies out of this
-        # cache, so only same-repo PRs take the fast path
-        if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/cache/restore@v6
-        with:
-          path: |
-            ~/.cache/coursier
-            ~/.ivy2/cache
-          key: uika-baseline-deps-${{ github.event.pull_request.base.sha }}
-
-      - name: Fetch baseline artifact
-        id: baseline-artifact
-        # without the old JARs the baseline would under-report, so skip it
-        if: steps.baseline-deps.outputs.cache-hit == 'true'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # To look up the artifact from another run (the develop push)
-          id=$(gh api \
-            "repos/${{ github.repository }}/actions/artifacts?name=uika-baseline-${{ github.event.pull_request.base.sha }}&per_page=5" \
-            --jq '[.artifacts[] | select(.expired == false)][0].id // empty')
-          test -n "$id"
-          gh api "repos/${{ github.repository }}/actions/artifacts/$id/zip" > /tmp/baseline.zip
-          unzip -o /tmp/baseline.zip -d /tmp/baseline
-          mv /tmp/baseline/classpath.json /tmp/before.json
-
-      - name: Dump baseline classpath (fallback)
+      - name: Dump baseline classpath
         # ahead of the PR dump, so the PR's compile replaces the base's classes
-        id: baseline-fallback
-        if: steps.baseline-artifact.outcome != 'success'
+        id: baseline
         # a PR whose base cannot produce a baseline skips the check instead
         # of failing it
         continue-on-error: true
@@ -146,30 +75,38 @@ jobs:
           exit $status
 
       - name: Dump PR classpath
+        # sbt compiles as a side effect of evaluating the dump task
         run: sbt uikaDumpClasspath && cp target/uika/classpath.json /tmp/after.json
 
       - name: Check broken references
-        if: steps.baseline-artifact.outcome == 'success' || steps.baseline-fallback.outcome == 'success'
+        if: steps.baseline.outcome == 'success'
         run: sbt "uikaUpgradeCheck /tmp/before.json /tmp/after.json"
 ```
 
+If the PR workflow already compiles the project and later jobs can reuse that
+work, through a remote build cache or by running on the same runner, give this
+job a `needs:` on those jobs, in the same workflow file. The PR dump then
+takes its compiled classes from them instead of compiling again.
+
+`paths:` keeps the check off PRs that touch no dependency declaration. A
+required status check cannot use it, because a skipped workflow creates no
+check run and the PR waits on it forever. For a required check, trigger on
+every PR and skip the job from a job-level `if:` that reads the changed files.
+A skipped job counts as passed.
+
 ### Caching the baseline
 
-The fallback resolves the base branch on the PR runner, which puts a
-second checkout and a cold sbt start on the PR's critical path every time.
-The baseline only feeds the version diff, so the `dump-baseline` job
-produces it once per push instead. The fallback stays for SHAs with no
-usable baseline. Those are SHAs predating the job, expired artifacts, and
-PRs not targeting `develop`. Deleting the marked blocks is also safe,
-because an `if:` reads a missing step's outcome as empty, never as
-`success`.
+The baseline dump is a second sbt start on the PR runner. Dumping it once per
+push to the base branch instead, as an artifact named by SHA that the PR job
+fetches by `base.sha`, moves that invocation off the PR's critical path at the
+price of a job on every push, so the example does not do it.
 
-A fetched dump names JARs by absolute path. On GitHub Actions both jobs
-run on the same runner image under the same `$HOME`, so those paths line
-up as long as the files exist. The old-version JARs are the gap, because
-the PR job resolves the new versions and nothing pulls the old ones in on
-its own, and a compared-pair JAR uika cannot open exits 2 rather than
-degrading to a warning. The cache save and restore close that gap.
+Where that trade is worth it, save the coursier and ivy caches with
+`actions/cache` under the same SHA and restore it before the check, because a
+fetched dump names JARs by absolute path and the old versions are not on the
+PR runner. Restore it for same-repo PRs only, since a fork PR's build code
+could read private dependencies out of it. A compared-pair JAR uika cannot
+open exits 2 rather than degrading to a warning.
 
 ## Options
 
