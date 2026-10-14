@@ -47,12 +47,16 @@ g uikaDumpClasspath -PkoinVersion=3.2.2 -PuikaOutput="$work/before.json" -PuikaB
     >"$work/before.log" 2>&1 || fail "the base dump failed" "$work/before.log"
 grep -q "> Task :app:compileJava" "$work/before.log" && fail "the base dump compiled :app" "$work/before.log"
 grep -q '"version":"3.2.2"' "$work/before.json" || fail "the base dump does not name koin-core-jvm 3.2.2" "$work/before.json"
+# kotlin-stdlib is runtimeOnly, so no compile misses it, and the dump's lenient artifact
+# view drops a jar the fixture repository lacks without failing the build.
+grep -q 'kotlin-stdlib-2.2.20.jar' "$work/before.json" || fail "the base dump dropped kotlin-stdlib" "$work/before.json"
 
 # 2. The PR dump resolves the new version and builds the module it will scan from.
 g uikaDumpClasspath -PkoinVersion=3.3.0 -PuikaOutput="$work/after.json" \
     >"$work/after.log" 2>&1 || fail "the PR dump failed" "$work/after.log"
 grep -q "> Task :app:compileJava" "$work/after.log" || fail "the PR dump did not compile :app" "$work/after.log"
 grep -q '"version":"3.3.0"' "$work/after.json" || fail "the PR dump does not name koin-core-jvm 3.3.0" "$work/after.json"
+grep -q 'kotlin-stdlib-2.2.20.jar' "$work/after.json" || fail "the PR dump dropped kotlin-stdlib" "$work/after.json"
 
 # 3. The check fails the build on the break, reached from the module's own class.
 if g uikaUpgradeCheck -PkoinVersion=3.3.0 -PuikaBefore="$work/before.json" -PuikaAfter="$work/after.json" \
