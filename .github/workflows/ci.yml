@@ -449,10 +449,35 @@ jobs:
   # renamed or added without touching repository settings. This job carries that name and
   # fails when any tool job did not pass. always() is what makes that hold. Without it a
   # failed need skips this job, and a skipped job reports success to the ruleset.
+  gradle-e2e:
+    name: Gradle PR gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          cache_save: false
+
+      - name: Cache Gradle
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 25
+          set-default: false
+          cache: gradle
+          cache-read-only: true
+          cache-dependency-path: |
+            cli-java/*.gradle.kts
+            gradle-plugin/*.gradle.kts
+
+      - name: Run the documented PR gate with the published plugin and CLI
+        run: make gradle-e2e
+
   gate:
     name: Quality Gate
     if: always()
-    needs: [cli, gradle, maven, sbt, mill, clojure, lein, bazel, bazel-maven]
+    needs: [cli, gradle, gradle-e2e, maven, sbt, mill, clojure, lein, bazel, bazel-maven]
     runs-on: ubuntu-latest
     steps:
       - name: Require every tool job to pass

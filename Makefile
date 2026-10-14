@@ -2,7 +2,7 @@
 	rewrite rewrite-check coverage \
 	java-cli-coverage gradle-coverage maven-coverage clojure-coverage \
 	lein-coverage sbt-coverage mill-coverage bazel-coverage jacoco-tools \
-	gradle-build gradle-check gradle-check-coverage gradle-test gradle-clean \
+	gradle-build gradle-check gradle-check-coverage gradle-test gradle-clean gradle-e2e \
 	java-cli-build java-cli-test java-cli-bless java-cli-clean \
 	sbt-compile sbt-scripted sbt-clean \
 	maven-verify maven-clean \
@@ -68,6 +68,7 @@ help:
 		'  make java-cli-test' \
 		'  make java-cli-bless   Rewrite the goldens from the current output' \
 		'  make gradle-check' \
+		'  make gradle-e2e       Run the Gradle PR gate with the published plugin and CLI' \
 		'  make sbt-scripted' \
 		'  make maven-verify' \
 		'  make mill-test' \
@@ -92,7 +93,7 @@ placeholder-check:
 	done
 	@echo "version placeholders: all 0.0.0-dev"
 
-check: placeholder-check rewrite-check java-cli-test gradle-check sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
+check: placeholder-check rewrite-check java-cli-test gradle-check gradle-e2e sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
 test: rewrite java-cli-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
@@ -158,6 +159,11 @@ gradle-test:
 
 gradle-clean:
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) clean
+
+# The plugin tests stub the CLI and the CLI tests start from hand-written dumps, so this is
+# the one place the published plugin, the published CLI and a real build meet.
+gradle-e2e:
+	GRADLE="$(GRADLE)" UIKA_VERSION=$(UIKA_VERSION) sh tools/gradle-e2e/run.sh
 
 gradle-coverage:
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) jacocoTestReport -PuikaCoverage=true
