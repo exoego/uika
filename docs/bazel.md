@@ -68,10 +68,8 @@ Each entry in `targets` becomes one module of the dump, named by its label, so
 
 ## PR gate on GitHub Actions
 
-The `linkage-check` job dumps a baseline from the PR's base branch and the
-PR's own classpath, and fails on broken references between the two. The
-`dump-baseline` job and the marked steps are the optional caching half,
-explained in [Caching the baseline](#caching-the-baseline).
+The `linkage-check` job dumps the PR's classpath and a baseline from the PR's
+base branch, and fails on broken references between the two.
 
 ```yaml
 # .github/workflows/linkage-check.yml
@@ -83,81 +81,31 @@ on:
       - 'MODULE.bazel.lock'
       - '**/*_install.json'
       - .github/workflows/linkage-check.yml
-  push:
-    branches: [develop]
-  workflow_dispatch:   # backfill the current tip
 
-# a PR update supersedes the running check, and baseline dumps get per-SHA
-# groups so a develop push never cancels one
+# a PR update supersedes the running check
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  # Optional: dumps the baseline once per push so the PR job can fetch it
-  # instead of resolving the base branch. To opt out, delete this job, the
-  # push and workflow_dispatch triggers, and the marked step in
-  # linkage-check.
-  dump-baseline:
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      # ... You may need to setup Bazel here ....
-
-      # this target builds none of your code
-      - run: |
-          bazel run //:uika_baseline_dump -- \
-            --output /tmp/uika-baseline/classpath.json \
-            --materialize /tmp/uika-baseline/jars
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: uika-baseline-${{ github.sha }}
-          path: /tmp/uika-baseline
-          retention-days: 30   # a PR's base.sha is always a recent tip
-
   linkage-check:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read   # to read the baseline artifact
     steps:
       - uses: actions/checkout@v7
 
       # ... You may need to setup Bazel here ....
 
-      # Cached-baseline fast path. This step skips while no artifact
-      # exists. Delete it together with the dump-baseline job if you do not
-      # cache.
-      - name: Fetch baseline artifact
+      - name: Dump baseline classpath
         id: baseline
-        # the artifact carries the baseline JARs themselves, so only
-        # same-repo PRs take the fast path
-        if: github.event.pull_request.head.repo.full_name == github.repository
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # To look up the artifact from another run (the develop push)
-          id=$(gh api \
-            "repos/${{ github.repository }}/actions/artifacts?name=uika-baseline-${{ github.event.pull_request.base.sha }}&per_page=5" \
-            --jq '[.artifacts[] | select(.expired == false)][0].id // empty')
-          test -n "$id"
-          gh api "repos/${{ github.repository }}/actions/artifacts/$id/zip" > /tmp/baseline.zip
-          unzip -o /tmp/baseline.zip -d /tmp/uika-baseline
-
-      - name: Dump baseline classpath (fallback)
-        id: baseline-fallback
-        if: steps.baseline.outcome != 'success'
         # a PR whose base cannot produce a baseline skips the check instead
         # of failing it
         continue-on-error: true
         run: |
           git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
           git checkout ${{ github.event.pull_request.base.sha }}
+          # this target builds none of your code
           if bazel run //:uika_baseline_dump -- \
                --output /tmp/uika-baseline/classpath.json \
                --materialize /tmp/uika-baseline/jars; then
@@ -172,29 +120,35 @@ jobs:
         run: bazel run //:uika_dump -- --output /tmp/after.json
 
       - name: Check broken references
-        if: steps.baseline.outcome == 'success' || steps.baseline-fallback.outcome == 'success'
+        if: steps.baseline.outcome == 'success'
         run: >
           bazel run //:uika_check --
           --before /tmp/uika-baseline/classpath.json --after /tmp/after.json
 ```
 
+If the PR workflow already compiles the project and later jobs can reuse that
+work, through a remote build cache or by running on the same runner, give this
+job a `needs:` on those jobs, in the same workflow file. The PR dump then
+takes its compiled classes from them instead of compiling again.
+
+`paths:` keeps the check off PRs that touch no dependency declaration. A
+required status check cannot use it, because a skipped workflow creates no
+check run and the PR waits on it forever. For a required check, trigger on
+every PR and skip the job from a job-level `if:` that reads the changed files.
+A skipped job counts as passed.
+
 ### Caching the baseline
 
-The fallback resolves the base branch on the PR runner, which puts a
-second checkout and a cold Bazel start on the PR's critical path every time.
-The baseline only feeds the version diff, so the `dump-baseline` job
-produces it once per push instead. The fallback stays for SHAs with no
-usable baseline. Those are SHAs predating the job, expired artifacts, and
-PRs not targeting `develop`. Deleting the marked blocks is also safe,
-because an `if:` reads a missing step's outcome as empty, never as
-`success`.
+The baseline dump is a second Bazel invocation on the PR runner. Dumping it
+once per push to the base branch instead, as an artifact named by SHA that the
+PR job fetches by `base.sha`, moves that invocation off the PR's critical path
+at the price of a job on every push, so the example does not do it.
 
-Bazel has no shared dependency cache to restore, so `--materialize` puts
-the JARs into the artifact itself, and the materialized directory has to
-land at the same absolute path the baseline run wrote it to. Both jobs use
-`/tmp/uika-baseline` for that reason. A missing old-side JAR exits 2
-rather than degrading to a warning, as
-[What a dump names](#what-a-dump-names) explains.
+Where that trade is worth it, pass `--materialize` so the artifact carries the
+JARs themselves, and unpack it at the same absolute path the base run wrote,
+because Bazel has no shared dependency cache to restore. A missing old-side
+JAR exits 2 rather than degrading to a warning, as [What a dump names](#what-
+a-dump-names) explains.
 
 ## Options
 
