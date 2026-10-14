@@ -10,5 +10,5 @@ val koinVersion = providers.gradleProperty("koinVersion").get()
 dependencies {
     implementation("io.insert-koin:koin-core-jvm:$koinVersion")
     implementation("io.insert-koin:koin-logger-slf4j:3.2.2")
-    runtimeOnly("org.jetbrains.kotlin:kotlin-stdlib:2.2.20")
+    runtimeOnly("org.jetbrains.kotlin:kotlin-stdlib:2.4.20")
 }
