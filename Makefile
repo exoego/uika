@@ -8,7 +8,7 @@
 	maven-verify maven-clean \
 	mill-compile mill-test mill-clean \
 	clojure-test clojure-clean clojure-stage \
-	lein-test lein-clean lein-stage \
+	lein-test lein-it lein-clean lein-stage \
 	bazel-unit-test bazel-test bazel-maven-test bazel-clean bazel-stage \
 	cli-publish-local stage-all
 
@@ -275,12 +275,14 @@ clojure-stage:
 
 # Real-CLI round trip, same reason as clojure-test: the dump JSON is hand-written.
 # mise exec puts lein itself on PATH for the script.
-# The unit suite runs here too, not only under lein-coverage: a test reached by nothing
-# but the coverage target is a test that rots without failing anything.
-lein-test: java-cli-build
-	cd $(LEIN_PLUGIN_DIR) && $(LEIN) test
+lein-it: java-cli-build
 	UIKA_BIN=$(JAVA_CLI_JAR) UIKA_IT_ALT_JAVA=$(UIKA_IT_ALT_JAVA) \
 		mise exec -- sh $(LEIN_PLUGIN_DIR)/it/run.sh
+
+# The unit suite runs here too, so make test covers it without coverage. CI runs lein-it
+# and lein-coverage instead, and Cloverage fails on a failing test just as lein test does.
+lein-test: lein-it
+	cd $(LEIN_PLUGIN_DIR) && $(LEIN) test
 
 # Cloverage instruments namespaces in the JVM it reports from, so it drives the unit
 # suite; it/run.sh forks `lein uika` as a child process and can be measured by nothing.
@@ -356,7 +358,7 @@ bazel-coverage: jacoco-tools java-cli-build
 		$(BAZEL_IT_JACOCO) $(BAZEL_IT_DIR)/ws $(CURDIR)/$(BAZEL_RULES_DIR)/java \
 		$(CURDIR)/$(COVERAGE_DIR)/bazel-it.xml
 
-# Real-CLI round trip, same reason as clojure-test and lein-test: the dump is written by
+# Real-CLI round trip, same reason as clojure-test and lein-it: the dump is written by
 # a tool the Rust side never sees, so only a run against the real binary catches drift.
 bazel-test: java-cli-build bazel-unit-test
 	UIKA_BIN=$(JAVA_CLI_JAR) mise exec -- sh $(BAZEL_RULES_DIR)/it/run.sh
