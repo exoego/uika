@@ -38,7 +38,30 @@ jobs:
         language: [ actions, java-kotlin ]
 
     steps:
+      # Build-mode none asks every Gradle and Maven build it finds for a classpath. Run cold,
+      # the three Gradle builds took about 100 seconds and added only JUnit and JaCoCo, which
+      # the extractor also infers from the imports. Without the Gradle scripts the same 149
+      # Java files are extracted. The poms stay, for the Maven API classpath and the pom
+      # queries.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !*.gradle.kts
+
+      # The Maven build still runs. This key lists a file set no CI job lists, so this job
+      # alone saves it.
+      - name: Cache Maven
+        if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 25
+          set-default: false
+          cache: maven
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          cache-dependency-path: maven-plugin/pom.xml
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3

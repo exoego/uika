@@ -8,7 +8,7 @@
 	maven-verify maven-clean \
 	mill-compile mill-test mill-clean \
 	clojure-test clojure-clean clojure-stage \
-	lein-test lein-clean lein-stage \
+	lein-test lein-it lein-clean lein-stage \
 	bazel-unit-test bazel-test bazel-maven-test bazel-clean bazel-stage \
 	cli-publish-local stage-all
 
@@ -35,7 +35,8 @@ BAZEL_STAGE_DIR ?= dist/bazel
 COVERAGE_DIR ?= target/coverage
 # Neither sbt nor Mill has a JaCoCo binding to resolve an agent and write a report the way
 # the Gradle and Maven builds do, so both jars are fetched here and the agent is handed to
-# them as a path. dependency:copy needs no pom, so it runs from the repository root.
+# them as a path. They come straight from Maven Central. mvn dependency:copy took 10 to 25
+# seconds per CI job, nearly all of it Maven fetching its own plugins into an empty ~/.m2.
 JACOCO_VERSION ?= 0.8.15
 JACOCO_DIR ?= $(CURDIR)/target/jacoco
 JACOCO_AGENT = $(JACOCO_DIR)/org.jacoco.agent-$(JACOCO_VERSION)-runtime.jar
@@ -101,12 +102,20 @@ test: rewrite java-cli-test gradle-test sbt-scripted maven-verify mill-test cloj
 coverage: java-cli-coverage gradle-coverage maven-coverage clojure-coverage lein-coverage \
 	sbt-coverage mill-coverage bazel-coverage
 
-jacoco-tools:
-	@mkdir -p $(JACOCO_DIR)
-	$(MAVEN) -q -B dependency:copy -DoutputDirectory=$(JACOCO_DIR) \
-		-Dartifact=org.jacoco:org.jacoco.agent:$(JACOCO_VERSION):jar:runtime
-	$(MAVEN) -q -B dependency:copy -DoutputDirectory=$(JACOCO_DIR) \
-		-Dartifact=org.jacoco:org.jacoco.cli:$(JACOCO_VERSION):jar:nodeps
+jacoco-tools: $(JACOCO_AGENT) $(JACOCO_CLI)
+
+# Downloaded beside the target and renamed, so an interrupted download never leaves a jar
+# that the next run would take as already fetched.
+fetch-jacoco = mkdir -p $(dir $@) && \
+	curl -fsSL --retry 3 -o $@.part \
+		https://repo1.maven.org/maven2/org/jacoco/$(1)/$(JACOCO_VERSION)/$(notdir $@) && \
+	mv $@.part $@
+
+$(JACOCO_AGENT):
+	$(call fetch-jacoco,org.jacoco.agent)
+
+$(JACOCO_CLI):
+	$(call fetch-jacoco,org.jacoco.cli)
 
 clean: java-cli-clean gradle-clean sbt-clean maven-clean mill-clean clojure-clean lein-clean bazel-clean
 
@@ -282,12 +291,14 @@ clojure-stage:
 
 # Real-CLI round trip, same reason as clojure-test: the dump JSON is hand-written.
 # mise exec puts lein itself on PATH for the script.
-# The unit suite runs here too, not only under lein-coverage: a test reached by nothing
-# but the coverage target is a test that rots without failing anything.
-lein-test: java-cli-build
-	cd $(LEIN_PLUGIN_DIR) && $(LEIN) test
+lein-it: java-cli-build
 	UIKA_BIN=$(JAVA_CLI_JAR) UIKA_IT_ALT_JAVA=$(UIKA_IT_ALT_JAVA) \
 		mise exec -- sh $(LEIN_PLUGIN_DIR)/it/run.sh
+
+# The unit suite runs here too, so make test covers it without coverage. CI runs lein-it
+# and lein-coverage instead, and Cloverage fails on a failing test just as lein test does.
+lein-test: lein-it
+	cd $(LEIN_PLUGIN_DIR) && $(LEIN) test
 
 # Cloverage instruments namespaces in the JVM it reports from, so it drives the unit
 # suite; it/run.sh forks `lein uika` as a child process and can be measured by nothing.
@@ -363,7 +374,7 @@ bazel-coverage: jacoco-tools java-cli-build
 		$(BAZEL_IT_JACOCO) $(BAZEL_IT_DIR)/ws $(CURDIR)/$(BAZEL_RULES_DIR)/java \
 		$(CURDIR)/$(COVERAGE_DIR)/bazel-it.xml
 
-# Real-CLI round trip, same reason as clojure-test and lein-test: the dump is written by
+# Real-CLI round trip, same reason as clojure-test and lein-it: the dump is written by
 # a tool the Rust side never sees, so only a run against the real binary catches drift.
 bazel-test: java-cli-build bazel-unit-test
 	UIKA_BIN=$(JAVA_CLI_JAR) mise exec -- sh $(BAZEL_RULES_DIR)/it/run.sh
