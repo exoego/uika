@@ -22,10 +22,7 @@ concurrency:
 
 # One job per build tool, so the tools run side by side. Each job runs the instrumented
 # target, which is the same suite its plain target runs with an agent attached, so every
-# suite runs once. The Clojure tool and the Leiningen plugin measure with Cloverage, which
-# rewrites forms rather than riding an agent. Every rewritten form still returns its
-# original value, and Cloverage fails on a failing test, so those suites run once too.
-# lein-coverage leaves out it/run.sh, so the Leiningen job runs that on its own.
+# suite runs once.
 #
 # Every cache restores on pull requests and saves only on main. A PR-saved cache is scoped
 # to its branch yet still evicts the entries every branch shares. Each key has exactly one
@@ -34,13 +31,6 @@ concurrency:
 # steps are a cache layer only. mise owns the build JDK, and set-default keeps theirs off
 # JAVA_HOME and PATH. cache-dependency-path is what splits the keys. setup-java hashes the
 # listed files into the key, so two jobs listing different files own different entries.
-# Every Gradle key lists .mise.toml, which pins the Gradle release. Gradle keeps compiled
-# build scripts under its own version, so a key that outlived a Gradle bump restored none.
-#
-# mise is the exception: no job but stage uses its cache. Each job installs only the tools
-# it runs, from the network. Java and Gradle took 3.2 seconds that way, while restoring the
-# 526 MB cache of every tool averaged 7.4. MISE_EXEC_AUTO_INSTALL is off because `mise exec`
-# would otherwise install every tool .mise.toml names on its first run.
 jobs:
   cli:
     name: CLI
@@ -106,9 +96,6 @@ jobs:
             gradle-plugin/*.gradle.kts
             .mise.toml
 
-      # The TestKit builds run in a Gradle user home of their own under build/test-kit. Set up
-      # empty, it cost the suite about 10 of its 51 seconds, most of it in the first build.
-      # It is about 12 MB. No restore-keys, so an entry never carries an old one forward.
       - name: Restore TestKit Gradle home
         id: cache-testkit
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -138,8 +125,6 @@ jobs:
             gradle-plugin/build/test-kit/native
           key: ${{ steps.cache-testkit.outputs.cache-primary-key }}
 
-  # Split from the gradle job because the two ran in series there and made it the critical
-  # path. The recipe jars give it a key of its own.
   rewrite:
     name: OpenRewrite
     runs-on: ubuntu-latest
@@ -208,9 +193,6 @@ jobs:
           disable_search: true
           fail_ci_if_error: true
 
-  # One job per scripted group, side by side. Each group is its own sbt invocation anyway,
-  # for the reason the Makefile's sbt-scripted target gives. Both upload under the sbt flag,
-  # and Codecov merges them.
   sbt:
     name: sbt plugin (${{ matrix.group }})
     runs-on: ubuntu-latest
@@ -235,7 +217,6 @@ jobs:
           java-version: 25
           set-default: false
           cache: sbt
-          # The uika group resolves more, so it is the one that saves.
           cache-read-only: ${{ github.ref != 'refs/heads/main' || matrix.group != 'uika' }}
           cache-path: |
             /tmp/uika-sbt
@@ -435,11 +416,6 @@ jobs:
             cli-java/*.gradle.kts
             .mise.toml
 
-      # No Bazel cache. The repository cache restored 1.1 GB in 13 seconds and saved 6 in
-      # the test, so fetching every run is faster. The bazel-maven job measured the same.
-      # The output base was never cached: the integration test cleans it on purpose
-      # (bazel-rules/it/run.sh explains why).
-
       # The integration test runs with the agent attached and runs the unit suite itself,
       # so this is the whole of bazel-test.
       - name: Test with coverage
@@ -536,12 +512,9 @@ jobs:
       # No ~/.m2 restore on purpose. The cold local repo IS what this job tests:
       # v0.9.0's publish died in lein-stage because leiningen's javac subprocess had to
       # fetch lein's own clojure through the emptied :repositories, and every machine
-      # that has built the plugin once, the lein job included, hides that. mise is
-      # still restored, since the release runner restores a mise cache too.
+      # that has built the plugin once, the lein job included, hides that.
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
-          # On main this job installs every tool and saves the full set, the cache the
-          # release workflow restores. On pull requests it is like the other jobs.
           install_args: ${{ github.ref != 'refs/heads/main' && 'java gradle leiningen' || '' }}
           cache: ${{ github.ref == 'refs/heads/main' }}
 

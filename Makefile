@@ -35,8 +35,7 @@ BAZEL_STAGE_DIR ?= dist/bazel
 COVERAGE_DIR ?= target/coverage
 # Neither sbt nor Mill has a JaCoCo binding to resolve an agent and write a report the way
 # the Gradle and Maven builds do, so both jars are fetched here and the agent is handed to
-# them as a path. They come straight from Maven Central. mvn dependency:copy took 10 to 25
-# seconds per CI job, nearly all of it Maven fetching its own plugins into an empty ~/.m2.
+# them as a path.
 JACOCO_VERSION ?= 0.8.15
 JACOCO_DIR ?= $(CURDIR)/target/jacoco
 JACOCO_AGENT = $(JACOCO_DIR)/org.jacoco.agent-$(JACOCO_VERSION)-runtime.jar
@@ -104,8 +103,6 @@ coverage: java-cli-coverage gradle-coverage maven-coverage clojure-coverage lein
 
 jacoco-tools: $(JACOCO_AGENT) $(JACOCO_CLI)
 
-# Downloaded beside the target and renamed, so an interrupted download never leaves a jar
-# that the next run would take as already fetched.
 fetch-jacoco = mkdir -p $(dir $@) && \
 	curl -fsSL --retry 3 -o $@.part \
 		https://repo1.maven.org/maven2/org/jacoco/$(1)/$(JACOCO_VERSION)/$(notdir $@) && \
@@ -209,9 +206,6 @@ sbt-clean:
 # scriptedLaunchOpts is the only place an agent can go. jvm-plugin-core rides along on
 # purpose: codecov.yml scores those paths as their own component, so this merges with the
 # Gradle and Maven measurements of the same lines rather than competing with them.
-#
-# SBT_SCRIPTED_GROUP=uika or uika-cli-path runs one of the two invocations, the way ci.yml's
-# two sbt jobs do. Unset, it runs both.
 SBT_JACOCO_DIR = $(SBT_PLUGIN_DIR)/target/jacoco
 sbt-coverage: jacoco-tools $(SBT_CLI_STUB)
 	rm -rf $(SBT_JACOCO_DIR)
@@ -295,8 +289,6 @@ lein-it: java-cli-build
 	UIKA_BIN=$(JAVA_CLI_JAR) UIKA_IT_ALT_JAVA=$(UIKA_IT_ALT_JAVA) \
 		mise exec -- sh $(LEIN_PLUGIN_DIR)/it/run.sh
 
-# The unit suite runs here too, so make test covers it without coverage. CI runs lein-it
-# and lein-coverage instead, and Cloverage fails on a failing test just as lein test does.
 lein-test: lein-it
 	cd $(LEIN_PLUGIN_DIR) && $(LEIN) test
 
