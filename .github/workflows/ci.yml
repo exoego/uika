@@ -88,12 +88,7 @@ jobs:
           set-default: false
           cache: gradle
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
-          cache-dependency-path: |
-            gradle-plugin/*.gradle.kts
-            tools/openrewrite/rewrite.gradle
-
-      - name: OpenRewrite dry run
-        run: make rewrite-check
+          cache-dependency-path: gradle-plugin/*.gradle.kts
 
       - name: Check with coverage
         run: make gradle-check-coverage
@@ -105,6 +100,33 @@ jobs:
           flags: gradle
           disable_search: true
           fail_ci_if_error: true
+
+  # Split from the gradle job because the two ran in series there and made it the critical
+  # path. The recipe jars give it a key of its own.
+  rewrite:
+    name: OpenRewrite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          cache_save: false
+
+      - name: Cache Gradle
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 25
+          set-default: false
+          cache: gradle
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          cache-dependency-path: |
+            gradle-plugin/*.gradle.kts
+            tools/openrewrite/rewrite.gradle
+
+      - name: OpenRewrite dry run
+        run: make rewrite-check
 
   maven:
     name: Maven plugin
@@ -476,7 +498,7 @@ jobs:
   gate:
     name: Quality Gate
     if: always()
-    needs: [cli, gradle, gradle-e2e, maven, sbt, mill, clojure, lein, bazel, bazel-maven]
+    needs: [cli, gradle, rewrite, gradle-e2e, maven, sbt, mill, clojure, lein, bazel, bazel-maven]
     runs-on: ubuntu-latest
     steps:
       - name: Require every tool job to pass
