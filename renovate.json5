@@ -9,6 +9,7 @@
   minimumReleaseAge: "7 days",
   prConcurrentLimit: 5,
   prHourlyLimit: 2,
+  lockFileMaintenance: { enabled: false },
   // Integration-test fixtures pin versions on purpose. Bumping them is noise
   // and can break scripted or invoker tests, so leave them out of the scan.
   ignorePaths: [
