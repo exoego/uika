@@ -44,12 +44,17 @@ jobs:
           sparse-checkout: |
             /*
             !*.gradle.kts
-            !pom.xml
-            !*.sbt
-            !build.mill
-            !deps.edn
-            !project.clj
-            !MODULE.bazel*
+
+      - name: Cache Maven
+        if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 25
+          set-default: false
+          cache: maven
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          cache-dependency-path: maven-plugin/pom.xml
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
