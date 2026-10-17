@@ -19,10 +19,10 @@ concurrency:
 
 # One job per build tool, so the tools run side by side. Each job runs the instrumented
 # target, which is the same suite its plain target runs with an agent attached, so every
-# suite runs once. The Leiningen plugin is the exception. lein-coverage leaves out
-# it/run.sh, so that job runs both targets. The Clojure tool's Cloverage run rewrites forms
-# rather than riding an agent, but every rewritten form returns its original value, so it
-# runs the same suite and fails on the same failures.
+# suite runs once. The Clojure tool and the Leiningen plugin measure with Cloverage, which
+# rewrites forms rather than riding an agent. Every rewritten form still returns its
+# original value, and Cloverage fails on a failing test, so those suites run once too.
+# lein-coverage leaves out it/run.sh, so the Leiningen job runs that on its own.
 #
 # Every cache restores on pull requests and saves only on main. A PR-saved cache is scoped
 # to its branch yet still evicts the entries every branch shares. Each key has exactly one
@@ -327,7 +327,7 @@ jobs:
           cache-path: ~/.m2/repository
           cache-dependency-path: lein-plugin/project.clj
 
-      - name: Test
+      - name: Integration test
         # UIKA_IT_ALT_JAVA gives the lein integration test a second JDK, so it can
         # prove jdkRelease follows the project's :java-cmd and not lein's own JVM.
         # mise pins temurin-21 for the build, so any OTHER release the runner ships
@@ -342,7 +342,7 @@ jobs:
           done
           test -n "$alt" || { echo "no alternate JDK on this runner; JAVA_HOME_* are: $(env | grep -c '^JAVA_HOME_')" >&2; exit 1; }
           echo "alternate JVM for the lein probe: $alt"
-          make lein-test UIKA_IT_ALT_JAVA="$alt"
+          make lein-it UIKA_IT_ALT_JAVA="$alt"
 
       # No java-cli-build dependency, unlike clojure-coverage: the unit suite stubs the CLI
       # with a shell script, and the real-CLI round trip stays in it/run.sh.
