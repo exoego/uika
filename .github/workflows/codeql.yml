@@ -51,34 +51,6 @@ jobs:
             !project.clj
             !MODULE.bazel*
 
-      # Build-mode none still asks every Gradle and Maven build in the tree for its
-      # classpath, and cold that took about 100 of the 142 seconds the analysis step ran.
-      # These keys list files no CI job lists, so this job is the only one saving them.
-      - name: Cache Gradle
-        if: matrix.language == 'java-kotlin'
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
-        with:
-          distribution: temurin
-          java-version: 25
-          set-default: false
-          cache: gradle
-          cache-read-only: false
-          cache-dependency-path: |
-            cli-java/*.gradle.kts
-            gradle-plugin/*.gradle.kts
-            tools/gradle-e2e/project/*.gradle.kts
-
-      - name: Cache Maven
-        if: matrix.language == 'java-kotlin'
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
-        with:
-          distribution: temurin
-          java-version: 25
-          set-default: false
-          cache: maven
-          cache-read-only: false
-          cache-dependency-path: maven-plugin/pom.xml
-
       - name: Initialize CodeQL
         uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
