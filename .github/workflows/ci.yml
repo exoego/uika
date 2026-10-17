@@ -74,9 +74,15 @@ jobs:
       - name: Probe fixture verdicts against a real JVM
         run: make probe
 
+  # Two halves side by side, because the TestKit suite alone took about a minute. Both
+  # upload under the gradle flag, and Codecov merges them.
   gradle:
-    name: Gradle plugin
+    name: Gradle plugin (${{ matrix.half }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        half: [upgrade-check, rest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -91,13 +97,14 @@ jobs:
           java-version: 25
           set-default: false
           cache: gradle
-          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          # One half saves, so the two never race for the key.
+          cache-read-only: ${{ github.ref != 'refs/heads/main' || matrix.half != 'rest' }}
           cache-dependency-path: |
             gradle-plugin/*.gradle.kts
             .mise.toml
 
       - name: Check with coverage
-        run: make gradle-check-coverage
+        run: make gradle-check-coverage GRADLE_TEST_HALF=${{ matrix.half }}
 
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:

@@ -169,9 +169,11 @@ gradle-coverage:
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) jacocoTestReport -PuikaCoverage=true
 
 # gradle-check and gradle-coverage in one invocation, so the instrumented tests run once and
-# the rest of check still runs. This is what ci.yml runs.
+# the rest of check still runs. This is what ci.yml runs, once per GRADLE_TEST_HALF
+# (upgrade-check or rest). Unset, it runs every test.
 gradle-check-coverage:
-	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) check jacocoTestReport -PuikaCoverage=true
+	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) check jacocoTestReport -PuikaCoverage=true \
+		$(if $(GRADLE_TEST_HALF),-PuikaTestHalf=$(GRADLE_TEST_HALF))
 
 # The binary the uika-cli-path scripted group points UIKA_CLI_PATH at. It only has to be
 # an executable file that records its argv: the group asserts acquisition was skipped, not

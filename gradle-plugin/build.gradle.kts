@@ -90,6 +90,15 @@ tasks.test {
     val pluginJar = tasks.jar.flatMap { it.archiveFile }
     inputs.file(pluginJar)
     doFirst { systemProperty("uika.plugin.jar", pluginJar.get().asFile.absolutePath) }
+    // CI runs the suite as two jobs side by side. UpgradeCheckTaskIntegrationTest alone is
+    // about 40% of it, so it is one half and every other class is the other.
+    val upgradeCheckClass = "net.exoego.uika.gradle.UpgradeCheckTaskIntegrationTest"
+    when (val half = providers.gradleProperty("uikaTestHalf").orNull) {
+        null -> {}
+        "upgrade-check" -> filter.includeTestsMatching(upgradeCheckClass)
+        "rest" -> filter.excludeTestsMatching(upgradeCheckClass)
+        else -> throw GradleException("uikaTestHalf is upgrade-check or rest, not $half")
+    }
     // The jacoco plugin instruments every Test task by default, so `make gradle-check` would
     // pay for coverage it never reports.
     extensions.getByType<JacocoTaskExtension>().isEnabled = coverageEnabled
