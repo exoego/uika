@@ -34,12 +34,13 @@ concurrency:
 # steps are a cache layer only. mise owns the build JDK, and set-default keeps theirs off
 # JAVA_HOME and PATH. cache-dependency-path is what splits the keys. setup-java hashes the
 # listed files into the key, so two jobs listing different files own different entries.
+# Every Gradle key lists .mise.toml, which pins the Gradle release. Gradle keeps compiled
+# build scripts under its own version, so a key that outlived a Gradle bump restored none.
+#
 # mise is the exception: no job but stage uses its cache. Each job installs only the tools
 # it runs, from the network. Java and Gradle took 3.2 seconds that way, while restoring the
 # 526 MB cache of every tool averaged 7.4. MISE_EXEC_AUTO_INSTALL is off because `mise exec`
 # would otherwise install every tool .mise.toml names on its first run.
-# Every Gradle key lists .mise.toml, which pins the Gradle release. Gradle keeps compiled
-# build scripts under its own version, so a key that outlived a Gradle bump restored none.
 jobs:
   cli:
     name: CLI
