@@ -7,13 +7,17 @@ on:
   release:
     types: [published]
 
-permissions:
-  contents: write
+permissions: {}
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
 
 jobs:
   version:
     name: Resolve version
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.resolve.outputs.version }}
 
@@ -29,6 +33,9 @@ jobs:
     name: Publish to Maven Central
     needs: version
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
     env:
       UIKA_VERSION: ${{ needs.version.outputs.version }}
       JRELEASER_PROJECT_VERSION: ${{ needs.version.outputs.version }}
@@ -41,12 +48,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      # A tag run restores the mise cache saved on main. Saving here would
-      # only create a tag-scoped duplicate.
+      # No cache, so nothing a CI run saved can reach the published artifacts.
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
-          cache_save: false
+          cache: false
 
       - name: Stage Maven artifacts
         shell: bash
