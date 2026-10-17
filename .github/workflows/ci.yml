@@ -34,10 +34,10 @@ concurrency:
 # steps are a cache layer only. mise owns the build JDK, and set-default keeps theirs off
 # JAVA_HOME and PATH. cache-dependency-path is what splits the keys. setup-java hashes the
 # listed files into the key, so two jobs listing different files own different entries.
-# mise works the same way. Each job installs only the tools it runs, and install_args is
-# hashed into the mise key, so jobs installing the same set share an entry and one of them
-# saves it. MISE_EXEC_AUTO_INSTALL is off because `mise exec` would otherwise install every
-# tool .mise.toml names on its first run.
+# mise is the exception: no job but stage uses its cache. Each job installs only the tools
+# it runs, from the network. Java and Gradle took 3.2 seconds that way, while restoring the
+# 526 MB cache of every tool averaged 7.4. MISE_EXEC_AUTO_INSTALL is off because `mise exec`
+# would otherwise install every tool .mise.toml names on its first run.
 # Every Gradle key lists .mise.toml, which pins the Gradle release. Gradle keeps compiled
 # build scripts under its own version, so a key that outlived a Gradle bump restored none.
 jobs:
@@ -50,7 +50,7 @@ jobs:
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: java gradle
-          cache_save: ${{ github.ref == 'refs/heads/main' }}
+          cache: false
 
       # Also restored by the clojure, lein and bazel jobs, which build the CLI jar.
       - name: Cache Gradle
@@ -91,7 +91,7 @@ jobs:
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: java gradle
-          cache_save: false
+          cache: false
 
       - name: Cache Gradle
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -127,7 +127,7 @@ jobs:
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: java gradle
-          cache_save: false
+          cache: false
 
       - name: Cache Gradle
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -154,7 +154,7 @@ jobs:
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: java maven
-          cache_save: ${{ github.ref == 'refs/heads/main' }}
+          cache: false
 
       # The invoker ITs resolve into target/it-repo, which ~/.m2 never covered, and
       # refetching it cold every run is what tripped a 429 once a third IT was added.
@@ -202,7 +202,7 @@ jobs:
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: java github:sbt/sbt
-          cache_save: ${{ github.ref == 'refs/heads/main' && matrix.group == 'uika' }}
+          cache: false
 
       # The Makefile redirects every sbt directory to /tmp/uika-sbt, so the default sbt
       # paths would cache nothing.
@@ -243,7 +243,7 @@ jobs:
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: java
-          cache_save: ${{ github.ref == 'refs/heads/main' }}
+          cache: false
 
       # Mill has no setup-java cache id, so it keeps a hand-rolled entry with the save
       # step at the end of the job. Mill resolves through coursier, hence that directory.
@@ -287,7 +287,7 @@ jobs:
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: java gradle clojure
-          cache_save: ${{ github.ref == 'refs/heads/main' }}
+          cache: false
 
       - name: Cache Gradle
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -335,7 +335,7 @@ jobs:
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: java gradle leiningen
-          cache_save: ${{ github.ref == 'refs/heads/main' }}
+          cache: false
 
       - name: Cache Gradle
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -399,7 +399,7 @@ jobs:
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: java gradle bazelisk
-          cache_save: ${{ github.ref == 'refs/heads/main' }}
+          cache: false
 
       - name: Cache Gradle
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -443,7 +443,7 @@ jobs:
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: java gradle bazelisk
-          cache_save: false
+          cache: false
 
       - name: Cache Gradle
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -473,7 +473,7 @@ jobs:
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           install_args: java gradle
-          cache_save: false
+          cache: false
 
       - name: Cache Gradle
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -518,10 +518,10 @@ jobs:
       # still restored, since the release runner restores a mise cache too.
       - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
-          # Main installs every tool and saves the full set, which is the cache the
-          # release workflow restores. Pull requests restore the lein job's subset.
+          # On main this job installs every tool and saves the full set, the cache the
+          # release workflow restores. On pull requests it is like the other jobs.
           install_args: ${{ github.ref != 'refs/heads/main' && 'java gradle leiningen' || '' }}
-          cache_save: ${{ github.ref == 'refs/heads/main' }}
+          cache: ${{ github.ref == 'refs/heads/main' }}
 
       # The three staging steps nothing else runs. The Gradle, sbt, Maven, Mill and Clojure
       # ones go through commands their own tests already exercise, so a release-only break
