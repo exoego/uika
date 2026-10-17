@@ -4,6 +4,7 @@ import groovy.json.JsonSlurper;
 import org.gradle.testkit.runner.BuildResult;
 import org.gradle.testkit.runner.GradleRunner;
 import org.gradle.testkit.runner.TaskOutcome;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -29,8 +30,14 @@ final class ResolveClasspathTaskIntegrationTest {
     @TempDir
     Path projectDir;
 
-    @TempDir
+    /// Inside the project, so the build scripts name it uri("repo") and the tests that share a
+    /// script compile it once instead of once per temp dir.
     Path repoDir;
+
+    @BeforeEach
+    void placeRepoInsideTheProject() {
+        repoDir = projectDir.resolve("repo");
+    }
 
     @Test
     void rehydratesMissingArtifactAndReusesConfigurationCache() throws Exception {
@@ -237,11 +244,11 @@ final class ResolveClasspathTaskIntegrationTest {
 
                 repositories {
                     maven {
-                        url = uri("%s")
+                        url = uri("repo")
                         metadataSources { artifact() }
                     }
                 }
-                """.formatted(repoDir.toUri()));
+                """);
     }
 
     private void publishStubJar(String name) throws IOException {

@@ -38,7 +38,8 @@ final class UpgradeCheckTaskIntegrationTest {
     @TempDir
     Path projectDir;
 
-    @TempDir
+    /// Inside the project, so the build scripts name it uri("repo") and the tests that share a
+    /// script compile it once instead of once per temp dir.
     Path repoDir;
 
     private Path before;
@@ -46,6 +47,7 @@ final class UpgradeCheckTaskIntegrationTest {
 
     @BeforeEach
     void setUp() throws Exception {
+        repoDir = projectDir.resolve("repo");
         // The printed lines must reach the build output through the task's logger
         // (inherited stdio dies with the daemon).
         publishStubCli(CLEAN_VERSION, "uika-stub: dependency changes: 0", 0);
@@ -62,11 +64,11 @@ final class UpgradeCheckTaskIntegrationTest {
 
                 repositories {
                     maven {
-                        url = uri("%s")
+                        url = uri("repo")
                         metadataSources { artifact() }
                     }
                 }
-                """.formatted(repoDir.toUri()));
+                """);
         before = Files.writeString(projectDir.resolve("before.json"), "{}");
         after = Files.writeString(projectDir.resolve("after.json"), "{}");
     }
@@ -119,7 +121,7 @@ final class UpgradeCheckTaskIntegrationTest {
 
                 repositories {
                     maven {
-                        url = uri("%s")
+                        url = uri("repo")
                         metadataSources { artifact() }
                     }
                 }
@@ -127,7 +129,7 @@ final class UpgradeCheckTaskIntegrationTest {
                 uika {
                     failOn = "reachable"
                 }
-                """.formatted(repoDir.toUri()));
+                """);
 
         var result = runner(CLEAN_VERSION).build();
 
@@ -245,7 +247,7 @@ final class UpgradeCheckTaskIntegrationTest {
 
                 repositories {
                     maven {
-                        url = uri("%s")
+                        url = uri("repo")
                         metadataSources { artifact() }
                     }
                 }
@@ -253,7 +255,7 @@ final class UpgradeCheckTaskIntegrationTest {
                 uika {
                     excludeFiles.from("%s")
                 }
-                """.formatted(repoDir.toUri(), excludeFile.toString().replace("\\", "\\\\")));
+                """.formatted(excludeFile.toString().replace("\\", "\\\\")));
 
         var result = runner(CLEAN_VERSION).build();
 
@@ -300,7 +302,7 @@ final class UpgradeCheckTaskIntegrationTest {
 
                 repositories {
                     maven {
-                        url = uri("%s")
+                        url = uri("repo")
                         metadataSources { artifact() }
                     }
                 }
@@ -309,7 +311,7 @@ final class UpgradeCheckTaskIntegrationTest {
                     val args = tasks.test.get().allJvmArgs
                     doLast { println("TEST_JVM_ARGS=" + args) }
                 }
-                """.formatted(repoDir.toUri()));
+                """);
 
         var with = GradleRunner.create()
                 .withProjectDir(projectDir.toFile())
@@ -393,7 +395,7 @@ final class UpgradeCheckTaskIntegrationTest {
 
                 repositories {
                     maven {
-                        url = uri("%s")
+                        url = uri("repo")
                         metadataSources { artifact() }
                     }
                 }
@@ -402,7 +404,7 @@ final class UpgradeCheckTaskIntegrationTest {
                     val args = tasks.test.get().allJvmArgs
                     doLast { println("TEST_JVM_ARGS=" + args) }
                 }
-                """.formatted(repoDir.toUri()));
+                """);
 
         var injected = GradleRunner.create()
                 .withProjectDir(projectDir.toFile())
@@ -470,11 +472,11 @@ final class UpgradeCheckTaskIntegrationTest {
 
                 repositories {
                     maven {
-                        url = uri("%s")
+                        url = uri("repo")
                         metadataSources { artifact() }
                     }
                 }
-                """.formatted(repoDir.toUri()));
+                """);
 
         runner(CLEAN_VERSION).build();
 
@@ -515,11 +517,11 @@ final class UpgradeCheckTaskIntegrationTest {
 
                 repositories {
                     maven {
-                        url = uri("%s")
+                        url = uri("repo")
                         metadataSources { artifact() }
                     }
                 }
-                """.formatted(repoDir.toUri()));
+                """);
 
         // With the configuration cache on, because deriving this reads other projects'
         // extensions and realizes their compileJava from a task input provider, and that is
@@ -588,11 +590,11 @@ final class UpgradeCheckTaskIntegrationTest {
 
                 repositories {
                     maven {
-                        url = uri("%s")
+                        url = uri("repo")
                         metadataSources { artifact() }
                     }
                 }
-                """.formatted(newer.feature(), repoDir.toUri()));
+                """.formatted(newer.feature()));
 
         String[] arguments = {
                 "uikaUpgradeCheck",
@@ -661,11 +663,11 @@ final class UpgradeCheckTaskIntegrationTest {
 
                 repositories {
                     maven {
-                        url = uri("%s")
+                        url = uri("repo")
                         metadataSources { artifact() }
                     }
                 }
-                """.formatted(newer.feature(), own, repoDir.toUri()));
+                """.formatted(newer.feature(), own));
 
         var result = runner(CLEAN_VERSION)
                 .withArguments(
@@ -714,11 +716,11 @@ final class UpgradeCheckTaskIntegrationTest {
 
                 repositories {
                     maven {
-                        url = uri("%s")
+                        url = uri("repo")
                         metadataSources { artifact() }
                     }
                 }
-                """.formatted(Runtime.version().feature() + 1, repoDir.toUri()));
+                """.formatted(Runtime.version().feature() + 1));
 
         var result = runner(CLEAN_VERSION)
                 .withArguments(
@@ -786,11 +788,11 @@ final class UpgradeCheckTaskIntegrationTest {
 
                 repositories {
                     maven {
-                        url = uri("%s")
+                        url = uri("repo")
                         metadataSources { artifact() }
                     }
                 }
-                """.formatted(older, repoDir.toUri()));
+                """.formatted(older));
 
         var result = runner(CLEAN_VERSION)
                 .withArguments(
@@ -1180,7 +1182,7 @@ final class UpgradeCheckTaskIntegrationTest {
 
                 repositories {
                     maven {
-                        url = uri("%s")
+                        url = uri("repo")
                         metadataSources { artifact() }
                     }
                 }
@@ -1188,7 +1190,7 @@ final class UpgradeCheckTaskIntegrationTest {
                 gradle.taskGraph.whenReady {
                     uika.cliVersion.set("%s")
                 }
-                """.formatted(repoDir.toUri(), CLEAN_VERSION));
+                """.formatted(CLEAN_VERSION));
 
         var result = GradleRunner.create()
                 .withProjectDir(projectDir.toFile())
@@ -1343,12 +1345,12 @@ final class UpgradeCheckTaskIntegrationTest {
 
                 repositories {
                     maven {
-                        url = uri("%s")
+                        url = uri("repo")
                         metadataSources { artifact() }
                     }
                 }
 
-                """.formatted(repoDir.toUri()) + extension);
+                """ + extension);
     }
 
     private GradleRunner runner(String cliVersion) {
