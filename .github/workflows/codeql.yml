@@ -12,9 +12,6 @@ on:
 permissions:
   contents: read
 
-env:
-  CODEQL_EXTRACTOR_JAVA_OPTION_BUILDLESS_DEPENDENCY_DIR: ${{ github.workspace }}/../codeql-java-deps
-
 concurrency:
   group: codeql-${{ github.ref }}
   # Superseded PR pushes are pointless to finish. Every main commit still gets analyzed.
@@ -66,14 +63,6 @@ jobs:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
           cache-dependency-path: maven-plugin/pom.xml
 
-      - name: Cache inferred dependencies
-        if: matrix.language == 'java-kotlin'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ github.workspace }}/../codeql-java-deps
-          key: codeql-java-deps-exp-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: codeql-java-deps-exp-
-
       - name: Initialize CodeQL
         uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
@@ -81,6 +70,12 @@ jobs:
           # Neither needs a build: Java is analyzed from source. See the matrix
           # comment before changing this.
           build-mode: none
+          config: |
+            paths-ignore:
+              - '**/src/test/**'
+              - '**/src/it/**'
+              - '**/it/**'
+              - tools/**
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
