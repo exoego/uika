@@ -10,7 +10,7 @@ dependencies {
     testImplementation(gradleTestKit())
     testImplementation(localGroovy())
     testImplementation("org.junit.jupiter:junit-jupiter:6.1.3")
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.1.3")
+    testImplementation("org.junit.platform:junit-platform-launcher:6.1.3")
 }
 
 repositories {
@@ -101,7 +101,10 @@ tasks.test {
         val agentJar = jacocoTestKitAgent.elements.map { it.single().asFile.absolutePath }
         val kitDir = testKitDir.get().asFile
         val exec = testKitExec.get().asFile
-        systemProperty("org.gradle.testkit.dir", kitDir.absolutePath)
+        // TestKitDirPerFork gives each fork a dir under this one, with a copy of the
+        // gradle.properties below. CI runs only this mode, so only this mode forks.
+        systemProperty("uika.testkit.base", kitDir.absolutePath)
+        maxParallelForks = 3
         doFirst {
             // daemon=false is load-bearing: JaCoCo flushes at JVM exit, and a reusable daemon
             // outlives the report task. A single-use daemon exits with each build.
