@@ -398,22 +398,10 @@ jobs:
             cli-java/*.gradle.kts
             .mise.toml
 
-      # Bazel has no setup-java cache id, so it keeps a hand-rolled entry with the save
-      # step at the end of the job.
-      - name: Restore Bazel cache
-        id: cache-bazel
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          # The output base is deliberately not cached. The integration test
-          # cleans it on purpose (bazel-rules/it/run.sh explains why), so
-          # storing it would cost gigabytes the run discards.
-          path: |
-            ~/.cache/bazelisk
-            ~/.cache/bazel/_bazel_runner/cache/repos/v1
-          # No restore-keys. A partial hit carried every Bazel release and rules_java archive
-          # forward into the next key, and the entry grew to 2.9 GB, 37 seconds to restore.
-          # v2 drops the entries that grew that way.
-          key: bazel-v2-${{ runner.os }}-${{ hashFiles('bazel-rules/MODULE.bazel', 'bazel-rules/it/test-workspace/MODULE.bazel.template', 'bazel-rules/.bazelversion') }}
+      # No Bazel cache. The repository cache restored 1.1 GB in 13 seconds and saved 6 in
+      # the test, so fetching every run is faster. The bazel-maven job measured the same.
+      # The output base was never cached: the integration test cleans it on purpose
+      # (bazel-rules/it/run.sh explains why).
 
       # The integration test runs with the agent attached and runs the unit suite itself,
       # so this is the whole of bazel-test.
@@ -430,18 +418,7 @@ jobs:
           disable_search: true
           fail_ci_if_error: true
 
-      - name: Save Bazel cache
-        if: github.ref == 'refs/heads/main' && steps.cache-bazel.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cache/bazelisk
-            ~/.cache/bazel/_bazel_runner/cache/repos/v1
-          key: ${{ steps.cache-bazel.outputs.cache-primary-key }}
-
-  # Split from the bazel job because it was the critical path by about 50 seconds. Its own
-  # key, since the artifacts it fetches are the ones the lock files pin and the bazel job
-  # never touches them.
+  # Split from the bazel job because it was the critical path by about 50 seconds.
   bazel-maven:
     name: Bazel rules with Maven artifacts
     runs-on: ubuntu-latest
@@ -464,28 +441,8 @@ jobs:
             cli-java/*.gradle.kts
             .mise.toml
 
-      - name: Restore Bazel cache
-        id: cache-bazel
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          # Not the output base, for the reason the bazel job gives.
-          path: |
-            ~/.cache/bazelisk
-            ~/.cache/bazel/_bazel_runner/cache/repos/v1
-          # No restore-keys, for the reason the bazel job gives.
-          key: bazel-maven-v2-${{ runner.os }}-${{ hashFiles('bazel-rules/MODULE.bazel', 'bazel-rules/it/maven-workspace/MODULE.bazel.template', 'bazel-rules/it/maven-workspace/maven_install-*.json', 'bazel-rules/.bazelversion') }}
-
       - name: Test against Maven artifacts
         run: make bazel-maven-test
-
-      - name: Save Bazel cache
-        if: github.ref == 'refs/heads/main' && steps.cache-bazel.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cache/bazelisk
-            ~/.cache/bazel/_bazel_runner/cache/repos/v1
-          key: ${{ steps.cache-bazel.outputs.cache-primary-key }}
 
   # The repository ruleset requires one check named "Quality Gate", so the tool jobs can be
   # renamed or added without touching repository settings. This job carries that name and
