@@ -106,6 +106,18 @@ jobs:
             gradle-plugin/*.gradle.kts
             .mise.toml
 
+      # The TestKit builds run in a Gradle user home of their own under build/test-kit. Set up
+      # empty, it cost the suite about 10 of its 51 seconds, most of it in the first build.
+      # It is about 12 MB. No restore-keys, so an entry never carries an old one forward.
+      - name: Restore TestKit Gradle home
+        id: cache-testkit
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            gradle-plugin/build/test-kit/caches
+            gradle-plugin/build/test-kit/native
+          key: gradle-testkit-${{ runner.os }}-${{ hashFiles('gradle-plugin/*.gradle.kts', '.mise.toml') }}
+
       - name: Check with coverage
         run: make gradle-check-coverage
 
@@ -116,6 +128,15 @@ jobs:
           flags: gradle
           disable_search: true
           fail_ci_if_error: true
+
+      - name: Save TestKit Gradle home
+        if: github.ref == 'refs/heads/main' && steps.cache-testkit.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            gradle-plugin/build/test-kit/caches
+            gradle-plugin/build/test-kit/native
+          key: ${{ steps.cache-testkit.outputs.cache-primary-key }}
 
   # Split from the gradle job because the two ran in series there and made it the critical
   # path. The recipe jars give it a key of its own.
