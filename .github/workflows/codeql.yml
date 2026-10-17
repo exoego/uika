@@ -39,6 +39,17 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !*.gradle.kts
+            !pom.xml
+            !*.sbt
+            !build.mill
+            !deps.edn
+            !project.clj
+            !MODULE.bazel*
 
       # Build-mode none still asks every Gradle and Maven build in the tree for its
       # classpath, and cold that took about 100 of the 142 seconds the analysis step ran.
