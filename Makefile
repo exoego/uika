@@ -35,7 +35,8 @@ BAZEL_STAGE_DIR ?= dist/bazel
 COVERAGE_DIR ?= target/coverage
 # Neither sbt nor Mill has a JaCoCo binding to resolve an agent and write a report the way
 # the Gradle and Maven builds do, so both jars are fetched here and the agent is handed to
-# them as a path. dependency:copy needs no pom, so it runs from the repository root.
+# them as a path. They come straight from Maven Central. mvn dependency:copy took 10 to 25
+# seconds per CI job, nearly all of it Maven fetching its own plugins into an empty ~/.m2.
 JACOCO_VERSION ?= 0.8.15
 JACOCO_DIR ?= $(CURDIR)/target/jacoco
 JACOCO_AGENT = $(JACOCO_DIR)/org.jacoco.agent-$(JACOCO_VERSION)-runtime.jar
@@ -101,12 +102,20 @@ test: rewrite java-cli-test gradle-test sbt-scripted maven-verify mill-test cloj
 coverage: java-cli-coverage gradle-coverage maven-coverage clojure-coverage lein-coverage \
 	sbt-coverage mill-coverage bazel-coverage
 
-jacoco-tools:
-	@mkdir -p $(JACOCO_DIR)
-	$(MAVEN) -q -B dependency:copy -DoutputDirectory=$(JACOCO_DIR) \
-		-Dartifact=org.jacoco:org.jacoco.agent:$(JACOCO_VERSION):jar:runtime
-	$(MAVEN) -q -B dependency:copy -DoutputDirectory=$(JACOCO_DIR) \
-		-Dartifact=org.jacoco:org.jacoco.cli:$(JACOCO_VERSION):jar:nodeps
+jacoco-tools: $(JACOCO_AGENT) $(JACOCO_CLI)
+
+# Downloaded beside the target and renamed, so an interrupted download never leaves a jar
+# that the next run would take as already fetched.
+fetch-jacoco = mkdir -p $(dir $@) && \
+	curl -fsSL --retry 3 -o $@.part \
+		https://repo1.maven.org/maven2/org/jacoco/$(1)/$(JACOCO_VERSION)/$(notdir $@) && \
+	mv $@.part $@
+
+$(JACOCO_AGENT):
+	$(call fetch-jacoco,org.jacoco.agent)
+
+$(JACOCO_CLI):
+	$(call fetch-jacoco,org.jacoco.cli)
 
 clean: java-cli-clean gradle-clean sbt-clean maven-clean mill-clean clojure-clean lein-clean bazel-clean
 
