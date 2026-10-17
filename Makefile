@@ -209,15 +209,22 @@ sbt-clean:
 # scriptedLaunchOpts is the only place an agent can go. jvm-plugin-core rides along on
 # purpose: codecov.yml scores those paths as their own component, so this merges with the
 # Gradle and Maven measurements of the same lines rather than competing with them.
+#
+# SBT_SCRIPTED_GROUP=uika or uika-cli-path runs one of the two invocations, the way ci.yml's
+# two sbt jobs do. Unset, it runs both.
 SBT_JACOCO_DIR = $(SBT_PLUGIN_DIR)/target/jacoco
 sbt-coverage: jacoco-tools $(SBT_CLI_STUB)
 	rm -rf $(SBT_JACOCO_DIR)
 	mkdir -p $(SBT_JACOCO_DIR)
+ifneq ($(SBT_SCRIPTED_GROUP),uika-cli-path)
 	cd $(SBT_PLUGIN_DIR) && UIKA_JACOCO_AGENT=$(JACOCO_AGENT) \
 		UIKA_JACOCO_EXEC=$(CURDIR)/$(SBT_JACOCO_DIR)/scripted.exec $(SBT) $(SBT_FLAGS) \
 		checkClassFileVersions 'scripted uika/*'
+endif
+ifneq ($(SBT_SCRIPTED_GROUP),uika)
 	cd $(SBT_PLUGIN_DIR) && UIKA_JACOCO_AGENT=$(JACOCO_AGENT) UIKA_CLI_PATH=$(SBT_CLI_STUB) \
 		UIKA_JACOCO_EXEC=$(CURDIR)/$(SBT_JACOCO_DIR)/scripted.exec $(SBT) $(SBT_FLAGS) 'scripted uika-cli-path/*'
+endif
 	$(JAVA) -jar $(JACOCO_CLI) report $(SBT_JACOCO_DIR)/scripted.exec \
 		--classfiles $(SBT_PLUGIN_DIR)/target/scala-2.12/sbt-1.0/classes \
 		--sourcefiles $(SBT_PLUGIN_DIR)/src/main/scala \
