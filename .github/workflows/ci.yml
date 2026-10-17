@@ -168,9 +168,16 @@ jobs:
           disable_search: true
           fail_ci_if_error: true
 
+  # One job per scripted group, side by side. Each group is its own sbt invocation anyway,
+  # for the reason the Makefile's sbt-scripted target gives. Both upload under the sbt flag,
+  # and Codecov merges them.
   sbt:
-    name: sbt plugin
+    name: sbt plugin (${{ matrix.group }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [uika, uika-cli-path]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -187,7 +194,8 @@ jobs:
           java-version: 25
           set-default: false
           cache: sbt
-          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          # The uika group resolves more, so it is the one that saves.
+          cache-read-only: ${{ github.ref != 'refs/heads/main' || matrix.group != 'uika' }}
           cache-path: |
             /tmp/uika-sbt
             ~/.cache/coursier
@@ -195,9 +203,9 @@ jobs:
             sbt-plugin/build.sbt
             sbt-plugin/project/build.properties
 
-      # Runs checkClassFileVersions too, in the same sbt as the first scripted group.
+      # The uika group runs checkClassFileVersions too, in the same sbt.
       - name: Scripted tests with coverage
-        run: make sbt-coverage
+        run: make sbt-coverage SBT_SCRIPTED_GROUP=${{ matrix.group }}
 
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
