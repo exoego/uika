@@ -30,6 +30,8 @@ concurrency:
 # steps are a cache layer only. mise owns the build JDK, and set-default keeps theirs off
 # JAVA_HOME and PATH. cache-dependency-path is what splits the keys. setup-java hashes the
 # listed files into the key, so two jobs listing different files own different entries.
+# Every Gradle key lists .mise.toml, which pins the Gradle release. Gradle keeps compiled
+# build scripts under its own version, so a key that outlived a Gradle bump restored none.
 jobs:
   cli:
     name: CLI
@@ -51,7 +53,9 @@ jobs:
           set-default: false
           cache: gradle
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
-          cache-dependency-path: cli-java/*.gradle.kts
+          cache-dependency-path: |
+            cli-java/*.gradle.kts
+            .mise.toml
 
       - name: Check version placeholders
         run: make placeholder-check
@@ -88,7 +92,9 @@ jobs:
           set-default: false
           cache: gradle
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
-          cache-dependency-path: gradle-plugin/*.gradle.kts
+          cache-dependency-path: |
+            gradle-plugin/*.gradle.kts
+            .mise.toml
 
       - name: Check with coverage
         run: make gradle-check-coverage
@@ -124,6 +130,7 @@ jobs:
           cache-dependency-path: |
             gradle-plugin/*.gradle.kts
             tools/openrewrite/rewrite.gradle
+            .mise.toml
 
       - name: OpenRewrite dry run
         run: make rewrite-check
@@ -268,7 +275,9 @@ jobs:
           set-default: false
           cache: gradle
           cache-read-only: true
-          cache-dependency-path: cli-java/*.gradle.kts
+          cache-dependency-path: |
+            cli-java/*.gradle.kts
+            .mise.toml
 
       # ~/.gitlibs holds the Clojure CLI's git deps.
       - name: Cache Maven and gitlibs
@@ -316,7 +325,9 @@ jobs:
           set-default: false
           cache: gradle
           cache-read-only: true
-          cache-dependency-path: cli-java/*.gradle.kts
+          cache-dependency-path: |
+            cli-java/*.gradle.kts
+            .mise.toml
 
       - name: Cache Maven
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -377,7 +388,9 @@ jobs:
           set-default: false
           cache: gradle
           cache-read-only: true
-          cache-dependency-path: cli-java/*.gradle.kts
+          cache-dependency-path: |
+            cli-java/*.gradle.kts
+            .mise.toml
 
       # Bazel has no setup-java cache id, so it keeps a hand-rolled entry with the save
       # step at the end of the job.
@@ -441,7 +454,9 @@ jobs:
           set-default: false
           cache: gradle
           cache-read-only: true
-          cache-dependency-path: cli-java/*.gradle.kts
+          cache-dependency-path: |
+            cli-java/*.gradle.kts
+            .mise.toml
 
       - name: Restore Bazel cache
         id: cache-bazel
@@ -487,10 +502,10 @@ jobs:
           java-version: 25
           set-default: false
           cache: gradle
-          cache-read-only: true
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
           cache-dependency-path: |
-            cli-java/*.gradle.kts
-            gradle-plugin/*.gradle.kts
+            tools/gradle-e2e/project/*.gradle.kts
+            .mise.toml
 
       - name: Run the documented PR gate with the published plugin and CLI
         run: make gradle-e2e
