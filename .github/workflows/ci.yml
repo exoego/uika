@@ -369,9 +369,10 @@ jobs:
           path: |
             ~/.cache/bazelisk
             ~/.cache/bazel/_bazel_runner/cache/repos/v1
-          key: bazel-${{ runner.os }}-${{ hashFiles('bazel-rules/MODULE.bazel', 'bazel-rules/it/test-workspace/MODULE.bazel.template', 'bazel-rules/.bazelversion') }}
-          restore-keys: |
-            bazel-${{ runner.os }}-
+          # No restore-keys. A partial hit carried every Bazel release and rules_java archive
+          # forward into the next key, and the entry grew to 2.9 GB, 37 seconds to restore.
+          # v2 drops the entries that grew that way.
+          key: bazel-v2-${{ runner.os }}-${{ hashFiles('bazel-rules/MODULE.bazel', 'bazel-rules/it/test-workspace/MODULE.bazel.template', 'bazel-rules/.bazelversion') }}
 
       # The integration test runs with the agent attached and runs the unit suite itself,
       # so this is the whole of bazel-test.
@@ -428,10 +429,8 @@ jobs:
           path: |
             ~/.cache/bazelisk
             ~/.cache/bazel/_bazel_runner/cache/repos/v1
-          key: bazel-maven-${{ runner.os }}-${{ hashFiles('bazel-rules/MODULE.bazel', 'bazel-rules/it/maven-workspace/MODULE.bazel.template', 'bazel-rules/it/maven-workspace/maven_install-*.json', 'bazel-rules/.bazelversion') }}
-          restore-keys: |
-            bazel-maven-${{ runner.os }}-
-            bazel-${{ runner.os }}-
+          # No restore-keys, for the reason the bazel job gives.
+          key: bazel-maven-v2-${{ runner.os }}-${{ hashFiles('bazel-rules/MODULE.bazel', 'bazel-rules/it/maven-workspace/MODULE.bazel.template', 'bazel-rules/it/maven-workspace/maven_install-*.json', 'bazel-rules/.bazelversion') }}
 
       - name: Test against Maven artifacts
         run: make bazel-maven-test
