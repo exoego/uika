@@ -331,9 +331,12 @@ class MainTest {
                 run.stdout().contains("❌ com.google.common.util.concurrent.TimeLimiter.callWithTimeout(Callable, long, TimeUnit, boolean)"),
                 run.stdout());
 
-        Run failed = runUika("check", "--markdown", report.toString(), "--old", dir.resolve("missing.jar").toString(), "--new", fixture(NEW),
-                "--classpath", fixture(CONSUMER));
+        // An input that fails to load is the earliest failure a run can have, so the report
+        // must already be gone by then.
+        Run failed = runUika("check", "--markdown", report.toString(), "--exclude-file", dir.resolve("missing.toml").toString(),
+                "--old", fixture(OLD), "--new", fixture(NEW), "--classpath", fixture(CONSUMER));
         assertEquals(2, failed.code(), failed.stderr());
+        assertTrue(failed.stderr().startsWith("error: cannot read exclude file "), failed.stderr());
         assertFalse(Files.exists(report), "a failed run leaves no report to post");
 
         Run directory = runUika("check", "--markdown", dir.toString(), "--old", fixture(OLD), "--new", fixture(NEW), "--classpath", fixture(CONSUMER));

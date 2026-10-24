@@ -56,6 +56,7 @@ final class Commands {
     }
 
     private static int cmdCheck(Cli.Check args) {
+        prepareMarkdown(args.markdown());
         List<String> targets = new ArrayList<>(args.classpath());
         List<String> appRoots = new ArrayList<>(args.app());
         targets.addAll(args.app());
@@ -66,7 +67,6 @@ final class Commands {
         }
         List<Exclude.Rule> excludeRules = Exclude.load(args.excludeFile());
         Evidence.LoadEvidence evidence = loadEvidence(args.classLoadLog(), args.draftExcludeFile(), args.excludeFile());
-        prepareMarkdown(args.markdown());
         int[] jdkPair = args.jdkReleaseOld() == null ? null : new int[] {args.jdkReleaseOld(), args.jdkReleaseNew()};
         Check.Report result;
         try (JdkLayer jdk = new JdkLayer(args.jdkRelease())) {
@@ -159,9 +159,10 @@ final class Commands {
     }
 
     /**
-     * Clears the way for --markdown before the scan. A report left by an earlier run is removed,
-     * so a run that fails leaves no stale report for a CI step to post as this run's. The
-     * directory is created here so a bad path fails the command before the scan, not after it.
+     * Clears the way for --markdown as the command's first step, before any input can fail to
+     * load. A report left by an earlier run is removed, so a run that fails leaves no stale
+     * report for a CI step to post as this run's. The directory is created here so a bad path
+     * fails the command before the scan, not after it.
      */
     static void prepareMarkdown(String path) {
         if (path == null) {
@@ -497,11 +498,11 @@ final class Commands {
      * the union of all modules, which mixes several resolved versions of one coordinate.
      */
     private static int cmdUpgradeCheck(Cli.UpgradeCheck args) {
+        prepareMarkdown(args.markdown());
         List<Exclude.Rule> excludeRules = Exclude.load(args.excludeFile());
         // Loaded and opened before the no-changes early return: a bad log path or
         // --jdk-release must fail on every run, not only when jars changed.
         Evidence.LoadEvidence evidence = loadEvidence(args.classLoadLog(), args.draftExcludeFile(), args.excludeFile());
-        prepareMarkdown(args.markdown());
         try (JdkLayer jdk = new JdkLayer(args.jdkRelease())) {
             Dump.Universe before = Dump.loadDump(args.before());
             Dump.Universe after = Dump.loadDump(args.after());
