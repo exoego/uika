@@ -113,7 +113,8 @@ class CliTest {
         Cli.Check check = assertInstanceOf(Cli.Check.class, Cli.parse(new String[] {
             "check", "--old", "a.jar", "--old=b.jar", "--new", "c.jar", "--classpath", "x.jar:y.jar", "--app", "classes",
             "--classpath-file", "dump.json", "--exclude-file", "e.toml", "--json", "--fail-on", "reachable",
-            "--jdk-release", "17", "--verdicts-json", "v.jsonl", "--class-load-log", "loads.log", "--draft-exclude-file", "d.toml"
+            "--jdk-release", "17", "--verdicts-json", "v.jsonl", "--class-load-log", "loads.log", "--draft-exclude-file", "d.toml",
+            "--markdown", "report.md"
         }));
         assertEquals(
                 new Cli.Check(
@@ -130,17 +131,28 @@ class CliTest {
                         null,
                         "v.jsonl",
                         List.of("loads.log"),
-                        "d.toml"),
+                        "d.toml",
+                        "report.md"),
                 check);
 
         Cli.UpgradeCheck upgrade = assertInstanceOf(Cli.UpgradeCheck.class, Cli.parse(new String[] {
             "upgrade-check", "--before", "b.json", "--after", "a.json", "--exclude-file", "e.toml", "--fail-on", "any",
             "--jdk-release", "21", "--verdicts-json", "v.jsonl", "--merged-classpath", "--class-load-log", "loads.log",
-            "--draft-exclude-file", "d.toml"
+            "--draft-exclude-file", "d.toml", "--markdown", "report.md"
         }));
         assertEquals(
                 new Cli.UpgradeCheck(
-                        "b.json", "a.json", List.of("e.toml"), false, Cli.FailOn.ANY, 21, "v.jsonl", true, List.of("loads.log"), "d.toml"),
+                        "b.json",
+                        "a.json",
+                        List.of("e.toml"),
+                        false,
+                        Cli.FailOn.ANY,
+                        21,
+                        "v.jsonl",
+                        true,
+                        List.of("loads.log"),
+                        "d.toml",
+                        "report.md"),
                 upgrade);
     }
 

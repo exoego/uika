@@ -10,9 +10,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.UnaryOperator;
 
 /**
- * The text and JSON renderers for every command.
+ * The text, Markdown and JSON renderers for every command.
  *
  * <p>Every sorted collection here orders by UTF-8 string value, never by symbol id, so the
  * output is the same on every run.
@@ -414,8 +415,15 @@ final class Report {
     record StructuralLines(String what, String error) {}
 
     static StructuralLines structuralLines(Violation v) {
-        String owner = dotted(Intern.str(v.reference.owner()));
-        String loading = simple(Intern.str(v.sourceClass));
+        return structuralLines(v, UnaryOperator.identity());
+    }
+
+    /** @param code how the renderer sets the class and member names apart from the prose */
+    private static StructuralLines structuralLines(Violation v, UnaryOperator<String> code) {
+        String owner = code.apply(dotted(Intern.str(v.reference.owner())));
+        String loading = code.apply(simple(Intern.str(v.sourceClass)));
+        String target = code.apply(prettyTarget(v));
+        String member = v.reference.hasMember() ? code.apply(memberName(v)) : null;
         // Which error fires depends on the JVM rather than on the violation, and the report
         // cannot know which JVM will run the code, so it names both. IncompatibleClassChangeError
         // from JDK 16 and VerifyError up to 15, confirmed on real JVMs from 11 to 25 for all
@@ -437,26 +445,26 @@ final class Report {
             case CONFLICTING_DEFAULT_METHODS -> !hasMember
                     ? degraded
                     : new StructuralLines(
-                            "inherits " + prettyTarget(v) + " as a default from two unrelated interfaces",
+                            "inherits " + target + " as a default from two unrelated interfaces",
                             noInvocation
                                     ? "throws IncompatibleClassChangeError or AbstractMethodError only when "
-                                            + memberName(v)
+                                            + member
                                             + " is first called (no invocation found in scanned bytecode)"
                                     : "throws IncompatibleClassChangeError or AbstractMethodError when "
-                                            + memberName(v)
+                                            + member
                                             + " is called");
             case METHOD_BECAME_ABSTRACT -> !hasMember
                     ? degraded
                     : new StructuralLines(
-                            "inherits abstract " + prettyTarget(v) + " without implementing it",
+                            "inherits abstract " + target + " without implementing it",
                             noInvocation
                                     ? "throws AbstractMethodError only when "
-                                            + memberName(v)
+                                            + member
                                             + " is first called (no invocation found in scanned bytecode)"
-                                    : "throws AbstractMethodError when " + memberName(v) + " is called");
+                                    : "throws AbstractMethodError when " + member + " is called");
             case METHOD_BECAME_FINAL -> !hasMember
                     ? degraded
-                    : new StructuralLines("overrides " + prettyTarget(v) + ", which became final", loads);
+                    : new StructuralLines("overrides " + target + ", which became final", loads);
             case CLASS_BECAME_FINAL -> new StructuralLines("extends " + owner + ", which became final", loads);
             // Cannot name the edge, for the same reason INTERFACE_BECAME_CLASS cannot.
             case CLASS_BECAME_SEALED -> new StructuralLines(
@@ -508,17 +516,137 @@ final class Report {
      * class. When the log carried a cause stack it names the frame that pulled the class in,
      * typically the reflective path the static walk could not see.
      */
-    private static String observedSuffix(Violation v) {
+    private static String observedSuffix(Violation v, UnaryOperator<String> code) {
         if (!v.observedLoading) {
             return "";
         }
         if (v.loadTrigger == null) {
             return "  ⚡ observed loading at runtime";
         }
-        return "  ⚡ observed loading at runtime (via " + v.loadTrigger + ")";
+        return "  ⚡ observed loading at runtime (via " + code.apply(v.loadTrigger) + ")";
     }
 
     // ---- blocks ----
+
+    /**
+     * How a renderer sets a name (class, member, coordinate, module, jar) apart from the prose
+     * around it. Text leaves it alone. Markdown wraps it as code, which also keeps a {@code
+     * <init>}, a {@code $} or a {@code [} from being read as markup.
+     */
+    enum Style {
+        TEXT,
+        MARKDOWN;
+
+        /** A name in a block body. */
+        String code(String s) {
+            return this == TEXT ? s : codeSpan(s);
+        }
+
+        /**
+         * A name in a block title. Markdown puts the title inside a {@code <summary>} tag, an
+         * HTML block where a backtick span would not render, so only an HTML tag works there.
+         */
+        String titleCode(String s) {
+            return this == TEXT ? s : "<code>" + escapeHtml(s) + "</code>";
+        }
+
+        /** Prose in a block title that is not a name, which an HTML block still needs escaped. */
+        String titleText(String s) {
+            return this == TEXT ? s : escapeHtml(s);
+        }
+    }
+
+    /** A CommonMark code span: the fence is one backtick longer than any run inside. */
+    static String codeSpan(String s) {
+        int longest = 0;
+        int run = 0;
+        for (int i = 0; i < s.length(); i++) {
+            run = s.charAt(i) == '`' ? run + 1 : 0;
+            longest = Math.max(longest, run);
+        }
+        String fence = "`".repeat(longest + 1);
+        // A span may not start or end with its own fence character, so one space each side,
+        // which the renderer strips again.
+        boolean pad = s.startsWith("`") || s.endsWith("`");
+        return pad ? fence + " " + s + " " + fence : fence + s + fence;
+    }
+
+    static String escapeHtml(String s) {
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    /**
+     * One group of violations as both renderers lay it out: a title line, then detail lines
+     * about the group as a whole and entries under them.
+     *
+     * @param depth 1 for a line about the whole block, 2 for one entry under it
+     */
+    record Line(int depth, String text) {}
+
+    record Block(String title, List<Line> lines) {}
+
+    /** The text layout: the title, then every line indented four spaces per depth. */
+    private static String textBlock(Block block) {
+        StringBuilder out = new StringBuilder(block.title()).append('\n');
+        for (Line line : block.lines()) {
+            out.append("    ".repeat(line.depth())).append(line.text()).append('\n');
+        }
+        return trimEnd(out);
+    }
+
+    /**
+     * The Markdown layout: a {@code <details>} with the title as its summary, depth-1 lines as
+     * paragraphs and depth-2 lines as list items. The blank line after the summary is what
+     * makes GitHub render the body as Markdown rather than as the rest of the HTML block.
+     */
+    private static String markdownBlock(Block block, boolean open) {
+        StringBuilder out = new StringBuilder(open ? "<details open>\n" : "<details>\n");
+        out.append("<summary>").append(block.title()).append("</summary>\n\n");
+        boolean inList = false;
+        for (Line line : block.lines()) {
+            if (line.depth() == 1) {
+                if (inList) {
+                    out.append('\n');
+                    inList = false;
+                }
+                out.append(line.text()).append("\n\n");
+            } else {
+                out.append("- ").append(line.text()).append('\n');
+                inList = true;
+            }
+        }
+        if (inList) {
+            out.append('\n');
+        }
+        return out.append("</details>").toString();
+    }
+
+    private static List<String> textBlocks(List<Violation> violations) {
+        List<String> out = new ArrayList<>();
+        for (Block block : violationBlocks(violations, Style.TEXT)) {
+            out.add(textBlock(block));
+        }
+        return out;
+    }
+
+    private static List<String> markdownBlocks(List<Violation> violations, boolean open) {
+        List<String> out = new ArrayList<>();
+        for (Block block : violationBlocks(violations, Style.MARKDOWN)) {
+            out.add(markdownBlock(block, open));
+        }
+        return out;
+    }
+
+    private static String joinCode(Iterable<String> names, UnaryOperator<String> code) {
+        StringBuilder out = new StringBuilder();
+        for (String name : names) {
+            if (out.length() > 0) {
+                out.append(", ");
+            }
+            out.append(code.apply(name));
+        }
+        return out.toString();
+    }
 
     /**
      * Rust's {@code trim_end} on a finished block. Every block opens with its marker, so
@@ -529,12 +657,12 @@ final class Report {
     }
 
     /**
-     * Renders a set of violations as blocks with no trailing newlines. The caller joins them
-     * with blank lines. upgrade-check violations carry a suggestion and group by the fix. The
-     * rest split by shape. Reference violations group by the broken symbol (the unit a fix
-     * targets), structural graph-walk violations by the scanned class that no longer loads.
+     * Groups a set of violations into blocks. upgrade-check violations carry a suggestion and
+     * group by the fix. The rest split by shape. Reference violations group by the broken
+     * symbol (the unit a fix targets), structural graph-walk violations by the scanned class
+     * that no longer loads.
      */
-    private static List<String> violationBlocks(List<Violation> violations) {
+    private static List<Block> violationBlocks(List<Violation> violations, Style style) {
         List<Violation> withSuggestion = new ArrayList<>();
         List<Violation> structural = new ArrayList<>();
         List<Violation> reference = new ArrayList<>();
@@ -547,9 +675,9 @@ final class Report {
                 reference.add(v);
             }
         }
-        List<String> blocks = suggestionBlocks(withSuggestion);
-        blocks.addAll(referenceBlocks(reference));
-        blocks.addAll(structuralBlocks(structural));
+        List<Block> blocks = suggestionBlocks(withSuggestion, style);
+        blocks.addAll(referenceBlocks(reference, style));
+        blocks.addAll(structuralBlocks(structural, style));
         return blocks;
     }
 
@@ -570,7 +698,8 @@ final class Report {
      * as prose, so the advice never looks like the thing the labels below it accuse.
      * References are deduplicated by (sentence, raw symbol) and ordered by sentence text.
      */
-    private static List<String> suggestionBlocks(List<Violation> violations) {
+    private static List<Block> suggestionBlocks(List<Violation> violations, Style style) {
+        UnaryOperator<String> code = style::code;
         TreeMap<WhyKey, List<Violation>> grouped = new TreeMap<>(WhyKey.ORDER);
         for (Violation v : violations) {
             Suggestion s = v.suggestion;
@@ -579,29 +708,28 @@ final class Report {
                             k -> new ArrayList<>())
                     .add(v);
         }
-        List<String> blocks = new ArrayList<>();
+        List<Block> blocks = new ArrayList<>();
         for (List<Violation> vs : grouped.values()) {
-            StringBuilder out = new StringBuilder();
+            List<Line> lines = new ArrayList<>();
             Suggestion s = vs.get(0).suggestion;
-            out.append("💡 suggestion: ").append(s.advice()).append('\n');
             // The modules whose classpaths exhibit this group, from per-module upgrade-check.
             TreeSet<String> modules = new TreeSet<>(UTF8);
             for (Violation v : vs) {
                 modules.addAll(v.modules);
             }
             if (!modules.isEmpty()) {
-                out.append("    affected modules: ").append(String.join(", ", modules)).append('\n');
+                lines.add(new Line(1, "affected modules: " + joinCode(modules, code)));
             }
-            out.append("    why: ")
-                    .append(s.removedBy())
+            StringBuilder why = new StringBuilder("why: ")
+                    .append(code.apply(s.removedBy()))
                     .append(" changed ")
                     .append(s.before())
                     .append(" -> ")
                     .append(s.after());
             if (s.referencedBy() != null) {
-                out.append(", which breaks ").append(s.referencedBy());
+                why.append(", which breaks ").append(code.apply(s.referencedBy()));
             }
-            out.append(":\n");
+            lines.add(new Line(1, why.append(':').toString()));
             // A sentence names the pretty target, which can collide for distinct symbols. A
             // sentence spanning several raw targets is re-rendered with the raw form so every
             // break stays visible. Identical (sentence, symbol) pairs still print once. That
@@ -609,7 +737,7 @@ final class Report {
             TreeMap<String, TreeMap<String, Violation>> bySentence = new TreeMap<>(UTF8);
             for (Violation v : vs) {
                 bySentence
-                        .computeIfAbsent(suggestionLine(v, prettyTarget(v)), k -> new TreeMap<>(UTF8))
+                        .computeIfAbsent(suggestionLine(v, code.apply(prettyTarget(v)), code), k -> new TreeMap<>(UTF8))
                         .putIfAbsent(rawTarget(v), v);
             }
             TreeSet<String> sentences = new TreeSet<>(UTF8);
@@ -618,14 +746,14 @@ final class Report {
                     sentences.add(e.getKey());
                 } else {
                     for (Map.Entry<String, Violation> raw : e.getValue().entrySet()) {
-                        sentences.add(suggestionLine(raw.getValue(), raw.getKey()));
+                        sentences.add(suggestionLine(raw.getValue(), code.apply(raw.getKey()), code));
                     }
                 }
             }
             for (String sentence : sentences) {
-                out.append("        ").append(sentence).append('\n');
+                lines.add(new Line(2, sentence));
             }
-            blocks.add(trimEnd(out));
+            blocks.add(new Block("💡 suggestion: " + style.titleText(s.advice()), lines));
         }
         return blocks;
     }
@@ -633,12 +761,13 @@ final class Report {
     /**
      * One reference in a 💡 block as an English sentence. It says what the library change did,
      * and what the consumer still does that no longer works. {@code target} is the rendered
-     * symbol (pretty normally, raw when the caller detected a pretty collision). The switch has
-     * no default, so a new reason must pick its phrasing here at compile time.
+     * symbol (pretty normally, raw when the caller detected a pretty collision), already set
+     * apart the way {@code code} does. The switch has no default, so a new reason must pick
+     * its phrasing here at compile time.
      */
-    private static String suggestionLine(Violation v, String target) {
-        String cls = dotted(Intern.str(v.sourceClass));
-        String owner = dotted(Intern.str(v.reference.owner()));
+    private static String suggestionLine(Violation v, String target, UnaryOperator<String> code) {
+        String cls = code.apply(dotted(Intern.str(v.sourceClass)));
+        String owner = code.apply(dotted(Intern.str(v.reference.owner())));
         boolean ctor = isConstructor(v);
         boolean hasMember = v.reference.hasMember();
         String accessVerb = v.reference.kind() == RefKind.FIELD ? "accesses" : "calls";
@@ -694,7 +823,7 @@ final class Report {
                             + " can no longer be instantiated by ServiceLoader, but is still registered as a provider for "
                             + owner;
                 };
-        return sentence + observedSuffix(v);
+        return sentence + observedSuffix(v, code);
     }
 
     private record SymbolKey(String pretty, String reason, String raw) {
@@ -718,7 +847,8 @@ final class Report {
      * form so both symbols stay distinguishable and the block count matches the summary's
      * broken count.
      */
-    private static List<String> referenceBlocks(List<Violation> violations) {
+    private static List<Block> referenceBlocks(List<Violation> violations, Style style) {
+        UnaryOperator<String> code = style::code;
         TreeMap<SymbolKey, List<Violation>> grouped = new TreeMap<>(SymbolKey.ORDER);
         for (Violation v : violations) {
             grouped.computeIfAbsent(new SymbolKey(prettyTarget(v), v.reason.text, rawTarget(v)), k -> new ArrayList<>())
@@ -728,44 +858,28 @@ final class Report {
         for (SymbolKey key : grouped.keySet()) {
             prettyCounts.merge(List.of(key.pretty(), key.reason()), 1, Integer::sum);
         }
-        List<String> blocks = new ArrayList<>();
+        List<Block> blocks = new ArrayList<>();
         for (Map.Entry<SymbolKey, List<Violation>> e : grouped.entrySet()) {
             SymbolKey key = e.getKey();
             List<Violation> vs = e.getValue();
             boolean ambiguous = prettyCounts.get(List.of(key.pretty(), key.reason())) > 1;
-            StringBuilder out = new StringBuilder();
-            out.append("❌ ").append(ambiguous ? key.raw() : key.pretty()).append('\n');
+            List<Line> lines = new ArrayList<>();
             Violation first = vs.get(0);
             String error = runtimeError(first);
-            out.append("    ").append(displayReason(first));
-            if (error != null) {
-                out.append(", throws ").append(error);
-            }
-            out.append('\n');
+            lines.add(new Line(1, error == null ? displayReason(first) : displayReason(first) + ", throws " + error));
             TreeSet<User> users = new TreeSet<>(User.ORDER);
             for (Violation v : vs) {
                 users.add(new User(
                         dotted(Intern.str(v.sourceClass)),
                         sourceDisplay(Intern.str(v.source)),
                         modulesSuffix(v),
-                        observedSuffix(v)));
+                        observedSuffix(v, code)));
             }
-            out.append("    used by ")
-                    .append(users.size())
-                    .append(" class")
-                    .append(users.size() == 1 ? "" : "es")
-                    .append(":\n");
+            lines.add(new Line(1, "used by " + users.size() + " class" + (users.size() == 1 ? "" : "es") + ":"));
             for (User user : users) {
-                out.append("        ")
-                        .append(user.className())
-                        .append("  (")
-                        .append(user.source())
-                        .append(')')
-                        .append(user.modules())
-                        .append(user.observed())
-                        .append('\n');
+                lines.add(new Line(2, code.apply(user.className()) + "  (" + user.source() + ')' + user.modules() + user.observed()));
             }
-            blocks.add(trimEnd(out));
+            blocks.add(new Block("❌ " + style.titleCode(ambiguous ? key.raw() : key.pretty()), lines));
         }
         return blocks;
     }
@@ -785,39 +899,34 @@ final class Report {
      * with the error the JVM raises for it. Grouped by the raw source path, because two jars
      * sharing a basename must not merge. Only the printed form is shortened.
      */
-    private static List<String> structuralBlocks(List<Violation> violations) {
+    private static List<Block> structuralBlocks(List<Violation> violations, Style style) {
         TreeMap<ConsumerKey, List<Violation>> grouped = new TreeMap<>(ConsumerKey.ORDER);
         for (Violation v : violations) {
             grouped.computeIfAbsent(
                             new ConsumerKey(dotted(Intern.str(v.sourceClass)), Intern.str(v.source)), k -> new ArrayList<>())
                     .add(v);
         }
-        List<String> blocks = new ArrayList<>();
+        List<Block> blocks = new ArrayList<>();
         for (Map.Entry<ConsumerKey, List<Violation>> e : grouped.entrySet()) {
             List<Violation> vs = e.getValue();
-            StringBuilder out = new StringBuilder();
             // One class per block, so the observed marker is a block-level fact. Any violation
             // of the group carries the same evidence.
-            out.append("❌ ")
-                    .append(e.getKey().className())
-                    .append("  (")
-                    .append(sourceDisplay(e.getKey().source()))
-                    .append(')')
-                    .append(observedSuffix(vs.get(0)))
-                    .append('\n');
+            String title = "❌ " + style.titleCode(e.getKey().className()) + "  (" + style.titleText(sourceDisplay(e.getKey().source()))
+                    + ')' + observedSuffix(vs.get(0), style::titleCode);
             List<Broken> entries = new ArrayList<>(vs.size());
             for (Violation v : vs) {
                 entries.add(new Broken(prettyTarget(v), v));
             }
             // List.sort is stable, like the Rust sort it replaces.
             entries.sort(Broken.ORDER);
+            List<Line> lines = new ArrayList<>();
             for (Broken entry : entries) {
                 Violation v = entry.violation();
-                StructuralLines lines = structuralLines(v);
-                out.append("    ").append(lines.what()).append(modulesSuffix(v)).append('\n');
-                out.append("        ").append(lines.error()).append('\n');
+                StructuralLines what = structuralLines(v, style::code);
+                lines.add(new Line(1, what.what() + modulesSuffix(v)));
+                lines.add(new Line(2, what.error()));
             }
-            blocks.add(trimEnd(out));
+            blocks.add(new Block(title, lines));
         }
         return blocks;
     }
@@ -869,15 +978,19 @@ final class Report {
         return line.toString();
     }
 
-    private static String names(List<String> paths) {
+    private static String names(List<String> paths, UnaryOperator<String> code) {
         StringBuilder out = new StringBuilder();
         for (String path : paths) {
             if (out.length() > 0) {
                 out.append(", ");
             }
-            out.append(sourceDisplay(path));
+            out.append(code.apply(sourceDisplay(path)));
         }
         return out.toString();
+    }
+
+    private static String targetsSuffix(int targets) {
+        return " against " + targets + " scan target" + (targets == 1 ? "" : "s");
     }
 
     /**
@@ -888,14 +1001,20 @@ final class Report {
      * header instead.
      */
     static String checkHeader(List<String> oldPaths, List<String> newPaths, int targets) {
-        return "checked " + names(oldPaths) + " -> " + names(newPaths) + " against " + targets + " scan target"
-                + (targets == 1 ? "" : "s") + "\n\n";
+        return checkHeaderLine(oldPaths, newPaths, targets, UnaryOperator.identity()) + "\n\n";
+    }
+
+    private static String checkHeaderLine(List<String> oldPaths, List<String> newPaths, int targets, UnaryOperator<String> code) {
+        return "checked " + names(oldPaths, code) + " -> " + names(newPaths, code) + targetsSuffix(targets);
     }
 
     /** Header for a JDK-pair check, where the compared sides are releases rather than JARs. */
     static String checkHeaderJdk(int oldRelease, int newRelease, int targets) {
-        return "checked JDK " + oldRelease + " -> JDK " + newRelease + " against " + targets + " scan target"
-                + (targets == 1 ? "" : "s") + "\n\n";
+        return checkHeaderJdkLine(oldRelease, newRelease, targets) + "\n\n";
+    }
+
+    private static String checkHeaderJdkLine(int oldRelease, int newRelease, int targets) {
+        return "checked JDK " + oldRelease + " -> JDK " + newRelease + targetsSuffix(targets);
     }
 
     private static final String RULE = "--------------------------------------------------------------------------------";
@@ -905,9 +1024,17 @@ final class Report {
      * out when scrolling a long report.
      */
     private static String section(String title, List<Violation> violations) {
-        return RULE + "\n" + title + "\n" + RULE + "\n\n" + String.join("\n\n", violationBlocks(violations));
+        return RULE + "\n" + title + "\n" + RULE + "\n\n" + String.join("\n\n", textBlocks(violations));
     }
 
+    /** A reachability-tier heading with one collapsible block per finding under it. */
+    private static String markdownSection(String title, List<Violation> violations, boolean open) {
+        return "#### " + title + "\n\n" + String.join("\n\n", markdownBlocks(violations, open));
+    }
+
+    private static final String BREAKS_HEADING = "💥 reachable from the application (likely to break)";
+    private static final String UNPROVEN_HEADING =
+            "⚠️  not proven reachable (no static path found; may still load via reflection)";
     // The 💤 headings for the two report shapes, kept side by side so their wording cannot
     // drift apart. The only difference is that the ranked report can also say the class is
     // reachable, which the flat report has no basis to claim.
@@ -915,48 +1042,153 @@ final class Report {
     private static final String LATENT_HEADING_RANKED =
             "💤 latent (class reachable, but no scanned code invokes the affected member)";
 
-    static String checkText(Check.Report report) {
-        List<String> sections = new ArrayList<>();
-        // Most severe first.
-        List<Violation> breaks = new ArrayList<>();
-        List<Violation> latent = new ArrayList<>();
-        List<Violation> unproven = new ArrayList<>();
-        // Same judgement the exit gate makes, so sections and --fail-on cannot drift.
-        boolean axis = Tier.reachableAxisValid(report.appRootsMatched);
-        for (Violation v : report.violations) {
-            List<Violation> tier =
-                    switch (Tier.of(v, axis)) {
-                        case BREAKS -> breaks;
-                        case LATENT -> latent;
-                        case UNPROVEN -> unproven;
-                    };
-            tier.add(v);
+    /** The violations split by tier, most severe first. */
+    private record Tiers(List<Violation> breaks, List<Violation> latent, List<Violation> unproven) {
+        /** Same judgement the exit gate makes, so sections and --fail-on cannot drift. */
+        static Tiers of(Check.Report report) {
+            Tiers tiers = new Tiers(new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
+            boolean axis = Tier.reachableAxisValid(report.appRootsMatched);
+            for (Violation v : report.violations) {
+                List<Violation> tier =
+                        switch (Tier.of(v, axis)) {
+                            case BREAKS -> tiers.breaks();
+                            case LATENT -> tiers.latent();
+                            case UNPROVEN -> tiers.unproven();
+                        };
+                tier.add(v);
+            }
+            return tiers;
         }
-        if (report.reachabilityComputed) {
-            if (!breaks.isEmpty()) {
-                sections.add(section("💥 reachable from the application (likely to break)", breaks));
-            }
-            if (!latent.isEmpty()) {
-                sections.add(section(LATENT_HEADING_RANKED, latent));
-            }
-            if (!unproven.isEmpty()) {
-                sections.add(section(
-                        "⚠️  not proven reachable (no static path found; may still load via reflection)", unproven));
-            }
-        } else if (!report.violations.isEmpty()) {
-            // No reachability axis, so one flat list, but latency is scan-derived and keeps
-            // its section. `unproven` is always empty here. Chaining it survives that changing.
+
+        /**
+         * Without a reachability axis the report is one flat list, but latency is scan-derived
+         * and keeps its section. {@code unproven} is always empty here. Chaining it survives
+         * that changing.
+         */
+        List<Violation> flat() {
             List<Violation> flat = new ArrayList<>(breaks);
             flat.addAll(unproven);
-            if (!flat.isEmpty()) {
-                sections.add(String.join("\n\n", violationBlocks(flat)));
+            return flat;
+        }
+    }
+
+    static String checkText(Check.Report report) {
+        Tiers tiers = Tiers.of(report);
+        List<String> sections = new ArrayList<>();
+        if (report.reachabilityComputed) {
+            if (!tiers.breaks().isEmpty()) {
+                sections.add(section(BREAKS_HEADING, tiers.breaks()));
             }
-            if (!latent.isEmpty()) {
-                sections.add(section(LATENT_HEADING, latent));
+            if (!tiers.latent().isEmpty()) {
+                sections.add(section(LATENT_HEADING_RANKED, tiers.latent()));
+            }
+            if (!tiers.unproven().isEmpty()) {
+                sections.add(section(UNPROVEN_HEADING, tiers.unproven()));
+            }
+        } else if (!report.violations.isEmpty()) {
+            List<Violation> flat = tiers.flat();
+            if (!flat.isEmpty()) {
+                sections.add(String.join("\n\n", textBlocks(flat)));
+            }
+            if (!tiers.latent().isEmpty()) {
+                sections.add(section(LATENT_HEADING, tiers.latent()));
             }
         }
-        sections.add(summaryLine(report, breaks.size(), latent.size(), unproven.size()));
+        sections.add(summaryLine(report, tiers.breaks().size(), tiers.latent().size(), tiers.unproven().size()));
         return String.join("\n\n", sections) + "\n";
+    }
+
+    // ---- markdown ----
+
+    /**
+     * Opens every Markdown report, so a workflow that posts the file as a pull request comment
+     * can find the comment it posted last time and replace it.
+     */
+    static final String MARKDOWN_MARKER = "<!-- uika -->";
+
+    /**
+     * The verdict, as the first line a reader of a comment sees. Reachability and latency
+     * counts follow the summary line's rules; the rest of its numbers stay down there.
+     *
+     * @param report null when no check ran
+     */
+    private static String headline(Check.Report report, Tiers tiers) {
+        if (report == null) {
+            return "### ✅ uika: nothing to check";
+        }
+        int broken = report.violations.size();
+        if (broken == 0) {
+            return "### ✅ uika: no broken references";
+        }
+        StringBuilder line = new StringBuilder("### ❌ uika: ")
+                .append(broken)
+                .append(" broken reference")
+                .append(broken == 1 ? "" : "s");
+        // Only the tiers that hold something. Without a reachability axis the breaks tier is
+        // everything not latent, which is no claim about reachability.
+        List<String> counts = new ArrayList<>();
+        if (report.reachabilityComputed && !tiers.breaks().isEmpty()) {
+            counts.add("💥 " + tiers.breaks().size() + " reachable");
+        }
+        if (!tiers.latent().isEmpty()) {
+            counts.add("💤 " + tiers.latent().size() + " latent");
+        }
+        if (!tiers.unproven().isEmpty()) {
+            counts.add("⚠️ " + tiers.unproven().size() + " not proven reachable");
+        }
+        if (!counts.isEmpty()) {
+            line.append(" (").append(String.join(", ", counts)).append(')');
+        }
+        return line.toString();
+    }
+
+    /**
+     * The check result as Markdown: the same tier sections as the text, each finding folded
+     * into its own {@code <details>}. The 💥 tier opens unfolded, since it is what a reader of
+     * the comment must act on; the deprioritized tiers open folded. The summary line closes it.
+     */
+    private static List<String> markdownSections(Check.Report report, Tiers tiers) {
+        List<String> sections = new ArrayList<>();
+        if (report.reachabilityComputed) {
+            if (!tiers.breaks().isEmpty()) {
+                sections.add(markdownSection(BREAKS_HEADING, tiers.breaks(), true));
+            }
+            if (!tiers.latent().isEmpty()) {
+                sections.add(markdownSection(LATENT_HEADING_RANKED, tiers.latent(), false));
+            }
+            if (!tiers.unproven().isEmpty()) {
+                sections.add(markdownSection(UNPROVEN_HEADING, tiers.unproven(), false));
+            }
+        } else if (!report.violations.isEmpty()) {
+            List<Violation> flat = tiers.flat();
+            if (!flat.isEmpty()) {
+                sections.add(String.join("\n\n", markdownBlocks(flat, true)));
+            }
+            if (!tiers.latent().isEmpty()) {
+                sections.add(markdownSection(LATENT_HEADING, tiers.latent(), false));
+            }
+        }
+        sections.add(summaryLine(report, tiers.breaks().size(), tiers.latent().size(), tiers.unproven().size()));
+        return sections;
+    }
+
+    /**
+     * The plain {@code check} report as Markdown, for a pull request comment or a CI job
+     * summary.
+     *
+     * @param jdkPair the compared releases when the JDK upgrade is the pair, else null
+     */
+    static String checkMarkdown(List<String> oldPaths, List<String> newPaths, int[] jdkPair, Check.Report report) {
+        Tiers tiers = Tiers.of(report);
+        List<String> parts = new ArrayList<>();
+        parts.add(MARKDOWN_MARKER);
+        parts.add(headline(report, tiers));
+        parts.add(
+                jdkPair != null
+                        ? checkHeaderJdkLine(jdkPair[0], jdkPair[1], report.scanTargets)
+                        : checkHeaderLine(oldPaths, newPaths, report.scanTargets, Style.MARKDOWN::code));
+        parts.addAll(markdownSections(report, tiers));
+        return String.join("\n\n", parts) + "\n";
     }
 
     static String checkJson(Check.Report report) {
@@ -1112,28 +1344,7 @@ final class Report {
                     .append('\n');
         }
         if (modules != null) {
-            out.append('\n');
-            int checked = 0;
-            for (ModuleOutcome o : modules.outcomes()) {
-                if (!o.jdk()) {
-                    checked += o.modules().size();
-                }
-            }
-            List<String> notes = new ArrayList<>();
-            notes.add(modules.unchangedModules() + " unchanged");
-            if (modules.newModules() > 0) {
-                notes.add(modules.newModules() + " new");
-            }
-            if (modules.incompleteModules() > 0) {
-                notes.add(modules.incompleteModules() + " incomplete");
-            }
-            out.append("per-module check: ")
-                    .append(checked)
-                    .append(" of ")
-                    .append(modules.totalModules())
-                    .append(" modules changed their resolved versions (")
-                    .append(String.join(", ", notes))
-                    .append(")\n");
+            out.append('\n').append(perModuleLine(modules)).append('\n');
             List<ModuleOutcome> jdkRuns = new ArrayList<>();
             for (ModuleOutcome o : modules.outcomes()) {
                 if (o.jdk()) {
@@ -1151,16 +1362,7 @@ final class Report {
             // are answers to different questions and side by side they read as one total that
             // does not add up.
             if (!jdkRuns.isEmpty()) {
-                Set<String> moved = new HashSet<>();
-                for (ModuleOutcome o : jdkRuns) {
-                    moved.addAll(o.jdkModules());
-                }
-                out.append('\n');
-                out.append("JDK check: ")
-                        .append(moved.size())
-                        .append(" of ")
-                        .append(modules.totalModules())
-                        .append(" modules moved to another release\n");
+                out.append('\n').append(jdkCheckLine(modules, jdkRuns)).append('\n');
                 for (ModuleOutcome o : jdkRuns) {
                     out.append("    ")
                             .append(String.join(", ", o.jdkModules()))
@@ -1179,6 +1381,132 @@ final class Report {
             out.append(checkText(result));
         }
         return out.toString();
+    }
+
+    private static String perModuleLine(ModuleRunSummary modules) {
+        int checked = 0;
+        for (ModuleOutcome o : modules.outcomes()) {
+            if (!o.jdk()) {
+                checked += o.modules().size();
+            }
+        }
+        List<String> notes = new ArrayList<>();
+        notes.add(modules.unchangedModules() + " unchanged");
+        if (modules.newModules() > 0) {
+            notes.add(modules.newModules() + " new");
+        }
+        if (modules.incompleteModules() > 0) {
+            notes.add(modules.incompleteModules() + " incomplete");
+        }
+        return "per-module check: " + checked + " of " + modules.totalModules() + " modules changed their resolved versions ("
+                + String.join(", ", notes) + ")";
+    }
+
+    private static String jdkCheckLine(ModuleRunSummary modules, List<ModuleOutcome> jdkRuns) {
+        Set<String> moved = new HashSet<>();
+        for (ModuleOutcome o : jdkRuns) {
+            moved.addAll(o.jdkModules());
+        }
+        return "JDK check: " + moved.size() + " of " + modules.totalModules() + " modules moved to another release";
+    }
+
+    private static String changeLabel(Dump.ChangeKind kind) {
+        return switch (kind) {
+            case CHANGED -> "CHANGED";
+            case REMOVED -> "REMOVED";
+            case ADDED -> "ADDED";
+        };
+    }
+
+    private static String versions(List<String> versions) {
+        return versions.isEmpty() ? "-" : String.join(",", versions);
+    }
+
+    /** The dependency-change header as a table. */
+    private static String changesMarkdown(List<Dump.DependencyChange> changes) {
+        if (changes.isEmpty()) {
+            return "dependency changes: none";
+        }
+        StringBuilder out = new StringBuilder("dependency changes: ").append(changes.size()).append("\n\n");
+        out.append("| change | coordinate | before | after |\n| --- | --- | --- | --- |");
+        for (Dump.DependencyChange c : changes) {
+            out.append("\n| ")
+                    .append(changeLabel(c.kind()))
+                    .append(" | ")
+                    .append(codeSpan(c.coordinate()))
+                    .append(" | ")
+                    .append(versions(c.before()))
+                    .append(" | ")
+                    .append(versions(c.after()))
+                    .append(" |");
+        }
+        return out.toString();
+    }
+
+    /** The three numbers of {@link #runCounts} as table cells. */
+    private static String countCells(ModuleOutcome o) {
+        String broken = o.broken() == 0 ? "✅ 0" : "❌ " + o.broken();
+        String unverified = o.unknownRefs() == 0 ? "0" : "❓ " + o.unknownRefs();
+        return o.scannedClasses() + " | " + broken + " | " + unverified;
+    }
+
+    /**
+     * The per-module run summary as a table, and the JDK runs as their own table after it, for
+     * the reason {@link #upgradeText} keeps them apart.
+     */
+    private static List<String> modulesMarkdown(ModuleRunSummary modules) {
+        List<String> parts = new ArrayList<>();
+        StringBuilder rows = new StringBuilder();
+        List<ModuleOutcome> jdkRuns = new ArrayList<>();
+        for (ModuleOutcome o : modules.outcomes()) {
+            if (o.jdk()) {
+                jdkRuns.add(o);
+            } else {
+                rows.append("\n| ").append(joinCode(o.modules(), Report::codeSpan)).append(" | ").append(countCells(o)).append(" |");
+            }
+        }
+        String perModule = perModuleLine(modules);
+        if (rows.length() > 0) {
+            perModule += "\n\n| module | scanned | broken | unverified |\n| --- | ---: | ---: | ---: |" + rows;
+        }
+        parts.add(perModule);
+        if (!jdkRuns.isEmpty()) {
+            StringBuilder jdk = new StringBuilder(jdkCheckLine(modules, jdkRuns));
+            jdk.append("\n\n| module | JDK | scanned | broken | unverified |\n| --- | --- | ---: | ---: | ---: |");
+            for (ModuleOutcome o : jdkRuns) {
+                jdk.append("\n| ")
+                        .append(joinCode(o.jdkModules(), Report::codeSpan))
+                        .append(" | ")
+                        .append(o.jdkPair()[0])
+                        .append(" -> ")
+                        .append(o.jdkPair()[1])
+                        .append(" | ")
+                        .append(countCells(o))
+                        .append(" |");
+            }
+            parts.add(jdk.toString());
+        }
+        return parts;
+    }
+
+    /**
+     * The upgrade-check report as Markdown, for a pull request comment or a CI job summary.
+     * Same parts as {@link #upgradeText}, in the same order, with the listings as tables and
+     * each finding folded into a {@code <details>}.
+     */
+    static String upgradeMarkdown(List<Dump.DependencyChange> changes, Check.Report result, ModuleRunSummary modules) {
+        Tiers tiers = result == null ? null : Tiers.of(result);
+        List<String> parts = new ArrayList<>();
+        parts.add(MARKDOWN_MARKER);
+        parts.add(headline(result, tiers));
+        parts.add(changesMarkdown(changes));
+        if (modules != null) {
+            parts.addAll(modulesMarkdown(modules));
+        }
+        if (result != null) {
+            parts.addAll(markdownSections(result, tiers));
+        }
+        return String.join("\n\n", parts) + "\n";
     }
 
     /**

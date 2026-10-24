@@ -1019,4 +1019,117 @@ class ReportTest {
                 }""",
                 Report.upgradeJson(List.of(), null, summary));
     }
+
+    /**
+     * The Markdown report folds every finding into its own details block, so a pull request
+     * comment stays one line per finding until a reader opens one. The 💥 tier opens unfolded,
+     * the rest folded. Names are set as code: a tag in the summary, where only HTML renders,
+     * and a span in the body.
+     */
+    @Test
+    void markdownFoldsEachFindingIntoDetails() {
+        Violation reachable = classViolation("a/Foo", "x/Gone", Reason.CLASS_REMOVED, true, "ADVICE");
+        reachable.modules = new ArrayList<>(List.of(":app"));
+        Violation unproven = memberViolation("a/Bar", "x/Owner", "run", "()V", RefKind.METHOD, Reason.METHOD_REMOVED);
+        unproven.reachable = false;
+        Violation structural = classViolation("a/Sub", "x/Base", Reason.CLASS_BECAME_FINAL, true, null);
+        String md = Report.upgradeMarkdown(List.of(), report(reachable, unproven, structural), null);
+        assertTrue(
+                md.startsWith("<!-- uika -->\n\n### ❌ uika: 3 broken references (💥 2 reachable, ⚠️ 1 not proven reachable)\n\n"
+                        + "dependency changes: none\n\n"),
+                md);
+        assertTrue(
+                md.contains("#### 💥 reachable from the application (likely to break)\n\n"
+                        + "<details open>\n<summary>💡 suggestion: ADVICE</summary>\n\n"
+                        + "affected modules: `:app`\n\n"
+                        + "why: `g:owner` changed 1 -> 2, which breaks `g:referencer:1`:\n\n"
+                        + "- `x.Gone` was removed, but `a.Foo` still uses it\n\n</details>\n\n"
+                        + "<details open>\n<summary>❌ <code>a.Sub</code>  (consumer.jar)</summary>\n\n"
+                        + "extends `x.Base`, which became final\n\n"
+                        + "- throws IncompatibleClassChangeError (VerifyError up to JDK 15) when `Sub` loads\n\n</details>"),
+                md);
+        assertTrue(
+                md.contains("#### ⚠️  not proven reachable (no static path found; may still load via reflection)\n\n"
+                        + "<details>\n<summary>❌ <code>x.Owner.run()</code></summary>\n\n"
+                        + "method removed, throws NoSuchMethodError at first call\n\n"
+                        + "used by 1 class:\n\n"
+                        + "- `a.Bar`  (consumer.jar)\n\n</details>"),
+                md);
+        assertTrue(md.endsWith("\n\nscanned 100 classes: ❌ 3 broken (of which 💥 2 reachable, ⚠️ 1 not proven reachable)\n"), md);
+    }
+
+    /** The first line is the verdict alone, so it reads as the comment's title. */
+    @Test
+    void markdownHeadlineIsTheVerdict() {
+        assertTrue(Report.upgradeMarkdown(List.of(), null, null).contains("\n### ✅ uika: nothing to check\n"));
+        assertTrue(Report.checkMarkdown(List.of("o.jar"), List.of("n.jar"), null, report()).contains("\n### ✅ uika: no broken references\n"));
+        Violation latent = memberViolation("a/Impl", "x/Iface", "run", "()V", RefKind.METHOD, Reason.METHOD_BECAME_ABSTRACT);
+        latent.invocationFound = false;
+        Check.Report flat = report(latent, classViolation("a/Foo", "x/Gone", Reason.CLASS_REMOVED, null, null));
+        flat.reachabilityComputed = false;
+        flat.appRootsMatched = null;
+        String md = Report.checkMarkdown(List.of("o.jar"), List.of("n.jar"), new int[] {11, 17}, flat);
+        // No reachability axis, so no reachable count is claimed, only the latent one.
+        assertTrue(
+                md.contains("\n### ❌ uika: 2 broken references (💤 1 latent)\n\nchecked JDK 11 -> JDK 17 against 1 scan target\n\n<details open>\n"),
+                md);
+        assertTrue(md.contains("\n#### 💤 latent (no scanned code invokes the affected member)\n\n<details>\n"), md);
+    }
+
+    /** A raw-descriptor fallback carries {@code <init>}, which an HTML summary would swallow as a tag. */
+    @Test
+    void markdownEscapesNamesInsideTheSummaryTag() {
+        Violation a = memberViolation("a/Foo", "x/Owner", "<init>", "(Ljava/util/List;)V", RefKind.METHOD, Reason.METHOD_REMOVED);
+        Violation b = memberViolation("a/Foo", "x/Owner", "<init>", "(Lother/List;)V", RefKind.METHOD, Reason.METHOD_REMOVED);
+        String md = Report.checkMarkdown(List.of("o.jar"), List.of("n.jar"), null, report(a, b));
+        assertTrue(md.contains("<summary>❌ <code>x.Owner.&lt;init&gt; (Ljava/util/List;)V</code></summary>"), md);
+        assertTrue(md.contains("<summary>❌ <code>x.Owner.&lt;init&gt; (Lother/List;)V</code></summary>"), md);
+        assertEquals("`a.B`", Report.codeSpan("a.B"));
+        assertEquals("``a`b``", Report.codeSpan("a`b"));
+        assertEquals("`` `x ``", Report.codeSpan("`x"));
+    }
+
+    /** The listings the text prints as indented lines are tables, with the JDK runs in their own. */
+    @Test
+    void upgradeMarkdownTabulatesChangesAndModules() {
+        List<Dump.DependencyChange> changes = List.of(
+                new Dump.DependencyChange("g:changed", Dump.ChangeKind.CHANGED, List.of("1.0", "1.1"), List.of("2.0")),
+                new Dump.DependencyChange("g:removed", Dump.ChangeKind.REMOVED, List.of("1.0"), List.of()),
+                new Dump.DependencyChange("g:added", Dump.ChangeKind.ADDED, List.of(), List.of("3.0")));
+        Report.ModuleRunSummary summary = new Report.ModuleRunSummary(
+                List.of(
+                        new Report.ModuleOutcome(List.of(":app", ":web"), false, List.of(), null, 10, 0, 3),
+                        outcome(List.of(":app (JDK 11 -> 17)"), List.of(":app"), 0)),
+                6,
+                2,
+                1,
+                1);
+        assertEquals(
+                """
+                <!-- uika -->
+
+                ### ✅ uika: nothing to check
+
+                dependency changes: 3
+
+                | change | coordinate | before | after |
+                | --- | --- | --- | --- |
+                | CHANGED | `g:changed` | 1.0,1.1 | 2.0 |
+                | REMOVED | `g:removed` | 1.0 | - |
+                | ADDED | `g:added` | - | 3.0 |
+
+                per-module check: 2 of 6 modules changed their resolved versions (2 unchanged, 1 new, 1 incomplete)
+
+                | module | scanned | broken | unverified |
+                | --- | ---: | ---: | ---: |
+                | `:app`, `:web` | 10 | ✅ 0 | ❓ 3 |
+
+                JDK check: 1 of 6 modules moved to another release
+
+                | module | JDK | scanned | broken | unverified |
+                | --- | --- | ---: | ---: | ---: |
+                | `:app` | 11 -> 17 | 10 | ✅ 0 | 0 |
+                """,
+                Report.upgradeMarkdown(changes, null, summary));
+    }
 }

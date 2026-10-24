@@ -47,7 +47,8 @@ final class Cli {
             Integer jdkReleaseNew,
             String verdictsJson,
             List<String> classLoadLog,
-            String draftExcludeFile)
+            String draftExcludeFile,
+            String markdown)
             implements Command {}
 
     record UpgradeCheck(
@@ -60,7 +61,8 @@ final class Cli {
             String verdictsJson,
             boolean mergedClasspath,
             List<String> classLoadLog,
-            String draftExcludeFile)
+            String draftExcludeFile,
+            String markdown)
             implements Command {}
 
     record DumpApi(String path) implements Command {}
@@ -260,7 +262,9 @@ final class Cli {
                 case "--merged-classpath" -> upgrade ? Kind.FLAG : null;
                 case "--old", "--new", "--classpath", "--app", "--classpath-file" -> check ? Kind.MANY : null;
                 case "--exclude-file", "--class-load-log" -> check || upgrade ? Kind.MANY : null;
-                case "--fail-on", "--jdk-release", "--verdicts-json", "--draft-exclude-file" -> check || upgrade ? Kind.SINGLE : null;
+                case "--fail-on", "--jdk-release", "--verdicts-json", "--draft-exclude-file", "--markdown" -> check || upgrade
+                        ? Kind.SINGLE
+                        : null;
                 case "--jdk-release-old", "--jdk-release-new" -> check ? Kind.SINGLE : null;
                 case "--before", "--after" -> upgrade ? Kind.SINGLE : null;
                 default -> null;
@@ -407,7 +411,8 @@ final class Cli {
                     release("--jdk-release-new"),
                     single("--verdicts-json"),
                     many("--class-load-log"),
-                    single("--draft-exclude-file"));
+                    single("--draft-exclude-file"),
+                    single("--markdown"));
         }
 
         Command upgradeCheck() throws UsageException {
@@ -427,7 +432,8 @@ final class Cli {
                     single("--verdicts-json"),
                     flags.contains("--merged-classpath"),
                     many("--class-load-log"),
-                    single("--draft-exclude-file"));
+                    single("--draft-exclude-file"),
+                    single("--markdown"));
         }
 
         Command dump() throws UsageException {

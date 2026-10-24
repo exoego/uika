@@ -83,10 +83,11 @@ Some options exist in a few tools only:
   into one directory, so a baseline artifact carries its own JARs. The `uika.cli`
   tag pins the jar's checksum.
 
-Two CLI flags have no plugin option,
-[`--json`](cli.md#options-shared-by-check-and-upgrade-check) and
+Three CLI flags have no plugin option,
+[`--json`](cli.md#options-shared-by-check-and-upgrade-check),
+[`--markdown`](cli.md#options-shared-by-check-and-upgrade-check) and
 [`--verdicts-json`](cli.md#options-shared-by-check-and-upgrade-check). To get
-either, run the CLI on the dumps your build writes.
+any of them, run the CLI on the dumps your build writes.
 
 ## `jdkRelease`
 
