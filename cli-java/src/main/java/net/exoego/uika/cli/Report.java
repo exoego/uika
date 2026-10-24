@@ -602,21 +602,20 @@ final class Report {
     private static String markdownBlock(Block block, boolean open) {
         StringBuilder out = new StringBuilder(open ? "<details open>\n" : "<details>\n");
         out.append("<summary>").append(block.title()).append("</summary>\n\n");
-        boolean inList = false;
-        for (Line line : block.lines()) {
+        List<Line> lines = block.lines();
+        for (int i = 0; i < lines.size(); i++) {
+            Line line = lines.get(i);
             if (line.depth() == 1) {
-                if (inList) {
-                    out.append('\n');
-                    inList = false;
-                }
                 out.append(line.text()).append("\n\n");
-            } else {
-                out.append("- ").append(line.text()).append('\n');
-                inList = true;
+                continue;
             }
-        }
-        if (inList) {
-            out.append('\n');
+            out.append("- ").append(line.text()).append('\n');
+            // A list ends where its entries do, so the next paragraph or the closing tag does
+            // not join it.
+            boolean last = i == lines.size() - 1;
+            if (last || lines.get(i + 1).depth() == 1) {
+                out.append('\n');
+            }
         }
         return out.append("</details>").toString();
     }
@@ -865,8 +864,9 @@ final class Report {
             boolean ambiguous = prettyCounts.get(List.of(key.pretty(), key.reason())) > 1;
             List<Line> lines = new ArrayList<>();
             Violation first = vs.get(0);
-            String error = runtimeError(first);
-            lines.add(new Line(1, error == null ? displayReason(first) : displayReason(first) + ", throws " + error));
+            // Never null here: the reasons without a runtime error are the structural ones,
+            // which violationBlocks routes to structuralBlocks.
+            lines.add(new Line(1, displayReason(first) + ", throws " + runtimeError(first)));
             TreeSet<User> users = new TreeSet<>(User.ORDER);
             for (Violation v : vs) {
                 users.add(new User(

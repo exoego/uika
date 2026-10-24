@@ -174,10 +174,9 @@ final class Commands {
         }
         try {
             Files.deleteIfExists(file);
-            Path parent = file.toAbsolutePath().getParent();
-            if (parent != null) {
-                Files.createDirectories(parent);
-            }
+            // Never null: the only path without a parent is a root, which is a directory and
+            // was rejected above.
+            Files.createDirectories(file.toAbsolutePath().getParent());
         } catch (IOException e) {
             throw new UikaException("cannot write markdown report " + path, e);
         }

@@ -1033,11 +1033,18 @@ class ReportTest {
         Violation unproven = memberViolation("a/Bar", "x/Owner", "run", "()V", RefKind.METHOD, Reason.METHOD_REMOVED);
         unproven.reachable = false;
         Violation structural = classViolation("a/Sub", "x/Base", Reason.CLASS_BECAME_FINAL, true, null);
-        String md = Report.upgradeMarkdown(List.of(), report(reachable, unproven, structural), null);
+        Violation finalMethod = memberViolation("a/Sub", "x/Base", "run", "()V", RefKind.METHOD, Reason.METHOD_BECAME_FINAL);
+        finalMethod.reachable = true;
+        Violation latent = memberViolation("a/Impl", "x/Iface", "go", "()V", RefKind.METHOD, Reason.METHOD_BECAME_ABSTRACT);
+        latent.reachable = true;
+        latent.invocationFound = false;
+        String md = Report.upgradeMarkdown(List.of(), report(reachable, unproven, structural, finalMethod, latent), null);
         assertTrue(
-                md.startsWith("<!-- uika -->\n\n### ❌ uika: 3 broken references (💥 2 reachable, ⚠️ 1 not proven reachable)\n\n"
+                md.startsWith("<!-- uika -->\n\n### ❌ uika: 5 broken references (💥 3 reachable, 💤 1 latent, ⚠️ 1 not proven reachable)\n\n"
                         + "dependency changes: none\n\n"),
                 md);
+        // A class broken twice is one block with two entries, so a list closes before the next
+        // paragraph opens.
         assertTrue(
                 md.contains("#### 💥 reachable from the application (likely to break)\n\n"
                         + "<details open>\n<summary>💡 suggestion: ADVICE</summary>\n\n"
@@ -1046,7 +1053,15 @@ class ReportTest {
                         + "- `x.Gone` was removed, but `a.Foo` still uses it\n\n</details>\n\n"
                         + "<details open>\n<summary>❌ <code>a.Sub</code>  (consumer.jar)</summary>\n\n"
                         + "extends `x.Base`, which became final\n\n"
+                        + "- throws IncompatibleClassChangeError (VerifyError up to JDK 15) when `Sub` loads\n\n"
+                        + "overrides `x.Base.run()`, which became final\n\n"
                         + "- throws IncompatibleClassChangeError (VerifyError up to JDK 15) when `Sub` loads\n\n</details>"),
+                md);
+        assertTrue(
+                md.contains("#### 💤 latent (class reachable, but no scanned code invokes the affected member)\n\n"
+                        + "<details>\n<summary>❌ <code>a.Impl</code>  (consumer.jar)</summary>\n\n"
+                        + "inherits abstract `x.Iface.go()` without implementing it\n\n"
+                        + "- throws AbstractMethodError only when `go` is first called (no invocation found in scanned bytecode)\n\n</details>"),
                 md);
         assertTrue(
                 md.contains("#### ⚠️  not proven reachable (no static path found; may still load via reflection)\n\n"
@@ -1055,7 +1070,8 @@ class ReportTest {
                         + "used by 1 class:\n\n"
                         + "- `a.Bar`  (consumer.jar)\n\n</details>"),
                 md);
-        assertTrue(md.endsWith("\n\nscanned 100 classes: ❌ 3 broken (of which 💥 2 reachable, ⚠️ 1 not proven reachable)\n"), md);
+        assertTrue(
+                md.endsWith("\n\nscanned 100 classes: ❌ 5 broken (of which 💥 3 reachable, 💤 1 latent, ⚠️ 1 not proven reachable)\n"), md);
     }
 
     /** The first line is the verdict alone, so it reads as the comment's title. */
@@ -1087,6 +1103,7 @@ class ReportTest {
         assertEquals("`a.B`", Report.codeSpan("a.B"));
         assertEquals("``a`b``", Report.codeSpan("a`b"));
         assertEquals("`` `x ``", Report.codeSpan("`x"));
+        assertEquals("`` x` ``", Report.codeSpan("x`"));
     }
 
     /** The listings the text prints as indented lines are tables, with the JDK runs in their own. */

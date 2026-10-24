@@ -546,4 +546,23 @@ class CommandsTest {
         // The JDK move is the first module's too.
         assertEquals(List.of(":app", ":app (JDK 11 -> 17)"), names);
     }
+
+    /** Every way the report path can fail names the report and the cause, before the scan where it can. */
+    @Test
+    void markdownPathFailuresNameTheReport(@TempDir Path dir) throws Exception {
+        String trailingSlash = dir + "/";
+        assertEquals(
+                "cannot write markdown report " + trailingSlash + ": Is a directory",
+                assertThrows(UikaException.class, () -> Commands.prepareMarkdown(trailingSlash)).getMessage());
+        // A regular file where a directory is needed fails the delete that clears the stale report.
+        Path file = Files.writeString(dir.resolve("file"), "");
+        String underFile = file.resolve("report.md").toString();
+        assertEquals(
+                "cannot write markdown report " + underFile + ": Not a directory",
+                assertThrows(UikaException.class, () -> Commands.prepareMarkdown(underFile)).getMessage());
+        String missingDir = dir.resolve("nowhere/report.md").toString();
+        assertEquals(
+                "cannot write markdown report " + missingDir + ": No such file or directory",
+                assertThrows(UikaException.class, () -> Commands.writeMarkdown(missingDir, "# report\n")).getMessage());
+    }
 }
