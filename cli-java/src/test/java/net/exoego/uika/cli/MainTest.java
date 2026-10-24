@@ -310,4 +310,57 @@ class MainTest {
             return in.readAllBytes();
         }
     }
+
+    /**
+     * --markdown writes the report beside the text, only once the check has completed, and
+     * never leaves an earlier run's report behind, because a CI step posts whatever file is
+     * there.
+     */
+    @Test
+    void checkWritesAMarkdownReportAndRemovesAStaleOne() throws Exception {
+        Path report = dir.resolve("out/report.md");
+        Run run = runUika("check", "--markdown", report.toString(), "--old", fixture(OLD), "--new", fixture(NEW), "--classpath", fixture(CONSUMER));
+        assertEquals(1, run.code(), run.stderr());
+        String markdown = Files.readString(report);
+        assertTrue(markdown.startsWith("<!-- uika -->\n\n### ❌ uika: 2 broken references\n\n"), markdown);
+        assertTrue(
+                markdown.contains("<details open>\n<summary>❌ <code>com.google.common.util.concurrent.TimeLimiter.callWithTimeout("
+                        + "Callable, long, TimeUnit, boolean)</code></summary>"),
+                markdown);
+        assertTrue(
+                run.stdout().contains("❌ com.google.common.util.concurrent.TimeLimiter.callWithTimeout(Callable, long, TimeUnit, boolean)"),
+                run.stdout());
+
+        // An input that fails to load is the earliest failure a run can have, so the report
+        // must already be gone by then.
+        Run failed = runUika("check", "--markdown", report.toString(), "--exclude-file", dir.resolve("missing.toml").toString(),
+                "--old", fixture(OLD), "--new", fixture(NEW), "--classpath", fixture(CONSUMER));
+        assertEquals(2, failed.code(), failed.stderr());
+        assertTrue(failed.stderr().startsWith("error: cannot read exclude file "), failed.stderr());
+        assertFalse(Files.exists(report), "a failed run leaves no report to post");
+
+        Run directory = runUika("check", "--markdown", dir.toString(), "--old", fixture(OLD), "--new", fixture(NEW), "--classpath", fixture(CONSUMER));
+        assertEquals(2, directory.code(), directory.stderr());
+        assertTrue(directory.stderr().startsWith("error: cannot write markdown report "), directory.stderr());
+    }
+
+    @Test
+    void upgradeCheckWritesAMarkdownReport() throws Exception {
+        String modules = """
+                {"modules":[{"module":":app","classesDirs":[],"artifacts":[
+                    {"group":"com.google.guava","name":"guava","version":"%s","file":"%s"},
+                    {"group":"org.seleniumhq.selenium","name":"selenium-remote-driver","version":"3.4.0","file":"%s"}
+                ]}]}
+                """;
+        Path before = Files.writeString(dir.resolve("before.json"), modules.formatted("22.0", fixture(OLD), fixture(CONSUMER)));
+        Path after = Files.writeString(dir.resolve("after.json"), modules.formatted("23.0-rc1", fixture(NEW), fixture(CONSUMER)));
+        Path report = dir.resolve("report.md");
+
+        Run run = runUika("upgrade-check", "--markdown", report.toString(), "--before", before.toString(), "--after", after.toString());
+        assertEquals(1, run.code(), run.stderr());
+        String markdown = Files.readString(report);
+        assertTrue(markdown.contains("| CHANGED | `com.google.guava:guava` | 22.0 | 23.0-rc1 |"), markdown);
+        assertTrue(markdown.contains("\n| `:app` | "), markdown);
+        assertTrue(markdown.contains("<details open>\n<summary>💡 suggestion: "), markdown);
+    }
 }

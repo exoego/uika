@@ -159,6 +159,19 @@ $ uika dump some.jar
   because a plugin knows the release the build compiles for and the CLI does
   not. The API is read from `$UIKA_JDK` when set, else `$JAVA_HOME`.
 - `--json` prints the report as JSON instead of text. No plugin exposes it.
+- `--markdown <path>` also writes the report as Markdown to that file, for a
+  pull request comment or a CI job summary. The first line is the verdict, the
+  listings are tables, and each finding is a `<details>` block, open in the 💥
+  tier and folded in the others. The file is written only when the check
+  completes, and a file already at the path is removed first, so a run that
+  fails leaves none behind for a CI step to post. Posting it is one step:
+
+  ```yaml
+  - if: ${{ !cancelled() && hashFiles('uika-report.md') != '' }}
+    run: cat uika-report.md >> "$GITHUB_STEP_SUMMARY"
+  ```
+
+  No plugin exposes it yet.
 - `--verdicts-json <path>` writes every reference verdict (ok, unknown, broken)
   to a file as JSON Lines, for checking uika's answers against a real JVM. It is
   not a report. It ignores `--exclude-file`, repeats a reference once per call

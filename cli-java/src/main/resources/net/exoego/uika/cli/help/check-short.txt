@@ -17,6 +17,8 @@ Options:
           TOML file(s) of known false positives to suppress (e.g. reflection-only member access). May be specified multiple times; rules from all files are merged
       --json
           
+      --markdown <MARKDOWN>
+          Also write the report as Markdown to this file, for a pull request comment or a CI job summary. Each finding is a collapsible <details> block. Written only when the check completes; a file already at the path is removed first, so a failed run leaves none behind
       --fail-on <FAIL_ON>
           When to exit non-zero: never, reachable (only reachable violations), or any (any violation, default) [default: any] [possible values: never, reachable, any]
       --jdk-release <JDK_RELEASE>

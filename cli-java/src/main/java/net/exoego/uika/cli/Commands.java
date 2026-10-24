@@ -1,6 +1,7 @@
 package net.exoego.uika.cli;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -55,6 +56,7 @@ final class Commands {
     }
 
     private static int cmdCheck(Cli.Check args) {
+        prepareMarkdown(args.markdown());
         List<String> targets = new ArrayList<>(args.classpath());
         List<String> appRoots = new ArrayList<>(args.app());
         targets.addAll(args.app());
@@ -92,6 +94,7 @@ final class Commands {
             }
             Out.out.print(Report.checkText(result));
         }
+        writeMarkdown(args.markdown(), Report.checkMarkdown(args.oldJars(), args.newJars(), jdkPair, result));
         return exitCode(result, args.failOn());
     }
 
@@ -153,6 +156,42 @@ final class Commands {
             throw new UikaException(streamError);
         }
         return result;
+    }
+
+    /**
+     * Clears the way for --markdown as the command's first step, before any input can fail to
+     * load. A report left by an earlier run is removed, so a run that fails leaves no stale
+     * report for a CI step to post as this run's. The directory is created here so a bad path
+     * fails the command before the scan, not after it.
+     */
+    static void prepareMarkdown(String path) {
+        if (path == null) {
+            return;
+        }
+        Path file = Path.of(path);
+        if (path.endsWith("/") || Files.isDirectory(file)) {
+            throw new UikaException("cannot write markdown report " + path + ": Is a directory");
+        }
+        try {
+            Files.deleteIfExists(file);
+            // Never null: the only path without a parent is a root, which is a directory and
+            // was rejected above.
+            Files.createDirectories(file.toAbsolutePath().getParent());
+        } catch (IOException e) {
+            throw new UikaException("cannot write markdown report " + path, e);
+        }
+    }
+
+    /** Writes the --markdown report once the check has completed. An unwritable path fails the command. */
+    static void writeMarkdown(String path, String markdown) {
+        if (path == null) {
+            return;
+        }
+        try {
+            Files.writeString(Path.of(path), markdown, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UikaException("cannot write markdown report " + path, e);
+        }
     }
 
     /**
@@ -442,12 +481,14 @@ final class Commands {
 
     // ---- upgrade-check ----
 
-    private static void printUpgrade(boolean json, List<Dump.DependencyChange> changes, Check.Report result, Report.ModuleRunSummary modules) {
-        if (json) {
+    private static void printUpgrade(
+            Cli.UpgradeCheck args, List<Dump.DependencyChange> changes, Check.Report result, Report.ModuleRunSummary modules) {
+        if (args.json()) {
             Out.out.println(Report.upgradeJson(changes, result, modules));
         } else {
             Out.out.print(Report.upgradeText(changes, result, modules));
         }
+        writeMarkdown(args.markdown(), Report.upgradeMarkdown(changes, result, modules));
     }
 
     /**
@@ -456,6 +497,7 @@ final class Commands {
      * the union of all modules, which mixes several resolved versions of one coordinate.
      */
     private static int cmdUpgradeCheck(Cli.UpgradeCheck args) {
+        prepareMarkdown(args.markdown());
         List<Exclude.Rule> excludeRules = Exclude.load(args.excludeFile());
         // Loaded and opened before the no-changes early return: a bad log path or
         // --jdk-release must fail on every run, not only when jars changed.
@@ -478,7 +520,7 @@ final class Commands {
             if (changes.oldJars().isEmpty() && jdkPair == null) {
                 // The empty list still writes the requested draft file, like --verdicts-json.
                 applyEvidenceAndDraft(new ArrayList<>(), null, evidence, args.draftExcludeFile());
-                printUpgrade(args.json(), changes.changes(), null, null);
+                printUpgrade(args, changes.changes(), null, null);
                 return 0;
             }
 
@@ -503,7 +545,7 @@ final class Commands {
             applyExcludes(result, excludeRules);
             Suggest.annotate(result.violations, before, after, changes.changes());
             applyEvidenceAndDraft(result.violations, result.appRootsMatched, evidence, args.draftExcludeFile());
-            printUpgrade(args.json(), changes.changes(), result, null);
+            printUpgrade(args, changes.changes(), result, null);
             return exitCode(result, args.failOn());
         }
     }
@@ -857,7 +899,7 @@ final class Commands {
         if (plan.runs.isEmpty()) {
             finishVerdicts(verdicts, () -> null);
             applyEvidenceAndDraft(new ArrayList<>(), null, evidence, args.draftExcludeFile());
-            printUpgrade(args.json(), changes.changes(), null, moduleSummary(plan, List.of()));
+            printUpgrade(args, changes.changes(), null, moduleSummary(plan, List.of()));
             return 0;
         }
 
@@ -973,7 +1015,7 @@ final class Commands {
             moduleOutcomes.add(new Report.ModuleOutcome(
                     o.names(), o.jdk() != null, o.jdkModules(), o.jdk(), o.scannedClasses(), runViolations(merged, o.names()).size(), o.unknownRefs()));
         }
-        printUpgrade(args.json(), changes.changes(), merged, moduleSummary(plan, moduleOutcomes));
+        printUpgrade(args, changes.changes(), merged, moduleSummary(plan, moduleOutcomes));
         return failed ? 1 : 0;
     }
 
