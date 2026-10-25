@@ -9,7 +9,11 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
+import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * The unit tests of cli/src/check.rs. The selection walk (AbstractMethodError, conflicting
@@ -1031,6 +1035,102 @@ final class CheckTest {
         assertEquals(Reason.METHOD_BECAME_FINAL, v.get(0).reason);
         assertEquals("app/Sub", Intern.str(v.get(0).sourceClass));
         assertEquals(overridden("lib/Mid", "m", "()V"), v.get(0).reference);
+    }
+
+    @Test
+    void anEntirelyNewFinalMethodBreaksAnExistingOverride() {
+        List<Violation> v = finalViolations(
+                index(classApi("lib/Base")), index(classWithMethodAccess("lib/Base", FINAL_M)),
+                null, extending("app/Sub", "lib/Base", PUBLIC_M));
+        assertEquals(1, v.size());
+        assertEquals(Reason.METHOD_BECAME_FINAL, v.get(0).reason);
+        assertEquals(overridden("lib/Base", "m", "()V"), v.get(0).reference);
+    }
+
+    static Stream<Named<Integer>> nonVirtualAccess() {
+        return Stream.of(
+                Named.of("private", Acc.PRIVATE),
+                Named.of("private final", Acc.PRIVATE | Acc.FINAL),
+                Named.of("public static", Acc.PUBLIC | Acc.STATIC),
+                Named.of("public static final", Acc.PUBLIC | Acc.STATIC | Acc.FINAL));
+    }
+
+    static Stream<Named<Integer>> nonFinalNonVirtualAccess() {
+        return nonVirtualAccess().filter(access -> (access.getPayload() & Acc.FINAL) == 0);
+    }
+
+    @ParameterizedTest(name = "{displayName}: {0}")
+    @MethodSource("nonVirtualAccess")
+    void aPrivateOrStaticAncestorMethodDoesNotHideAnAddedFinalMethod(int access) {
+        Member ancestor = m("m", "()V", access);
+        List<Violation> v = finalViolations(
+                baseAndMid(ancestor), baseAndMid(ancestor, FINAL_M), null, extending("app/Sub", "lib/Mid", PUBLIC_M));
+        assertEquals(1, v.size());
+        assertEquals(Reason.METHOD_BECAME_FINAL, v.get(0).reason);
+        assertEquals(overridden("lib/Mid", "m", "()V"), v.get(0).reference);
+    }
+
+    @Test
+    void aPrivateMethodDoesNotHideAPreExistingFinalFurtherUp() {
+        ClassApi base = classWithMethodAccess("lib/Base", FINAL_M);
+        ClassApi hidden = extending("lib/Hidden", "lib/Base", m("m", "()V", Acc.PRIVATE));
+        ApiIndex oldLib = index(base, hidden, extending("lib/Mid", "lib/Hidden"));
+        ApiIndex newLib = index(base, hidden, extending("lib/Mid", "lib/Hidden", FINAL_M));
+        assertTrue(finalViolations(oldLib, newLib, null, extending("app/Sub", "lib/Mid", PUBLIC_M)).isEmpty());
+    }
+
+    @Test
+    void anOldChainEscapingAboveAPrivateMethodStaysUnknown() {
+        ClassApi hidden = extending("lib/Hidden", "ext/Base", m("m", "()V", Acc.PRIVATE));
+        ApiIndex oldLib = index(hidden, extending("lib/Mid", "lib/Hidden"));
+        ApiIndex newLib = index(hidden, extending("lib/Mid", "lib/Hidden", FINAL_M));
+        assertTrue(finalViolations(oldLib, newLib, null, extending("app/Sub", "lib/Mid", PUBLIC_M)).isEmpty());
+    }
+
+    @Test
+    void aPrivateAncestorDoesNotMakeAnAddedFinalBridgeSourceVisible() {
+        Member privateMethod = m("m", "()V", Acc.PRIVATE);
+        Member finalBridge = m("m", "()V", Acc.PUBLIC | Acc.FINAL | Acc.BRIDGE);
+        assertTrue(finalViolations(
+                baseAndMid(privateMethod), baseAndMid(privateMethod, finalBridge), null, extending("app/Sub", "lib/Mid", PUBLIC_M)).isEmpty());
+    }
+
+    @ParameterizedTest(name = "{displayName}: {0}")
+    @MethodSource("nonVirtualAccess")
+    void privateAndStaticSubclassMethodsDoNotOverrideAnAddedFinalMethod(int access) {
+        assertTrue(finalViolations(
+                index(classApi("lib/Base")), index(classWithMethodAccess("lib/Base", FINAL_M)),
+                null, extending("app/Sub", "lib/Base", m("m", "()V", access))).isEmpty());
+    }
+
+    @Test
+    void anAddedPackageFinalMethodOnlyBreaksAnOverrideInItsPackage() {
+        Member packageFinal = m("m", "()V", Acc.FINAL);
+        ApiIndex oldLib = index(classApi("lib/Base"));
+        ApiIndex newLib = index(classWithMethodAccess("lib/Base", packageFinal));
+        List<Violation> v = finalViolations(oldLib, newLib, null,
+                extending("lib/Sub", "lib/Base", PUBLIC_M), extending("app/Sub", "lib/Base", PUBLIC_M));
+        assertEquals(1, v.size());
+        assertEquals("lib/Sub", Intern.str(v.get(0).sourceClass));
+    }
+
+    @Test
+    void anEntirelyNewProtectedFinalMethodBreaksAnOverrideInAnotherPackage() {
+        Member protectedFinal = m("m", "()V", Acc.PROTECTED | Acc.FINAL);
+        assertEquals(1, finalViolations(
+                index(classApi("lib/Base")), index(classWithMethodAccess("lib/Base", protectedFinal)),
+                null, extending("app/Sub", "lib/Base", PUBLIC_M)).size());
+    }
+
+    @ParameterizedTest(name = "{displayName}: {0}")
+    @MethodSource("nonFinalNonVirtualAccess")
+    void privateAndStaticMethodsBecomingFinalDoNotBreakSubclasses(int access) {
+        Member oldMethod = m("m", "()V", access);
+        Member newMethod = m("m", "()V", access | Acc.FINAL);
+        // Same package, so the package-access guard cannot mask a private final false positive.
+        assertTrue(finalViolations(
+                index(classWithMethodAccess("lib/Base", oldMethod)), index(classWithMethodAccess("lib/Base", newMethod)),
+                null, extending("lib/Sub", "lib/Base", PUBLIC_M)).isEmpty());
     }
 
     @Test

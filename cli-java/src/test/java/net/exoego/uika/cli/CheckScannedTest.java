@@ -9,6 +9,7 @@ import static net.exoego.uika.cli.CheckTest.syms;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -18,6 +19,8 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -30,6 +33,8 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /** Whole {@link Check#checkScanned} runs: pass 2, the verdicts, the graph walks and reachability together. */
 final class CheckScannedTest {
@@ -507,13 +512,15 @@ final class CheckScannedTest {
         assertEquals(new SymbolRef(RefKind.METHOD, intern("lib/M"), MemberKey.of("m", "()V"), Boolean.FALSE, null, null), v.reference);
     }
 
-    /**
-     * lib/Mid adds `@Override public final void m()` of the m it inherits from cp/Base in another
-     * jar. Only pass 2 has cp/Base's members, which show m was overridable in old.
-     */
-    @Test
-    void anAddedFinalOverrideOfAClasspathMethodIsJudgedInPassTwo() throws Exception {
-        String cp = jar("cp.jar", "cp/Base.class", new ClassWriter("cp/Base", JAVA_LANG_OBJECT).method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
+    /** Only pass 2 can tell whether cp/Base had an overridable m or no declaration at all. */
+    @ParameterizedTest(name = "old superclass declares m: {0}")
+    @ValueSource(booleans = {true, false})
+    void anAddedFinalMethodIsJudgedAfterFetchingItsOldSuperclass(boolean declaredInOld) throws Exception {
+        ClassWriter base = new ClassWriter("cp/Base", JAVA_LANG_OBJECT);
+        if (declaredInOld) {
+            base.method(Acc.PUBLIC, "m", "()V", RETURN);
+        }
+        String cp = jar("cp.jar", "cp/Base.class", base.bytes());
         String app = jar("app.jar", "app/Sub.class", new ClassWriter("app/Sub", "lib/Mid").method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
         ApiIndex oldLib = index(classApi("lib/Mid", "cp/Base", Acc.PUBLIC));
         ClassApi mid = classApi("lib/Mid", "cp/Base", Acc.PUBLIC);
@@ -527,6 +534,48 @@ final class CheckScannedTest {
         assertEquals("app/Sub", Intern.str(v.sourceClass));
         assertEquals(Reason.METHOD_BECAME_FINAL, v.reason);
         assertEquals(new SymbolRef(RefKind.METHOD, intern("lib/Mid"), MemberKey.of("m", "()V"), Boolean.FALSE, null, null), v.reference);
+    }
+
+    @Test
+    void anAddedFinalMethodOverAPrivateClasspathMethodMatchesTheJvm() throws Exception {
+        String cp = jar("cp.jar", "cp/Base.class",
+                new ClassWriter("cp/Base", JAVA_LANG_OBJECT).method(Acc.PRIVATE | Acc.FINAL, "m", "()V", RETURN).bytes());
+        String oldLib = jar("lib-old.jar", "lib/Mid.class", new ClassWriter("lib/Mid", "cp/Base").bytes());
+        String newLib = jar("lib-new.jar", "lib/Mid.class",
+                new ClassWriter("lib/Mid", "cp/Base").method(Acc.PUBLIC | Acc.FINAL, "m", "()V", RETURN).bytes());
+        String app = jar("app.jar", "app/Sub.class", new ClassWriter("app/Sub", "lib/Mid").method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
+        URL cpUrl = Path.of(cp).toUri().toURL();
+        URL appUrl = Path.of(app).toUri().toURL();
+        try (URLClassLoader before = new URLClassLoader(new URL[] {Path.of(oldLib).toUri().toURL(), cpUrl, appUrl}, null);
+                URLClassLoader after = new URLClassLoader(new URL[] {Path.of(newLib).toUri().toURL(), cpUrl, appUrl}, null)) {
+            assertEquals("app.Sub", Class.forName("app.Sub", false, before).getName());
+            assertThrows(IncompatibleClassChangeError.class, () -> Class.forName("app.Sub", false, after));
+        }
+
+        Check.Report report = Commands.runCheck(List.of(oldLib), List.of(newLib), List.of(cp, app), List.of(), List.of(), null, null);
+
+        assertEquals(List.of(), report.warnings);
+        assertEquals(1, report.violations.size());
+        assertEquals("app/Sub", Intern.str(report.violations.get(0).sourceClass));
+        assertEquals(Reason.METHOD_BECAME_FINAL, report.violations.get(0).reason);
+    }
+
+    @Test
+    void passTwoFollowsTheOldChainAboveAPrivateDeclaration() throws Exception {
+        String cp = jar("cp.jar", "cp/Base.class", new ClassWriter("cp/Base", JAVA_LANG_OBJECT).bytes());
+        String app = jar("app.jar", "app/Sub.class", new ClassWriter("app/Sub", "lib/Mid").method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
+        ClassApi hidden = classApi("lib/Hidden", "cp/Base", Acc.PUBLIC);
+        CheckTest.setMembers(hidden, true, m("m", "()V", Acc.PRIVATE));
+        ApiIndex oldLib = index(hidden, classApi("lib/Mid", "lib/Hidden", Acc.PUBLIC));
+        ClassApi mid = classApi("lib/Mid", "lib/Hidden", Acc.PUBLIC);
+        CheckTest.setMembers(mid, true, m("m", "()V", Acc.PUBLIC | Acc.FINAL));
+
+        Check.Report report = Check.check(List.of(cp, app), oldLib, index(hidden, mid), List.of());
+
+        assertEquals(List.of(), report.warnings);
+        assertEquals(1, report.violations.size());
+        assertEquals("app/Sub", Intern.str(report.violations.get(0).sourceClass));
+        assertEquals(Reason.METHOD_BECAME_FINAL, report.violations.get(0).reason);
     }
 
     /**

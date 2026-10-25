@@ -975,11 +975,18 @@ final class Check {
             finalOwnersOnChain(className, newIndex, graph, finalOwners, seenAncestors, owners);
             int n = owners.isEmpty() ? 0 : fetched.methodCount(entry);
             for (int k = 0; k < n; k++) {
+                if ((fetched.methodAccessAt(entry, k) & (Acc.PRIVATE | Acc.STATIC)) != 0) {
+                    continue;
+                }
                 long key = fetched.methodKeyAt(entry, k);
                 // The nearest final declaration is the one the JVM names.
                 for (int i = 0; i < owners.n; i++) {
                     int owner = owners.a[i];
                     if (finalMethods.get(owner).contains(key)) {
+                        int access = newIndex.findMethod(newIndex.entry(owner), key);
+                        if ((access & (Acc.PUBLIC | Acc.PROTECTED)) == 0 && !Intern.samePackage(owner, className)) {
+                            continue;
+                        }
                         SymbolRef reference = new SymbolRef(RefKind.METHOD, owner, key, Boolean.FALSE, null, null);
                         pushViolation(violations, seen, graph.sourceOf(node), className, reference, Reason.METHOD_BECAME_FINAL);
                         break;
@@ -1491,7 +1498,7 @@ final class Check {
                 }
                 long key = oldIndex.methodKeyAt(e, k);
                 int newAccess = newIndex.findMethod(newEntry, key);
-                if (newAccess >= 0 && (newAccess & Acc.FINAL) != 0 && !compilerGeneratedOnly(oldAccess, newAccess)) {
+                if (newAccess >= 0 && blocksOverride(newAccess) && !compilerGeneratedOnly(oldAccess, newAccess)) {
                     out.computeIfAbsent(className, c -> new LongSet()).add(key);
                 }
             }
@@ -1500,9 +1507,9 @@ final class Check {
     }
 
     /**
-     * Final methods a class declares in new but only inherited in old (owner -> keys), when the
-     * inherited version was one a subclass could override. The inherited declaration is the old
-     * side of the bridge guard. A method whose old chain leaves {@code oldScope} is left out like
+     * Final methods a class declares in new but did not declare in old (owner -> keys), when
+     * old virtual lookup finds no method or an overridable inherited version. The inherited declaration
+     * is the old side of the bridge guard. A method whose old chain leaves {@code oldScope} is left out like
      * Unknown, and its class goes to {@code unresolved} when that is non-null.
      */
     static Map<Integer, LongSet> addedFinalOverrides(ApiIndex oldIndex, ApiIndex newIndex, Scope oldScope, IntSet unresolved) {
@@ -1518,22 +1525,24 @@ final class Check {
             for (int k = 0; k < n; k++) {
                 int newAccess = newIndex.methodAccessAt(e, k);
                 long key = newIndex.methodKeyAt(e, k);
-                boolean blocksOverride = (newAccess & (Acc.FINAL | Acc.STATIC | Acc.PRIVATE)) == Acc.FINAL;
-                if (!blocksOverride || oldIndex.findMethod(oldEntry, key) >= 0) {
+                if (!blocksOverride(newAccess) || oldIndex.findMethod(oldEntry, key) >= 0) {
                     continue;
                 }
-                long inherited = oldScope.resolveMember(className, key, Scope.MemberKind.METHOD);
+                long inherited = oldScope.resolveVirtualMethod(className, key);
                 if (inherited == Scope.UNKNOWN) {
                     if (unresolved != null) {
                         unresolved.add(className);
                     }
                     continue;
                 }
-                if (!Scope.isFound(inherited)) {
+                if (inherited == Scope.NOT_FOUND) {
+                    if (!isSyntheticOrBridge(newAccess)) {
+                        out.computeIfAbsent(className, c -> new LongSet()).add(key);
+                    }
                     continue;
                 }
                 int oldAccess = Scope.foundAccess(inherited);
-                if (isOverridable(oldAccess) && !compilerGeneratedOnly(oldAccess, newAccess)) {
+                if (!blocksOverride(oldAccess) && !compilerGeneratedOnly(oldAccess, newAccess)) {
                     out.computeIfAbsent(className, c -> new LongSet()).add(key);
                 }
             }
@@ -1541,9 +1550,9 @@ final class Check {
         return out;
     }
 
-    /** Static and private methods never override, and a final one cannot be overridden. */
-    private static boolean isOverridable(int access) {
-        return (access & (Acc.FINAL | Acc.STATIC | Acc.PRIVATE)) == 0;
+    /** Private and static final methods do not block subclass overrides. */
+    private static boolean blocksOverride(int access) {
+        return (access & (Acc.FINAL | Acc.STATIC | Acc.PRIVATE)) == Acc.FINAL;
     }
 
     private static void mergeMethods(Map<Integer, LongSet> into, Map<Integer, LongSet> from) {
