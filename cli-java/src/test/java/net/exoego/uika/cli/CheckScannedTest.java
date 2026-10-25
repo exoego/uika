@@ -536,10 +536,12 @@ final class CheckScannedTest {
         assertEquals(new SymbolRef(RefKind.METHOD, intern("lib/Mid"), MemberKey.of("m", "()V"), Boolean.FALSE, null, null), v.reference);
     }
 
-    @Test
-    void anAddedFinalMethodOverAPrivateClasspathMethodMatchesTheJvm() throws Exception {
+    @ParameterizedTest(name = "private old method: {0}")
+    @ValueSource(booleans = {true, false})
+    void anAddedFinalMethodOverANonInheritedClasspathMethodMatchesTheJvm(boolean privateMethod) throws Exception {
+        int oldAccess = Acc.FINAL | (privateMethod ? Acc.PRIVATE : 0);
         String cp = jar("cp.jar", "cp/Base.class",
-                new ClassWriter("cp/Base", JAVA_LANG_OBJECT).method(Acc.PRIVATE | Acc.FINAL, "m", "()V", RETURN).bytes());
+                new ClassWriter("cp/Base", JAVA_LANG_OBJECT).method(oldAccess, "m", "()V", RETURN).bytes());
         String oldLib = jar("lib-old.jar", "lib/Mid.class", new ClassWriter("lib/Mid", "cp/Base").bytes());
         String newLib = jar("lib-new.jar", "lib/Mid.class",
                 new ClassWriter("lib/Mid", "cp/Base").method(Acc.PUBLIC | Acc.FINAL, "m", "()V", RETURN).bytes());

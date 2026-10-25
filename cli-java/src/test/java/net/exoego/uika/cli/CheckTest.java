@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * The unit tests of cli/src/check.rs. The selection walk (AbstractMethodError, conflicting
@@ -1138,6 +1139,22 @@ final class CheckTest {
         // Base.m was final in old, so Sub failed to load before the upgrade too.
         List<Violation> v = finalViolations(baseAndMid(FINAL_M), baseAndMid(PUBLIC_M, FINAL_M), null, extending("app/Sub", "lib/Mid", PUBLIC_M));
         assertTrue(v.isEmpty());
+    }
+
+    @ParameterizedTest(name = "old final method access: {0}")
+    @ValueSource(ints = {Acc.PUBLIC, Acc.PROTECTED})
+    void aPublicOrProtectedInheritedFinalFromAnotherPackageIsPreExisting(int access) {
+        ClassApi oldBase = classWithMethodAccess("cp/Base", m("m", "()V", access | Acc.FINAL));
+        ApiIndex oldLib = index(oldBase, extending("lib/Mid", "cp/Base"));
+        ApiIndex newLib = index(classWithMethodAccess("cp/Base", PUBLIC_M), extending("lib/Mid", "cp/Base", FINAL_M));
+        assertTrue(finalViolations(oldLib, newLib, null, extending("app/Sub", "lib/Mid", PUBLIC_M)).isEmpty());
+    }
+
+    @Test
+    void aPackagePrivateInheritedFinalInItsPackageIsPreExisting() {
+        Member packageFinal = m("m", "()V", Acc.FINAL);
+        assertTrue(finalViolations(baseAndMid(packageFinal), baseAndMid(PUBLIC_M, FINAL_M),
+                null, extending("lib/Sub", "lib/Mid", PUBLIC_M)).isEmpty());
     }
 
     @Test

@@ -1542,7 +1542,10 @@ final class Check {
                     continue;
                 }
                 int oldAccess = Scope.foundAccess(inherited);
-                if (!blocksOverride(oldAccess) && !compilerGeneratedOnly(oldAccess, newAccess)) {
+                boolean inheritedBlocksOverride = blocksOverride(oldAccess)
+                        && ((oldAccess & (Acc.PUBLIC | Acc.PROTECTED)) != 0
+                                || Intern.samePackage(Scope.foundOwner(inherited), className));
+                if (!inheritedBlocksOverride && !compilerGeneratedOnly(oldAccess, newAccess)) {
                     out.computeIfAbsent(className, c -> new LongSet()).add(key);
                 }
             }
