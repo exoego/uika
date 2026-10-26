@@ -34,6 +34,7 @@ import java.util.zip.ZipOutputStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /** Whole {@link Check#checkScanned} runs: pass 2, the verdicts, the graph walks and reachability together. */
@@ -557,6 +558,30 @@ final class CheckScannedTest {
         }
 
         Check.Report report = Commands.runCheck(List.of(oldLib), List.of(newLib), List.of(cp, app), List.of(), List.of(), null, null);
+
+        assertEquals(List.of(), report.warnings);
+        assertEquals(1, report.violations.size());
+        assertEquals("app/Sub", Intern.str(report.violations.get(0).sourceClass));
+        assertEquals(Reason.METHOD_BECAME_FINAL, report.violations.get(0).reason);
+    }
+
+    /** kotlinc emits a private fun as private final, so making it public in an open class gives this shape. */
+    @ParameterizedTest(name = "{displayName}: {0}")
+    @MethodSource("net.exoego.uika.cli.CheckTest#nonVirtualAccess")
+    void aPrivateOrStaticMethodTurnedInstanceFinalMatchesTheJvm(int oldAccess) throws Exception {
+        String oldLib = jar("lib-old.jar", "lib/Mid.class",
+                new ClassWriter("lib/Mid", JAVA_LANG_OBJECT).method(oldAccess, "m", "()V", RETURN).bytes());
+        String newLib = jar("lib-new.jar", "lib/Mid.class",
+                new ClassWriter("lib/Mid", JAVA_LANG_OBJECT).method(Acc.PUBLIC | Acc.FINAL, "m", "()V", RETURN).bytes());
+        String app = jar("app.jar", "app/Sub.class", new ClassWriter("app/Sub", "lib/Mid").method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
+        URL appUrl = Path.of(app).toUri().toURL();
+        try (URLClassLoader before = new URLClassLoader(new URL[] {Path.of(oldLib).toUri().toURL(), appUrl}, null);
+                URLClassLoader after = new URLClassLoader(new URL[] {Path.of(newLib).toUri().toURL(), appUrl}, null)) {
+            assertEquals("app.Sub", Class.forName("app.Sub", false, before).getName());
+            assertThrows(IncompatibleClassChangeError.class, () -> Class.forName("app.Sub", false, after));
+        }
+
+        Check.Report report = Commands.runCheck(List.of(oldLib), List.of(newLib), List.of(app), List.of(), List.of(), null, null);
 
         assertEquals(List.of(), report.warnings);
         assertEquals(1, report.violations.size());
