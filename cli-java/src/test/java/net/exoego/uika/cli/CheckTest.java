@@ -1206,6 +1206,27 @@ final class CheckTest {
         assertTrue(finalViolations(index(oldMid), index(newMid), null, extending("app/Sub", "lib/Mid", PUBLIC_M)).isEmpty());
     }
 
+    /**
+     * Skewed jars: the old lib/Mid extended app/Sub, which still extends lib/Mid. The JVM rejects
+     * that pair with ClassCircularityError. The old-side walk must still end, and the upgrade's
+     * own break is reported.
+     */
+    @Test
+    void theOldChainWalkEndsOnACycle() {
+        ApiIndex oldLib = index(extending("lib/Mid", "app/Sub", PUBLIC_M));
+        ApiIndex newLib = index(classWithMethodAccess("lib/Mid", FINAL_M));
+        assertEquals(1, finalViolations(oldLib, newLib, null, extending("app/Sub", "lib/Mid", PUBLIC_M)).size());
+    }
+
+    /** Only java/lang/Object may name no superclass; the JVM rejects any other such class file. */
+    @Test
+    void theOldChainWalkEndsAtAClassWithoutASuperclass() {
+        ClassApi oldMid = classWithMethodAccess("lib/Mid", PUBLIC_M);
+        oldMid.superName = Intern.NONE;
+        ApiIndex newLib = index(classWithMethodAccess("lib/Mid", FINAL_M));
+        assertEquals(1, finalViolations(index(oldMid), newLib, null, extending("app/Sub", "lib/Mid", PUBLIC_M)).size());
+    }
+
     @Test
     void aSubclassThatDoesNotOverrideTheAddedFinalMethodIsNotReported() {
         ClassApi sub = extending("app/Sub", "lib/Mid", m("n", "()V", Acc.PUBLIC));
