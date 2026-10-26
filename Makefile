@@ -1,4 +1,4 @@
-.PHONY: help build check test clean probe placeholder-check \
+.PHONY: help build check test clean probe placeholder-check hidden-text-check \
 	rewrite rewrite-check coverage \
 	java-cli-coverage gradle-coverage maven-coverage clojure-coverage \
 	lein-coverage sbt-coverage mill-coverage bazel-coverage jacoco-tools \
@@ -93,7 +93,21 @@ placeholder-check:
 	done
 	@echo "version placeholders: all 0.0.0-dev"
 
-check: placeholder-check rewrite-check java-cli-test gradle-check gradle-e2e sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
+# The characters of jactionlint's invisible-characters rule, plus private use (Co), where
+# GlassWorm hid its payload. U+FE0E and U+FE0F pass only right after an emoji.
+HIDDEN_TEXT := (?![\t\r])\p{Cc}|\p{Cf}|\p{Co}|\p{Zl}|\p{Zp}|[\x{034F}\x{115F}\x{1160}\x{17B4}\x{17B5}\x{180B}-\x{180F}\x{3164}\x{FFA0}\x{FE00}-\x{FE0D}\x{E0100}-\x{E01EF}]|(?<![\x{A9}\x{AE}\x{203C}\x{2049}\x{2122}\x{2139}\x{2190}-\x{2BFF}\x{3030}\x{303D}\x{3297}\x{3299}\x{1F000}-\x{1FAFF}])[\x{FE0E}\x{FE0F}]
+
+hidden-text-check:
+	@LC_ALL=C.UTF-8 git grep -I -q -P '$(HIDDEN_TEXT)' -- .; status=$$?; \
+	if [ $$status -eq 1 ]; then echo "hidden text: none"; exit 0; fi; \
+	if [ $$status -eq 0 ]; then \
+	  LC_ALL=C.UTF-8 git grep -I -n --column -o -P '$(HIDDEN_TEXT)' -- . \
+	    | perl -CS -pe 's/([^\x20-\x7E\n])/sprintf("U+%04X", ord $$1)/ge' >&2; \
+	  echo "these invisible or bidi characters can hide text from review" >&2; \
+	fi; \
+	exit 1
+
+check: placeholder-check hidden-text-check rewrite-check java-cli-test gradle-check gradle-e2e sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 
 test: rewrite java-cli-test gradle-test sbt-scripted maven-verify mill-test clojure-test lein-test bazel-test bazel-maven-test
 

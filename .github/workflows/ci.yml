@@ -62,6 +62,9 @@ jobs:
       - name: Check version placeholders
         run: make placeholder-check
 
+      - name: Check for hidden text
+        run: make hidden-text-check
+
       - name: Test with coverage
         run: make java-cli-coverage
 
