@@ -20,7 +20,7 @@ concurrency:
 jobs:
   version:
     name: Resolve version
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       version: ${{ steps.resolve.outputs.version }}
@@ -35,7 +35,7 @@ jobs:
   publish:
     name: Publish to Maven Central
     needs: version
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     permissions:
       contents: write # JReleaser attaches the CLI jar and the Bazel archive to the release.
