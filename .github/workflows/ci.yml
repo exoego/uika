@@ -540,6 +540,8 @@ jobs:
           persist-credentials: false
 
       - uses: jdx/jactionlint@a65ab044e916760429068fe5794b8306abdfcbb9 # v2.3.0
+        with:
+          strict-exit: true
 
   gate:
     name: Quality Gate
