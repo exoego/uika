@@ -140,7 +140,15 @@ final class Scope {
             int access = layers[(int) (at >>> 32)].findMethod((int) at, key);
             return access < 0 ? NOT_FOUND : found(owner, access);
         }
-        return kind == MemberKind.FIELD ? resolveField(owner, key, new IntSet()) : resolveMethod(owner, key);
+        return kind == MemberKind.FIELD ? resolveField(owner, key, new IntSet()) : resolveMethod(owner, key, 0);
+    }
+
+    /**
+     * Lookup for subclass overrides: skip private/static declarations and keep walking above
+     * them. This filters declaration kind only; it does not decide access or finality.
+     */
+    long resolveVirtualMethod(int owner, long key) {
+        return resolveMethod(owner, key, Acc.PRIVATE | Acc.STATIC);
     }
 
     private static boolean isConstructor(long key) {
@@ -186,7 +194,7 @@ final class Scope {
      * phase is first-match rather than strict maximally-specific selection, which is enough
      * for existence and access.
      */
-    private long resolveMethod(int owner, long key) {
+    private long resolveMethod(int owner, long key, int ignoredAccess) {
         int[] pending = new int[8];
         int pendingCount = 0;
         IntSet seen = new IntSet();
@@ -210,7 +218,7 @@ final class Scope {
             ApiIndex index = layers[(int) (at >>> 32)];
             int entry = (int) at;
             int access = index.findMethod(entry, key);
-            if (access >= 0) {
+            if (access >= 0 && (access & ignoredAccess) == 0) {
                 return found(current, access);
             }
             int interfaces = index.interfaceCount(entry);
@@ -225,7 +233,7 @@ final class Scope {
         IntSet interfaceSeen = new IntSet();
         boolean unknown = false;
         for (int k = 0; k < pendingCount; k++) {
-            long resolved = resolveInterfaceMethod(pending[k], key, interfaceSeen);
+            long resolved = resolveInterfaceMethod(pending[k], key, interfaceSeen, ignoredAccess);
             if (resolved >= 0) {
                 return resolved;
             }
@@ -234,7 +242,7 @@ final class Scope {
         return unknown ? UNKNOWN : NOT_FOUND;
     }
 
-    private long resolveInterfaceMethod(int iface, long key, IntSet seen) {
+    private long resolveInterfaceMethod(int iface, long key, IntSet seen, int ignoredAccess) {
         if (!seen.add(iface)) {
             return NOT_FOUND;
         }
@@ -245,13 +253,13 @@ final class Scope {
         ApiIndex index = layers[(int) (at >>> 32)];
         int entry = (int) at;
         int access = index.findMethod(entry, key);
-        if (access >= 0) {
+        if (access >= 0 && (access & ignoredAccess) == 0) {
             return found(iface, access);
         }
         boolean unknown = false;
         int interfaces = index.interfaceCount(entry);
         for (int k = 0; k < interfaces; k++) {
-            long resolved = resolveInterfaceMethod(index.interfaceAt(entry, k), key, seen);
+            long resolved = resolveInterfaceMethod(index.interfaceAt(entry, k), key, seen, ignoredAccess);
             if (resolved >= 0) {
                 return resolved;
             }

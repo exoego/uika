@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /** Ports the `index.rs` tests. */
 class IndexTest {
@@ -100,6 +102,44 @@ class IndexTest {
         assertEquals(
                 Scope.Resolution.FOUND, scope.resolve(Intern.intern("lib/C"), MemberKey.of("m", "()V"), Scope.MemberKind.METHOD));
         assertTrue(scope.containsClass(Intern.intern("cp/Base")));
+    }
+
+    @ParameterizedTest(name = "{displayName}: {0}")
+    @MethodSource("net.exoego.uika.cli.CheckTest#nonVirtualAccess")
+    void virtualLookupSkipsPrivateAndStaticMethodsWithoutChangingReferenceResolution(int access) {
+        ClassApi base = classOf("a/Base", JAVA_LANG_OBJECT, m("m", "()V"));
+        ClassApi sub = classOf("a/Sub", "a/Base");
+        CheckTest.setMembers(sub, true, CheckTest.m("m", "()V", access));
+        Scope scope = new Scope(ApiIndex.build(List.of(base, sub)));
+        long key = MemberKey.of("m", "()V");
+
+        long reference = scope.resolveMember(sub.name, key, Scope.MemberKind.METHOD);
+        assertEquals(sub.name, Scope.foundOwner(reference));
+        assertEquals(access, Scope.foundAccess(reference));
+        long virtual = scope.resolveVirtualMethod(sub.name, key);
+        assertTrue(Scope.isFound(virtual));
+        assertEquals(base.name, Scope.foundOwner(virtual));
+        assertEquals(Acc.PUBLIC, Scope.foundAccess(virtual));
+    }
+
+    @ParameterizedTest(name = "{displayName}: {0}")
+    @MethodSource("net.exoego.uika.cli.CheckTest#nonFinalNonVirtualAccess")
+    void virtualLookupSkipsPrivateAndStaticInterfaceMethods(int access) {
+        ClassApi c = classOf("a/C", JAVA_LANG_OBJECT);
+        c.interfaces = syms("a/Hidden", "a/Public");
+        ClassApi hidden = classOf("a/Hidden", JAVA_LANG_OBJECT);
+        CheckTest.setMembers(hidden, true, CheckTest.m("m", "()V", access));
+        ClassApi inherited = classOf("a/Public", JAVA_LANG_OBJECT, m("m", "()V"));
+        hidden.access = Acc.PUBLIC | Acc.INTERFACE | Acc.ABSTRACT;
+        inherited.access = Acc.PUBLIC | Acc.INTERFACE | Acc.ABSTRACT;
+        Scope scope = new Scope(ApiIndex.build(List.of(c, hidden, inherited)));
+        long key = MemberKey.of("m", "()V");
+
+        assertEquals(hidden.name, Scope.foundOwner(scope.resolveMember(c.name, key, Scope.MemberKind.METHOD)));
+        long virtual = scope.resolveVirtualMethod(c.name, key);
+        assertTrue(Scope.isFound(virtual));
+        assertEquals(inherited.name, Scope.foundOwner(virtual));
+        assertEquals(Acc.PUBLIC, Scope.foundAccess(virtual));
     }
 
     @Test
