@@ -24,7 +24,8 @@ reference recorded in the referencing binary's constant pool. Detection covers:
 - Visibility narrowing (public -> protected -> private) `IllegalAccessError`
 - Writes to a field that became final `IllegalAccessError`
 - Static <-> instance mismatches `IncompatibleClassChangeError`
-- Newly-final classes/members, or a class still final in a lagging artifact
+- Newly-final classes/members, a new final method that an existing subclass
+  already declares, or a class still final in a lagging artifact
   `IncompatibleClassChangeError` (`VerifyError` up to JDK 15)
 - Methods that became abstract `AbstractMethodError`
 - `new` on a class that became abstract or an interface `InstantiationError`
