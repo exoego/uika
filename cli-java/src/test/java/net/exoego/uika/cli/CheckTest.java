@@ -1040,6 +1040,7 @@ final class CheckTest {
 
     @Test
     void anEntirelyNewFinalMethodBreaksAnExistingOverride() {
+        // Minimizes JDK 19 adding public final Thread.threadId(), pinned on the real pair in CheckScannedTest.
         List<Violation> v = finalViolations(
                 index(classApi("lib/Base")), index(classWithMethodAccess("lib/Base", FINAL_M)),
                 null, extending("app/Sub", "lib/Base", PUBLIC_M));

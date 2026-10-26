@@ -373,6 +373,8 @@ final class CheckScannedTest {
     private static final int RETURN = 0xb1;
     private static final int ICONST_0 = 0x03;
     private static final int IRETURN = 0xac;
+    private static final int LCONST_0 = 0x09;
+    private static final int LRETURN = 0xad;
 
     private static ClassWriter callingMethod(String name, String owner, String method, String descriptor) {
         ClassWriter w = new ClassWriter(name, JAVA_LANG_OBJECT);
@@ -613,6 +615,29 @@ final class CheckScannedTest {
             UpgradeCheckIntegrationTest.Run plain =
                     UpgradeCheckIntegrationTest.runUika("check", "--old", oldLib, "--new", newLib, "--classpath", app);
             assertEquals(0, plain.code(), plain.stdout());
+        } finally {
+            Env.clearOverrides();
+        }
+    }
+
+    /** JDK 19 added Thread.threadId() as public final, so a Thread subclass that declared its own stops loading. */
+    @Test
+    void aFinalMethodTheJdkAddsBreaksAnExistingOverride() throws Exception {
+        Path home = Path.of(System.getProperty("java.home"));
+        assumeTrue(Files.isRegularFile(home.resolve("lib/ct.sym")) && Runtime.version().feature() >= 20, "needs a ct.sym that serves 17 and 19");
+        String app = jar("app.jar", "app/Worker.class",
+                new ClassWriter("app/Worker", "java/lang/Thread").method(Acc.PUBLIC, "threadId", "()J", LCONST_0, LRETURN).bytes());
+        try (URLClassLoader loader = new URLClassLoader(new URL[] {Path.of(app).toUri().toURL()}, null)) {
+            assertThrows(IncompatibleClassChangeError.class, () -> Class.forName("app.Worker", false, loader));
+        }
+        Env.override("UIKA_JDK", home.toString());
+        try {
+            UpgradeCheckIntegrationTest.Run run =
+                    UpgradeCheckIntegrationTest.runUika("check", "--jdk-release-old", "17", "--jdk-release-new", "19", "--classpath", app);
+            assertEquals(1, run.code(), run.stdout() + run.stderr());
+            assertTrue(
+                    run.stdout().contains("❌ app.Worker  (app.jar)\n    overrides java.lang.Thread.threadId(), which became final\n"),
+                    run.stdout());
         } finally {
             Env.clearOverrides();
         }
