@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 env:
   MISE_EXEC_AUTO_INSTALL: false
 
@@ -34,7 +38,7 @@ concurrency:
 jobs:
   cli:
     name: CLI
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -81,7 +85,7 @@ jobs:
 
   gradle:
     name: Gradle plugin
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -126,7 +130,7 @@ jobs:
           fail_ci_if_error: true
 
       - name: Save TestKit Gradle home
-        if: github.ref == 'refs/heads/main' && steps.cache-testkit.outputs.cache-hit != 'true'
+        if: ${{ github.ref == 'refs/heads/main' && steps.cache-testkit.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -136,7 +140,7 @@ jobs:
 
   rewrite:
     name: OpenRewrite
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -166,7 +170,7 @@ jobs:
 
   maven:
     name: Maven plugin
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -210,7 +214,7 @@ jobs:
 
   sbt:
     name: sbt plugin (${{ matrix.group }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -245,7 +249,9 @@ jobs:
 
       # The uika group runs checkClassFileVersions too, in the same sbt.
       - name: Scripted tests with coverage
-        run: make sbt-coverage SBT_SCRIPTED_GROUP=${{ matrix.group }}
+        env:
+          SBT_SCRIPTED_GROUP: ${{ matrix.group }}
+        run: make sbt-coverage SBT_SCRIPTED_GROUP="$SBT_SCRIPTED_GROUP"
 
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
@@ -257,7 +263,7 @@ jobs:
 
   mill:
     name: Mill plugin
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -294,7 +300,7 @@ jobs:
           fail_ci_if_error: true
 
       - name: Save Mill cache
-        if: github.ref == 'refs/heads/main' && steps.cache-mill.outputs.cache-hit != 'true'
+        if: ${{ github.ref == 'refs/heads/main' && steps.cache-mill.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -304,7 +310,7 @@ jobs:
 
   clojure:
     name: Clojure tool
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -355,7 +361,7 @@ jobs:
 
   lein:
     name: Leiningen plugin
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -422,7 +428,7 @@ jobs:
 
   bazel:
     name: Bazel rules
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -464,7 +470,7 @@ jobs:
   # Split from the bazel job because it was the critical path by about 50 seconds.
   bazel-maven:
     name: Bazel rules with Maven artifacts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -497,7 +503,7 @@ jobs:
   # failed need skips this job, and a skipped job reports success to the ruleset.
   gradle-e2e:
     name: Gradle PR gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -526,24 +532,24 @@ jobs:
 
   jactionlint:
     name: Workflow lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: jdx/jactionlint@1027f0a131ab98bc7e191d995bfa15dbed5bbf8f # v2.2.0
+      - uses: jdx/jactionlint@a65ab044e916760429068fe5794b8306abdfcbb9 # v2.3.0
 
   gate:
     name: Quality Gate
-    if: always()
+    if: ${{ always() }}
     needs: [cli, gradle, rewrite, gradle-e2e, maven, sbt, mill, clojure, lein, bazel, bazel-maven, jactionlint]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every tool job to pass
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
@@ -552,7 +558,7 @@ jobs:
 
   stage:
     name: Stage release artifacts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
@@ -576,7 +582,6 @@ jobs:
         run: make lein-stage UIKA_VERSION=0.0.0-ci
 
       - name: Check what lein staged
-        shell: bash
         run: |
           set -euo pipefail
           dir=lein-plugin/target/staging-deploy/net/exoego/uika/lein-uika/0.0.0-ci
@@ -596,7 +601,6 @@ jobs:
         run: mise exec -- gradle -p cli-java publishAllPublicationsToStagingRepository -PuikaVersion=0.0.0-ci
 
       - name: Check what the CLI build staged
-        shell: bash
         run: |
           set -euo pipefail
           dir=cli-java/build/staging-deploy/net/exoego/uika/uika-cli/0.0.0-ci
@@ -615,7 +619,6 @@ jobs:
         run: make bazel-stage UIKA_VERSION=0.0.0-ci
 
       - name: Check what stage.sh cut
-        shell: bash
         run: |
           set -euo pipefail
           test -s dist/bazel/uika-bazel-0.0.0-ci.tar.gz
