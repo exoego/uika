@@ -264,18 +264,29 @@ pass-2 classes are typically below 0.1% of the scan.
   direction as Unknown.
 - Newly-final classes/methods break scanned subclasses/overriders even without
   a constant-pool reference; `Check.addFinalViolations` walks the class
-  graph for these. A final method a class adds in new counts too when old virtual
-  lookup finds no declaration (JDK 19 added `Thread.threadId()` as public final) or an
-  overridable inherited version (`Check.addedFinalOverrides`). The old-side lookup
-  (`Scope.resolveVirtualMethod`) walks past private/static declarations: a private
-  method must not hide an added final one, a pre-existing final further up, or a scope
-  escape that still needs pass 2. Reference resolution keeps those declarations, since
-  the verdict path needs a private hit for nestmate access and level narrowing.
-  Porting a Java `AbstractList` subclass to Kotlin adds a final `contains(Object)` bridge
-  this way (JVM-confirmed). The inherited declaration is the old side of the bridge
-  guard. An old chain that leaves every scope stays unreported, so a JDK super needs
-  `--jdk-release`. The walk checks every superclass that owns such a method, so an
-  added one cannot hide another further up.
+  graph for these. The library side (`Check.newlyFinalMethods`) only names candidates: a
+  method final in new whose own old declaration was not a final every subclass could see,
+  which covers one old never declared (JDK 19 added `Thread.threadId()` as public final)
+  and a package-private final turned public. Whether a SUBCLASS was already rejected is
+  decided from the subclass (`Check.oldChainBlocks`), the way HotSpot's
+  `check_final_method_override` does: walk its old superclass chain, past private,
+  static and non-final declarations, for a final that is public, protected or in the
+  subclass's own runtime package. Judging that from the library class's package instead
+  reported a subclass the final's own package had already rejected as newly broken
+  (JVM-confirmed, both with and without a non-final declaration between). Interfaces
+  are not walked, since they cannot declare final methods (JVMS 4.6), so an interface
+  outside scope does not make the arm Unknown; a chain that leaves scope through a
+  superclass does, so a JDK super needs `--jdk-release`. The bridge guard is the one
+  library-side lookup that needs the declaration old inherited
+  (`Scope.resolveVirtualMethod`, interfaces included, private/static walked past):
+  porting a Java `AbstractList` subclass to Kotlin adds a final `contains(Object)`
+  bridge over the version old inherited from the JDK (JVM-confirmed). Before pass 2
+  that chain can leave the library, so the bridge stays a candidate and the candidates'
+  old supertype closure is fetched; after pass 2 an escape leaves it out like Unknown.
+  Reference resolution keeps private and static declarations, since the verdict path
+  needs a private hit for nestmate access and level narrowing. The walk checks every
+  superclass that owns a candidate, nearest first, so an added final cannot hide
+  another further up.
 - Three JVMS class-shape breaks, all old-relative:
   - InstantiationError: `new X` where X became abstract or an interface. The
     `new` opcode (0xbb) is scanned in `ClassParser` and sets `SymbolRef.instantiated`

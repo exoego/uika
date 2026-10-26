@@ -1158,6 +1158,54 @@ final class CheckTest {
                 null, extending("lib/Sub", "lib/Mid", PUBLIC_M)).isEmpty());
     }
 
+    /**
+     * HotSpot judges an inherited final from the loading subclass: a package-private final rejects
+     * a subclass in its own package wherever the library class sits on the chain, and shields none
+     * in another package. JVM-confirmed in CheckScannedTest.
+     */
+    @ParameterizedTest(name = "old lib/Mid declares a non-final m: {0}")
+    @ValueSource(booleans = {false, true})
+    void aPackagePrivateInheritedFinalIsJudgedFromTheSubclassesPackage(boolean midDeclaresM) {
+        ClassApi base = classWithMethodAccess("cp/Base", m("m", "()V", Acc.FINAL));
+        ApiIndex oldLib = index(base, midDeclaresM ? extending("lib/Mid", "cp/Base", PUBLIC_M) : extending("lib/Mid", "cp/Base"));
+        ApiIndex newLib = index(base, extending("lib/Mid", "cp/Base", FINAL_M));
+        List<Violation> v = finalViolations(oldLib, newLib, null,
+                extending("cp/Sub", "lib/Mid", PUBLIC_M), extending("app/Sub", "lib/Mid", PUBLIC_M));
+        assertEquals(1, v.size());
+        assertEquals("app/Sub", Intern.str(v.get(0).sourceClass));
+        assertEquals(overridden("lib/Mid", "m", "()V"), v.get(0).reference);
+    }
+
+    @Test
+    void anOldPackagePrivateFinalTurnedPublicFinalBreaksAnotherPackage() {
+        ApiIndex oldLib = index(classWithMethodAccess("lib/Base", m("m", "()V", Acc.FINAL)));
+        ApiIndex newLib = index(classWithMethodAccess("lib/Base", FINAL_M));
+        List<Violation> v = finalViolations(oldLib, newLib, null,
+                extending("lib/Sub", "lib/Base", PUBLIC_M), extending("app/Sub", "lib/Base", PUBLIC_M));
+        assertEquals(1, v.size());
+        assertEquals("app/Sub", Intern.str(v.get(0).sourceClass));
+    }
+
+    @Test
+    void anInterfaceOutsideScopeDoesNotHideAnAddedFinalMethod() {
+        // Interface methods cannot be final (JVMS 4.6), so the superclass chain alone decides.
+        ClassApi oldMid = classApi("lib/Mid");
+        oldMid.interfaces = syms("ext/Iface");
+        ClassApi newMid = classWithMethodAccess("lib/Mid", FINAL_M);
+        newMid.interfaces = syms("ext/Iface");
+        assertEquals(1, finalViolations(index(oldMid), index(newMid), null, extending("app/Sub", "lib/Mid", PUBLIC_M)).size());
+    }
+
+    @Test
+    void anAddedFinalBridgeOverAnInterfaceOutsideScopeStaysUnknown() {
+        // The bridge guard needs the declaration old inherited, which may sit on that interface.
+        ClassApi oldMid = classApi("lib/Mid");
+        oldMid.interfaces = syms("ext/Iface");
+        ClassApi newMid = classWithMethodAccess("lib/Mid", m("m", "()V", Acc.PUBLIC | Acc.FINAL | Acc.BRIDGE));
+        newMid.interfaces = syms("ext/Iface");
+        assertTrue(finalViolations(index(oldMid), index(newMid), null, extending("app/Sub", "lib/Mid", PUBLIC_M)).isEmpty());
+    }
+
     @Test
     void aSubclassThatDoesNotOverrideTheAddedFinalMethodIsNotReported() {
         ClassApi sub = extending("app/Sub", "lib/Mid", m("n", "()V", Acc.PUBLIC));
