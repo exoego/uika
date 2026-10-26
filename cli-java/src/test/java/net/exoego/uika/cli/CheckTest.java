@@ -1000,7 +1000,7 @@ final class CheckTest {
     private static final Member FINAL_M = m("m", "()V", Acc.PUBLIC | Acc.FINAL);
     private static final String CONTAINS = "(Ljava/lang/Object;)Z";
 
-    private static ClassApi extending(String name, String superName, Member... methods) {
+    static ClassApi extending(String name, String superName, Member... methods) {
         ClassApi c = classWithMethodAccess(name, methods);
         c.superName = intern(superName);
         return c;

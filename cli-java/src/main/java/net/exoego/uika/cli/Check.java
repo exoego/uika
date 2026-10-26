@@ -975,18 +975,17 @@ final class Check {
             finalOwnersOnChain(className, newIndex, graph, finalOwners, seenAncestors, owners);
             int n = owners.isEmpty() ? 0 : fetched.methodCount(entry);
             for (int k = 0; k < n; k++) {
-                if ((fetched.methodAccessAt(entry, k) & (Acc.PRIVATE | Acc.STATIC)) != 0) {
+                if (!isVirtual(fetched.methodAccessAt(entry, k))) {
                     continue;
                 }
                 long key = fetched.methodKeyAt(entry, k);
                 // The nearest final declaration is the one the JVM names.
                 for (int i = 0; i < owners.n; i++) {
                     int owner = owners.a[i];
-                    if (finalMethods.get(owner).contains(key)) {
-                        int access = newIndex.findMethod(newIndex.entry(owner), key);
-                        if ((access & (Acc.PUBLIC | Acc.PROTECTED)) == 0 && !Intern.samePackage(owner, className)) {
-                            continue;
-                        }
+                    if (!finalMethods.get(owner).contains(key)) {
+                        continue;
+                    }
+                    if (overrideVisible(newIndex.directMethodAccess(owner, key), owner, className)) {
                         SymbolRef reference = new SymbolRef(RefKind.METHOD, owner, key, Boolean.FALSE, null, null);
                         pushViolation(violations, seen, graph.sourceOf(node), className, reference, Reason.METHOD_BECAME_FINAL);
                         break;
@@ -1242,7 +1241,7 @@ final class Check {
             }
             int entry = scope.entryOf(current);
             int access = layer.findMethod(entry, key);
-            if (access >= 0 && (access & (Acc.STATIC | Acc.PRIVATE)) == 0) {
+            if (access >= 0 && isVirtual(access)) {
                 return (access & Acc.ABSTRACT) == 0 ? ImplStatus.CONCRETE : ImplStatus.ABSTRACT_ONLY;
             }
             int n = layer.interfaceCount(entry);
@@ -1267,7 +1266,7 @@ final class Check {
             }
             int entry = scope.entryOf(iface);
             int access = layer.findMethod(entry, key);
-            if (access >= 0 && (access & (Acc.STATIC | Acc.PRIVATE)) == 0) {
+            if (access >= 0 && isVirtual(access)) {
                 if ((access & Acc.ABSTRACT) == 0) {
                     concrete.add(iface);
                 } else {
@@ -1493,12 +1492,9 @@ final class Check {
             int n = oldIndex.methodCount(e);
             for (int k = 0; k < n; k++) {
                 int oldAccess = oldIndex.methodAccessAt(e, k);
-                if (blocksOverride(oldAccess)) {
-                    continue;
-                }
                 long key = oldIndex.methodKeyAt(e, k);
                 int newAccess = newIndex.findMethod(newEntry, key);
-                if (newAccess >= 0 && blocksOverride(newAccess) && !compilerGeneratedOnly(oldAccess, newAccess)) {
+                if (newAccess >= 0 && blocksOverride(newAccess) && !blocksOverride(oldAccess) && !compilerGeneratedOnly(oldAccess, newAccess)) {
                     out.computeIfAbsent(className, c -> new LongSet()).add(key);
                 }
             }
@@ -1535,16 +1531,10 @@ final class Check {
                     }
                     continue;
                 }
-                if (inherited == Scope.NOT_FOUND) {
-                    if (!isSyntheticOrBridge(newAccess)) {
-                        out.computeIfAbsent(className, c -> new LongSet()).add(key);
-                    }
-                    continue;
-                }
-                int oldAccess = Scope.foundAccess(inherited);
-                boolean inheritedBlocksOverride = blocksOverride(oldAccess)
-                        && ((oldAccess & (Acc.PUBLIC | Acc.PROTECTED)) != 0
-                                || Intern.samePackage(Scope.foundOwner(inherited), className));
+                int oldAccess = inherited == Scope.NOT_FOUND ? -1 : Scope.foundAccess(inherited);
+                boolean inheritedBlocksOverride = oldAccess >= 0
+                        && blocksOverride(oldAccess)
+                        && overrideVisible(oldAccess, Scope.foundOwner(inherited), className);
                 if (!inheritedBlocksOverride && !compilerGeneratedOnly(oldAccess, newAccess)) {
                     out.computeIfAbsent(className, c -> new LongSet()).add(key);
                 }
@@ -1553,9 +1543,17 @@ final class Check {
         return out;
     }
 
-    /** Private and static final methods do not block subclass overrides. */
+    private static boolean isVirtual(int access) {
+        return (access & Acc.NON_VIRTUAL) == 0;
+    }
+
     private static boolean blocksOverride(int access) {
-        return (access & (Acc.FINAL | Acc.STATIC | Acc.PRIVATE)) == Acc.FINAL;
+        return isVirtual(access) && (access & Acc.FINAL) != 0;
+    }
+
+    /** JVMS 5.4.5: a package-private declaration is overridden only from its own runtime package. */
+    private static boolean overrideVisible(int access, int holder, int sub) {
+        return (access & (Acc.PUBLIC | Acc.PROTECTED)) != 0 || Intern.samePackage(holder, sub);
     }
 
     private static void mergeMethods(Map<Integer, LongSet> into, Map<Integer, LongSet> from) {
