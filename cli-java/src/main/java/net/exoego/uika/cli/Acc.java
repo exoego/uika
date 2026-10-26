@@ -14,6 +14,8 @@ final class Acc {
     /** Compiler-generated member not present in the source. */
     static final int SYNTHETIC = 0x1000;
     static final int ENUM = 0x4000;
+    /** A method with either flag never takes part in overriding (JVMS 5.4.5). */
+    static final int NON_VIRTUAL = PRIVATE | STATIC;
 
     private Acc() {}
 }

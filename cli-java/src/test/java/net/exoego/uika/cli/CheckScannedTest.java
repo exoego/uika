@@ -3,6 +3,7 @@ package net.exoego.uika.cli;
 import static net.exoego.uika.cli.CheckTest.JAVA_LANG_OBJECT;
 import static net.exoego.uika.cli.CheckTest.classWithFields;
 import static net.exoego.uika.cli.CheckTest.classWithMethodAccess;
+import static net.exoego.uika.cli.CheckTest.extending;
 import static net.exoego.uika.cli.CheckTest.intern;
 import static net.exoego.uika.cli.CheckTest.m;
 import static net.exoego.uika.cli.CheckTest.syms;
@@ -31,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -41,6 +43,11 @@ import org.junit.jupiter.params.provider.ValueSource;
 final class CheckScannedTest {
     @TempDir
     Path dir;
+
+    @AfterEach
+    void clearEnvironment() {
+        Env.clearOverrides();
+    }
 
     private static ApiIndex index(ClassApi... apis) {
         return ApiIndex.build(List.of(apis));
@@ -507,11 +514,7 @@ final class CheckScannedTest {
 
         Check.Report report = Check.check(List.of(boot), oldLib, newLib, List.of());
 
-        assertEquals(List.of(), report.warnings);
-        assertEquals(1, report.violations.size());
-        Violation v = report.violations.get(0);
-        assertEquals("app/Over", Intern.str(v.sourceClass));
-        assertEquals(Reason.METHOD_BECAME_FINAL, v.reason);
+        Violation v = onlyFinalOverride(report, "app/Over");
         assertEquals(new SymbolRef(RefKind.METHOD, intern("lib/M"), MemberKey.of("m", "()V"), Boolean.FALSE, null, null), v.reference);
     }
 
@@ -524,18 +527,13 @@ final class CheckScannedTest {
             base.method(Acc.PUBLIC, "m", "()V", RETURN);
         }
         String cp = jar("cp.jar", "cp/Base.class", base.bytes());
-        String app = jar("app.jar", "app/Sub.class", new ClassWriter("app/Sub", "lib/Mid").method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
-        ApiIndex oldLib = index(classApi("lib/Mid", "cp/Base", Acc.PUBLIC));
-        ClassApi mid = classApi("lib/Mid", "cp/Base", Acc.PUBLIC);
-        CheckTest.setMembers(mid, true, m("m", "()V", Acc.PUBLIC | Acc.FINAL));
+        String app = subOverridingM();
+        ApiIndex oldLib = index(extending("lib/Mid", "cp/Base"));
+        ClassApi mid = extending("lib/Mid", "cp/Base", m("m", "()V", Acc.PUBLIC | Acc.FINAL));
 
         Check.Report report = Check.check(List.of(cp, app), oldLib, index(mid), List.of());
 
-        assertEquals(List.of(), report.warnings);
-        assertEquals(1, report.violations.size());
-        Violation v = report.violations.get(0);
-        assertEquals("app/Sub", Intern.str(v.sourceClass));
-        assertEquals(Reason.METHOD_BECAME_FINAL, v.reason);
+        Violation v = onlyFinalOverride(report, "app/Sub");
         assertEquals(new SymbolRef(RefKind.METHOD, intern("lib/Mid"), MemberKey.of("m", "()V"), Boolean.FALSE, null, null), v.reference);
     }
 
@@ -548,21 +546,11 @@ final class CheckScannedTest {
         String oldLib = jar("lib-old.jar", "lib/Mid.class", new ClassWriter("lib/Mid", "cp/Base").bytes());
         String newLib = jar("lib-new.jar", "lib/Mid.class",
                 new ClassWriter("lib/Mid", "cp/Base").method(Acc.PUBLIC | Acc.FINAL, "m", "()V", RETURN).bytes());
-        String app = jar("app.jar", "app/Sub.class", new ClassWriter("app/Sub", "lib/Mid").method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
-        URL cpUrl = Path.of(cp).toUri().toURL();
-        URL appUrl = Path.of(app).toUri().toURL();
-        try (URLClassLoader before = new URLClassLoader(new URL[] {Path.of(oldLib).toUri().toURL(), cpUrl, appUrl}, null);
-                URLClassLoader after = new URLClassLoader(new URL[] {Path.of(newLib).toUri().toURL(), cpUrl, appUrl}, null)) {
-            assertEquals("app.Sub", Class.forName("app.Sub", false, before).getName());
-            assertThrows(IncompatibleClassChangeError.class, () -> Class.forName("app.Sub", false, after));
-        }
+        String app = subOverridingM();
+        assertLoads("app.Sub", oldLib, cp, app);
+        assertRejects("app.Sub", newLib, cp, app);
 
-        Check.Report report = Commands.runCheck(List.of(oldLib), List.of(newLib), List.of(cp, app), List.of(), List.of(), null, null);
-
-        assertEquals(List.of(), report.warnings);
-        assertEquals(1, report.violations.size());
-        assertEquals("app/Sub", Intern.str(report.violations.get(0).sourceClass));
-        assertEquals(Reason.METHOD_BECAME_FINAL, report.violations.get(0).reason);
+        onlyFinalOverride(runCheck(oldLib, newLib, cp, app), "app/Sub");
     }
 
     /** kotlinc emits a private fun as private final, so making it public in an open class gives this shape. */
@@ -573,38 +561,70 @@ final class CheckScannedTest {
                 new ClassWriter("lib/Mid", JAVA_LANG_OBJECT).method(oldAccess, "m", "()V", RETURN).bytes());
         String newLib = jar("lib-new.jar", "lib/Mid.class",
                 new ClassWriter("lib/Mid", JAVA_LANG_OBJECT).method(Acc.PUBLIC | Acc.FINAL, "m", "()V", RETURN).bytes());
-        String app = jar("app.jar", "app/Sub.class", new ClassWriter("app/Sub", "lib/Mid").method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
-        URL appUrl = Path.of(app).toUri().toURL();
-        try (URLClassLoader before = new URLClassLoader(new URL[] {Path.of(oldLib).toUri().toURL(), appUrl}, null);
-                URLClassLoader after = new URLClassLoader(new URL[] {Path.of(newLib).toUri().toURL(), appUrl}, null)) {
-            assertEquals("app.Sub", Class.forName("app.Sub", false, before).getName());
-            assertThrows(IncompatibleClassChangeError.class, () -> Class.forName("app.Sub", false, after));
-        }
+        String app = subOverridingM();
+        assertLoads("app.Sub", oldLib, app);
+        assertRejects("app.Sub", newLib, app);
 
-        Check.Report report = Commands.runCheck(List.of(oldLib), List.of(newLib), List.of(app), List.of(), List.of(), null, null);
-
-        assertEquals(List.of(), report.warnings);
-        assertEquals(1, report.violations.size());
-        assertEquals("app/Sub", Intern.str(report.violations.get(0).sourceClass));
-        assertEquals(Reason.METHOD_BECAME_FINAL, report.violations.get(0).reason);
+        onlyFinalOverride(runCheck(oldLib, newLib, app), "app/Sub");
     }
 
     @Test
     void passTwoFollowsTheOldChainAboveAPrivateDeclaration() throws Exception {
         String cp = jar("cp.jar", "cp/Base.class", new ClassWriter("cp/Base", JAVA_LANG_OBJECT).bytes());
-        String app = jar("app.jar", "app/Sub.class", new ClassWriter("app/Sub", "lib/Mid").method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
-        ClassApi hidden = classApi("lib/Hidden", "cp/Base", Acc.PUBLIC);
-        CheckTest.setMembers(hidden, true, m("m", "()V", Acc.PRIVATE));
-        ApiIndex oldLib = index(hidden, classApi("lib/Mid", "lib/Hidden", Acc.PUBLIC));
-        ClassApi mid = classApi("lib/Mid", "lib/Hidden", Acc.PUBLIC);
-        CheckTest.setMembers(mid, true, m("m", "()V", Acc.PUBLIC | Acc.FINAL));
+        String app = subOverridingM();
+        ClassApi hidden = extending("lib/Hidden", "cp/Base", m("m", "()V", Acc.PRIVATE));
+        ApiIndex oldLib = index(hidden, extending("lib/Mid", "lib/Hidden"));
+        ClassApi mid = extending("lib/Mid", "lib/Hidden", m("m", "()V", Acc.PUBLIC | Acc.FINAL));
 
         Check.Report report = Check.check(List.of(cp, app), oldLib, index(hidden, mid), List.of());
 
+        onlyFinalOverride(report, "app/Sub");
+    }
+
+    /** app/Sub extends lib/Mid and overrides m. */
+    private String subOverridingM() throws Exception {
+        return jar("app.jar", "app/Sub.class", new ClassWriter("app/Sub", "lib/Mid").method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
+    }
+
+    private static Check.Report runCheck(String oldLib, String newLib, String... targets) {
+        return Commands.runCheck(List.of(oldLib), List.of(newLib), List.of(targets), List.of(), List.of(), null, null);
+    }
+
+    /** The report's one violation, which is {@code sourceClass} overriding a method that became final. */
+    private static Violation onlyFinalOverride(Check.Report report, String sourceClass) {
         assertEquals(List.of(), report.warnings);
         assertEquals(1, report.violations.size());
-        assertEquals("app/Sub", Intern.str(report.violations.get(0).sourceClass));
-        assertEquals(Reason.METHOD_BECAME_FINAL, report.violations.get(0).reason);
+        Violation v = report.violations.get(0);
+        assertEquals(sourceClass, Intern.str(v.sourceClass));
+        assertEquals(Reason.METHOD_BECAME_FINAL, v.reason);
+        return v;
+    }
+
+    private static void assertLoads(String className, String... jars) throws Exception {
+        try (URLClassLoader loader = new URLClassLoader(urls(jars), null)) {
+            assertEquals(className, Class.forName(className, false, loader).getName());
+        }
+    }
+
+    private static void assertRejects(String className, String... jars) throws Exception {
+        try (URLClassLoader loader = new URLClassLoader(urls(jars), null)) {
+            assertThrows(IncompatibleClassChangeError.class, () -> Class.forName(className, false, loader));
+        }
+    }
+
+    private static URL[] urls(String... jars) throws Exception {
+        URL[] out = new URL[jars.length];
+        for (int i = 0; i < jars.length; i++) {
+            out[i] = Path.of(jars[i]).toUri().toURL();
+        }
+        return out;
+    }
+
+    /** The running JDK's home, when its ct.sym serves {@code release}. */
+    private static Path jdkHomeServing(int release) {
+        Path home = Path.of(System.getProperty("java.home"));
+        assumeTrue(Files.isRegularFile(home.resolve("lib/ct.sym")) && Runtime.version().feature() > release, "needs a ct.sym that serves " + release);
+        return home;
     }
 
     /**
@@ -613,8 +633,7 @@ final class CheckScannedTest {
      */
     @Test
     void anAddedFinalBridgeOverAJdkMethodIsJudgedWithTheJdkLayer() throws Exception {
-        Path home = Path.of(System.getProperty("java.home"));
-        assumeTrue(Files.isRegularFile(home.resolve("lib/ct.sym")) && Runtime.version().feature() >= 18, "needs a ct.sym that serves 17");
+        Path home = jdkHomeServing(17);
         String oldLib = jar("lib-1.jar", "lib/Items.class", new ClassWriter("lib/Items", "java/util/AbstractList").bytes());
         String newLib = jar(
                 "lib-2.jar",
@@ -629,43 +648,32 @@ final class CheckScannedTest {
                         .method(Acc.PUBLIC, "contains", "(Ljava/lang/Object;)Z", ICONST_0, IRETURN)
                         .bytes());
         Env.override("UIKA_JDK", home.toString());
-        try {
-            UpgradeCheckIntegrationTest.Run layered = UpgradeCheckIntegrationTest.runUika(
-                    "check", "--jdk-release", "17", "--old", oldLib, "--new", newLib, "--classpath", app);
-            assertEquals(1, layered.code(), layered.stderr());
-            assertTrue(
-                    layered.stdout().contains("❌ app.Containing  (app.jar)\n    overrides lib.Items.contains(Object), which became final\n"),
-                    layered.stdout());
+        UpgradeCheckIntegrationTest.Run layered = UpgradeCheckIntegrationTest.runUika(
+                "check", "--jdk-release", "17", "--old", oldLib, "--new", newLib, "--classpath", app);
+        assertEquals(1, layered.code(), layered.stderr());
+        assertTrue(
+                layered.stdout().contains("❌ app.Containing  (app.jar)\n    overrides lib.Items.contains(Object), which became final\n"),
+                layered.stdout());
 
-            UpgradeCheckIntegrationTest.Run plain =
-                    UpgradeCheckIntegrationTest.runUika("check", "--old", oldLib, "--new", newLib, "--classpath", app);
-            assertEquals(0, plain.code(), plain.stdout());
-        } finally {
-            Env.clearOverrides();
-        }
+        UpgradeCheckIntegrationTest.Run plain =
+                UpgradeCheckIntegrationTest.runUika("check", "--old", oldLib, "--new", newLib, "--classpath", app);
+        assertEquals(0, plain.code(), plain.stdout());
     }
 
     /** JDK 19 added Thread.threadId() as public final, so a Thread subclass that declared its own stops loading. */
     @Test
     void aFinalMethodTheJdkAddsBreaksAnExistingOverride() throws Exception {
-        Path home = Path.of(System.getProperty("java.home"));
-        assumeTrue(Files.isRegularFile(home.resolve("lib/ct.sym")) && Runtime.version().feature() >= 20, "needs a ct.sym that serves 17 and 19");
+        Path home = jdkHomeServing(19);
         String app = jar("app.jar", "app/Worker.class",
                 new ClassWriter("app/Worker", "java/lang/Thread").method(Acc.PUBLIC, "threadId", "()J", LCONST_0, LRETURN).bytes());
-        try (URLClassLoader loader = new URLClassLoader(new URL[] {Path.of(app).toUri().toURL()}, null)) {
-            assertThrows(IncompatibleClassChangeError.class, () -> Class.forName("app.Worker", false, loader));
-        }
+        assertRejects("app.Worker", app);
         Env.override("UIKA_JDK", home.toString());
-        try {
-            UpgradeCheckIntegrationTest.Run run =
-                    UpgradeCheckIntegrationTest.runUika("check", "--jdk-release-old", "17", "--jdk-release-new", "19", "--classpath", app);
-            assertEquals(1, run.code(), run.stdout() + run.stderr());
-            assertTrue(
-                    run.stdout().contains("❌ app.Worker  (app.jar)\n    overrides java.lang.Thread.threadId(), which became final\n"),
-                    run.stdout());
-        } finally {
-            Env.clearOverrides();
-        }
+        UpgradeCheckIntegrationTest.Run run =
+                UpgradeCheckIntegrationTest.runUika("check", "--jdk-release-old", "17", "--jdk-release-new", "19", "--classpath", app);
+        assertEquals(1, run.code(), run.stdout() + run.stderr());
+        assertTrue(
+                run.stdout().contains("❌ app.Worker  (app.jar)\n    overrides java.lang.Thread.threadId(), which became final\n"),
+                run.stdout());
     }
 
     /** The JVM would throw ClassFormatError loading lib/D's new superclass. Here it stays unverified. */

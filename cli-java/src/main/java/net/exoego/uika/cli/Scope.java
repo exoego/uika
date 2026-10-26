@@ -143,12 +143,9 @@ final class Scope {
         return kind == MemberKind.FIELD ? resolveField(owner, key, new IntSet()) : resolveMethod(owner, key, 0);
     }
 
-    /**
-     * Lookup for subclass overrides: skip private/static declarations and keep walking above
-     * them. This filters declaration kind only; it does not decide access or finality.
-     */
+    /** Filters declaration kind only; access and finality are the caller's to judge. */
     long resolveVirtualMethod(int owner, long key) {
-        return resolveMethod(owner, key, Acc.PRIVATE | Acc.STATIC);
+        return resolveMethod(owner, key, Acc.NON_VIRTUAL);
     }
 
     private static boolean isConstructor(long key) {
