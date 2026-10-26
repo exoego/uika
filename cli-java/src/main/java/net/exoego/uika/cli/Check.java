@@ -1493,7 +1493,7 @@ final class Check {
             int n = oldIndex.methodCount(e);
             for (int k = 0; k < n; k++) {
                 int oldAccess = oldIndex.methodAccessAt(e, k);
-                if ((oldAccess & Acc.FINAL) != 0) {
+                if (blocksOverride(oldAccess)) {
                     continue;
                 }
                 long key = oldIndex.methodKeyAt(e, k);
