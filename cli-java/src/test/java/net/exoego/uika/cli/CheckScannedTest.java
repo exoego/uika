@@ -568,6 +568,47 @@ final class CheckScannedTest {
         onlyFinalOverride(runCheck(oldLib, newLib, app), "app/Sub");
     }
 
+    /** HotSpot checks an inherited package-private final from the loading subclass, past any non-final declaration between. */
+    @ParameterizedTest(name = "old lib/Mid declares a non-final m: {0}")
+    @ValueSource(booleans = {false, true})
+    void aPackagePrivateFinalIsJudgedFromTheSubclassesPackage(boolean midDeclaresM) throws Exception {
+        String cp = jar("cp.jar", "app/Base.class", new ClassWriter("app/Base", JAVA_LANG_OBJECT).method(Acc.FINAL, "m", "()V", RETURN).bytes());
+        ClassWriter oldMid = new ClassWriter("lib/Mid", "app/Base");
+        if (midDeclaresM) {
+            oldMid.method(Acc.PUBLIC, "m", "()V", RETURN);
+        }
+        String oldLib = jar("lib-old.jar", "lib/Mid.class", oldMid.bytes());
+        String newLib = jar("lib-new.jar", "lib/Mid.class",
+                new ClassWriter("lib/Mid", "app/Base").method(Acc.PUBLIC | Acc.FINAL, "m", "()V", RETURN).bytes());
+        String app = jar("app.jar",
+                "app/Sub.class", new ClassWriter("app/Sub", "lib/Mid").method(Acc.PUBLIC, "m", "()V", RETURN).bytes(),
+                "other/Sub.class", new ClassWriter("other/Sub", "lib/Mid").method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
+        assertRejects("app.Sub", oldLib, cp, app);
+        assertRejects("app.Sub", newLib, cp, app);
+        assertLoads("other.Sub", oldLib, cp, app);
+        assertRejects("other.Sub", newLib, cp, app);
+
+        Violation v = onlyFinalOverride(runCheck(oldLib, newLib, cp, app), "other/Sub");
+        assertEquals(new SymbolRef(RefKind.METHOD, intern("lib/Mid"), MemberKey.of("m", "()V"), Boolean.FALSE, null, null), v.reference);
+    }
+
+    @Test
+    void anOldPackagePrivateFinalTurnedPublicFinalMatchesTheJvm() throws Exception {
+        String oldLib = jar("lib-old.jar", "lib/Mid.class",
+                new ClassWriter("lib/Mid", JAVA_LANG_OBJECT).method(Acc.FINAL, "m", "()V", RETURN).bytes());
+        String newLib = jar("lib-new.jar", "lib/Mid.class",
+                new ClassWriter("lib/Mid", JAVA_LANG_OBJECT).method(Acc.PUBLIC | Acc.FINAL, "m", "()V", RETURN).bytes());
+        String app = jar("app.jar",
+                "lib/Sub.class", new ClassWriter("lib/Sub", "lib/Mid").method(Acc.PUBLIC, "m", "()V", RETURN).bytes(),
+                "other/Sub.class", new ClassWriter("other/Sub", "lib/Mid").method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
+        assertRejects("lib.Sub", oldLib, app);
+        assertRejects("lib.Sub", newLib, app);
+        assertLoads("other.Sub", oldLib, app);
+        assertRejects("other.Sub", newLib, app);
+
+        onlyFinalOverride(runCheck(oldLib, newLib, app), "other/Sub");
+    }
+
     @Test
     void passTwoFollowsTheOldChainAboveAPrivateDeclaration() throws Exception {
         String cp = jar("cp.jar", "cp/Base.class", new ClassWriter("cp/Base", JAVA_LANG_OBJECT).bytes());

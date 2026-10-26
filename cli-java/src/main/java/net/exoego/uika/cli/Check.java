@@ -130,19 +130,20 @@ final class Check {
         }
     }
 
+    /**
+     * Pass-2 classes for the final-method walk: every scanned subclass of a candidate owner, and
+     * every scanned class on the owners' old supertype closure, which the old-side walk from a
+     * subclass passes through. Pass 2 has not run yet, so a final bridge whose old chain leaves
+     * the library stays a candidate here and is judged once that chain is fetched.
+     */
     private static void collectFinalWanted(ApiIndex oldIndex, ApiIndex newIndex, ClassGraph graph, IntSet wanted, IntSet escapes) {
-        Map<Integer, LongSet> finalMethods = newlyFinalMethods(oldIndex, newIndex);
-        // Pass 2 has not run yet. An added final method whose old chain leaves the library
-        // stays a candidate, and the chain is fetched so the verdict can judge the old side.
-        IntSet unresolved = new IntSet();
-        mergeMethods(finalMethods, addedFinalOverrides(oldIndex, newIndex, new Scope(oldIndex), unresolved));
-        if (finalMethods.isEmpty() && unresolved.isEmpty()) {
+        Map<Integer, LongSet> finalMethods = newlyFinalMethods(oldIndex, newIndex, new Scope(oldIndex), true);
+        if (finalMethods.isEmpty()) {
             return;
         }
         IntSet finalOwners = ownersOf(finalMethods);
         Walk walk = new Walk();
-        for (int owner : unresolved.toArray()) {
-            finalOwners.add(owner);
+        for (int owner : finalOwners.toArray()) {
             forEachSupertype(owner, oldIndex, graph, walk, type -> {
                 if (oldIndex.containsClass(type)) {
                     return;
@@ -958,8 +959,7 @@ final class Check {
             }
         }
 
-        Map<Integer, LongSet> finalMethods = newlyFinalMethods(oldIndex, newIndex);
-        mergeMethods(finalMethods, addedFinalOverrides(oldIndex, newIndex, oldScope, null));
+        Map<Integer, LongSet> finalMethods = newlyFinalMethods(oldIndex, newIndex, oldScope, false);
         if (finalMethods.isEmpty()) {
             return;
         }
@@ -979,17 +979,19 @@ final class Check {
                     continue;
                 }
                 long key = fetched.methodKeyAt(entry, k);
-                // The nearest final declaration is the one the JVM names.
+                // The nearest final declaration the class can see is the one the JVM names.
                 for (int i = 0; i < owners.n; i++) {
                     int owner = owners.a[i];
-                    if (!finalMethods.get(owner).contains(key)) {
+                    if (!finalMethods.get(owner).contains(key)
+                            || !overrideVisible(newIndex.directMethodAccess(owner, key), owner, className)) {
                         continue;
                     }
-                    if (overrideVisible(newIndex.directMethodAccess(owner, key), owner, className)) {
+                    // Old-relative: a final the class could see on its old chain rejected it before the upgrade.
+                    if (oldChainBlocks(className, key, oldScope) == NO) {
                         SymbolRef reference = new SymbolRef(RefKind.METHOD, owner, key, Boolean.FALSE, null, null);
                         pushViolation(violations, seen, graph.sourceOf(node), className, reference, Reason.METHOD_BECAME_FINAL);
-                        break;
                     }
+                    break;
                 }
             }
         }
@@ -1481,34 +1483,15 @@ final class Check {
         return out;
     }
 
-    static Map<Integer, LongSet> newlyFinalMethods(ApiIndex oldIndex, ApiIndex newIndex) {
-        Map<Integer, LongSet> out = new HashMap<>();
-        for (int e = 0; e < oldIndex.classCount(); e++) {
-            int className = oldIndex.nameOf(e);
-            int newEntry = newIndex.entry(className);
-            if (newEntry < 0) {
-                continue;
-            }
-            int n = oldIndex.methodCount(e);
-            for (int k = 0; k < n; k++) {
-                int oldAccess = oldIndex.methodAccessAt(e, k);
-                long key = oldIndex.methodKeyAt(e, k);
-                int newAccess = newIndex.findMethod(newEntry, key);
-                if (newAccess >= 0 && blocksOverride(newAccess) && !blocksOverride(oldAccess) && !compilerGeneratedOnly(oldAccess, newAccess)) {
-                    out.computeIfAbsent(className, c -> new LongSet()).add(key);
-                }
-            }
-        }
-        return out;
-    }
-
     /**
-     * Final methods a class declares in new but did not declare in old (owner -> keys), when
-     * old virtual lookup finds no method or an overridable inherited version. The inherited declaration
-     * is the old side of the bridge guard. A method whose old chain leaves {@code oldScope} is left out like
-     * Unknown, and its class goes to {@code unresolved} when that is non-null.
+     * Final candidates (owner -> keys): a method final in new whose own old declaration, if any,
+     * was not a final every subclass could see. Which subclass was already rejected is the
+     * walk's question ({@link #oldChainBlocks}); this bounds pass 2. The bridge guard needs the
+     * declaration an added bridge replaced, which old inherited: before pass 2 that chain can
+     * leave {@code oldScope}, and {@code unknownIsCandidate} keeps the bridge in so its subclasses
+     * are fetched; after pass 2 an escape is Unknown and the bridge is left out.
      */
-    static Map<Integer, LongSet> addedFinalOverrides(ApiIndex oldIndex, ApiIndex newIndex, Scope oldScope, IntSet unresolved) {
+    static Map<Integer, LongSet> newlyFinalMethods(ApiIndex oldIndex, ApiIndex newIndex, Scope oldScope, boolean unknownIsCandidate) {
         Map<Integer, LongSet> out = new HashMap<>();
         for (int e = 0; e < newIndex.classCount(); e++) {
             int className = newIndex.nameOf(e);
@@ -1520,22 +1503,22 @@ final class Check {
             int n = newIndex.methodCount(e);
             for (int k = 0; k < n; k++) {
                 int newAccess = newIndex.methodAccessAt(e, k);
+                if (!blocksOverride(newAccess)) {
+                    continue;
+                }
                 long key = newIndex.methodKeyAt(e, k);
-                if (!blocksOverride(newAccess) || oldIndex.findMethod(oldEntry, key) >= 0) {
-                    continue;
-                }
-                long inherited = oldScope.resolveVirtualMethod(className, key);
-                if (inherited == Scope.UNKNOWN) {
-                    if (unresolved != null) {
-                        unresolved.add(className);
+                int oldAccess = oldIndex.findMethod(oldEntry, key);
+                if (oldAccess < 0 && isSyntheticOrBridge(newAccess)) {
+                    long inherited = oldScope.resolveVirtualMethod(className, key);
+                    if (inherited == Scope.UNKNOWN) {
+                        if (unknownIsCandidate) {
+                            out.computeIfAbsent(className, c -> new LongSet()).add(key);
+                        }
+                        continue;
                     }
-                    continue;
+                    oldAccess = inherited == Scope.NOT_FOUND ? -1 : Scope.foundAccess(inherited);
                 }
-                int oldAccess = inherited == Scope.NOT_FOUND ? -1 : Scope.foundAccess(inherited);
-                boolean inheritedBlocksOverride = oldAccess >= 0
-                        && blocksOverride(oldAccess)
-                        && overrideVisible(oldAccess, Scope.foundOwner(inherited), className);
-                if (!inheritedBlocksOverride && !compilerGeneratedOnly(oldAccess, newAccess)) {
+                if (!blocksEverySubclass(oldAccess) && !compilerGeneratedOnly(oldAccess, newAccess)) {
                     out.computeIfAbsent(className, c -> new LongSet()).add(key);
                 }
             }
@@ -1556,13 +1539,35 @@ final class Check {
         return (access & (Acc.PUBLIC | Acc.PROTECTED)) != 0 || Intern.samePackage(holder, sub);
     }
 
-    private static void mergeMethods(Map<Integer, LongSet> into, Map<Integer, LongSet> from) {
-        for (Map.Entry<Integer, LongSet> e : from.entrySet()) {
-            LongSet keys = into.computeIfAbsent(e.getKey(), c -> new LongSet());
-            for (long key : e.getValue().toArray()) {
-                keys.add(key);
+    /** A final every subclass could see: whichever overrode it was rejected before the upgrade. */
+    private static boolean blocksEverySubclass(int access) {
+        return blocksOverride(access) && (access & (Acc.PUBLIC | Acc.PROTECTED)) != 0;
+    }
+
+    /**
+     * HotSpot's check_final_method_override from {@code sub}'s side: {@link #YES} when a
+     * declaration of {@code key} on its superclass chain is final, virtual and visible from
+     * {@code sub}, walking past every other declaration (a non-final one does not shield what
+     * sits above it); {@link #NO} once the chain ends; {@link #MAYBE} when it leaves
+     * {@code scope} first. Interfaces cannot declare final methods (JVMS 4.6), so they are not walked.
+     */
+    private static int oldChainBlocks(int sub, long key, Scope scope) {
+        IntSet seen = new IntSet();
+        int current = sub;
+        while (current != Intern.NONE && current != Scope.objectSym() && seen.add(current)) {
+            ApiIndex layer = scope.layerOf(current);
+            if (layer == null) {
+                return MAYBE;
             }
+            int entry = scope.entryOf(current);
+            // The class's own declaration is the override under test, not a blocker.
+            int access = current == sub ? -1 : layer.findMethod(entry, key);
+            if (access >= 0 && blocksOverride(access) && overrideVisible(access, current, sub)) {
+                return YES;
+            }
+            current = layer.superOf(entry);
         }
+        return NO;
     }
 
     /**

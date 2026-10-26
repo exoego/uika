@@ -345,11 +345,11 @@ final class CheckSelectionTest {
         // synthetic bridge turning final is not reported, while a real method still is.
         ApiIndex oldLib = index(amvClass("lib/A", JAVA_LANG_OBJECT, Acc.PUBLIC, m("m", "()V", Acc.PUBLIC | Acc.BRIDGE)));
         ApiIndex newLib = index(amvClass("lib/A", JAVA_LANG_OBJECT, Acc.PUBLIC, m("m", "()V", Acc.PUBLIC | Acc.FINAL | Acc.BRIDGE)));
-        assertTrue(Check.newlyFinalMethods(oldLib, newLib).isEmpty());
+        assertTrue(Check.newlyFinalMethods(oldLib, newLib, new Scope(oldLib), false).isEmpty());
 
         ApiIndex oldReal = index(amvClass("lib/B", JAVA_LANG_OBJECT, Acc.PUBLIC, m("m", "()V", Acc.PUBLIC)));
         ApiIndex newReal = index(amvClass("lib/B", JAVA_LANG_OBJECT, Acc.PUBLIC, m("m", "()V", Acc.PUBLIC | Acc.FINAL)));
-        assertFalse(Check.newlyFinalMethods(oldReal, newReal).isEmpty());
+        assertFalse(Check.newlyFinalMethods(oldReal, newReal, new Scope(oldReal), false).isEmpty());
     }
 
     private static final String OBJECT_ARG = "(Ljava/lang/Object;)V";
@@ -394,7 +394,8 @@ final class CheckSelectionTest {
         // method.
         ApiIndex newLib = index(
                 handler(), amvClass("lib/LoggingHandler", "lib/Handler", Acc.PUBLIC, m("handle", OBJECT_ARG, Acc.PUBLIC | Acc.FINAL)));
-        LongSet finals = Check.newlyFinalMethods(specializedHandler(), newLib).get(intern("lib/LoggingHandler"));
+        ApiIndex oldLib = specializedHandler();
+        LongSet finals = Check.newlyFinalMethods(oldLib, newLib, new Scope(oldLib), false).get(intern("lib/LoggingHandler"));
         assertEquals(1, finals.toArray().length);
         assertTrue(finals.contains(MemberKey.of("handle", OBJECT_ARG)));
     }
@@ -411,7 +412,7 @@ final class CheckSelectionTest {
                 Acc.PUBLIC,
                 m("getSize", "()I", Acc.PUBLIC),
                 m("size", "()I", Acc.PUBLIC | Acc.FINAL | Acc.BRIDGE)));
-        LongSet finals = Check.newlyFinalMethods(oldLib, newLib).get(intern("lib/Items"));
+        LongSet finals = Check.newlyFinalMethods(oldLib, newLib, new Scope(oldLib), false).get(intern("lib/Items"));
         assertEquals(1, finals.toArray().length);
         assertTrue(finals.contains(MemberKey.of("size", "()I")));
     }
