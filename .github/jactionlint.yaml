@@ -1,0 +1,18 @@
+# https://jactionlint.jdx.dev/config
+profile: pedantic
+
+rules:
+  mutable-runner-label:
+    # The image ubuntu-latest resolves to today, so --fix pins a new job to it.
+    pin:
+      ubuntu-latest: ubuntu-24.04
+  secrets-outside-env:
+    allow:
+      # Only lets its holder upload a coverage report.
+      - CODECOV_TOKEN
+      # Repository secrets until they are re-entered in a protected release environment.
+      - MAVEN_CENTRAL_USERNAME
+      - MAVEN_CENTRAL_PASSWORD
+      - JRELEASER_GPG_SECRET_KEY
+      - JRELEASER_GPG_PUBLIC_KEY
+      - JRELEASER_GPG_PASSPHRASE
