@@ -11,7 +11,7 @@ leiningen = "2.12.0"
 java = "temurin-21"
 # Bazelisk, not bazel: it reads bazel-rules/.bazelversion, so the ruleset pins the
 # Bazel release its integration test runs on independently of this file.
-bazelisk = "1.29.0"
+bazelisk = "1.30.0"
 # Not the `jreleaser` entry, whose GraalVM native binary dies in
 # AbstractMavenDeployer.parsePom on every Maven Central deploy. bin/install needs
 # java on PATH. Renovate's mise manager skips asdf plugin paths, so the annotation
