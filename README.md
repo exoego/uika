@@ -67,26 +67,26 @@ common and tool-specific setup on one page per tool:
 <table>
   <tr>
     <td align="center" width="33%">
-      <a href="docs/gradle.md"><img src="docs/logos/gradle.svg" alt="Gradle" height="64"></a><br>
-      <a href="docs/gradle.md"><b>Gradle</b></a>
+      <a href="docs/maven.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/logos/maven-dark.svg"><img src="docs/logos/maven.svg" alt="Maven" width="200"></picture></a><br>
+      <a href="docs/maven.md"><b>Maven</b></a>
     </td>
     <td align="center" width="33%">
       <a href="docs/sbt.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/logos/sbt-dark.svg"><img src="docs/logos/sbt.svg" alt="sbt" height="64"></picture></a><br>
       <a href="docs/sbt.md"><b>sbt</b></a>
     </td>
     <td align="center" width="33%">
-      <a href="docs/maven.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/logos/maven-dark.svg"><img src="docs/logos/maven.svg" alt="Maven" width="200"></picture></a><br>
-      <a href="docs/maven.md"><b>Maven</b></a>
+      <a href="docs/clojure.md"><img src="docs/logos/clojure.png" alt="Clojure CLI" height="64"></a><br>
+      <a href="docs/clojure.md"><b>Clojure CLI</b></a>
     </td>
   </tr>
   <tr>
     <td align="center">
-      <a href="docs/mill.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/logos/mill-dark.svg"><img src="docs/logos/mill.svg" alt="Mill" height="64"></picture></a><br>
-      <a href="docs/mill.md"><b>Mill</b></a>
+      <a href="docs/gradle.md"><img src="docs/logos/gradle.svg" alt="Gradle" height="64"></a><br>
+      <a href="docs/gradle.md"><b>Gradle</b></a>
     </td>
     <td align="center">
-      <a href="docs/clojure.md"><img src="docs/logos/clojure.png" alt="Clojure CLI" height="64"></a><br>
-      <a href="docs/clojure.md"><b>Clojure CLI</b></a>
+      <a href="docs/mill.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/logos/mill-dark.svg"><img src="docs/logos/mill.svg" alt="Mill" height="64"></picture></a><br>
+      <a href="docs/mill.md"><b>Mill</b></a>
     </td>
     <td align="center">
       <a href="docs/leiningen.md"><img src="docs/logos/leiningen.jpg" alt="Leiningen" height="64"></a><br>
