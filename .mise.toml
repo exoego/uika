@@ -2,7 +2,7 @@
 gradle = "9.8.2"
 # The default backends (conda, asdf plugin) lag behind sbt releases and have
 # no 1.12.13 or later, so install the launcher from the GitHub release.
-"github:sbt/sbt" = "1.13.0"
+"github:sbt/sbt" = "1.13.1"
 maven = "3.9.16"
 clojure = "1.12.6.1673"
 # 2.13.0 is a broken package: its lein script points at a 2.12.1-SNAPSHOT
