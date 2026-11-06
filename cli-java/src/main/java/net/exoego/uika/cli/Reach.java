@@ -281,14 +281,24 @@ final class Reach {
         if (!Character.isJavaIdentifierStart(first)) {
             return false;
         }
+        // ServiceLoader permits digits at the start of later components.
+        boolean previousDot = false;
         for (int at = Character.charCount(first); at < name.length();) {
             int codePoint = name.codePointAt(at);
-            if (codePoint != '.' && !Character.isJavaIdentifierPart(codePoint)) {
-                return false;
+            if (codePoint == '.') {
+                if (previousDot) {
+                    return false;
+                }
+                previousDot = true;
+            } else {
+                if (!Character.isJavaIdentifierPart(codePoint)) {
+                    return false;
+                }
+                previousDot = false;
             }
             at += Character.charCount(codePoint);
         }
-        return true;
+        return !previousDot;
     }
 
     /** Unicode White_Space trim, which is what the provider-line parsing was specified against. */

@@ -228,7 +228,7 @@ class ReachTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"1provider.Impl", "com.example.Bad-Provider"})
+    @ValueSource(strings = {"1provider.Impl", "com.example.Bad-Provider", "app..Impl", "app.Impl.", ".app.Impl", "app.Bad\u2603Provider"})
     void strictServiceReadingReportsInvalidProviderNames(String provider) throws Exception {
         Path services = Files.createDirectories(dir.resolve("META-INF/services"));
         Files.writeString(services.resolve("com.example.Spi"), provider + "\n");
@@ -241,6 +241,18 @@ class ReachTest {
         assertEquals(1, tolerant.size());
         assertArrayEquals(syms(provider.replace('.', '/')), tolerant.get(0).impls());
         assertTrue(warnings.isEmpty());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"Impl", "app.Outer$Provider", "app._Provider2", "app.1Provider", "\u03c0.\uD801\uDC00Provider", "pa\u0301ck.Impl"})
+    void strictServiceReadingAcceptsJvmProviderNames(String provider) throws Exception {
+        Path services = Files.createDirectories(dir.resolve("META-INF/services"));
+        Files.writeString(services.resolve("com.example.Spi"), provider + "\n");
+        List<String> warnings = new ArrayList<>();
+        List<Reach.ServiceFile> found = Reach.collectServices(List.of(dir.toString()), warnings, true);
+        assertEquals(1, found.size());
+        assertArrayEquals(syms(provider.replace('.', '/')), found.get(0).impls());
+        assertTrue(warnings.isEmpty(), warnings.toString());
     }
 
     /** A symbol interned after the pass is simply unmarked, never out of bounds. */

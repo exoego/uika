@@ -1028,16 +1028,22 @@ class SnapshotTest {
         assertJvmFailure(NoSuchMethodError.class, api, consumer);
     }
 
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void malformedServiceMetadataMakesValidationIncomplete(boolean archive) throws Exception {
+    static Stream<Arguments> malformedServiceMetadata() {
+        return Stream.of(false, true).flatMap(archive -> Stream.of(
+                Arguments.of(archive, "malformed UTF-8", new byte[] {(byte) 0xff, '\n'}),
+                Arguments.of(archive, "empty provider name component", "app..Impl\n".getBytes(StandardCharsets.UTF_8))));
+    }
+
+    @ParameterizedTest(name = "{1}, archive={0}")
+    @MethodSource("malformedServiceMetadata")
+    void malformedServiceMetadataMakesValidationIncomplete(boolean archive, String label, byte[] metadata) throws Exception {
         Path classes = compile("app", Map.of("app/Service", "package app; public interface Service {}", "app/Impl", "package app; public class Impl implements Service {}", "app/Main", "package app; import java.util.ServiceLoader; public class Main { public static void run() { ServiceLoader.load(Service.class, Service.class.getClassLoader()).iterator().next(); } }"));
         Path file = Files.createDirectories(classes.resolve("META-INF/services")).resolve("app.Service");
         Files.writeString(file, "app.Impl\n");
         Path beforePath = archive ? jar("before", classes) : classes;
         Run before = validate(beforePath);
         assertEquals(0, before.code(), before.stdout() + before.stderr());
-        Files.write(file, new byte[] {(byte) 0xff, '\n'});
+        Files.write(file, metadata);
         Path afterPath = archive ? jar("after", classes) : classes;
         Run after = validate(afterPath);
         assertEquals(2, after.code(), after.stdout() + after.stderr());
