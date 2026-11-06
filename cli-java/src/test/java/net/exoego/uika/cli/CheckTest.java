@@ -8,11 +8,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -214,6 +216,85 @@ final class CheckTest {
         ApiIndex newLib = index(c);
         Check.Verdict v = verdict(methodRef("lib/C", "m", "()V"), "app/Use", new Scope(oldLib), new Scope(newLib), new ClassGraph());
         assertUnknown(v);
+    }
+
+    private static int snapshotSpecialVerdict(RefKind kind, String owner, String sourceClass, Scope runtime, boolean handle) {
+        int meta = SymbolRef.pack(kind, SymbolRef.TRI_FALSE, SymbolRef.TRI_NONE, false)
+                | SymbolRef.SPECIAL_CALL | (handle ? SymbolRef.SPECIAL_HANDLE : 0);
+        ClassGraph graph = new ClassGraph();
+        return Check.verdict(meta, intern(owner), MemberKey.of("m", "()V"), intern(sourceClass), null,
+                runtime, graph, new Check.NestHosts(graph, Map.of()));
+    }
+
+    static Stream<Arguments> specialInterfaceSelections() {
+        return Stream.of(false, true).flatMap(handle -> Stream.of(
+                Arguments.of("empty sibling", handle, true, false, Check.OK),
+                Arguments.of("conflicting default", handle, true, true, Reason.CONFLICTING_DEFAULT_METHODS.ordinal()),
+                Arguments.of("missing sibling", handle, false, false, Check.UNKNOWN)));
+    }
+
+    @ParameterizedTest(name = "{0}, handle={1}")
+    @MethodSource("specialInterfaceSelections")
+    void snapshotSpecialSelectionDistinguishesConflictingAndUnknownDefaults(
+            String label, boolean handle, boolean siblingAvailable, boolean siblingDefault, int expected) {
+        ClassApi object = classApi(JAVA_LANG_OBJECT);
+        object.superName = Intern.NONE;
+        ClassApi first = iface("lib/First");
+        setMembers(first, true, m("m", "()V", Acc.PUBLIC));
+        ClassApi sibling = iface("lib/Sibling");
+        if (siblingDefault) {
+            setMembers(sibling, true, m("m", "()V", Acc.PUBLIC));
+        }
+        ClassApi api = iface("lib/Api");
+        api.interfaces = syms("lib/First", "lib/Sibling");
+        ClassApi caller = abstractClass("app/Use");
+        caller.interfaces = syms("lib/Api");
+        Scope runtime = new Scope(siblingAvailable ? index(object, first, sibling, api, caller) : index(object, first, api, caller));
+
+        assertEquals(expected, snapshotSpecialVerdict(RefKind.INTERFACE_METHOD, "lib/Api", "app/Use", runtime, handle));
+    }
+
+    static Stream<Arguments> specialDefaultReceivers() {
+        return Stream.of(false, true).flatMap(abstractRoot -> Stream.of(
+                Arguments.of("selected declaring type", abstractRoot, "lib/Child", Check.OK),
+                Arguments.of("less specific type", abstractRoot, "lib/Root", Reason.METHOD_ACCESS_NARROWED.ordinal()),
+                Arguments.of("missing receiver interface", abstractRoot, "ext/Unknown", Check.UNKNOWN)));
+    }
+
+    @ParameterizedTest(name = "{0}, abstract root={1}")
+    @MethodSource("specialDefaultReceivers")
+    void snapshotSpecialHandlesCheckTheSelectedDefaultReceiver(
+            String label, boolean abstractRoot, String receiverInterface, int expected) {
+        ClassApi object = classApi(JAVA_LANG_OBJECT);
+        object.superName = Intern.NONE;
+        ClassApi root = iface("lib/Root");
+        setMembers(root, true, m("m", "()V", Acc.PUBLIC | (abstractRoot ? Acc.ABSTRACT : 0)));
+        ClassApi child = iface("lib/Child");
+        child.interfaces = syms("lib/Root");
+        setMembers(child, true, m("m", "()V", Acc.PUBLIC));
+        ClassApi owner = classApi("lib/Owner");
+        owner.interfaces = syms("lib/Root", "lib/Child");
+        ClassApi caller = abstractClass("app/Use");
+        caller.interfaces = syms(receiverInterface);
+        Scope runtime = new Scope(index(object, root, child, owner, caller));
+
+        assertEquals(expected, snapshotSpecialVerdict(RefKind.METHOD, "lib/Owner", "app/Use", runtime, true));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void snapshotSpecialSelectionNeedsTheIntermediateSuperclass(boolean middleAvailable) {
+        ClassApi object = classApi(JAVA_LANG_OBJECT);
+        object.superName = Intern.NONE;
+        ClassApi owner = classApi("lib/Api", "m", "()V");
+        ClassApi middle = classApi("lib/Middle");
+        middle.superName = owner.name;
+        ClassApi caller = classApi("app/Use");
+        caller.superName = middle.name;
+        Scope runtime = new Scope(middleAvailable ? index(object, owner, middle, caller) : index(object, owner, caller));
+
+        assertEquals(middleAvailable ? Check.OK : Check.UNKNOWN,
+                snapshotSpecialVerdict(RefKind.METHOD, "lib/Api", "app/Use", runtime, true));
     }
 
     @Test

@@ -227,6 +227,22 @@ class ReachTest {
         assertEquals(List.of(missing + ": cannot open " + missing + ": No such file or directory"), warnings);
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"1provider.Impl", "com.example.Bad-Provider"})
+    void strictServiceReadingReportsInvalidProviderNames(String provider) throws Exception {
+        Path services = Files.createDirectories(dir.resolve("META-INF/services"));
+        Files.writeString(services.resolve("com.example.Spi"), provider + "\n");
+        List<String> warnings = new ArrayList<>();
+        assertTrue(Reach.collectServices(List.of(dir.toString()), warnings, true).isEmpty());
+        assertEquals(List.of(dir + ": invalid provider name in " + dir + "!META-INF/services/com.example.Spi: " + provider), warnings);
+
+        warnings.clear();
+        List<Reach.ServiceFile> tolerant = Reach.collectServices(List.of(dir.toString()), warnings);
+        assertEquals(1, tolerant.size());
+        assertArrayEquals(syms(provider.replace('.', '/')), tolerant.get(0).impls());
+        assertTrue(warnings.isEmpty());
+    }
+
     /** A symbol interned after the pass is simply unmarked, never out of bounds. */
     @Test
     void symbolsInternedAfterThePassAreUnreachable() {

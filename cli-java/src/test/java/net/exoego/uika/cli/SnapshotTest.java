@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.IOException;
 import java.io.PrintStream;
 import java.lang.reflect.InvocationTargetException;
 import java.net.URL;
@@ -136,6 +137,48 @@ class SnapshotTest {
 
     private static Set<Object> ids(Run run) throws Exception {
         return violations(run).stream().map(v -> v.get("id")).collect(Collectors.toSet());
+    }
+
+    @Test
+    void textReportsACompleteCleanSnapshot() throws Exception {
+        Path classes = compile("app", Map.of("app/Main", "package app; public class Main {}"));
+        Run result = run("validate", "--classpath", classes.toString());
+        assertEquals(0, result.code(), result.stdout() + result.stderr());
+        assertEquals(List.of("validated 1 classes on JDK " + Runtime.version().feature(), "0 violation(s)"), result.stdout().lines().toList());
+        assertEquals("", result.stderr());
+    }
+
+    @Test
+    void textReportsClassAndMemberRequirementsWithTheirSource() throws Exception {
+        Path compileApi = compile("compile", Map.of("lib/Api", "package lib; public class Api { public static void m() {} }", "lib/Missing", "package lib; public class Missing {}"));
+        Path api = compile("runtime", Map.of("lib/Api", "package lib; public class Api {}"));
+        Path consumer = compile("app", Map.of("app/Main", """
+                package app;
+                import lib.Api;
+                import lib.Missing;
+                public class Main {
+                    public Missing field;
+                    public static void run() { Api.m(); }
+                }
+                """), compileApi);
+        Run result = run("validate", "--classpath", api + File.pathSeparator + consumer);
+        assertEquals(1, result.code(), result.stdout() + result.stderr());
+        List<String> lines = result.stdout().lines().toList();
+        assertEquals("validated 2 classes on JDK " + Runtime.version().feature(), lines.get(0));
+        assertTrue(lines.contains("app/Main: class_not_found (" + consumer + ")"), result.stdout());
+        assertTrue(lines.contains("app/Main: method_not_found (" + consumer + ")"), result.stdout());
+        assertEquals(Set.of("    lib/Missing", "    lib/Api.m()V"), lines.stream().filter(line -> line.startsWith("    ")).collect(Collectors.toSet()));
+        assertEquals("2 violation(s)", lines.get(lines.size() - 1));
+        assertEquals("", result.stderr());
+    }
+
+    @Test
+    void textReportsIncompleteValidationAndSendsDiagnosticsToStderr() {
+        Path missing = dir.resolve("missing.jar");
+        Run result = run("validate", "--classpath", missing.toString());
+        assertEquals(2, result.code());
+        assertEquals(List.of("validated 0 classes on JDK " + Runtime.version().feature(), "validation incomplete"), result.stdout().lines().toList());
+        assertEquals(List.of("error: snapshot input is missing or unreadable: " + missing), result.stderr().lines().toList());
     }
 
     @Test
@@ -370,6 +413,92 @@ class SnapshotTest {
         assertEquals(Boolean.FALSE, result.json().get("complete"));
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void truncatedClassesWithValidMagicMakeValidationIncomplete(boolean archive) throws Exception {
+        Path classes = compile("app", Map.of("app/Main", "package app; public class Main {}"));
+        Path file = classes.resolve("app/Main.class");
+        Files.write(file, Arrays.copyOf(Files.readAllBytes(file), CLASS_HEADER_BYTES));
+        Path input = archive ? jar("truncated", classes) : classes;
+        Run result = validate(input);
+        assertEquals(2, result.code(), result.stdout() + result.stderr());
+        assertEquals(Boolean.FALSE, result.json().get("complete"));
+        assertTrue(violations(result).isEmpty());
+        assertTrue(result.stdout().contains("app/Main"), result.stdout());
+        assertFalse(((List<?>) result.json().get("diagnostics")).isEmpty());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void aClassStoredUnderAnotherBinaryNameMakesValidationIncomplete(boolean archive) throws Exception {
+        Path classes = compile("app", Map.of("app/Main", "package app; public class Main {}"));
+        Files.move(classes.resolve("app/Main.class"), classes.resolve("app/Other.class"));
+        Path input = archive ? jar("misnamed", classes) : classes;
+        Run result = validate(input);
+        assertEquals(2, result.code(), result.stdout() + result.stderr());
+        assertEquals(Boolean.FALSE, result.json().get("complete"));
+        assertTrue(violations(result).isEmpty());
+        assertTrue(result.stdout().contains("class entry does not match its binary name"), result.stdout());
+        assertTrue(result.stdout().contains("app/Other"), result.stdout());
+    }
+
+    @Test
+    void duplicateClassEntriesRequireNormalization() throws Exception {
+        Path classes = compile("app", Map.of("app/Main", "package app; public class Main {}"));
+        String entry = "app/Main.class";
+        String placeholder = "app/Copy.class";
+        Files.copy(classes.resolve(entry), classes.resolve(placeholder));
+        Path input = jar("duplicates", classes);
+        // Replace both ZIP headers; the equal lengths preserve the archive's offsets.
+        assertEquals(entry.length(), placeholder.length());
+        String bytes = new String(Files.readAllBytes(input), StandardCharsets.ISO_8859_1);
+        Files.write(input, bytes.replace(placeholder, entry).getBytes(StandardCharsets.ISO_8859_1));
+        Run result = validate(input);
+        assertEquals(2, result.code(), result.stdout() + result.stderr());
+        assertEquals(Boolean.FALSE, result.json().get("complete"));
+        assertTrue(violations(result).isEmpty());
+        assertTrue(result.stdout().contains("duplicate class entry"), result.stdout());
+        assertTrue(result.stdout().contains(entry), result.stdout());
+    }
+
+    @ParameterizedTest(name = "linked directory: {0}")
+    @ValueSource(booleans = {false, true})
+    void linkedClasspathContentsRequireNormalization(boolean directory) throws Exception {
+        Path classes = compile("app", Map.of("app/Main", "package app; public class Main {}"));
+        Path input = Files.createDirectories(dir.resolve("linked"));
+        Path link = directory ? input.resolve("app") : Files.createDirectories(input.resolve("app")).resolve("Main.class");
+        Path target = classes.resolve(directory ? "app" : "app/Main.class");
+        try {
+            Files.createSymbolicLink(link, target);
+        } catch (UnsupportedOperationException | IOException e) {
+            assumeTrue(false, "symbolic links are unavailable: " + e);
+        }
+        Run result = validate(input);
+        assertEquals(2, result.code(), result.stdout() + result.stderr());
+        assertEquals(Boolean.FALSE, result.json().get("complete"));
+        assertTrue(violations(result).isEmpty());
+        assertTrue(((List<?>) result.json().get("diagnostics")).stream().anyMatch(message -> message.toString().contains(link.toString())), result.stdout());
+    }
+
+    @ParameterizedTest(name = "missing ancestor interface: {0}")
+    @ValueSource(booleans = {false, true})
+    void transitiveLoadingFailuresKeepTheAncestorsRequirement(boolean iface) throws Exception {
+        String kind = iface ? "interface" : "class";
+        String relation = iface ? "implements" : "extends";
+        Path classes = compile("app", Map.of(
+                "lib/Grandparent", "package lib; public " + kind + " Grandparent {}",
+                "lib/Parent", "package lib; public " + kind + " Parent extends Grandparent {}",
+                "app/Main", "package app; import lib.Parent; public class Main " + relation + " Parent {}"));
+        Files.delete(classes.resolve("lib/Grandparent.class"));
+        Run result = validate(classes);
+        assertEquals(1, result.code(), result.stdout() + result.stderr());
+        assertEquals(Boolean.TRUE, result.json().get("complete"));
+        assertEquals(List.of(), result.json().get("diagnostics"));
+        List<Map<String, Object>> issues = violations(result);
+        assertFalse(issues.isEmpty());
+        assertTrue(issues.stream().allMatch(issue -> issue.get("kind").equals("class_not_found") && issue.get("source_class").equals("lib/Parent")), result.stdout());
+    }
+
     @Test
     void unknownHierarchyNeverBecomesSuccess() throws Exception {
         Path api = compile("compile", Map.of("lib/Parent", "package lib; public class Parent { public void m() {} }", "lib/Api", "package lib; public class Api extends Parent {}"));
@@ -470,6 +599,27 @@ class SnapshotTest {
         assertTrue(violations(result).stream().anyMatch(v -> v.get("kind").equals("service_provider_not_found")), result.stdout());
     }
 
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {
+            "public abstract class Impl implements Service {}",
+            "public class Impl implements Service { private Impl() {} }",
+            "class Impl implements Service {}",
+            "public class Impl {}"
+    })
+    void anUnusableServiceProviderIsReportedEvenWhenItsClassExists(String declaration) throws Exception {
+        Path classes = compile("app", Map.of("app/Service", "package app; public interface Service {}", "app/Impl", "package app; " + declaration));
+        Path services = Files.createDirectories(classes.resolve("META-INF/services"));
+        Files.writeString(services.resolve("app.Service"), "app.Impl\n");
+        Run result = validate(classes);
+        assertEquals(1, result.code(), result.stdout() + result.stderr());
+        assertEquals(Boolean.TRUE, result.json().get("complete"));
+        List<Map<String, Object>> issues = violations(result);
+        assertEquals(1, issues.size(), result.stdout());
+        assertEquals("service_provider_not_instantiable", issues.get(0).get("kind"));
+        assertEquals("app/Impl", issues.get(0).get("source_class"));
+        assertEquals(classes.toString(), issues.get(0).get("source"));
+    }
+
     @Test
     void aDifferentJdkReleaseIsAnIncompleteEnvironment() throws Exception {
         Run result = run("validate", "--classpath", dir.toString(), "--jdk-release", Runtime.version().feature() == 17 ? "21" : "17", "--json");
@@ -538,6 +688,17 @@ class SnapshotTest {
         Path classes = compile("app", Map.of("app/Main", "package app; public class Main { private int value; static class Inner { int get(Main m) { return m.value; } } }"));
         Run result = validate(classes);
         assertEquals(0, result.code(), result.stdout() + result.stderr());
+    }
+
+    @Test
+    void aNestMemberFromAnOlderHostMakesValidationIncomplete() throws Exception {
+        Path oldClasses = compile("old", Map.of("app/Main", "package app; public class Main { private int value; static class Inner { int get(Main m) { return m.value; } } }"));
+        Path classes = compile("runtime", Map.of("app/Main", "package app; public class Main { private int value; }"));
+        Files.copy(oldClasses.resolve("app/Main$Inner.class"), classes.resolve("app/Main$Inner.class"));
+        Run result = validate(classes);
+        assertEquals(2, result.code(), result.stdout() + result.stderr());
+        assertEquals(Boolean.FALSE, result.json().get("complete"));
+        assertTrue(result.stdout().contains("invalid nest membership for app/Main$Inner"), result.stdout());
     }
 
     @Test

@@ -103,6 +103,8 @@ class CliTest {
         assertEquals(new Cli.Print(Cli.help("root", true)), Cli.parse(new String[] {"help"}));
         assertEquals(new Cli.Print(Cli.help("diff", false)), Cli.parse(new String[] {"diff", "-h"}));
         assertEquals(new Cli.Print(Cli.help("check", true)), Cli.parse(new String[] {"check", "--help"}));
+        assertEquals(new Cli.Print(Cli.help("validate", true)), Cli.parse(new String[] {"validate", "--help"}));
+        assertEquals(new Cli.Print(Cli.help("validate", false)), Cli.parse(new String[] {"validate", "-h"}));
         assertEquals(new Cli.Print(Cli.help("upgrade-check", false)), Cli.parse(new String[] {"upgrade-check", "-h"}));
         assertEquals(new Cli.Print(Cli.help("dump", true)), Cli.parse(new String[] {"dump", "--help"}));
     }
