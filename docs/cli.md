@@ -110,7 +110,9 @@ library pair is needed.
 $ uika validate --classpath app.jar:lib-a.jar:lib-b.jar --json
 ```
 
-Pass every artifact in the environment, in runtime search order. Duplicate
+Pass every artifact in the environment, in runtime search order. Separate
+classpath entries with `;` on Windows or `:` elsewhere, or repeat `--classpath`
+for each entry. The same separators apply to `check --classpath`. Duplicate
 classes are first-wins. Each invocation models one flat classpath; prepare
 separate inputs for environments with different dependency selections. Build
 classpath dumps are not implicitly merged into a runtime environment.

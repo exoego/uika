@@ -1,5 +1,6 @@
 package net.exoego.uika.cli;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -92,6 +93,11 @@ final class Cli {
     }
 
     static Command parse(String[] args) throws UsageException {
+        return parse(args, File.pathSeparator);
+    }
+
+    /** Test seam for platform-specific classpath separators. */
+    static Command parse(String[] args, String pathSeparator) throws UsageException {
         if (args.length == 0) {
             throw new UsageException(help("root", false));
         }
@@ -116,7 +122,7 @@ final class Cli {
                     + "For more information, try '--help'.\n");
         }
         String command = subcommand(first);
-        Options options = new Options(command, args);
+        Options options = new Options(command, args, pathSeparator);
         return switch (command) {
             case "diff" -> options.diff();
             case "check" -> options.check();
@@ -149,13 +155,15 @@ final class Cli {
     /** One subcommand's arguments, consumed left to right. */
     private static final class Options {
         private final String command;
+        private final String pathSeparator;
         private final List<String> positional = new ArrayList<>();
         private final Map<String, List<String>> values = new LinkedHashMap<>();
         private final Set<String> flags = new HashSet<>();
         private Print print;
 
-        Options(String command, String[] args) throws UsageException {
+        Options(String command, String[] args, String pathSeparator) throws UsageException {
             this.command = command;
+            this.pathSeparator = pathSeparator;
             boolean onlyPositional = false;
             for (int i = 1; i < args.length; i++) {
                 String arg = args[i];
@@ -200,7 +208,7 @@ final class Cli {
                     }
                     if (name.equals("--classpath")) {
                         // clap splits on the delimiter first, so an empty part is a missing value.
-                        for (String part : value.split(":", -1)) {
+                        for (String part : value.split(pathSeparator, -1)) {
                             if (part.isEmpty()) {
                                 throw missingValue(name + " <" + placeholder(name) + ">");
                             }
@@ -407,16 +415,10 @@ final class Cli {
                 required(List.of("--old", "--new"));
             }
             requires("--draft-exclude-file", "--class-load-log");
-            List<String> classpath = new ArrayList<>();
-            for (String value : many("--classpath")) {
-                for (String part : value.split(":", -1)) {
-                    classpath.add(part);
-                }
-            }
             return new Check(
                     many("--old"),
                     many("--new"),
-                    classpath,
+                    classpath(),
                     many("--app"),
                     many("--classpath-file"),
                     many("--exclude-file"),
@@ -458,11 +460,15 @@ final class Cli {
             }
             noPositional();
             required(List.of("--classpath"));
+            return new Validate(classpath(), flags.contains("--json"), release("--jdk-release"));
+        }
+
+        private List<String> classpath() {
             List<String> classpath = new ArrayList<>();
             for (String value : many("--classpath")) {
-                classpath.addAll(List.of(value.split(":")));
+                classpath.addAll(List.of(value.split(pathSeparator, -1)));
             }
-            return new Validate(classpath, flags.contains("--json"), release("--jdk-release"));
+            return classpath;
         }
 
         Command dump() throws UsageException {

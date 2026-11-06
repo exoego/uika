@@ -3,7 +3,7 @@ Validate one runtime classpath independently of previous versions
 Usage: uika validate [OPTIONS] --classpath <CLASSPATH>
 
 Options:
-      --classpath <CLASSPATH>      Ordered JARs or class directories; repeatable, colon-separated
+      --classpath <CLASSPATH>      Ordered JARs or class directories; repeatable, separated by ; on Windows or : elsewhere
       --jdk-release <JDK_RELEASE>  Require this running JDK release
       --json                       Print a machine-readable report
   -h, --help                       Print help

@@ -5,14 +5,41 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.File;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class CliTest {
+    @ParameterizedTest(name = "{0} classpath separator {1}")
+    @CsvSource({"check,:", "check,;", "validate,:", "validate,;"})
+    void classpathsUseThePlatformSeparatorAndPreserveRepeatedPaths(String command, String separator) throws Exception {
+        List<String> paths = separator.equals(";")
+                ? List.of("C:\\app\\classes", "D:\\lib\\api.jar", "E:\\extra.jar")
+                : List.of("/app/classes", "/lib/api.jar", "/extra.jar");
+        List<String> args = new ArrayList<>(List.of(command));
+        if (command.equals("check")) {
+            args.addAll(List.of("--old", "old.jar", "--new", "new.jar"));
+        }
+        args.addAll(List.of("--classpath=" + paths.get(0) + separator + paths.get(1), "--classpath", paths.get(2)));
+        Cli.Command parsed = Cli.parse(args.toArray(String[]::new), separator);
+        List<String> actual = parsed instanceof Cli.Validate validate ? validate.classpath() : ((Cli.Check) parsed).classpath();
+        assertEquals(paths, actual);
+
+        for (String value : List.of(separator + "app.jar", "app.jar" + separator, "app.jar" + separator + separator + "lib.jar")) {
+            List<String> invalid = new ArrayList<>(args);
+            invalid.set(invalid.size() - 1, value);
+            Cli.UsageException failure = assertThrows(Cli.UsageException.class, () -> Cli.parse(invalid.toArray(String[]::new), separator));
+            assertTrue(failure.getMessage().contains("a value is required for '--classpath <CLASSPATH>'"), failure.getMessage());
+        }
+    }
+
     @Test
     void validateTakesOneCompleteClasspathAndRejectsUpgradeOptions() throws Exception {
         Cli.Validate command = assertInstanceOf(Cli.Validate.class,
-                Cli.parse(new String[] {"validate", "--classpath", "a.jar:b.jar", "--classpath", "classes", "--json", "--jdk-release", "17"}));
+                Cli.parse(new String[] {"validate", "--classpath", "a.jar" + File.pathSeparator + "b.jar", "--classpath", "classes", "--json", "--jdk-release", "17"}));
         assertEquals(List.of("a.jar", "b.jar", "classes"), command.classpath());
         assertEquals(17, command.jdkRelease());
         assertTrue(command.json());
@@ -75,7 +102,7 @@ class CliTest {
                 usageError("check", "--old=", "--new", "b.jar"));
         assertEquals(
                 "error: a value is required for '--classpath <CLASSPATH>' but none was supplied" + tail,
-                usageError("check", "--old", "a.jar", "--new", "b.jar", "--classpath", "a.jar:"));
+                usageError("check", "--old", "a.jar", "--new", "b.jar", "--classpath", "a.jar" + File.pathSeparator));
         assertEquals(
                 "error: a value is required for '--fail-on <FAIL_ON>' but none was supplied\n"
                         + "  [possible values: never, reachable, any]" + tail,
@@ -127,7 +154,7 @@ class CliTest {
     @Test
     void everyOptionOfCheckAndUpgradeCheckIsRead() throws Exception {
         Cli.Check check = assertInstanceOf(Cli.Check.class, Cli.parse(new String[] {
-            "check", "--old", "a.jar", "--old=b.jar", "--new", "c.jar", "--classpath", "x.jar:y.jar", "--app", "classes",
+            "check", "--old", "a.jar", "--old=b.jar", "--new", "c.jar", "--classpath", "x.jar" + File.pathSeparator + "y.jar", "--app", "classes",
             "--classpath-file", "dump.json", "--exclude-file", "e.toml", "--json", "--fail-on", "reachable",
             "--jdk-release", "17", "--verdicts-json", "v.jsonl", "--class-load-log", "loads.log", "--draft-exclude-file", "d.toml",
             "--markdown", "report.md"

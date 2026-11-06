@@ -118,7 +118,7 @@ final class Launcher {
             if (name.equals("--classpath") && value != null) {
                 targets++;
                 for (int k = 0; k < value.length(); k++) {
-                    if (value.charAt(k) == ':') {
+                    if (value.charAt(k) == File.pathSeparatorChar) {
                         targets++;
                     }
                 }
