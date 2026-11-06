@@ -34,6 +34,10 @@ final class Scratch {
     byte[] cpFlags = new byte[1024];
     /** Per constant-pool Class slot: the accepted owner symbol + 1, or -1 for rejected. */
     int[] cpOwner = new int[1024];
+    /** Reused while a parsed class is copied into a packed API index. */
+    long[] apiMemberKeys = new long[64];
+    char[] apiMemberAccess = new char[64];
+    boolean[] apiMemberFilled = new boolean[64];
 
     private static final ThreadLocal<Scratch> FALLBACK = ThreadLocal.withInitial(Scratch::new);
 
@@ -50,6 +54,15 @@ final class Scratch {
             nameBytes = new byte[Math.max(len, nameBytes.length * 2)];
         }
         return nameBytes;
+    }
+
+    void reserveApiMembers(int count) {
+        if (apiMemberKeys.length < count) {
+            int capacity = Math.max(count, apiMemberKeys.length * 2);
+            apiMemberKeys = new long[capacity];
+            apiMemberAccess = new char[capacity];
+            apiMemberFilled = new boolean[capacity];
+        }
     }
 
     /** A worker that carries its scratch as a field: cheaper than a ThreadLocal lookup. */

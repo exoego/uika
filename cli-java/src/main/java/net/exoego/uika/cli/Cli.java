@@ -1,10 +1,16 @@
 package net.exoego.uika.cli;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 /** Command-line parsing. The surface and its help text are the ones the Rust CLI shipped with. */
 final class Cli {
@@ -29,7 +35,9 @@ final class Cli {
         }
     }
 
-    sealed interface Command permits Diff, Check, UpgradeCheck, DumpApi, Print {}
+    sealed interface Command permits Diff, Check, Validate, UpgradeCheck, DumpApi, Print {}
+
+    record Validate(List<String> classpath, boolean json, Integer jdkRelease) implements Command {}
 
     record Diff(String oldJar, String newJar, boolean json) implements Command {}
 
@@ -85,6 +93,11 @@ final class Cli {
     }
 
     static Command parse(String[] args) throws UsageException {
+        return parse(args, File.pathSeparator);
+    }
+
+    /** Test seam for platform-specific classpath separators. */
+    static Command parse(String[] args, String pathSeparator) throws UsageException {
         if (args.length == 0) {
             throw new UsageException(help("root", false));
         }
@@ -109,10 +122,11 @@ final class Cli {
                     + "For more information, try '--help'.\n");
         }
         String command = subcommand(first);
-        Options options = new Options(command, args);
+        Options options = new Options(command, args, pathSeparator);
         return switch (command) {
             case "diff" -> options.diff();
             case "check" -> options.check();
+            case "validate" -> options.validate();
             case "upgrade-check" -> options.upgradeCheck();
             default -> options.dump();
         };
@@ -120,7 +134,7 @@ final class Cli {
 
     private static String subcommand(String name) throws UsageException {
         return switch (name) {
-            case "diff", "check", "upgrade-check", "dump" -> name;
+            case "diff", "check", "validate", "upgrade-check", "dump" -> name;
             default -> throw new UsageException("error: unrecognized subcommand '" + name + "'\n\nUsage: uika <COMMAND>\n\n"
                     + "For more information, try '--help'.\n");
         };
@@ -141,13 +155,15 @@ final class Cli {
     /** One subcommand's arguments, consumed left to right. */
     private static final class Options {
         private final String command;
+        private final String pathSeparator;
         private final List<String> positional = new ArrayList<>();
-        private final java.util.Map<String, List<String>> values = new java.util.LinkedHashMap<>();
-        private final java.util.Set<String> flags = new java.util.HashSet<>();
+        private final Map<String, List<String>> values = new LinkedHashMap<>();
+        private final Set<String> flags = new HashSet<>();
         private Print print;
 
-        Options(String command, String[] args) throws UsageException {
+        Options(String command, String[] args, String pathSeparator) throws UsageException {
             this.command = command;
+            this.pathSeparator = pathSeparator;
             boolean onlyPositional = false;
             for (int i = 1; i < args.length; i++) {
                 String arg = args[i];
@@ -192,7 +208,7 @@ final class Cli {
                     }
                     if (name.equals("--classpath")) {
                         // clap splits on the delimiter first, so an empty part is a missing value.
-                        for (String part : value.split(":", -1)) {
+                        for (String part : value.split(pathSeparator, -1)) {
                             if (part.isEmpty()) {
                                 throw missingValue(name + " <" + placeholder(name) + ">");
                             }
@@ -257,6 +273,14 @@ final class Cli {
         private Kind kind(String name) {
             boolean check = command.equals("check");
             boolean upgrade = command.equals("upgrade-check");
+            if (command.equals("validate")) {
+                return switch (name) {
+                    case "--json" -> Kind.FLAG;
+                    case "--classpath" -> Kind.MANY;
+                    case "--jdk-release" -> Kind.SINGLE;
+                    default -> null;
+                };
+            }
             return switch (name) {
                 case "--json" -> command.equals("dump") ? null : Kind.FLAG;
                 case "--merged-classpath" -> upgrade ? Kind.FLAG : null;
@@ -272,7 +296,7 @@ final class Cli {
         }
 
         private static String placeholder(String name) {
-            return name.substring(2).replace('-', '_').toUpperCase(java.util.Locale.ROOT);
+            return name.substring(2).replace('-', '_').toUpperCase(Locale.ROOT);
         }
 
         private UsageException usage(String message) {
@@ -391,16 +415,10 @@ final class Cli {
                 required(List.of("--old", "--new"));
             }
             requires("--draft-exclude-file", "--class-load-log");
-            List<String> classpath = new ArrayList<>();
-            for (String value : many("--classpath")) {
-                for (String part : value.split(":", -1)) {
-                    classpath.add(part);
-                }
-            }
             return new Check(
                     many("--old"),
                     many("--new"),
-                    classpath,
+                    classpath(),
                     many("--app"),
                     many("--classpath-file"),
                     many("--exclude-file"),
@@ -434,6 +452,23 @@ final class Cli {
                     many("--class-load-log"),
                     single("--draft-exclude-file"),
                     single("--markdown"));
+        }
+
+        Command validate() throws UsageException {
+            if (print != null) {
+                return print;
+            }
+            noPositional();
+            required(List.of("--classpath"));
+            return new Validate(classpath(), flags.contains("--json"), release("--jdk-release"));
+        }
+
+        private List<String> classpath() {
+            List<String> classpath = new ArrayList<>();
+            for (String value : many("--classpath")) {
+                classpath.addAll(List.of(value.split(pathSeparator, -1)));
+            }
+            return classpath;
         }
 
         Command dump() throws UsageException {

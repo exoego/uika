@@ -101,6 +101,9 @@ common and tool-specific setup on one page per tool:
 </table>
 
 There's also [CLI](docs/cli.md) in case you want to run it by hand.
+Use [`uika validate`](docs/cli.md#uika-validate) to check a complete runtime
+classpath independently of a dependency update, including requirements added by
+a changed consumer.
 [What every integration shares](docs/build-tools.md) covers the dump format, how the CLI
 is fetched, and where `jdkRelease` comes from.
 

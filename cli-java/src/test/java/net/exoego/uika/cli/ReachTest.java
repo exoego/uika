@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +25,8 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /** Ports the `reach.rs` tests. */
 class ReachTest {
@@ -41,7 +44,7 @@ class ReachTest {
     private static ClassGraph graphWith(String[]... edges) {
         ClassGraph graph = new ClassGraph();
         for (String[] edge : edges) {
-            String[] refs = java.util.Arrays.copyOfRange(edge, 2, edge.length);
+            String[] refs = Arrays.copyOfRange(edge, 2, edge.length);
             graph.insertIfAbsent(Intern.intern(edge[0]), Scope.objectSym(), NONE, syms(refs), Intern.NONE, Intern.intern(edge[1]));
         }
         return graph;
@@ -224,6 +227,34 @@ class ReachTest {
         assertEquals(List.of(missing + ": cannot open " + missing + ": No such file or directory"), warnings);
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"1provider.Impl", "com.example.Bad-Provider", "app..Impl", "app.Impl.", ".app.Impl", "app.Bad\u2603Provider"})
+    void strictServiceReadingReportsInvalidProviderNames(String provider) throws Exception {
+        Path services = Files.createDirectories(dir.resolve("META-INF/services"));
+        Files.writeString(services.resolve("com.example.Spi"), provider + "\n");
+        List<String> warnings = new ArrayList<>();
+        assertTrue(Reach.collectServices(List.of(dir.toString()), warnings, true).isEmpty());
+        assertEquals(List.of(dir + ": invalid provider name in " + dir + "!META-INF/services/com.example.Spi: " + provider), warnings);
+
+        warnings.clear();
+        List<Reach.ServiceFile> tolerant = Reach.collectServices(List.of(dir.toString()), warnings);
+        assertEquals(1, tolerant.size());
+        assertArrayEquals(syms(provider.replace('.', '/')), tolerant.get(0).impls());
+        assertTrue(warnings.isEmpty());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"Impl", "app.Outer$Provider", "app._Provider2", "app.1Provider", "\u03c0.\uD801\uDC00Provider", "pa\u0301ck.Impl"})
+    void strictServiceReadingAcceptsJvmProviderNames(String provider) throws Exception {
+        Path services = Files.createDirectories(dir.resolve("META-INF/services"));
+        Files.writeString(services.resolve("com.example.Spi"), provider + "\n");
+        List<String> warnings = new ArrayList<>();
+        List<Reach.ServiceFile> found = Reach.collectServices(List.of(dir.toString()), warnings, true);
+        assertEquals(1, found.size());
+        assertArrayEquals(syms(provider.replace('.', '/')), found.get(0).impls());
+        assertTrue(warnings.isEmpty(), warnings.toString());
+    }
+
     /** A symbol interned after the pass is simply unmarked, never out of bounds. */
     @Test
     void symbolsInternedAfterThePassAreUnreachable() {
@@ -249,6 +280,60 @@ class ReachTest {
         zip.putNextEntry(entry);
         zip.write(data);
         zip.closeEntry();
+    }
+
+    private Path duplicateServiceJar(byte[] first, byte[] last) throws Exception {
+        Path jar = dir.resolve("duplicate-services.jar");
+        String name = "META-INF/services/com.example.Spi";
+        String placeholder = "META-INF/services/com.example.Tmp";
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(jar))) {
+            storedEntry(zip, name, first);
+            storedEntry(zip, placeholder, last);
+        }
+        // ZipOutputStream rejects duplicate names; replace both headers without changing their lengths.
+        assertEquals(name.length(), placeholder.length());
+        String bytes = new String(Files.readAllBytes(jar), StandardCharsets.ISO_8859_1);
+        Files.write(jar, bytes.replace(placeholder, name).getBytes(StandardCharsets.ISO_8859_1));
+        return jar;
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void duplicateProviderFilesUseTheLastEntry(boolean strict) throws Exception {
+        Path jar = duplicateServiceJar("com.example.Old\n".getBytes(StandardCharsets.UTF_8), "com.example.New\n".getBytes(StandardCharsets.UTF_8));
+        List<String> warnings = new ArrayList<>();
+        List<Reach.ServiceFile> services = Reach.collectServices(List.of(jar.toString()), warnings, strict);
+        assertEquals(1, services.size());
+        assertEquals("com/example/Spi", Intern.str(services.get(0).iface()));
+        assertArrayEquals(syms("com/example/New"), services.get(0).impls());
+        assertEquals(jar.toString(), Intern.str(services.get(0).source()));
+        assertTrue(warnings.isEmpty(), warnings.toString());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void malformedShadowedProviderFilesAreIgnored(boolean strict) throws Exception {
+        Path jar = duplicateServiceJar(new byte[] {(byte) 0xff}, "com.example.New\n".getBytes(StandardCharsets.UTF_8));
+        List<String> warnings = new ArrayList<>();
+        List<Reach.ServiceFile> services = Reach.collectServices(List.of(jar.toString()), warnings, strict);
+        assertEquals(1, services.size());
+        assertArrayEquals(syms("com/example/New"), services.get(0).impls());
+        assertTrue(warnings.isEmpty(), warnings.toString());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void malformedWinningProviderFilesDoNotReviveShadowedEntries(boolean strict) throws Exception {
+        Path jar = duplicateServiceJar("com.example.Old\n".getBytes(StandardCharsets.UTF_8), new byte[] {(byte) 0xff});
+        List<String> warnings = new ArrayList<>();
+        List<Reach.ServiceFile> services = Reach.collectServices(List.of(jar.toString()), warnings, strict);
+        assertTrue(services.isEmpty());
+        if (strict) {
+            assertEquals(1, warnings.size());
+            assertTrue(warnings.get(0).contains("invalid UTF-8"), warnings.toString());
+        } else {
+            assertTrue(warnings.isEmpty(), warnings.toString());
+        }
     }
 
     /**

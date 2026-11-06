@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -17,7 +18,7 @@ class LauncherTest {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < jars; i++) {
             if (i > 0) {
-                sb.append(':');
+                sb.append(File.pathSeparatorChar);
             }
             sb.append("lib").append(i).append(".jar");
         }

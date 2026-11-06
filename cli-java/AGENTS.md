@@ -43,6 +43,55 @@ verdict: class existence = new + ClassGraph
 The memory win is not holding member tables for the whole consumer classpath;
 pass-2 classes are typically below 0.1% of the scan.
 
+## Snapshot validation
+
+- `validate` is independent of library deltas. A null old scope in `Check.verdict`
+  means evaluate the current requirement directly, never suppress a failure as
+  pre-existing. All upgrade callers continue to supply an old scope.
+- Snapshot input leaves retain packed `ApiIndex` rows and packed references, never
+  collections of ClassApi objects. Merges are first-wins in path/entry order;
+  references of a losing class are discarded with its definition. Paths have a
+  bounded window and each JAR retains span parallelism.
+- Complete snapshot member tables are a deliberate exception to the selective
+  second-pass memory budget: every class is both consumer and provider. Reference
+  records remain in IntArena. This cost is confined to `validate`.
+- Input.Sink.strict is opt-in. Snapshot parsing must surface bad magic, inflate
+  errors and skipped directory links as incomplete; upgrade reads retain their
+  historical behavior. Parser method context is likewise opt-in and reset in
+  finally, so final writes in constructors are distinguished from illegal writes
+  elsewhere without retaining per-method objects.
+- Descriptor-only types require existence, not public access. A public method
+  may expose a package-private return type to a caller that discards the value.
+  MethodType constants still require type access.
+- Snapshot member references preserve array owners; arrays resolve Object methods
+  with public clone(), but declare no fields or constructors. Their component type
+  has a separate class requirement. Handle, dynamic and signature-polymorphic
+  descriptors require type access checks; ordinary member descriptors only require
+  the types to exist. A protected constructor handle requires the declaring package,
+  even when the caller is a subclass allowed to call super().
+- Snapshot references retain invokespecial/REF_invokeSpecial evidence. Selection
+  starts at the caller's direct superclass for a superclass reference, even when
+  the constant-pool owner is farther up; interface defaults still use specificity.
+  REF_invokeSpecial additionally checks access and caller assignability against the
+  selected declaring type, which may differ from the constant-pool owner. An
+  interface owner must be the caller itself or one of its direct superinterfaces.
+- Service metadata is strict only in snapshot validation: unreadable entries,
+  malformed UTF-8 and invalid provider names are incomplete. Reachability keeps
+  its tolerant reader. Repeated SPI entries within a JAR use the last record for
+  each name, matching the runtime loader. JAR indexes are rejected because
+  URLClassLoader can use them to load classes outside the declared input list.
+- Snapshot JDK APIs come from the running platform loader's class resources,
+  including private APIs and full sealing metadata. The same running JVM verifies
+  the input without initialization; it must match an explicit --jdk-release.
+  Launcher must not relaunch validate: the child would lose JVM options such as
+  --add-exports that affect the validity of the input.
+- JSON issue IDs exclude paths and messages. The embedding repository layer adds
+  logical environment/artifact identities before comparing snapshots. Deduplicate
+  by (source, ID), so separate SPI registrations remain attributable to each source.
+  Snapshot's identity encoding is frozen per schema version; do not reuse a report
+  formatter that can change independently. Incomplete reports must never be treated
+  as clean or used as an empty baseline.
+
 ## Per-Module upgrade-check
 
 - `upgrade-check` is per-module by default: each module in the dump whose OWN

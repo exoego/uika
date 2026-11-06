@@ -5,8 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /** Ports the `index.rs` tests. */
@@ -124,7 +126,7 @@ class IndexTest {
 
     @ParameterizedTest(name = "{displayName}: {0}")
     @MethodSource("net.exoego.uika.cli.CheckTest#nonFinalNonVirtualAccess")
-    void virtualLookupSkipsPrivateAndStaticInterfaceMethods(int access) {
+    void inheritedInterfaceLookupSkipsPrivateAndStaticMethods(int access) {
         ClassApi c = classOf("a/C", JAVA_LANG_OBJECT);
         c.interfaces = syms("a/Hidden", "a/Public");
         ClassApi hidden = classOf("a/Hidden", JAVA_LANG_OBJECT);
@@ -135,7 +137,10 @@ class IndexTest {
         Scope scope = new Scope(ApiIndex.build(List.of(c, hidden, inherited)));
         long key = MemberKey.of("m", "()V");
 
-        assertEquals(hidden.name, Scope.foundOwner(scope.resolveMember(c.name, key, Scope.MemberKind.METHOD)));
+        long reference = scope.resolveMember(c.name, key, Scope.MemberKind.METHOD);
+        assertTrue(Scope.isFound(reference));
+        assertEquals(inherited.name, Scope.foundOwner(reference));
+        assertEquals(Acc.PUBLIC, Scope.foundAccess(reference));
         long virtual = scope.resolveVirtualMethod(c.name, key);
         assertTrue(Scope.isFound(virtual));
         assertEquals(inherited.name, Scope.foundOwner(virtual));
@@ -247,6 +252,34 @@ class IndexTest {
         assertEquals(Scope.Resolution.NOT_FOUND, resolveMethod(idx, "a/Sub", "<init>", "(Z)V"));
         assertEquals(Scope.Resolution.FOUND, resolveMethod(idx, "a/Super", "<init>", "(Z)V"));
         assertEquals(Scope.Resolution.UNKNOWN, resolveMethod(idx, "ext/Gone", "<init>", "(Z)V"));
+    }
+
+    static Stream<Arguments> arrayMembers() {
+        return Stream.of(
+                Arguments.of(Scope.MemberKind.METHOD, "clone", "()Ljava/lang/Object;", "[Llib/Item;"),
+                Arguments.of(Scope.MemberKind.METHOD, "toString", "()Ljava/lang/String;", JAVA_LANG_OBJECT),
+                Arguments.of(Scope.MemberKind.METHOD, "<init>", "()V", null),
+                Arguments.of(Scope.MemberKind.FIELD, "length", "I", null));
+    }
+
+    @ParameterizedTest(name = "array {0}: {1}{2}")
+    @MethodSource("arrayMembers")
+    void arraysExposePublicCloneAndObjectMethodsButNoFieldsOrConstructors(
+            Scope.MemberKind kind, String name, String descriptor, String expectedOwner) {
+        ClassApi object = classOf(JAVA_LANG_OBJECT, null);
+        CheckTest.setMembers(object, true,
+                CheckTest.m("clone", "()Ljava/lang/Object;", Acc.PROTECTED),
+                CheckTest.m("toString", "()Ljava/lang/String;", Acc.PUBLIC),
+                CheckTest.m("<init>", "()V", Acc.PUBLIC));
+        Scope scope = new Scope(ApiIndex.build(List.of(object)));
+        long resolved = scope.resolveArrayMember(Intern.intern("[Llib/Item;"), MemberKey.of(name, descriptor), kind);
+        if (expectedOwner == null) {
+            assertEquals(Scope.NOT_FOUND, resolved);
+        } else {
+            assertTrue(Scope.isFound(resolved));
+            assertEquals(Intern.intern(expectedOwner), Scope.foundOwner(resolved));
+            assertEquals(Acc.PUBLIC, Scope.foundAccess(resolved));
+        }
     }
 
     @Test

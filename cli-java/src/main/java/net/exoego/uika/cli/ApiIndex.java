@@ -28,6 +28,10 @@ final class ApiIndex {
     private static final int FIELD_LEN = 11;
     private static final int SOURCE = 12;
     private static final int SEALING_UNKNOWN_BIT = 1 << 16;
+    /** ClassParser member tables contain (access, name index, descriptor index) triples. */
+    private static final int PARSED_MEMBER_WORDS = 3;
+    private static final int PARSED_MEMBER_NAME = 1;
+    private static final int PARSED_MEMBER_DESCRIPTOR = 2;
 
     private final SymMap classes = new SymMap();
     private int[] rows = new int[STRIDE * 64];
@@ -72,6 +76,83 @@ final class ApiIndex {
         classCount++;
     }
 
+    /** Copies a parsed class directly into the arenas, without per-class staging objects. */
+    void insertIfAbsent(ClassParser parser, Scratch scratch, int source) throws ClassParser.FormatException {
+        int name = parser.internClassName(scratch, parser.thisClass);
+        if (classes.containsKey(name)) {
+            return;
+        }
+        if ((classCount + 1) * STRIDE > rows.length) {
+            rows = Arrays.copyOf(rows, rows.length * 2);
+        }
+        int symbolsBefore = symCount;
+        int membersBefore = memberCount;
+        try {
+            int row = classCount * STRIDE;
+            rows[row + NAME] = name;
+            rows[row + ACCESS] = parser.access | (parser.sealingUnknown ? SEALING_UNKNOWN_BIT : 0);
+            rows[row + SUPER] = parser.superClass == 0 ? Intern.NONE : parser.internClassName(scratch, parser.superClass);
+            rows[row + NEST_HOST] = parser.nestHost == 0 ? Intern.NONE : parser.internClassName(scratch, parser.nestHost);
+            rows[row + IFACE_START] = appendClassNames(parser, scratch, parser.interfaces, parser.interfaceCount);
+            rows[row + IFACE_LEN] = parser.interfaceCount;
+            rows[row + PERMIT_START] = parser.permittedCount < 0 ? -1 : appendClassNames(parser, scratch, parser.permitted, parser.permittedCount);
+            rows[row + PERMIT_LEN] = Math.max(0, parser.permittedCount);
+            rows[row + METHOD_START] = appendParsedMembers(parser, scratch, parser.methods, parser.methodCount);
+            rows[row + METHOD_LEN] = memberCount - rows[row + METHOD_START];
+            rows[row + FIELD_START] = appendParsedMembers(parser, scratch, parser.fields, parser.fieldCount);
+            rows[row + FIELD_LEN] = memberCount - rows[row + FIELD_START];
+            rows[row + SOURCE] = source;
+            classes.put(name, classCount);
+            classCount++;
+        } catch (ClassParser.FormatException e) {
+            symCount = symbolsBefore;
+            memberCount = membersBefore;
+            throw e;
+        }
+    }
+
+    private int appendClassNames(ClassParser parser, Scratch scratch, int[] indexes, int count) throws ClassParser.FormatException {
+        int start = symCount;
+        if (symCount + count > symArena.length) {
+            symArena = Arrays.copyOf(symArena, Math.max(symArena.length * 2, symCount + count));
+        }
+        for (int i = 0; i < count; i++) {
+            symArena[symCount++] = parser.internClassName(scratch, indexes[i]);
+        }
+        return start;
+    }
+
+    private int appendParsedMembers(ClassParser parser, Scratch scratch, int[] table, int count) throws ClassParser.FormatException {
+        scratch.reserveApiMembers(count);
+        long[] keys = scratch.apiMemberKeys;
+        for (int i = 0; i < count; i++) {
+            keys[i] = parsedMemberKey(parser, scratch, table, i);
+        }
+        Arrays.sort(keys, 0, count);
+        int unique = 0;
+        for (int i = 0; i < count; i++) {
+            if (unique == 0 || keys[unique - 1] != keys[i]) {
+                keys[unique++] = keys[i];
+            }
+        }
+        Arrays.fill(scratch.apiMemberFilled, 0, unique, false);
+        for (int i = 0; i < count; i++) {
+            int at = Arrays.binarySearch(keys, 0, unique, parsedMemberKey(parser, scratch, table, i));
+            if (!scratch.apiMemberFilled[at]) {
+                scratch.apiMemberFilled[at] = true;
+                scratch.apiMemberAccess[at] = (char) table[i * PARSED_MEMBER_WORDS];
+            }
+        }
+        return appendMembers(keys, scratch.apiMemberAccess, 0, unique);
+    }
+
+    private static long parsedMemberKey(ClassParser parser, Scratch scratch, int[] table, int member) throws ClassParser.FormatException {
+        int offset = member * PARSED_MEMBER_WORDS;
+        int name = parser.internUtf8(scratch, table[offset + PARSED_MEMBER_NAME]);
+        int descriptor = parser.internUtf8(scratch, table[offset + PARSED_MEMBER_DESCRIPTOR]);
+        return MemberKey.of(name, descriptor);
+    }
+
     /**
      * A copy in which each class of {@code shadowed} takes its row from {@code winners}. A
      * shadowed class that {@code winners} could not read is left out.
@@ -89,7 +170,11 @@ final class ApiIndex {
         return out;
     }
 
-    private void appendRow(ApiIndex from, int entry) {
+    /** Copies a packed row without retaining a ClassApi object. */
+    void appendRow(ApiIndex from, int entry) {
+        if (containsClass(from.nameOf(entry))) {
+            return;
+        }
         if ((classCount + 1) * STRIDE > rows.length) {
             rows = Arrays.copyOf(rows, rows.length * 2);
         }

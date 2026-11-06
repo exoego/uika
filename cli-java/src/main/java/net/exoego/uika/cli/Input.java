@@ -1,13 +1,18 @@
 package net.exoego.uika.cli;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.ReadableByteChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardOpenOption;
@@ -17,9 +22,13 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ForkJoinTask;
 import java.util.concurrent.RecursiveAction;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
 import java.util.zip.ZipFile;
@@ -50,8 +59,8 @@ final class Input {
     private static final byte[] MODULE_INFO = "module-info.class".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] VERSIONS = "META-INF/versions/".getBytes(StandardCharsets.US_ASCII);
 
-    private static final Set<java.nio.file.OpenOption> NO_FOLLOW_READ =
-            Set.of(StandardOpenOption.READ, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+    private static final Set<OpenOption> NO_FOLLOW_READ =
+            Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
 
     private Input() {}
 
@@ -61,6 +70,11 @@ final class Input {
      */
     interface Sink<L> {
         L newLeaf();
+
+        /** Snapshot checks cannot silently skip unreadable or non-class .class entries. */
+        default boolean strict() {
+            return false;
+        }
 
         /**
          * @param entry interned entry name (relative path for a directory) without ".class"
@@ -317,6 +331,9 @@ final class Input {
                 problem = "deflate error";
             }
             if (problem != null) {
+                if (sink.strict()) {
+                    throw new UikaException(Intern.str(source) + "!" + Intern.str(entries.name[i]) + ".class: " + problem);
+                }
                 Out.err.println("warning: " + Intern.str(source) + "!" + Intern.str(entries.name[i]) + ".class: " + problem);
             }
         }
@@ -354,6 +371,8 @@ final class Input {
         }
         if (hasClassMagic(cs.bytes, cs.available)) {
             sink.accept(leaf, scratch, source, entries.name[i], cs);
+        } else if (sink.strict()) {
+            return "not a class file (bad magic)";
         }
         return null;
     }
@@ -382,10 +401,16 @@ final class Input {
                 try {
                     length = readEntry(zip, entry, scratch);
                 } catch (IOException e) {
+                    if (sink.strict()) {
+                        throw new UikaException("cannot read " + path + "!" + entry.getName(), e);
+                    }
                     Out.err.println("warning: " + path + "!" + entry.getName() + ": " + UikaException.describe(e));
                     continue;
                 }
                 if (!hasClassMagic(scratch.classBytes, length)) {
+                    if (sink.strict()) {
+                        throw new UikaException(path + "!" + entry.getName() + ": not a class file (bad magic)");
+                    }
                     continue;
                 }
                 scratch.classSource.ofBytes(scratch.classBytes, length);
@@ -403,7 +428,7 @@ final class Input {
         } catch (ZipException e) {
             // Names that are not UTF-8 fail the default open; every byte maps in Latin-1.
             try {
-                return new ZipFile(new java.io.File(path), StandardCharsets.ISO_8859_1);
+                return new ZipFile(new File(path), StandardCharsets.ISO_8859_1);
             } catch (IOException again) {
                 throw new UikaException("not a zip/jar: " + path, e);
             }
@@ -455,12 +480,12 @@ final class Input {
      */
     static final class DirectoryScan<L> {
         private final Sink<L> sink;
-        private final java.util.concurrent.ConcurrentLinkedQueue<Runnable> queue = new java.util.concurrent.ConcurrentLinkedQueue<>();
-        private final java.util.concurrent.atomic.AtomicInteger queued = new java.util.concurrent.atomic.AtomicInteger();
+        private final ConcurrentLinkedQueue<Runnable> queue = new ConcurrentLinkedQueue<>();
+        private final AtomicInteger queued = new AtomicInteger();
         /** Lanes draining the queue right now, never more than {@link #lanes}. */
-        private final java.util.concurrent.atomic.AtomicInteger active = new java.util.concurrent.atomic.AtomicInteger();
+        private final AtomicInteger active = new AtomicInteger();
         /** Queued plus running items. The last one to end completes {@link #completion}. */
-        private final java.util.concurrent.atomic.AtomicInteger outstanding = new java.util.concurrent.atomic.AtomicInteger();
+        private final AtomicInteger outstanding = new AtomicInteger();
         /** Never run: completed by the last item, or exceptionally by the first failing one. */
         private final RecursiveAction completion = new RecursiveAction() {
             private static final long serialVersionUID = 1L;
@@ -479,10 +504,10 @@ final class Input {
         static final class Root<L> {
             final List<L> out;
             /** Filled leaves by batch sequence, so they come back in walk order. */
-            final java.util.TreeMap<Integer, L> leaves = new java.util.TreeMap<>();
+            final TreeMap<Integer, L> leaves = new TreeMap<>();
             int nextSequence;
             /** The walk plus the batches not yet run; the leaves are complete at zero. */
-            final java.util.concurrent.atomic.AtomicInteger pending = new java.util.concurrent.atomic.AtomicInteger(1);
+            final AtomicInteger pending = new AtomicInteger(1);
             /**
              * Run to completion by the last item, which is what wakes a joiner; completed
              * exceptionally instead when an item of any root failed.
@@ -637,7 +662,7 @@ final class Input {
 
         private void walk(Root<L> root, Path dir, String prefix, List<Path> files, List<String> names, int source) {
             List<String> entries = new ArrayList<>();
-            try (java.nio.file.DirectoryStream<Path> stream = Files.newDirectoryStream(dir)) {
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir)) {
                 for (Path entry : stream) {
                     entries.add(entry.getFileName().toString());
                 }
@@ -662,7 +687,10 @@ final class Input {
             }
             for (String entry : others) {
                 Path child = dir.resolve(entry);
-                if (Files.isDirectory(child, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                if (sink.strict() && Files.isSymbolicLink(child)) {
+                    throw new UikaException("normalize symbolic links before snapshot validation: " + child);
+                }
+                if (Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS)) {
                     walk(root, child, prefix + entry + "/", files, names, source);
                 }
             }
@@ -696,7 +724,7 @@ final class Input {
                 try {
                     length = readFile(files[k], scratch);
                 } catch (IOException e) {
-                    if (Files.isSymbolicLink(files[k]) || Files.isDirectory(files[k])) {
+                    if (!sink.strict() && (Files.isSymbolicLink(files[k]) || Files.isDirectory(files[k]))) {
                         continue;
                     }
                     throw new UikaException("cannot read " + files[k], e);
@@ -705,6 +733,8 @@ final class Input {
                     String name = names[k];
                     scratch.classSource.ofBytes(scratch.classBytes, length);
                     sink.accept(leaf, scratch, source, Intern.intern(name.substring(0, name.length() - 6)), scratch.classSource);
+                } else if (sink.strict()) {
+                    throw new UikaException(files[k] + ": not a class file (bad magic)");
                 }
             }
             synchronized (root) {
@@ -726,7 +756,7 @@ final class Input {
                 // fall through to the default
             }
         }
-        boolean mac = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("mac");
+        boolean mac = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
         return mac ? Math.min(4, Scratch.threads()) : Scratch.threads();
     }
 
@@ -800,7 +830,7 @@ final class Input {
             return warnings;
         }
         if (!Files.exists(root)) {
-            throw new UikaException("cannot open " + path, new java.nio.file.NoSuchFileException(path));
+            throw new UikaException("cannot open " + path, new NoSuchFileException(path));
         }
         try (ZipFile zip = openZip(path)) {
             for (Wanted wanted : entries) {

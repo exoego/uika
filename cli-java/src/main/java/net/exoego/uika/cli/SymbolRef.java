@@ -12,6 +12,12 @@ package net.exoego.uika.cli;
  * @param instantiated TRUE for a Class reference targeted by a {@code new} instruction, else null
  */
 record SymbolRef(RefKind kind, int owner, long member, Boolean expectedStatic, Boolean fieldWrite, Boolean instantiated) {
+    static final int META_WORD = 0;
+    static final int OWNER_WORD = 1;
+    static final int NAME_WORD = 2;
+    static final int DESCRIPTOR_WORD = 3;
+    static final int WORDS = 4;
+
     static SymbolRef ofClass(int owner) {
         return new SymbolRef(RefKind.CLASS, owner, MemberKey.NONE, null, null, null);
     }
@@ -30,6 +36,18 @@ record SymbolRef(RefKind kind, int owner, long member, Boolean expectedStatic, B
     static final int TRI_NONE = 0;
     static final int TRI_FALSE = 1;
     static final int TRI_TRUE = 2;
+    /** Snapshot-only evidence; upgrade reports keep their historical metadata unchanged. */
+    static final int FINAL_WRITE_OUTSIDE_INITIALIZER = 1 << 7;
+    /** A descriptor names a required type without requiring public access to that type. */
+    static final int DESCRIPTOR_TYPE = 1 << 8;
+    /** A direct invocation selects from the caller's supertype, not the receiver's class. */
+    static final int SPECIAL_CALL = 1 << 9;
+    /** Constructor handles have stricter protected access than a super() call. */
+    static final int CONSTRUCTOR_HANDLE = 1 << 10;
+    /** The raw owner is an array descriptor, whose members are not in the class index. */
+    static final int ARRAY_OWNER = 1 << 11;
+    /** REF_invokeSpecial also constrains the caller relative to the selected declaration. */
+    static final int SPECIAL_HANDLE = 1 << 12;
 
     static RefKind kindOf(int meta) {
         return RefKind.VALUES[meta & 3];

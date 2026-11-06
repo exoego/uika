@@ -1,17 +1,22 @@
 package net.exoego.uika.cli;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ForkJoinTask;
@@ -52,6 +57,10 @@ final class Reach {
 
     /** Read failures per target come back as warnings; reachability just sees fewer dynamic edges. */
     static List<ServiceFile> collectServices(List<String> paths, List<String> warnings) {
+        return collectServices(paths, warnings, false);
+    }
+
+    static List<ServiceFile> collectServices(List<String> paths, List<String> warnings, boolean strict) {
         @SuppressWarnings("unchecked")
         List<ServiceFile>[] perPath = new List[paths.size()];
         String[] failures = new String[paths.size()];
@@ -65,7 +74,7 @@ final class Reach {
                 protected void compute() {
                     String path = paths.get(index);
                     try {
-                        perPath[index] = servicesOf(path);
+                        perPath[index] = servicesOf(path, strict);
                     } catch (UikaException e) {
                         perPath[index] = List.of();
                         failures[index] = path + ": " + e.getMessage();
@@ -91,13 +100,13 @@ final class Reach {
      * Provider files of a JAR whose central directory was already streamed, read through the
      * open channel. One unreadable provider file is skipped, not the whole JAR's providers.
      */
-    static List<ServiceFile> servicesOf(java.nio.channels.FileChannel channel, Jar.Entries entries, int source, Scratch scratch) {
+    static List<ServiceFile> servicesOf(FileChannel channel, Jar.Entries entries, int source, Scratch scratch) {
         List<ServiceFile> out = new ArrayList<>();
         if (entries.services == null) {
             return out;
         }
         // A name listed twice is read once, at its first position, from its last record.
-        Map<String, Jar.ServiceEntry> byName = new java.util.LinkedHashMap<>();
+        Map<String, Jar.ServiceEntry> byName = new LinkedHashMap<>();
         for (Jar.ServiceEntry entry : entries.services) {
             byName.put(entry.service(), entry);
         }
@@ -108,8 +117,8 @@ final class Reach {
             if (entry.compressed() > 64L * 1024 * 1024) {
                 continue;
             }
-            java.nio.ByteBuffer header = BufPool.acquire(30);
-            java.nio.ByteBuffer data = null;
+            ByteBuffer header = BufPool.acquire(30);
+            ByteBuffer data = null;
             try {
                 if (!Jar.readFully(channel, header, entry.offset(), 30) || header.getInt(0) != Jar.LOCAL_SIGNATURE) {
                     continue;
@@ -157,17 +166,22 @@ final class Reach {
     }
 
     private static List<ServiceFile> servicesOf(String path) throws IOException {
+        return servicesOf(path, false);
+    }
+
+    private static List<ServiceFile> servicesOf(String path, boolean strict) throws IOException {
         Path file = Path.of(path);
         if (Files.isDirectory(file)) {
-            return servicesOfDirectory(file, path);
+            return servicesOfDirectory(file, path, strict);
         }
         int source = Intern.intern(path);
         if (!Files.exists(file)) {
-            throw new UikaException("cannot open " + path, new java.nio.file.NoSuchFileException(path));
+            throw new UikaException("cannot open " + path, new NoSuchFileException(path));
         }
         List<ServiceFile> out = new ArrayList<>();
         Scratch scratch = Scratch.current();
         try (ZipFile zip = Input.openZip(path)) {
+            Map<String, ZipEntry> byName = new LinkedHashMap<>();
             Enumeration<? extends ZipEntry> entries = zip.entries();
             while (entries.hasMoreElements()) {
                 ZipEntry entry = entries.nextElement();
@@ -175,20 +189,27 @@ final class Reach {
                 if (!name.startsWith(SERVICES_PREFIX) || !isServiceName(name.substring(SERVICES_PREFIX.length()))) {
                     continue;
                 }
+                byName.put(name, entry);
+            }
+            for (ZipEntry entry : byName.values()) {
+                String name = entry.getName();
                 // One unreadable provider file is skipped, not the whole JAR's providers.
                 int length;
                 try {
                     length = Input.readEntry(zip, entry, scratch);
                 } catch (IOException e) {
+                    if (strict) {
+                        throw new IOException("cannot read " + name, e);
+                    }
                     continue;
                 }
-                pushService(out, name.substring(SERVICES_PREFIX.length()), scratch.classBytes, length, source);
+                pushService(out, name.substring(SERVICES_PREFIX.length()), scratch.classBytes, length, source, strict);
             }
         }
         return out;
     }
 
-    private static List<ServiceFile> servicesOfDirectory(Path root, String path) throws IOException {
+    private static List<ServiceFile> servicesOfDirectory(Path root, String path, boolean strict) throws IOException {
         int source = Intern.intern(path);
         List<ServiceFile> out = new ArrayList<>();
         Path dir = root.resolve("META-INF/services");
@@ -206,7 +227,7 @@ final class Reach {
             String name = entry.getFileName().toString();
             if (Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS)) {
                 byte[] bytes = Files.readAllBytes(entry);
-                pushService(out, name, bytes, bytes.length, source);
+                pushService(out, name, bytes, bytes.length, source, strict);
             }
         }
         return out;
@@ -218,15 +239,22 @@ final class Reach {
     }
 
     static void pushService(List<ServiceFile> out, String dottedIface, byte[] bytes, int length, int source) {
+        pushService(out, dottedIface, bytes, length, source, false);
+    }
+
+    private static void pushService(List<ServiceFile> out, String dottedIface, byte[] bytes, int length, int source, boolean strict) {
         String text;
         try {
             text = StandardCharsets.UTF_8
                     .newDecoder()
                     .onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .decode(java.nio.ByteBuffer.wrap(bytes, 0, length))
+                    .decode(ByteBuffer.wrap(bytes, 0, length))
                     .toString();
         } catch (CharacterCodingException e) {
+            if (strict) {
+                throw new UikaException("invalid UTF-8 in " + Intern.str(source) + "!" + SERVICES_PREFIX + dottedIface, e);
+            }
             return;
         }
         // Both terminators, not lines(): ServiceLoader reads these files with
@@ -234,14 +262,43 @@ final class Reach {
         IntBuf impls = new IntBuf(4);
         for (String line : text.split("[\r\n]", -1)) {
             int hash = line.indexOf('#');
-            String provider = trim(hash < 0 ? line : line.substring(0, hash));
+            String content = hash < 0 ? line : line.substring(0, hash);
+            String provider = strict ? content.trim() : trim(content);
             if (!provider.isEmpty()) {
+                if (strict && !isBinaryName(provider)) {
+                    throw new UikaException("invalid provider name in " + Intern.str(source) + "!" + SERVICES_PREFIX + dottedIface + ": " + provider);
+                }
                 impls.add(Intern.intern(provider.replace('.', '/')));
             }
         }
         if (!impls.isEmpty()) {
-            out.add(new ServiceFile(Intern.intern(dottedIface.replace('.', '/')), java.util.Arrays.copyOf(impls.a, impls.n), source));
+            out.add(new ServiceFile(Intern.intern(dottedIface.replace('.', '/')), Arrays.copyOf(impls.a, impls.n), source));
         }
+    }
+
+    private static boolean isBinaryName(String name) {
+        int first = name.codePointAt(0);
+        if (!Character.isJavaIdentifierStart(first)) {
+            return false;
+        }
+        // ServiceLoader permits digits at the start of later components.
+        boolean previousDot = false;
+        for (int at = Character.charCount(first); at < name.length();) {
+            int codePoint = name.codePointAt(at);
+            if (codePoint == '.') {
+                if (previousDot) {
+                    return false;
+                }
+                previousDot = true;
+            } else {
+                if (!Character.isJavaIdentifierPart(codePoint)) {
+                    return false;
+                }
+                previousDot = false;
+            }
+            at += Character.charCount(codePoint);
+        }
+        return !previousDot;
     }
 
     /** Unicode White_Space trim, which is what the provider-line parsing was specified against. */

@@ -1,0 +1,23 @@
+Validate one runtime classpath independently of previous versions
+
+Usage: uika validate [OPTIONS] --classpath <CLASSPATH>
+
+Checks every static class, method and field requirement, including structural
+constraints on subclasses and service providers. Existing inconsistencies are
+reported too. Run once for each declared runtime environment and compare reports
+outside the checker to identify new violations.
+
+Uses the running JDK's APIs and verifier without initializing application classes.
+Stays in the launching JVM, preserving options such as --add-exports.
+Inputs must describe a flat classpath. Normalize multi-release JARs, manifest
+Class-Path entries, META-INF/INDEX.LIST indexes and symbolic links before validation.
+
+Exit codes: 0 = complete and clean, 1 = complete with violations,
+2 = error or incomplete validation. JSON includes complete, diagnostics and stable
+requirement IDs; a partial or incomplete report must not be used as a baseline.
+
+Options:
+      --classpath <CLASSPATH>      Ordered JARs or class directories; repeatable, separated by ; on Windows or : elsewhere
+      --jdk-release <JDK_RELEASE>  Require this running JDK release
+      --json                       Print a machine-readable report
+  -h, --help                       Print help

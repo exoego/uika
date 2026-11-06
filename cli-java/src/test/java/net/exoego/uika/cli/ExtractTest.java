@@ -12,13 +12,20 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.TreeSet;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Ports the `extract.rs` tests. The Rust helpers take and return strings. The Java twins
  * judge raw constant-pool bytes and intern the result, so the tests go through the symbol.
  */
 class ExtractTest {
+    private static final int HANDLE_GET_FIELD = 1;
+    private static final int FIELD_HANDLE_TARGET = 10;
     private final Scratch scratch = new Scratch();
 
     /** Rust `object_class_of`, with null standing for None. */
@@ -199,6 +206,82 @@ class ExtractTest {
         assertEquals(
                 List.of("CLASS other/Thing static=null write=null new=null", "METHOD other/Thing.call:()V static=false write=null new=null"),
                 shown);
+    }
+
+    private static byte[] fieldHandleClass(int handle, String descriptor, int target) {
+        ClassFileBytes b = ClassFileBytes.header(52, 12);
+        b.utf8("app/Main"); // #1
+        b.classRef(1); // #2
+        b.utf8("java/lang/Object"); // #3
+        b.classRef(3); // #4
+        b.utf8("lib/Owner"); // #5
+        b.classRef(5); // #6
+        b.utf8("value"); // #7
+        b.utf8(descriptor); // #8
+        b.nameAndType(7, 8); // #9
+        b.memberRef(ClassParser.TAG_FIELDREF, 6, 9); // #10
+        b.u8(ClassParser.TAG_METHOD_HANDLE).u8(handle).u16(target); // #11
+        b.u16(Acc.PUBLIC).u16(2).u16(4).u16(0).u16(0).u16(0).u16(0);
+        return b.toByteArray();
+    }
+
+    private IntBuf snapshotReferences(byte[] bytes) throws Exception {
+        ClassParser parser = new ClassParser();
+        parser.parse(bytes, bytes.length);
+        IntBuf records = new IntBuf();
+        Extract.snapshotRefs(records, parser, scratch);
+        return records;
+    }
+
+    static Stream<Arguments> fieldHandles() {
+        return Stream.of(
+                Arguments.of("getField", HANDLE_GET_FIELD, false, false),
+                Arguments.of("getStatic", ClassParser.HANDLE_GET_STATIC, true, false),
+                Arguments.of("putField", ClassParser.HANDLE_PUT_FIELD, false, true),
+                Arguments.of("putStatic", ClassParser.HANDLE_PUT_STATIC, true, true));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("fieldHandles")
+    void fieldHandlesRetainAccessWriteAndDescriptorRequirements(String label, int handle, boolean isStatic, boolean write) throws Exception {
+        String descriptor = "Llib/Value;";
+        IntBuf records = snapshotReferences(fieldHandleClass(handle, descriptor, FIELD_HANDLE_TARGET));
+        int fields = 0;
+        int descriptorTypes = 0;
+        // The first word counts the following reference records.
+        for (int at = 1; at < records.n; at += SymbolRef.WORDS) {
+            int meta = records.a[at + SymbolRef.META_WORD];
+            SymbolRef reference = SymbolRef.unpack(meta, records.a[at + SymbolRef.OWNER_WORD],
+                    records.a[at + SymbolRef.NAME_WORD], records.a[at + SymbolRef.DESCRIPTOR_WORD]);
+            if (reference.kind() == RefKind.FIELD && reference.expectedStatic() != null) {
+                fields++;
+                assertEquals(Intern.intern("lib/Owner"), reference.owner());
+                assertEquals(MemberKey.of("value", descriptor), reference.member());
+                assertEquals(isStatic, reference.expectedStatic());
+                assertEquals(write, reference.fieldWrite());
+                assertEquals(write, (meta & SymbolRef.FINAL_WRITE_OUTSIDE_INITIALIZER) != 0);
+            } else if (reference.kind() == RefKind.CLASS && reference.owner() == Intern.intern("lib/Value")) {
+                descriptorTypes++;
+                assertEquals(0, meta & SymbolRef.DESCRIPTOR_TYPE, "handle descriptor types require access as well as existence");
+            }
+        }
+        assertEquals(1, fields);
+        assertEquals(1, descriptorTypes);
+    }
+
+    @Test
+    void aMethodHandleCannotTargetAClassConstant() {
+        byte[] bytes = fieldHandleClass(ClassParser.HANDLE_GET_STATIC, "Llib/Value;", /* lib/Owner Class constant */ 6);
+        ClassParser.FormatException error = assertThrows(ClassParser.FormatException.class, () -> snapshotReferences(bytes));
+        assertEquals("invalid method handle target", error.getMessage());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"L;", "Llib/Value"})
+    void malformedHandleDescriptorsCannotLoseTheirRequiredType(String descriptor) {
+        byte[] bytes = fieldHandleClass(ClassParser.HANDLE_GET_STATIC, descriptor, FIELD_HANDLE_TARGET);
+        ClassParser.FormatException error = assertThrows(ClassParser.FormatException.class, () -> snapshotReferences(bytes));
+        assertEquals("invalid reference descriptor", error.getMessage());
     }
 
     @Test

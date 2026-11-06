@@ -44,6 +44,10 @@ final class Launcher {
         if (args.length < 2 || args[0].startsWith("-") || args[0].equals("help")) {
             return false;
         }
+        // Validation needs the launching JVM's module access and other runtime settings.
+        if (args[0].equals("validate")) {
+            return false;
+        }
         String optOut = System.getenv("UIKA_NO_RELAUNCH");
         return optOut == null || optOut.isEmpty();
     }
@@ -114,7 +118,7 @@ final class Launcher {
             if (name.equals("--classpath") && value != null) {
                 targets++;
                 for (int k = 0; k < value.length(); k++) {
-                    if (value.charAt(k) == ':') {
+                    if (value.charAt(k) == File.pathSeparatorChar) {
                         targets++;
                     }
                 }
