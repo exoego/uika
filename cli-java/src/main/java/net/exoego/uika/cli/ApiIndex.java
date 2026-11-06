@@ -89,7 +89,11 @@ final class ApiIndex {
         return out;
     }
 
-    private void appendRow(ApiIndex from, int entry) {
+    /** Copies a packed row without retaining a ClassApi object. */
+    void appendRow(ApiIndex from, int entry) {
+        if (containsClass(from.nameOf(entry))) {
+            return;
+        }
         if ((classCount + 1) * STRIDE > rows.length) {
             rows = Arrays.copyOf(rows, rows.length * 2);
         }

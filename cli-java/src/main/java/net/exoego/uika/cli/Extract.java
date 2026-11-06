@@ -10,6 +10,8 @@ final class Extract {
     private static final byte CP_CODE_REF = 1;
     /** The Class constant is the target of a {@code new} opcode. */
     private static final byte CP_INSTANTIATED = 2;
+    /** A handle or dynamic call site must resolve the types in this NameAndType descriptor. */
+    private static final byte CP_DESCRIPTOR_ACCESS = 4;
 
     private static final int OP_NEW = 0xbb;
 
@@ -431,7 +433,14 @@ final class Extract {
                         case 0xb3, 0xb5 -> SymbolRef.TRI_TRUE;
                         default -> SymbolRef.TRI_NONE;
                     };
+            int mark = out.n;
             count += memberRef(out, p, scratch, oldNames, index, tag, expectedStatic, fieldWrite);
+            if (oldNames == null && out.n != mark && fieldWrite == SymbolRef.TRI_TRUE && !p.fieldWriteInInitializer(i)) {
+                out.a[mark] |= SymbolRef.FINAL_WRITE_OUTSIDE_INITIALIZER;
+            }
+            if (oldNames == null && out.n != mark && opcode == ClassParser.OP_INVOKE_SPECIAL) {
+                out.a[mark] |= SymbolRef.SPECIAL_CALL;
+            }
         }
         out.a[countAt] = count;
     }
@@ -447,6 +456,96 @@ final class Extract {
             decoded.add(SymbolRef.unpack(out.a[at], out.a[at + 1], out.a[at + 2], out.a[at + 3]));
         }
         return decoded;
+    }
+
+    /** All static requirements of one snapshot class, including descriptors and handle kinds. */
+    static void snapshotRefs(IntBuf out, ClassParser p, Scratch scratch) throws ClassParser.FormatException {
+        referencesLibrary(p, scratch, null);
+        int countAt = out.n;
+        refs(out, p, scratch, null);
+        int count = out.a[countAt];
+        for (int i = 1; i < p.cpLen; i++) {
+            int tag = p.tag(i);
+            if (tag == ClassParser.TAG_METHOD_HANDLE) {
+                int handle = p.handleKind(i);
+                int target = p.handleTarget(i);
+                int targetTag = p.tag(target);
+                if (targetTag < ClassParser.TAG_FIELDREF || targetTag > ClassParser.TAG_INTERFACE_METHODREF) {
+                    throw new ClassParser.FormatException("invalid method handle target");
+                }
+                boolean isStatic = handle == ClassParser.HANDLE_GET_STATIC || handle == ClassParser.HANDLE_PUT_STATIC
+                        || handle == ClassParser.HANDLE_INVOKE_STATIC;
+                int write = targetTag != ClassParser.TAG_FIELDREF ? SymbolRef.TRI_NONE
+                        : handle == ClassParser.HANDLE_PUT_FIELD || handle == ClassParser.HANDLE_PUT_STATIC
+                                ? SymbolRef.TRI_TRUE : SymbolRef.TRI_FALSE;
+                int mark = out.n;
+                count += memberRef(out, p, scratch, null, target, targetTag,
+                        isStatic ? SymbolRef.TRI_TRUE : SymbolRef.TRI_FALSE, write);
+                if (out.n != mark && write == SymbolRef.TRI_TRUE) {
+                    out.a[mark] |= SymbolRef.FINAL_WRITE_OUTSIDE_INITIALIZER;
+                }
+                if (out.n != mark && handle == ClassParser.HANDLE_INVOKE_SPECIAL) {
+                    out.a[mark] |= SymbolRef.SPECIAL_CALL | SymbolRef.SPECIAL_HANDLE;
+                }
+                if (out.n != mark && handle == ClassParser.HANDLE_NEW_INVOKE_SPECIAL) {
+                    out.a[mark] |= SymbolRef.CONSTRUCTOR_HANDLE;
+                    int owner = out.a[mark + SymbolRef.OWNER_WORD];
+                    out.add(SymbolRef.pack(RefKind.CLASS, SymbolRef.TRI_NONE, SymbolRef.TRI_NONE, true));
+                    out.add(owner);
+                    out.add(Intern.NONE);
+                    out.add(Intern.NONE);
+                    count++;
+                }
+                scratch.cpFlags[p.operand2(target)] |= CP_DESCRIPTOR_ACCESS;
+            } else if (tag == ClassParser.TAG_DYNAMIC || tag == ClassParser.TAG_INVOKE_DYNAMIC
+                    || (tag == ClassParser.TAG_METHODREF && Scope.isPolymorphicOwner(p.internClassName(scratch, p.operand1(i))))) {
+                int nameAndType = p.operand2(i);
+                p.requireNameAndType(nameAndType);
+                scratch.cpFlags[nameAndType] |= CP_DESCRIPTOR_ACCESS;
+            } else if (tag == ClassParser.TAG_METHOD_TYPE) {
+                count += descriptorRefs(out, p, scratch, p.operand1(i), /* checkAccess */ true);
+            }
+        }
+        // A NameAndType may precede its users, so decide its access requirement after the pool walk.
+        for (int i = 1; i < p.cpLen; i++) {
+            if (p.tag(i) == ClassParser.TAG_NAME_AND_TYPE) {
+                count += descriptorRefs(out, p, scratch, p.operand2(i), (scratch.cpFlags[i] & CP_DESCRIPTOR_ACCESS) != 0);
+            }
+        }
+        for (int i = 0; i < p.methodCount; i++) {
+            count += descriptorRefs(out, p, scratch, p.methods[i * 3 + 2], /* checkAccess */ false);
+        }
+        for (int i = 0; i < p.fieldCount; i++) {
+            count += descriptorRefs(out, p, scratch, p.fields[i * 3 + 2], /* checkAccess */ false);
+        }
+        out.a[countAt] = count;
+    }
+
+    private static int descriptorRefs(IntBuf out, ClassParser p, Scratch scratch, int utf8, boolean checkAccess) throws ClassParser.FormatException {
+        int at = p.utf8Offset(utf8);
+        int end = at + p.utf8Length(utf8);
+        int count = 0;
+        while (at < end) {
+            if (p.bytes[at++] != 'L') {
+                continue;
+            }
+            int start = at;
+            while (at < end && p.bytes[at] != ';') {
+                at++;
+            }
+            if (at == end || at == start) {
+                throw new ClassParser.FormatException("invalid reference descriptor");
+            }
+            int owner = acceptOwner(scratch, null, p.bytes, start, at - start);
+            out.add(SymbolRef.pack(RefKind.CLASS, SymbolRef.TRI_NONE, SymbolRef.TRI_NONE, false)
+                    | (checkAccess ? 0 : SymbolRef.DESCRIPTOR_TYPE));
+            out.add(owner);
+            out.add(Intern.NONE);
+            out.add(Intern.NONE);
+            count++;
+            at++;
+        }
+        return count;
     }
 
     /** Test entry point for the class-load edges of a parsed class, in the order the scan stores them. */
@@ -487,7 +586,7 @@ final class Extract {
             throws ClassParser.FormatException {
         // The first eight bytes are ASCII in every real name, and ASCII is the same in
         // Modified UTF-8 and UTF-8, so the raw prefix is what a member's prefix was built from.
-        if (!oldNames.mayContain(b, off, len) && ModifiedUtf8.isAscii(b, off, Math.min(len, 8))) {
+        if (oldNames != null && !oldNames.mayContain(b, off, len) && ModifiedUtf8.isAscii(b, off, Math.min(len, 8))) {
             return Intern.NONE;
         }
         if (!ModifiedUtf8.isAscii(b, off, len) && !ModifiedUtf8.isValidUtf8(b, off, len)) {
@@ -495,7 +594,7 @@ final class Extract {
             off = 0;
             len = b.length;
         }
-        return oldNames.find(b, off, len, Intern.hash(b, off, len));
+        return oldNames == null ? Intern.intern(scratch, b, off, len) : oldNames.find(b, off, len, Intern.hash(b, off, len));
     }
 
     /** Appends the member reference when its owner is accepted; returns how many were appended. */
@@ -505,11 +604,12 @@ final class Extract {
         int classIndex = p.operand1(index);
         int nameIndex = p.classNameIndex(classIndex);
         int off = p.utf8Offset(nameIndex);
-        // Methods on array owners (clone and friends) come from java/lang/Object.
-        if (p.utf8Length(nameIndex) > 0 && p.bytes[off] == '[') {
+        boolean array = p.utf8Length(nameIndex) > 0 && p.bytes[off] == '[';
+        // Upgrade checks only resolve members of the compared library; arrays cannot declare them.
+        if (array && oldNames != null) {
             return 0;
         }
-        int owner = classRefOwner(p, scratch, oldNames, classIndex);
+        int owner = array ? p.internUtf8(scratch, nameIndex) : classRefOwner(p, scratch, oldNames, classIndex);
         if (owner == Intern.NONE) {
             return 0;
         }
@@ -520,7 +620,7 @@ final class Extract {
         RefKind kind = tag == ClassParser.TAG_FIELDREF
                 ? RefKind.FIELD
                 : tag == ClassParser.TAG_METHODREF ? RefKind.METHOD : RefKind.INTERFACE_METHOD;
-        out.add(SymbolRef.pack(kind, expectedStatic, fieldWrite, false));
+        out.add(SymbolRef.pack(kind, expectedStatic, fieldWrite, false) | (array ? SymbolRef.ARRAY_OWNER : 0));
         out.add(owner);
         out.add(name);
         out.add(descriptor);

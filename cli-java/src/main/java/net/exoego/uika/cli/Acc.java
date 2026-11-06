@@ -9,6 +9,8 @@ final class Acc {
     static final int FINAL = 0x0010;
     /** Compiler-generated bridge method (covariant returns, generic erasure). */
     static final int BRIDGE = 0x0040;
+    static final int VARARGS = 0x0080;
+    static final int NATIVE = 0x0100;
     static final int INTERFACE = 0x0200;
     static final int ABSTRACT = 0x0400;
     /** Compiler-generated member not present in the source. */

@@ -4,7 +4,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -14,6 +16,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.ForkJoinTask;
 import java.util.function.Supplier;
 
 /** The commands: what each does with its parsed arguments, and the exit code it ends with. */
@@ -26,6 +30,8 @@ final class Commands {
             return cmdDiff(diff);
         } else if (command instanceof Cli.Check check) {
             return cmdCheck(check);
+        } else if (command instanceof Cli.Validate validate) {
+            return Snapshot.run(validate);
         } else if (command instanceof Cli.UpgradeCheck upgrade) {
             return cmdUpgradeCheck(upgrade);
         } else if (command instanceof Cli.DumpApi dump) {
@@ -312,11 +318,11 @@ final class Commands {
         // most of the pool idle, and it runs on a cold JIT. The first chunk's
         // central-directory reads need no index, so they queue up behind the builds and
         // bring the JIT to the directory parser and the interner before pass 1 starts.
-        java.util.concurrent.ForkJoinPool pool = Scratch.pool();
+        ForkJoinPool pool = Scratch.pool();
         List<String> oldWarnings = new ArrayList<>();
         List<String> newWarnings = new ArrayList<>();
-        java.util.concurrent.ForkJoinTask<ApiIndex> oldTask = pool.submit(() -> ApiIndex.fromPaths(oldJars, oldWarnings));
-        java.util.concurrent.ForkJoinTask<ApiIndex> newTask = pool.submit(() -> ApiIndex.fromPaths(newJars, newWarnings));
+        ForkJoinTask<ApiIndex> oldTask = pool.submit(() -> ApiIndex.fromPaths(oldJars, oldWarnings));
+        ForkJoinTask<ApiIndex> newTask = pool.submit(() -> ApiIndex.fromPaths(newJars, newWarnings));
         Scan.Ahead ahead = Scan.prepareAhead(scan.paths(), !appRoots.isEmpty());
         ApiIndex oldIndex = oldTask.join();
         ApiIndex newIndex = newTask.join();
@@ -469,7 +475,7 @@ final class Commands {
      */
     private static Object identity(Path path) {
         try {
-            Object key = Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class).fileKey();
+            Object key = Files.readAttributes(path, BasicFileAttributes.class).fileKey();
             if (key != null) {
                 return key;
             }
@@ -1145,7 +1151,7 @@ final class Commands {
         for (int i = 0; i < order.length; i++) {
             order[i] = i;
         }
-        java.util.Arrays.sort(order, (a, b) -> MemberKey.compare(keys[a], keys[b]));
+        Arrays.sort(order, (a, b) -> MemberKey.compare(keys[a], keys[b]));
         for (int i : order) {
             out.append("  ").append(kind).append(' ').append(className).append('.').append(Intern.str(MemberKey.name(keys[i])))
                     .append(' ').append(Intern.str(MemberKey.descriptor(keys[i]))).append(" [").append(flags(access[i])).append("]\n");

@@ -1,5 +1,8 @@
 package net.exoego.uika.cli;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+
 /**
  * Minimal class-file parser.
  *
@@ -25,6 +28,19 @@ final class ClassParser {
     static final int TAG_METHODREF = 10;
     static final int TAG_INTERFACE_METHODREF = 11;
     static final int TAG_NAME_AND_TYPE = 12;
+    static final int TAG_METHOD_HANDLE = 15;
+    static final int TAG_METHOD_TYPE = 16;
+    static final int TAG_DYNAMIC = 17;
+    static final int TAG_INVOKE_DYNAMIC = 18;
+    static final int OP_PUT_STATIC = 0xb3;
+    static final int OP_INVOKE_SPECIAL = 0xb7;
+
+    static final int HANDLE_GET_STATIC = 2;
+    static final int HANDLE_PUT_FIELD = 3;
+    static final int HANDLE_PUT_STATIC = 4;
+    static final int HANDLE_INVOKE_STATIC = 6;
+    static final int HANDLE_INVOKE_SPECIAL = 7;
+    static final int HANDLE_NEW_INVOKE_SPECIAL = 8;
 
     // Plain byte arithmetic rather than a VarHandle view: C1 code, which the parser runs as
     // until C2 gets to it, calls through the VarHandle machinery per read and showed up in
@@ -38,9 +54,15 @@ final class ClassParser {
     }
 
     private static final byte[] CODE = {'C', 'o', 'd', 'e'};
-    private static final byte[] NEST_HOST = "NestHost".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    private static final byte[] INIT = {'<', 'i', 'n', 'i', 't', '>'};
+    private static final byte[] CLINIT = {'<', 'c', 'l', 'i', 'n', 'i', 't', '>'};
+    /** Only snapshot validation needs the method containing each field write. */
+    boolean collectMethodContext;
+    private int[] codeRefMethods = new int[0];
+    private int currentMethodName;
+    private static final byte[] NEST_HOST = "NestHost".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] PERMITTED_SUBCLASSES =
-            "PermittedSubclasses".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            "PermittedSubclasses".getBytes(StandardCharsets.US_ASCII);
 
     byte[] bytes;
     private int end;
@@ -108,7 +130,7 @@ final class ClassParser {
 
     private void addTagged(int tag, int index) {
         if (taggedCount == tagged.length) {
-            tagged = java.util.Arrays.copyOf(tagged, tagged.length * 2);
+            tagged = Arrays.copyOf(tagged, tagged.length * 2);
         }
         tagged[taggedCount++] = tag << 16 | index;
     }
@@ -308,6 +330,7 @@ final class ClassParser {
             table[i * 3] = u16();
             table[i * 3 + 1] = u16();
             table[i * 3 + 2] = u16();
+            currentMethodName = table[i * 3 + 1];
             int attributes = u16();
             for (int a = 0; a < attributes; a++) {
                 int nameIndex = u16();
@@ -386,7 +409,7 @@ final class ClassParser {
     private static final byte[] FIXED_LENGTH = new byte[256];
 
     static {
-        java.util.Arrays.fill(FIXED_LENGTH, (byte) 1);
+        Arrays.fill(FIXED_LENGTH, (byte) 1);
         int[] two = {0x10, 0x12, 0x15, 0x16, 0x17, 0x18, 0x19, 0x36, 0x37, 0x38, 0x39, 0x3a, 0xa9, 0xbc};
         for (int op : two) {
             FIXED_LENGTH[op] = 2;
@@ -407,9 +430,20 @@ final class ClassParser {
 
     private void addCodeRef(int ref) {
         if (codeRefCount == codeRefs.length) {
-            codeRefs = java.util.Arrays.copyOf(codeRefs, codeRefs.length * 2);
+            codeRefs = Arrays.copyOf(codeRefs, codeRefs.length * 2);
+        }
+        if (collectMethodContext) {
+            if (codeRefMethods.length < codeRefs.length) {
+                codeRefMethods = Arrays.copyOf(codeRefMethods, codeRefs.length);
+            }
+            codeRefMethods[codeRefCount] = currentMethodName;
         }
         codeRefs[codeRefCount++] = ref;
+    }
+
+    boolean fieldWriteInInitializer(int codeRef) {
+        int opcode = codeRefs[codeRef] >>> 16;
+        return utf8Equals(codeRefMethods[codeRef], opcode == OP_PUT_STATIC ? CLINIT : INIT);
     }
 
     private void classAttributes() throws FormatException {
@@ -483,6 +517,14 @@ final class ClassParser {
     /** Second u2 operand (ref name_and_type, NameAndType descriptor). */
     int operand2(int index) {
         return be16(bytes, cpPos[index] + 3);
+    }
+
+    int handleKind(int index) {
+        return bytes[cpPos[index] + 1] & 0xff;
+    }
+
+    int handleTarget(int index) {
+        return be16(bytes, cpPos[index] + 2);
     }
 
     /** Byte offset of a Utf8 entry's data. */

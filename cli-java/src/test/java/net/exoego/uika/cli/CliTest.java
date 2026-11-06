@@ -9,6 +9,20 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class CliTest {
+    @Test
+    void validateTakesOneCompleteClasspathAndRejectsUpgradeOptions() throws Exception {
+        Cli.Validate command = assertInstanceOf(Cli.Validate.class,
+                Cli.parse(new String[] {"validate", "--classpath", "a.jar:b.jar", "--classpath", "classes", "--json", "--jdk-release", "17"}));
+        assertEquals(List.of("a.jar", "b.jar", "classes"), command.classpath());
+        assertEquals(17, command.jdkRelease());
+        assertTrue(command.json());
+        assertThrows(Cli.UsageException.class, () -> Cli.parse(new String[] {"validate"}));
+        for (String option : List.of("--old", "--new", "--before", "--after", "--fail-on", "--exclude-file")) {
+            assertThrows(Cli.UsageException.class, () -> Cli.parse(new String[] {"validate", "--classpath", "app.jar", option, "value"}));
+        }
+        assertTrue(Cli.help("validate", true).contains("validation"));
+    }
+
     /**
      * A JDK pair supplies both compared sides itself. Accepting --old/--new next to it would
      * silently ignore them, since only one pair reaches the check.

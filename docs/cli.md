@@ -100,6 +100,66 @@ scanned 1346 classes: ❌ 1 broken (of which 💥 1 reachable, ⚠️ 0 not prov
   hand-assembled classpath and reduces unverified references, so prefer it
   whenever a build can produce one.
 
+### `uika validate`
+
+Checks one complete runtime classpath, including references that were already
+broken and references introduced by a new or changed consumer. No old/new
+library pair is needed.
+
+```console
+$ uika validate --classpath app.jar:lib-a.jar:lib-b.jar --json
+```
+
+Pass every artifact in the environment, in runtime search order. Duplicate
+classes are first-wins. Each invocation models one flat classpath; prepare
+separate inputs for environments with different dependency selections. Build
+classpath dumps are not implicitly merged into a runtime environment.
+
+Validation uses the APIs and bytecode verifier of the JVM running uika. Run
+uika on the target JDK. Optional `--jdk-release N` checks that this JVM is N;
+`UIKA_JDK` and `JAVA_HOME` do not substitute another JDK's APIs in this command.
+The JVM loads classes for verification without running their static initializers.
+Validation stays in the launching JVM, preserving options such as `--add-exports`.
+
+The exit codes are:
+
+- `0`: the check completed and found no violations.
+- `1`: the check completed and found violations.
+- `2`: an input error or incomplete validation. Missing/unreadable inputs,
+  malformed classes, unresolved hierarchies and inconclusive method selection
+  cannot produce a successful check. Bytecode verifier failures that cannot be
+  attributed to a supported static requirement also produce this result.
+
+`--json` reports `schema_version`, `complete`, `jdk_release`, `scanned_classes`,
+`unknown_refs`, `violations` and `diagnostics`. Each violation contains its
+`kind`, raw `reference`, consumer `source_class` and `source`, provider path when
+known, and a stable `id`. IDs hash the consumer class, violation kind and raw
+requirement; artifact paths, provider paths and messages are excluded. They are
+stable within one logical environment. A repository integration must combine
+them with its own logical environment and consumer artifact identities.
+Identical requirements from different source artifacts produce separate rows
+with the same ID; duplicates within one source artifact are collapsed. ID encoding
+is fixed within a schema version, independently of report formatting. Changing
+that encoding requires a new `schema_version`.
+
+Run validation separately for baseline and candidate, then compare violations
+by those identities. An incomplete baseline cannot stand in for an empty set.
+The command deliberately reports historical violations so an integration can
+distinguish them from new ones, including when only the consumer changed.
+
+Inputs must already contain the effective class view for the target JDK.
+Multi-release JARs, manifest `Class-Path` entries and `META-INF/INDEX.LIST` JAR
+indexes are rejected until normalized, and directory symlinks must be materialized.
+Custom classloaders and module-path environments require a separate environment model. Reflection/JNI
+targets supplied by configuration and arbitrary bootstrap results remain outside
+static analysis; statically named bootstrap methods and MethodHandle targets
+are checked.
+
+Validation keeps complete packed member tables for the environment and loads
+classes for JVM verification, so its memory cost is higher than an upgrade
+check's selective second pass. It does not prove program behavior or source
+compatibility.
+
 ### `uika upgrade-check`
 
 Compares two dumps and checks every artifact whose version changed. This is

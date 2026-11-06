@@ -1,5 +1,7 @@
 package net.exoego.uika.cli;
 
+import java.util.Arrays;
+
 /**
  * Resolution scope layered over several indexes, first layer wins.
  *
@@ -27,18 +29,22 @@ final class Scope {
     private static final int OBJECT = Intern.intern("java/lang/Object");
     private static final int INIT = Intern.intern("<init>");
     private static final int CLINIT = Intern.intern("<clinit>");
+    private static final int METHOD_HANDLE = Intern.intern("java/lang/invoke/MethodHandle");
+    private static final int VAR_HANDLE = Intern.intern("java/lang/invoke/VarHandle");
+    private static final long OBJECT_CLONE = MemberKey.of("clone", "()Ljava/lang/Object;");
+    private static final long OBJECT_FINALIZE = MemberKey.of("finalize", "()V");
     private static final long[] OBJECT_METHODS = {
         MemberKey.of("getClass", "()Ljava/lang/Class;"),
         MemberKey.of("hashCode", "()I"),
         MemberKey.of("equals", "(Ljava/lang/Object;)Z"),
-        MemberKey.of("clone", "()Ljava/lang/Object;"),
+        OBJECT_CLONE,
         MemberKey.of("toString", "()Ljava/lang/String;"),
         MemberKey.of("notify", "()V"),
         MemberKey.of("notifyAll", "()V"),
         MemberKey.of("wait", "()V"),
         MemberKey.of("wait", "(J)V"),
         MemberKey.of("wait", "(JI)V"),
-        MemberKey.of("finalize", "()V"),
+        OBJECT_FINALIZE,
     };
 
     private final ApiIndex[] layers;
@@ -49,6 +55,10 @@ final class Scope {
 
     static int objectSym() {
         return OBJECT;
+    }
+
+    static boolean isPolymorphicOwner(int owner) {
+        return owner == METHOD_HANDLE || owner == VAR_HANDLE;
     }
 
     /** The 11 java/lang/Object methods are built in: Object itself is rarely in scope. */
@@ -129,6 +139,22 @@ final class Scope {
 
     /** Simplified JVMS 5.4.3.2 / 5.4.3.3. Returns a found member, {@link #NOT_FOUND} or {@link #UNKNOWN}. */
     long resolveMember(int owner, long key, MemberKind kind) {
+        // JVMS 2.9.3 / 5.4.3.3: these native varargs declarations accept call-site descriptors.
+        if (kind == MemberKind.METHOD && isPolymorphicOwner(owner)) {
+            ApiIndex layer = layerOf(owner);
+            if (layer != null) {
+                int entry = layer.entry(owner);
+                for (int i = 0; i < layer.methodCount(entry); i++) {
+                    long declared = layer.methodKeyAt(entry, i);
+                    int access = layer.methodAccessAt(entry, i);
+                    if (MemberKey.name(declared) == MemberKey.name(key)
+                            && (access & (Acc.NATIVE | Acc.VARARGS)) == (Acc.NATIVE | Acc.VARARGS)
+                            && Intern.str(MemberKey.descriptor(declared)).startsWith("([Ljava/lang/Object;)")) {
+                        return found(owner, access);
+                    }
+                }
+            }
+        }
         // Constructors and the class initializer are not inherited: walking the chain for
         // them would bind a removed constructor to a superclass copy and misreport a
         // NoSuchMethodError as access-narrowed.
@@ -143,9 +169,55 @@ final class Scope {
         return kind == MemberKind.FIELD ? resolveField(owner, key, new IntSet()) : resolveMethod(owner, key, 0);
     }
 
+    /** Arrays inherit Object's methods, with public clone(), and have no fields or constructors. */
+    long resolveArrayMember(int owner, long key, MemberKind kind) {
+        if (kind == MemberKind.FIELD || isConstructor(key)) {
+            return NOT_FOUND;
+        }
+        return key == OBJECT_CLONE ? found(owner, Acc.PUBLIC) : resolveMember(OBJECT, key, kind);
+    }
+
     /** Filters declaration kind only; access and finality are the caller's to judge. */
     long resolveVirtualMethod(int owner, long key) {
         return resolveMethod(owner, key, Acc.NON_VIRTUAL);
+    }
+
+    /** The class-chain implementation of an interface slot, before interface defaults. */
+    long resolveVirtualClassMethod(int owner, long key) {
+        return resolveMethod(owner, key, Acc.NON_VIRTUAL, false);
+    }
+
+    /** JVMS 6.5 invokespecial: ACC_SUPER selection starts at the direct superclass. */
+    int specialLookupStart(int caller, int owner, long key) {
+        if (isConstructor(key)) {
+            return owner;
+        }
+        int start = owner;
+        if ((classAccess(owner) & Acc.INTERFACE) == 0 && owner != caller) {
+            ApiIndex layer = layerOf(caller);
+            if (layer == null) {
+                return (int) UNKNOWN;
+            }
+            int directSuper = layer.superOf(layer.entry(caller));
+            IntSet seen = new IntSet();
+            int current = directSuper;
+            while (current != Intern.NONE && seen.add(current)) {
+                if (current == owner) {
+                    start = directSuper;
+                    break;
+                }
+                layer = layerOf(current);
+                if (layer == null) {
+                    return (int) UNKNOWN;
+                }
+                current = layer.superOf(layer.entry(current));
+            }
+        }
+        return start;
+    }
+
+    long resolveSpecialMethod(int start, long key) {
+        return isConstructor(key) ? resolveMember(start, key, MemberKind.METHOD) : resolveMethod(start, key, Acc.STATIC);
     }
 
     private static boolean isConstructor(long key) {
@@ -192,6 +264,11 @@ final class Scope {
      * for existence and access.
      */
     private long resolveMethod(int owner, long key, int ignoredAccess) {
+        return resolveMethod(owner, key, ignoredAccess, true);
+    }
+
+    private long resolveMethod(int owner, long key, int ignoredAccess, boolean includeInterfaces) {
+        boolean interfaceOwner = owner != OBJECT && (classAccess(owner) & Acc.INTERFACE) != 0;
         int[] pending = new int[8];
         int pendingCount = 0;
         IntSet seen = new IntSet();
@@ -201,7 +278,16 @@ final class Scope {
                 break;
             }
             if (current == OBJECT) {
-                if (isObjectMethod(key)) {
+                long object = locate(OBJECT);
+                if (object >= 0) {
+                    int access = layers[(int) (object >>> 32)].findMethod((int) object, key);
+                    if (access >= 0 && (access & ignoredAccess) == 0
+                            && (!interfaceOwner || (access & (Acc.PUBLIC | Acc.STATIC)) == Acc.PUBLIC)) {
+                        return found(OBJECT, access);
+                    }
+                    break;
+                }
+                if (isObjectMethod(key) && (!interfaceOwner || (key != OBJECT_CLONE && key != OBJECT_FINALIZE))) {
                     return found(current, Acc.PUBLIC);
                 }
                 break;
@@ -220,12 +306,15 @@ final class Scope {
             }
             int interfaces = index.interfaceCount(entry);
             if (pendingCount + interfaces > pending.length) {
-                pending = java.util.Arrays.copyOf(pending, Math.max(pending.length * 2, pendingCount + interfaces));
+                pending = Arrays.copyOf(pending, Math.max(pending.length * 2, pendingCount + interfaces));
             }
             for (int k = 0; k < interfaces; k++) {
                 pending[pendingCount++] = index.interfaceAt(entry, k);
             }
             current = index.superOf(entry);
+        }
+        if (!includeInterfaces) {
+            return NOT_FOUND;
         }
         IntSet interfaceSeen = new IntSet();
         boolean unknown = false;

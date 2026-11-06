@@ -2,6 +2,7 @@ package net.exoego.uika.cli;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -552,7 +553,7 @@ final class Check {
         for (int i = 0; i < names.length; i++) {
             sorted[i] = names[i];
         }
-        java.util.Arrays.sort(sorted, Intern::compare);
+        Arrays.sort(sorted, Intern::compare);
         for (int name : sorted) {
             int node = scan.graph.node(name);
             String entry = entryName(scan.entryOverrides, name);
@@ -823,24 +824,29 @@ final class Check {
         return new Verdict(Verdict.Kind.BROKEN, reason == Reason.CLASS_REMOVED ? SymbolRef.ofClass(r.owner()) : r, reason);
     }
 
-    private static final int OK = -1;
+    static final int OK = -1;
     /** Reached a type outside the index and cannot be proven. */
-    private static final int UNKNOWN = -2;
+    static final int UNKNOWN = -2;
 
     /**
      * {@link #OK}, {@link #UNKNOWN}, or the ordinal of the breaking {@link Reason}. Class
      * existence is checked against the graph (all scan targets); member resolution uses the
      * scope layered with the fetched classes.
      */
-    private static int verdict(
+    static int verdict(
             int meta, int owner, long member, int sourceClass, Scope oldScope, Scope runtime, ClassGraph graph, NestHosts hosts) {
-        if (!runtime.containsClass(owner) && !graph.contains(owner)) {
+        boolean arrayOwner = (meta & SymbolRef.ARRAY_OWNER) != 0;
+        if (!arrayOwner && !runtime.containsClass(owner) && !graph.contains(owner)) {
             return Reason.CLASS_REMOVED.ordinal();
         }
-        int ownerAccess = runtime.classAccess(owner);
+        // Array component access is checked by its separate class reference.
+        int ownerAccess = arrayOwner ? Acc.PUBLIC | Acc.FINAL : runtime.classAccess(owner);
         // `new X` where X is now abstract or an interface throws InstantiationError.
         // Old-relative: only when X was concrete before.
         if (SymbolRef.instantiatedOf(meta) && ownerAccess >= 0 && (ownerAccess & (Acc.ABSTRACT | Acc.INTERFACE)) != 0) {
+            if (oldScope == null) {
+                return Reason.CLASS_BECAME_ABSTRACT.ordinal();
+            }
             int oldAccess = oldScope.classAccess(owner);
             if (oldAccess < 0) {
                 return UNKNOWN;
@@ -848,12 +854,18 @@ final class Check {
             return (oldAccess & (Acc.ABSTRACT | Acc.INTERFACE)) == 0 ? Reason.CLASS_BECAME_ABSTRACT.ordinal() : OK;
         }
         if (member == MemberKey.NONE) {
+            if (oldScope == null && (meta & SymbolRef.DESCRIPTOR_TYPE) != 0) {
+                return OK;
+            }
             // Only public or the same run-time package (JVMS 5.4.4). No subclass or nestmate rule.
             if (ownerAccess < 0 || Visibility.ofClass(ownerAccess) == Visibility.PUBLIC || Intern.samePackage(owner, sourceClass)) {
                 return OK;
             }
             // Narrowing is relative to old: a reference equally inaccessible before the
             // change is pre-existing.
+            if (oldScope == null) {
+                return Reason.CLASS_ACCESS_NARROWED.ordinal();
+            }
             int oldAccess = oldScope.classAccess(owner);
             if (oldAccess < 0) {
                 return UNKNOWN;
@@ -868,6 +880,9 @@ final class Check {
         if (kind == Scope.MemberKind.METHOD && ownerAccess >= 0) {
             boolean expectsInterface = refKind == RefKind.INTERFACE_METHOD;
             if (((ownerAccess & Acc.INTERFACE) != 0) != expectsInterface) {
+                if (oldScope == null) {
+                    return (expectsInterface ? Reason.INTERFACE_BECAME_CLASS : Reason.CLASS_BECAME_INTERFACE).ordinal();
+                }
                 int oldAccess = oldScope.classAccess(owner);
                 if (oldAccess < 0) {
                     return UNKNOWN;
@@ -877,11 +892,14 @@ final class Check {
                 }
             }
         }
-        long found = runtime.resolveMember(owner, member, kind);
+        long found = arrayOwner ? runtime.resolveArrayMember(owner, member, kind) : runtime.resolveMember(owner, member, kind);
         if (found == Scope.UNKNOWN) {
             return UNKNOWN;
         }
         if (found == Scope.NOT_FOUND) {
+            if (oldScope == null) {
+                return (kind == Scope.MemberKind.FIELD ? Reason.FIELD_REMOVED : Reason.METHOD_REMOVED).ordinal();
+            }
             // A reference that cannot resolve against old was already inconsistent.
             return switch (oldScope.resolve(owner, member, kind)) {
                 case FOUND -> (kind == Scope.MemberKind.FIELD ? Reason.FIELD_REMOVED : Reason.METHOD_REMOVED).ordinal();
@@ -891,15 +909,19 @@ final class Check {
         }
         int foundAccess = Scope.foundAccess(found);
         int foundOwner = Scope.foundOwner(found);
+        if ((meta & SymbolRef.CONSTRUCTOR_HANDLE) != 0 && (foundAccess & Acc.PROTECTED) != 0
+                && !Intern.samePackage(foundOwner, sourceClass)) {
+            return Reason.METHOD_ACCESS_NARROWED.ordinal();
+        }
         int expectedStatic = SymbolRef.expectedStaticOf(meta);
         if (expectedStatic != SymbolRef.TRI_NONE) {
             boolean expected = expectedStatic == SymbolRef.TRI_TRUE;
             if (((foundAccess & Acc.STATIC) != 0) != expected) {
-                long oldFound = oldScope.resolveMember(owner, member, kind);
+                long oldFound = oldScope == null ? found : oldScope.resolveMember(owner, member, kind);
                 if (oldFound == Scope.UNKNOWN) {
                     return UNKNOWN;
                 }
-                if (Scope.isFound(oldFound) && ((Scope.foundAccess(oldFound) & Acc.STATIC) != 0) == expected) {
+                if (oldScope == null || (Scope.isFound(oldFound) && ((Scope.foundAccess(oldFound) & Acc.STATIC) != 0) == expected)) {
                     if (kind == Scope.MemberKind.METHOD) {
                         return (expected ? Reason.METHOD_BECAME_INSTANCE : Reason.METHOD_BECAME_STATIC).ordinal();
                     }
@@ -913,6 +935,9 @@ final class Check {
             return UNKNOWN;
         }
         if (accessible == NO) {
+            if (oldScope == null) {
+                return (kind == Scope.MemberKind.FIELD ? Reason.FIELD_ACCESS_NARROWED : Reason.METHOD_ACCESS_NARROWED).ordinal();
+            }
             // Levels are compared instead of re-running isAccessible against old, because the
             // subclass walk only sees scanned classes and would demote real narrowing.
             long oldFound = oldScope.resolveMember(owner, member, kind);
@@ -928,7 +953,10 @@ final class Check {
         if (kind == Scope.MemberKind.FIELD
                 && SymbolRef.fieldWriteOf(meta) == SymbolRef.TRI_TRUE
                 && (foundAccess & Acc.FINAL) != 0
-                && sourceClass != foundOwner) {
+                && (sourceClass != foundOwner || (oldScope == null && (meta & SymbolRef.FINAL_WRITE_OUTSIDE_INITIALIZER) != 0))) {
+            if (oldScope == null) {
+                return Reason.FIELD_BECAME_FINAL.ordinal();
+            }
             long oldFound = oldScope.resolveMember(owner, member, kind);
             if (oldFound == Scope.UNKNOWN) {
                 return UNKNOWN;
@@ -937,6 +965,77 @@ final class Check {
                 return Reason.FIELD_BECAME_FINAL.ordinal();
             }
             return OK;
+        }
+        if (oldScope == null && (meta & SymbolRef.SPECIAL_CALL) != 0) {
+            return specialVerdict(meta, owner, member, sourceClass, runtime, graph, hosts);
+        }
+        return OK;
+    }
+
+    private static int specialVerdict(int meta, int owner, long member, int sourceClass, Scope runtime, ClassGraph graph, NestHosts hosts) {
+        boolean handle = (meta & SymbolRef.SPECIAL_HANDLE) != 0;
+        if (handle && (runtime.classAccess(owner) & Acc.INTERFACE) != 0 && owner != sourceClass) {
+            ApiIndex caller = runtime.layerOf(sourceClass);
+            if (caller == null) {
+                return UNKNOWN;
+            }
+            int entry = caller.entry(sourceClass);
+            boolean direct = false;
+            for (int i = 0; i < caller.interfaceCount(entry); i++) {
+                if (caller.interfaceAt(entry, i) == owner) {
+                    direct = true;
+                    break;
+                }
+            }
+            if (!direct) {
+                return Reason.METHOD_ACCESS_NARROWED.ordinal();
+            }
+        }
+        int start = runtime.specialLookupStart(sourceClass, owner, member);
+        if (start < 0) {
+            return UNKNOWN;
+        }
+        long selected = runtime.resolveSpecialMethod(start, member);
+        if (selected == Scope.UNKNOWN) {
+            return UNKNOWN;
+        }
+        if (selected == Scope.NOT_FOUND) {
+            return Reason.METHOD_BECAME_ABSTRACT.ordinal();
+        }
+        int selectedOwner = Scope.foundOwner(selected);
+        int selectedAccess = Scope.foundAccess(selected);
+        if ((runtime.classAccess(selectedOwner) & Acc.INTERFACE) != 0 && (selectedAccess & Acc.PRIVATE) == 0) {
+            int[] declaringOwner = handle ? new int[1] : null;
+            ImplStatus status = implementationStatus(start, member, runtime, true, declaringOwner);
+            if (status != ImplStatus.CONCRETE) {
+                return switch (status) {
+                    case CONFLICT -> Reason.CONFLICTING_DEFAULT_METHODS.ordinal();
+                    case ABSENT, ABSTRACT_ONLY -> Reason.METHOD_BECAME_ABSTRACT.ordinal();
+                    default -> UNKNOWN;
+                };
+            }
+            if (!handle) {
+                return OK;
+            }
+            selectedOwner = declaringOwner[0];
+            selectedAccess = runtime.directMethodAccess(selectedOwner, member);
+        } else if ((selectedAccess & Acc.ABSTRACT) != 0) {
+            return Reason.METHOD_BECAME_ABSTRACT.ordinal();
+        }
+        if (handle) {
+            // ACC_SUPER may select a less accessible method or a more specific default.
+            int access = isAccessible(selectedAccess, selectedOwner, sourceClass, runtime, graph, hosts);
+            if (access == MAYBE) {
+                return UNKNOWN;
+            }
+            if (access == NO) {
+                return Reason.METHOD_ACCESS_NARROWED.ordinal();
+            }
+            return switch (isAssignable(graph, runtime, sourceClass, selectedOwner, true)) {
+                case YES -> OK;
+                case NO -> Reason.METHOD_ACCESS_NARROWED.ordinal();
+                default -> UNKNOWN;
+            };
         }
         return OK;
     }
@@ -1151,7 +1250,7 @@ final class Check {
      * constructor. A static {@code provider()} factory is deliberately ignored, the JDK honors
      * it only for providers in explicit modules.
      */
-    private static int spiInstantiable(ClassGraph graph, Scope scope, int provider, int iface, boolean scopeFirst) {
+    static int spiInstantiable(ClassGraph graph, Scope scope, int provider, int iface, boolean scopeFirst) {
         int access = scope.classAccess(provider);
         if (access < 0) {
             // A graph node means the class is still on the runtime classpath and only its
@@ -1202,7 +1301,7 @@ final class Check {
 
     // ---- method selection: AbstractMethodError and conflicting defaults ----
 
-    private enum ImplStatus {
+    enum ImplStatus {
         /** A concrete declaration wins selection. */
         CONCRETE,
         /** Declared only abstractly, and the whole closure was in scope. */
@@ -1222,7 +1321,17 @@ final class Check {
      * specificity is not modeled, so an abstract/concrete mix is UNKNOWN rather than guessed.
      * A static or private declaration never overrides and is ignored.
      */
-    private static ImplStatus implementationStatus(int start, long key, Scope scope) {
+    static ImplStatus implementationStatus(int start, long key, Scope scope) {
+        return implementationStatus(start, key, scope, false, null);
+    }
+
+    /** Complete snapshot selection may resolve abstract/default mixes by interface specificity. */
+    static ImplStatus snapshotImplementationStatus(int start, long key, Scope scope) {
+        return implementationStatus(start, key, scope, true, null);
+    }
+
+    /** When requested, selectedOwner receives the declaring type of a CONCRETE result. */
+    private static ImplStatus implementationStatus(int start, long key, Scope scope, boolean selectMixedDefaults, int[] selectedOwner) {
         IntQueue queue = new IntQueue();
         IntSet seen = new IntSet();
         int current = start;
@@ -1232,6 +1341,9 @@ final class Check {
             }
             if (current == Scope.objectSym()) {
                 if (Scope.isObjectMethod(key)) {
+                    if (selectedOwner != null) {
+                        selectedOwner[0] = current;
+                    }
                     return ImplStatus.CONCRETE;
                 }
                 break;
@@ -1244,6 +1356,9 @@ final class Check {
             int entry = scope.entryOf(current);
             int access = layer.findMethod(entry, key);
             if (access >= 0 && isVirtual(access)) {
+                if (selectedOwner != null) {
+                    selectedOwner[0] = current;
+                }
                 return (access & Acc.ABSTRACT) == 0 ? ImplStatus.CONCRETE : ImplStatus.ABSTRACT_ONLY;
             }
             int n = layer.interfaceCount(entry);
@@ -1256,6 +1371,7 @@ final class Check {
         boolean sawAbstract = false;
         boolean escaped = false;
         IntBuf concrete = new IntBuf(4);
+        IntBuf declarations = selectMixedDefaults ? new IntBuf(4) : null;
         while (!queue.isEmpty()) {
             int iface = queue.poll();
             if (iface == Scope.objectSym() || !interfaceSeen.add(iface)) {
@@ -1269,6 +1385,9 @@ final class Check {
             int entry = scope.entryOf(iface);
             int access = layer.findMethod(entry, key);
             if (access >= 0 && isVirtual(access)) {
+                if (declarations != null) {
+                    declarations.add(iface);
+                }
                 if ((access & Acc.ABSTRACT) == 0) {
                     concrete.add(iface);
                 } else {
@@ -1280,13 +1399,27 @@ final class Check {
                 queue.add(layer.interfaceAt(entry, k));
             }
         }
+        if (!escaped && selectMixedDefaults && sawAbstract && !concrete.isEmpty()) {
+            IntSet shadowed = shadowedDeclarations(declarations, scope);
+            int defaults = 0;
+            for (int i = 0; i < declarations.n; i++) {
+                int iface = declarations.a[i];
+                if (!shadowed.contains(iface) && (scope.directMethodAccess(iface, key) & Acc.ABSTRACT) == 0) {
+                    defaults++;
+                    if (selectedOwner != null) {
+                        selectedOwner[0] = iface;
+                    }
+                }
+            }
+            return defaults == 0 ? ImplStatus.ABSTRACT_ONLY : defaults == 1 ? ImplStatus.CONCRETE : ImplStatus.CONFLICT;
+        }
         if (escaped || (sawAbstract && !concrete.isEmpty())) {
             return ImplStatus.UNKNOWN;
         } else if (sawAbstract) {
             return ImplStatus.ABSTRACT_ONLY;
         } else if (concrete.isEmpty()) {
             return ImplStatus.ABSENT;
-        } else if (maximallySpecificCount(concrete, scope) > 1) {
+        } else if (maximallySpecificCount(concrete, scope, selectedOwner) > 1) {
             return ImplStatus.CONFLICT;
         }
         return ImplStatus.CONCRETE;
@@ -1296,7 +1429,21 @@ final class Check {
      * How many declarations are maximally specific (JVMS 5.4.3.3): an interface that another
      * declaring interface inherits from is overridden by it and does not compete.
      */
-    private static int maximallySpecificCount(IntBuf declarations, Scope scope) {
+    private static int maximallySpecificCount(IntBuf declarations, Scope scope, int[] selectedOwner) {
+        IntSet shadowed = shadowedDeclarations(declarations, scope);
+        int count = 0;
+        for (int d = 0; d < declarations.n; d++) {
+            if (!shadowed.contains(declarations.a[d])) {
+                count++;
+                if (selectedOwner != null) {
+                    selectedOwner[0] = declarations.a[d];
+                }
+            }
+        }
+        return count;
+    }
+
+    private static IntSet shadowedDeclarations(IntBuf declarations, Scope scope) {
         IntSet shadowed = new IntSet();
         IntQueue queue = new IntQueue();
         IntSet seen = new IntSet();
@@ -1317,13 +1464,7 @@ final class Check {
                 pushInterfaces(queue, scope, iface);
             }
         }
-        int count = 0;
-        for (int d = 0; d < declarations.n; d++) {
-            if (!shadowed.contains(declarations.a[d])) {
-                count++;
-            }
-        }
-        return count;
+        return shadowed;
     }
 
     private static void pushInterfaces(IntQueue queue, Scope scope, int className) {
@@ -1336,6 +1477,38 @@ final class Check {
         for (int k = 0; k < n; k++) {
             queue.add(layer.interfaceAt(entry, k));
         }
+    }
+
+    /** Selects the slot of a package-private abstract declaration, including public bridges. */
+    static ImplStatus packageImplementationStatus(int sub, int owner, long key, Scope scope) {
+        IntBuf chain = new IntBuf();
+        IntSet seen = new IntSet();
+        int current = sub;
+        while (current != Intern.NONE && seen.add(current)) {
+            ApiIndex layer = scope.layerOf(current);
+            if (layer == null) {
+                return ImplStatus.UNKNOWN;
+            }
+            chain.add(current);
+            if (current == owner) {
+                break;
+            }
+            current = layer.superOf(layer.entry(current));
+        }
+        if (current != owner) {
+            return ImplStatus.UNKNOWN;
+        }
+        ImplStatus selected = ImplStatus.ABSTRACT_ONLY;
+        boolean publicBridge = false;
+        for (int i = chain.n - 1; i >= 0; i--) {
+            int holder = chain.a[i];
+            int access = scope.directMethodAccess(holder, key);
+            if (access >= 0 && isVirtual(access) && (publicBridge || Intern.samePackage(holder, owner))) {
+                selected = (access & Acc.ABSTRACT) == 0 ? ImplStatus.CONCRETE : ImplStatus.ABSTRACT_ONLY;
+                publicBridge |= (access & (Acc.PUBLIC | Acc.PROTECTED)) != 0;
+            }
+        }
+        return selected;
     }
 
     /**
@@ -1552,22 +1725,28 @@ final class Check {
      * {@code scope} first. Interfaces cannot declare final methods (JVMS 4.6), so they are not walked.
      */
     private static int oldChainBlocks(int sub, long key, Scope scope) {
+        int owner = finalOverrideOwner(sub, key, scope);
+        return owner == UNKNOWN ? MAYBE : owner == Intern.NONE ? NO : YES;
+    }
+
+    /** The nearest visible final on the superclass chain, NONE at its end, UNKNOWN on an escape. */
+    static int finalOverrideOwner(int sub, long key, Scope scope) {
         IntSet seen = new IntSet();
         int current = sub;
         while (current != Intern.NONE && current != Scope.objectSym() && seen.add(current)) {
             ApiIndex layer = scope.layerOf(current);
             if (layer == null) {
-                return MAYBE;
+                return UNKNOWN;
             }
             int entry = scope.entryOf(current);
             // The class's own declaration is the override under test, not a blocker.
             int access = current == sub ? -1 : layer.findMethod(entry, key);
             if (access >= 0 && blocksOverride(access) && overrideVisible(access, current, sub)) {
-                return YES;
+                return current;
             }
             current = layer.superOf(entry);
         }
-        return NO;
+        return Intern.NONE;
     }
 
     /**
@@ -1733,10 +1912,10 @@ final class Check {
 
     // ---- access ----
 
-    private static final int YES = 1;
-    private static final int NO = 0;
+    static final int YES = 1;
+    static final int NO = 0;
     /** The relationship cannot be proven either way; callers treat the reference as unverified. */
-    private static final int MAYBE = 2;
+    static final int MAYBE = 2;
 
     private static int isAccessible(int access, int owner, int sourceClass, Scope runtime, ClassGraph graph, NestHosts hosts) {
         if ((access & Acc.PUBLIC) != 0) {
