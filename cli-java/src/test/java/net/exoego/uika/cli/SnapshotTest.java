@@ -597,6 +597,7 @@ class SnapshotTest {
         Run result = validate(api);
         assertEquals(1, result.code(), result.stdout() + result.stderr());
         assertTrue(violations(result).stream().anyMatch(v -> v.get("kind").equals("service_provider_not_found")), result.stdout());
+        assertNull(violations(result).get(0).get("provider"));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -608,16 +609,25 @@ class SnapshotTest {
     })
     void anUnusableServiceProviderIsReportedEvenWhenItsClassExists(String declaration) throws Exception {
         Path classes = compile("app", Map.of("app/Service", "package app; public interface Service {}", "app/Impl", "package app; " + declaration));
-        Path services = Files.createDirectories(classes.resolve("META-INF/services"));
+        Path registration = Files.createDirectories(dir.resolve("registration"));
+        Path services = Files.createDirectories(registration.resolve("META-INF/services"));
         Files.writeString(services.resolve("app.Service"), "app.Impl\n");
-        Run result = validate(classes);
+        Run result = validate(classes, registration);
         assertEquals(1, result.code(), result.stdout() + result.stderr());
         assertEquals(Boolean.TRUE, result.json().get("complete"));
         List<Map<String, Object>> issues = violations(result);
         assertEquals(1, issues.size(), result.stdout());
         assertEquals("service_provider_not_instantiable", issues.get(0).get("kind"));
         assertEquals("app/Impl", issues.get(0).get("source_class"));
-        assertEquals(classes.toString(), issues.get(0).get("source"));
+        assertEquals(registration.toString(), issues.get(0).get("source"));
+        assertEquals(classes.toString(), issues.get(0).get("provider"));
+        Path providerJar = jar("provider", classes);
+        Path registrationJar = jar("registration", registration);
+        Run archived = validate(providerJar, registrationJar);
+        assertEquals(1, archived.code(), archived.stdout() + archived.stderr());
+        assertEquals(ids(result), ids(archived));
+        assertEquals(registrationJar.toString(), violations(archived).get(0).get("source"));
+        assertEquals(providerJar.toString(), violations(archived).get(0).get("provider"));
     }
 
     @Test
@@ -911,6 +921,9 @@ class SnapshotTest {
                 "lib/Api", "package lib; public class Api { private void m() {} }",
                 "lib/Middle", "package lib; public class Middle extends Api { private void m() {} }"));
         Files.write(newApi.resolve("lib/Api.class"), Files.readAllBytes(oldApi.resolve("lib/Api.class")));
+        Path selected = Files.createDirectories(dir.resolve("selected"));
+        Files.createDirectories(selected.resolve("lib"));
+        Files.move(newApi.resolve("lib/Middle.class"), selected.resolve("lib/Middle.class"));
         Path consumer = compile("app", Map.of("app/Main", """
                 package app;
                 import java.util.function.Consumer;
@@ -925,11 +938,12 @@ class SnapshotTest {
         invokeOnJvm(oldApi, consumer);
         Run before = validate(oldApi, consumer);
         assertEquals(0, before.code(), before.stdout() + before.stderr());
-        assertJvmFailure(IllegalAccessError.class, newApi, consumer);
-        Run after = validate(newApi, consumer);
+        assertJvmFailure(IllegalAccessError.class, newApi, selected, consumer);
+        Run after = validate(newApi, selected, consumer);
         assertEquals(1, after.code(), after.stdout() + after.stderr());
         assertEquals(Boolean.TRUE, after.json().get("complete"));
         assertEquals(List.of("method_not_accessible"), violations(after).stream().map(v -> v.get("kind")).toList());
+        assertEquals(selected.toString(), violations(after).get(0).get("provider"));
     }
 
     @ParameterizedTest
@@ -968,21 +982,27 @@ class SnapshotTest {
         String iface = "package lib; public interface Api extends Parent, Child {}";
         Path oldApi = compile("compile", Map.of("lib/Parent", parent, "lib/Child", "package lib; public interface Child extends Parent {}", "lib/Api", iface));
         Path api = compile("runtime", Map.of("lib/Parent", parent, "lib/Child", "package lib; public interface Child extends Parent { void m(); }", "lib/Api", iface));
+        Path selected = Files.createDirectories(dir.resolve("selected"));
+        Files.createDirectories(selected.resolve("lib"));
+        Files.move(api.resolve("lib/Child.class"), selected.resolve("lib/Child.class"));
         Path consumer = compile("app", Map.of("app/Main", "package app; import lib.Api; public class Main implements Api { public void m() { Api.super.m(); } public static void run() { new Main().m(); } }"), oldApi);
         Run before = validate(oldApi, consumer);
         assertEquals(0, before.code(), before.stdout() + before.stderr());
-        Run after = validate(api, consumer);
+        Run after = validate(api, selected, consumer);
         assertEquals(1, after.code(), after.stdout() + after.stderr());
         assertTrue(violations(after).stream().anyMatch(v -> v.get("kind").equals("abstract_method_called")), after.stdout());
-        assertJvmFailure(AbstractMethodError.class, api, consumer);
+        assertEquals(selected.toString(), violations(after).get(0).get("provider"));
+        assertJvmFailure(AbstractMethodError.class, api, selected, consumer);
     }
 
-    @Test
-    void aSuperCallSelectsTheNearestSuperclassEvenWhenItNamesAnAncestor() throws Exception {
-        String grand = "package lib; public class Grand { public void m() {} }";
-        Path oldApi = compile("compile", Map.of("lib/Grand", grand, "lib/Api", "package lib; public class Api extends Grand {}"));
-        Path api = compile("runtime", Map.of("lib/Grand", grand, "lib/Api", "package lib; public abstract class Api extends Grand { public abstract void m(); }"));
-        Path consumer = compile("app", Map.of("app/Main", "package app; import lib.Api; import lib.Grand; public class Main extends Api { public static Class<?> ancestor() { return Grand.class; } public void m() { super.m(); } public static void run() { new Main().m(); } }"), oldApi);
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void aSuperCallAttributesTheFailureToTheResolvedOrSelectedDeclaration(boolean accessibleAncestor) throws Exception {
+        Path oldGrand = compile("compile-grand", Map.of("lib/Grand", "package lib; public class Grand { public void m() {} }"));
+        Path grand = compile("runtime-grand", Map.of("lib/Grand", "package lib; public class Grand { " + (accessibleAncestor ? "public" : "private") + " void m() {} }"));
+        Path oldApi = compile("compile", Map.of("lib/Api", "package lib; public class Api extends Grand {}"), oldGrand);
+        Path api = compile("runtime", Map.of("lib/Api", "package lib; public abstract class Api extends Grand { public abstract void m(); }"), grand);
+        Path consumer = compile("app", Map.of("app/Main", "package app; import lib.Api; import lib.Grand; public class Main extends Api { public static Class<?> ancestor() { return Grand.class; } public void m() { super.m(); } public static void run() { new Main().m(); } }"), oldApi, oldGrand);
         Path file = consumer.resolve("app/Main.class");
         byte[] bytes = Files.readAllBytes(file);
         ClassParser parser = new ClassParser();
@@ -1007,12 +1027,26 @@ class SnapshotTest {
         assertNotEquals(0, reference);
         ByteBuffer.wrap(bytes).putShort(parser.cpPos[reference] + Byte.BYTES, (short) owner);
         Files.write(file, bytes);
-        Run before = validate(oldApi, consumer);
+        Run before = validate(oldApi, oldGrand, consumer);
         assertEquals(0, before.code(), before.stdout() + before.stderr());
-        Run after = validate(api, consumer);
+        Run after = validate(api, grand, consumer);
         assertEquals(1, after.code(), after.stdout() + after.stderr());
-        assertTrue(violations(after).stream().anyMatch(v -> v.get("kind").equals("abstract_method_called")), after.stdout());
-        assertJvmFailure(AbstractMethodError.class, api, consumer);
+        assertEquals(Boolean.TRUE, after.json().get("complete"));
+        List<Map<String, Object>> issues = violations(after);
+        assertEquals(1, issues.size(), after.stdout());
+        assertEquals(accessibleAncestor ? "abstract_method_called" : "method_not_accessible", issues.get(0).get("kind"));
+        assertEquals("lib/Grand", ((Map<?, ?>) issues.get(0).get("reference")).get("owner"));
+        assertEquals(consumer.toString(), issues.get(0).get("source"));
+        assertEquals((accessibleAncestor ? api : grand).toString(), issues.get(0).get("provider"));
+        assertJvmFailure(accessibleAncestor ? AbstractMethodError.class : IllegalAccessError.class, api, grand, consumer);
+        Path apiJar = jar("api", api);
+        Path grandJar = jar("grand", grand);
+        Path consumerJar = jar("consumer", consumer);
+        Run archived = validate(apiJar, grandJar, consumerJar);
+        assertEquals(1, archived.code(), archived.stdout() + archived.stderr());
+        assertEquals(ids(after), ids(archived));
+        assertEquals(consumerJar.toString(), violations(archived).get(0).get("source"));
+        assertEquals((accessibleAncestor ? apiJar : grandJar).toString(), violations(archived).get(0).get("provider"));
     }
 
     @Test

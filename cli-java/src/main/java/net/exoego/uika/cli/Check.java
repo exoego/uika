@@ -835,6 +835,13 @@ final class Check {
      */
     static int verdict(
             int meta, int owner, long member, int sourceClass, Scope oldScope, Scope runtime, ClassGraph graph, NestHosts hosts) {
+        return verdict(meta, owner, member, sourceClass, oldScope, runtime, graph, hosts, null);
+    }
+
+    /** Snapshot attribution may request the unique declaration selected by invokespecial. */
+    static int verdict(
+            int meta, int owner, long member, int sourceClass, Scope oldScope, Scope runtime, ClassGraph graph, NestHosts hosts,
+            int[] selectedDeclaration) {
         boolean arrayOwner = (meta & SymbolRef.ARRAY_OWNER) != 0;
         if (!arrayOwner && !runtime.containsClass(owner) && !graph.contains(owner)) {
             return Reason.CLASS_REMOVED.ordinal();
@@ -967,12 +974,13 @@ final class Check {
             return OK;
         }
         if (oldScope == null && (meta & SymbolRef.SPECIAL_CALL) != 0) {
-            return specialVerdict(meta, owner, member, sourceClass, runtime, graph, hosts);
+            return specialVerdict(meta, owner, member, sourceClass, runtime, graph, hosts, selectedDeclaration);
         }
         return OK;
     }
 
-    private static int specialVerdict(int meta, int owner, long member, int sourceClass, Scope runtime, ClassGraph graph, NestHosts hosts) {
+    private static int specialVerdict(int meta, int owner, long member, int sourceClass, Scope runtime, ClassGraph graph, NestHosts hosts,
+            int[] selectedDeclaration) {
         boolean handle = (meta & SymbolRef.SPECIAL_HANDLE) != 0;
         if (handle && (runtime.classAccess(owner) & Acc.INTERFACE) != 0 && owner != sourceClass) {
             ApiIndex caller = runtime.layerOf(sourceClass);
@@ -1005,9 +1013,12 @@ final class Check {
         int selectedOwner = Scope.foundOwner(selected);
         int selectedAccess = Scope.foundAccess(selected);
         if ((runtime.classAccess(selectedOwner) & Acc.INTERFACE) != 0 && (selectedAccess & Acc.PRIVATE) == 0) {
-            int[] declaringOwner = handle ? new int[1] : null;
+            int[] declaringOwner = selectedDeclaration != null ? selectedDeclaration : handle ? new int[1] : null;
             ImplStatus status = implementationStatus(start, member, runtime, true, declaringOwner);
             if (status != ImplStatus.CONCRETE) {
+                if (selectedDeclaration != null && status != ImplStatus.ABSTRACT_ONLY) {
+                    selectedDeclaration[0] = Intern.NONE;
+                }
                 return switch (status) {
                     case CONFLICT -> Reason.CONFLICTING_DEFAULT_METHODS.ordinal();
                     case ABSENT, ABSTRACT_ONLY -> Reason.METHOD_BECAME_ABSTRACT.ordinal();
@@ -1019,8 +1030,13 @@ final class Check {
             }
             selectedOwner = declaringOwner[0];
             selectedAccess = runtime.directMethodAccess(selectedOwner, member);
-        } else if ((selectedAccess & Acc.ABSTRACT) != 0) {
-            return Reason.METHOD_BECAME_ABSTRACT.ordinal();
+        } else {
+            if (selectedDeclaration != null) {
+                selectedDeclaration[0] = selectedOwner;
+            }
+            if ((selectedAccess & Acc.ABSTRACT) != 0) {
+                return Reason.METHOD_BECAME_ABSTRACT.ordinal();
+            }
         }
         if (handle) {
             // ACC_SUPER may select a less accessible method or a more specific default.
@@ -1330,7 +1346,7 @@ final class Check {
         return implementationStatus(start, key, scope, true, null);
     }
 
-    /** When requested, selectedOwner receives the declaring type of a CONCRETE result. */
+    /** Reports the declaration for CONCRETE or unique ABSTRACT_ONLY results; otherwise unspecified. */
     private static ImplStatus implementationStatus(int start, long key, Scope scope, boolean selectMixedDefaults, int[] selectedOwner) {
         IntQueue queue = new IntQueue();
         IntSet seen = new IntSet();
@@ -1402,20 +1418,33 @@ final class Check {
         if (!escaped && selectMixedDefaults && sawAbstract && !concrete.isEmpty()) {
             IntSet shadowed = shadowedDeclarations(declarations, scope);
             int defaults = 0;
+            int specificDeclarations = 0;
+            int specificOwner = Intern.NONE;
             for (int i = 0; i < declarations.n; i++) {
                 int iface = declarations.a[i];
-                if (!shadowed.contains(iface) && (scope.directMethodAccess(iface, key) & Acc.ABSTRACT) == 0) {
+                if (shadowed.contains(iface)) {
+                    continue;
+                }
+                specificDeclarations++;
+                specificOwner = iface;
+                if ((scope.directMethodAccess(iface, key) & Acc.ABSTRACT) == 0) {
                     defaults++;
                     if (selectedOwner != null) {
                         selectedOwner[0] = iface;
                     }
                 }
             }
+            if (defaults == 0 && selectedOwner != null && specificDeclarations == 1) {
+                selectedOwner[0] = specificOwner;
+            }
             return defaults == 0 ? ImplStatus.ABSTRACT_ONLY : defaults == 1 ? ImplStatus.CONCRETE : ImplStatus.CONFLICT;
         }
         if (escaped || (sawAbstract && !concrete.isEmpty())) {
             return ImplStatus.UNKNOWN;
         } else if (sawAbstract) {
+            if (selectedOwner != null && declarations != null && maximallySpecificCount(declarations, scope, selectedOwner) != 1) {
+                selectedOwner[0] = Intern.NONE;
+            }
             return ImplStatus.ABSTRACT_ONLY;
         } else if (concrete.isEmpty()) {
             return ImplStatus.ABSENT;

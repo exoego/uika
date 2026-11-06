@@ -368,6 +368,7 @@ final class Snapshot {
     private static void checkReferences(IntArena records, ApiIndex platform, Scope runtime,
             ClassGraph graph, Check.NestHosts hosts, Module consumerModule, Result result) {
         SymMap exported = new SymMap();
+        int[] selectedDeclaration = new int[1];
         for (int at = 0; at < records.size();) {
             int source = records.get(at + RECORD_SOURCE);
             int consumer = records.get(at + RECORD_CLASS);
@@ -379,7 +380,8 @@ final class Snapshot {
                 int name = records.get(base + SymbolRef.NAME_WORD);
                 int descriptor = records.get(base + SymbolRef.DESCRIPTOR_WORD);
                 long key = name == Intern.NONE ? MemberKey.NONE : MemberKey.of(name, descriptor);
-                int verdict = Check.verdict(meta, owner, key, consumer, null, runtime, graph, hosts);
+                selectedDeclaration[0] = Intern.NONE;
+                int verdict = Check.verdict(meta, owner, key, consumer, null, runtime, graph, hosts, selectedDeclaration);
                 if (verdict == Check.OK && key == MemberKey.NONE && (meta & SymbolRef.DESCRIPTOR_TYPE) == 0
                         && platform.containsClass(owner)) {
                     int accessible = exported.get(owner);
@@ -402,7 +404,8 @@ final class Snapshot {
                     SymbolRef reference = SymbolRef.unpack(meta, owner, name, descriptor);
                     Kind kind = verdict == Reason.METHOD_BECAME_ABSTRACT.ordinal() && (meta & SymbolRef.SPECIAL_CALL) != 0
                             ? Kind.ABSTRACT_METHOD_CALLED : kind(Reason.ALL[verdict]);
-                    result.issue(source, consumer, reference, kind, provider(runtime, reference));
+                    int origin = selectedDeclaration[0] == Intern.NONE ? provider(runtime, reference) : provider(runtime, selectedDeclaration[0]);
+                    result.issue(source, consumer, reference, kind, origin);
                 }
             }
             at += RECORD_HEADER_WORDS + count * SymbolRef.WORDS;
@@ -419,6 +422,10 @@ final class Snapshot {
                 owner = Scope.foundOwner(resolved);
             }
         }
+        return provider(runtime, owner);
+    }
+
+    private static int provider(Scope runtime, int owner) {
         ApiIndex layer = runtime.layerOf(owner);
         return layer == null ? Intern.NONE : layer.sourceOf(layer.entry(owner));
     }
@@ -535,7 +542,7 @@ final class Snapshot {
                     result.diagnostics.add("inconclusive service provider: " + Intern.str(provider));
                 } else if (status == Check.NO) {
                     result.issue(file.source(), provider, SymbolRef.ofClass(file.iface()), runtime.containsClass(provider)
-                            ? Kind.SERVICE_PROVIDER_NOT_INSTANTIABLE : Kind.SERVICE_PROVIDER_NOT_FOUND, Intern.NONE);
+                            ? Kind.SERVICE_PROVIDER_NOT_INSTANTIABLE : Kind.SERVICE_PROVIDER_NOT_FOUND, provider(runtime, provider));
                 }
             }
         }
