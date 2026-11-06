@@ -168,18 +168,17 @@ final class Snapshot {
                 ClassParser parser = scratch.parser;
                 parser.collectMethodContext = true;
                 parser.parse(bytes.bytes, bytes.available);
-                ClassApi api = Extract.extractApi(parser, scratch);
-                if (!Intern.str(api.name).equals(Intern.str(entry))) {
+                int name = parser.internClassName(scratch, parser.thisClass);
+                if (name != entry) {
                     leaf.diagnostics.add("class entry does not match its binary name: " + Intern.str(source) + "!" + Intern.str(entry));
                     return;
                 }
-                if (api.sealingUnknown) {
+                if (parser.sealingUnknown) {
                     leaf.diagnostics.add("unreadable sealing metadata: " + Intern.str(source) + "!" + Intern.str(entry));
                 }
-                api.source = source;
-                leaf.index.insertIfAbsent(api);
+                leaf.index.insertIfAbsent(parser, scratch, source);
                 leaf.records.add(source);
-                leaf.records.add(api.name);
+                leaf.records.add(name);
                 Extract.snapshotRefs(leaf.records, parser, scratch);
             } catch (ClassParser.FormatException e) {
                 leaf.records.n = mark;
