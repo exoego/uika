@@ -124,7 +124,7 @@ class IndexTest {
 
     @ParameterizedTest(name = "{displayName}: {0}")
     @MethodSource("net.exoego.uika.cli.CheckTest#nonFinalNonVirtualAccess")
-    void virtualLookupSkipsPrivateAndStaticInterfaceMethods(int access) {
+    void inheritedInterfaceLookupSkipsPrivateAndStaticMethods(int access) {
         ClassApi c = classOf("a/C", JAVA_LANG_OBJECT);
         c.interfaces = syms("a/Hidden", "a/Public");
         ClassApi hidden = classOf("a/Hidden", JAVA_LANG_OBJECT);
@@ -135,7 +135,10 @@ class IndexTest {
         Scope scope = new Scope(ApiIndex.build(List.of(c, hidden, inherited)));
         long key = MemberKey.of("m", "()V");
 
-        assertEquals(hidden.name, Scope.foundOwner(scope.resolveMember(c.name, key, Scope.MemberKind.METHOD)));
+        long reference = scope.resolveMember(c.name, key, Scope.MemberKind.METHOD);
+        assertTrue(Scope.isFound(reference));
+        assertEquals(inherited.name, Scope.foundOwner(reference));
+        assertEquals(Acc.PUBLIC, Scope.foundAccess(reference));
         long virtual = scope.resolveVirtualMethod(c.name, key);
         assertTrue(Scope.isFound(virtual));
         assertEquals(inherited.name, Scope.foundOwner(virtual));

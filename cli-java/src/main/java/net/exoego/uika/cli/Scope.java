@@ -230,7 +230,7 @@ final class Scope {
         IntSet interfaceSeen = new IntSet();
         boolean unknown = false;
         for (int k = 0; k < pendingCount; k++) {
-            long resolved = resolveInterfaceMethod(pending[k], key, interfaceSeen, ignoredAccess);
+            long resolved = resolveInterfaceMethod(pending[k], key, interfaceSeen, ignoredAccess | Acc.NON_VIRTUAL);
             if (resolved >= 0) {
                 return resolved;
             }
