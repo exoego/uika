@@ -17,4 +17,4 @@ bazelisk = "1.30.0"
 # java on PATH. Renovate's mise manager skips asdf plugin paths, so the annotation
 # below carries the lookup, and extractVersion undoes the v the plugin strips.
 # renovate: datasource=github-releases depName=jreleaser/jreleaser extractVersion=^v(?<version>.+)$
-"asdf:joschi/asdf-jreleaser" = { version = "1.26.0", depends = ["java"] }
+"asdf:joschi/asdf-jreleaser" = { version = "1.27.0", depends = ["java"] }
