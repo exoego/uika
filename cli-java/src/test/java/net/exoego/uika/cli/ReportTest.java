@@ -683,6 +683,7 @@ class ReportTest {
                 memberViolation("a/User", "x/C", "o", "()V", RefKind.METHOD, Reason.METHOD_BECAME_FINAL),
                 classViolation("a/User", "x/Final", Reason.EXTENDS_FINAL_CLASS, true, null),
                 memberViolation("a/User", "x/C", "a", "()V", RefKind.METHOD, Reason.METHOD_BECAME_ABSTRACT),
+                memberViolation("a/User", "x/C", "su", "()V", RefKind.METHOD, Reason.SUPER_METHOD_BECAME_ABSTRACT),
                 memberViolation("a/User", "x/C", "d", "()V", RefKind.METHOD, Reason.CONFLICTING_DEFAULT_METHODS),
                 classViolation("a/Provider", "x/Service", Reason.SERVICE_PROVIDER_REMOVED, true, null),
                 classViolation("a/Provider", "x/Service", Reason.SERVICE_PROVIDER_NOT_INSTANTIABLE, true, null));
@@ -713,6 +714,7 @@ class ReportTest {
                         x.C.o() became final, but a.User still overrides it
                         x.C.sf: int became an instance member, but a.User still accesses it as a static member
                         x.C.si() became an instance member, but a.User still calls it as a static member
+                        x.C.su() became abstract, but a.User still calls it through super
                         x.Fin became final, but a.User still extends it
                         x.Flip became an interface, but a.User was compiled against it as a class
                         x.Gone was removed, but a.User still uses it
@@ -742,7 +744,8 @@ class ReportTest {
                 memberViolation("a/User", "x/C", "is", "()V", RefKind.METHOD, Reason.METHOD_BECAME_STATIC),
                 memberViolation("a/User", "x/C", "si", "()V", RefKind.METHOD, Reason.METHOD_BECAME_INSTANCE),
                 memberViolation("a/User", "x/C", "if", "I", RefKind.FIELD, Reason.FIELD_BECAME_STATIC),
-                memberViolation("a/User", "x/C", "sf", "I", RefKind.FIELD, Reason.FIELD_BECAME_INSTANCE));
+                memberViolation("a/User", "x/C", "sf", "I", RefKind.FIELD, Reason.FIELD_BECAME_INSTANCE),
+                memberViolation("a/User", "x/C", "su", "()V", RefKind.METHOD, Reason.SUPER_METHOD_BECAME_ABSTRACT));
         r.reachabilityComputed = false;
         String out = Report.checkText(r);
         for (String expected : List.of(
@@ -757,10 +760,11 @@ class ReportTest {
                 "❌ x.C.is()\n    method became static, throws IncompatibleClassChangeError at first call\n",
                 "❌ x.C.si()\n    method became instance, throws IncompatibleClassChangeError at first call\n",
                 "❌ x.C.if: int\n    field became static, throws IncompatibleClassChangeError at first access\n",
-                "❌ x.C.sf: int\n    field became instance, throws IncompatibleClassChangeError at first access\n")) {
+                "❌ x.C.sf: int\n    field became instance, throws IncompatibleClassChangeError at first access\n",
+                "❌ x.C.su()\n    super method became abstract, throws AbstractMethodError at first call\n")) {
             assertTrue(out.contains(expected), "missing " + Json.quote(expected) + "\n" + out);
         }
-        assertEquals(12, count(out, "❌ x."), out);
+        assertEquals(13, count(out, "❌ x."), out);
     }
 
     /**

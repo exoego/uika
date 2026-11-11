@@ -175,6 +175,32 @@ class ExtractTest {
     }
 
     @Test
+    void onlyAnInvokespecialCallSiteIsMarkedSpecial() throws Exception {
+        byte[] bytes = referencingClass();
+        // invokestatic #19 becomes invokespecial #19.
+        int at = -1;
+        for (int i = 0; i + 2 < bytes.length; i++) {
+            if ((bytes[i] & 0xff) == 0xb8 && bytes[i + 1] == 0x00 && bytes[i + 2] == 0x13) {
+                at = i;
+            }
+        }
+        bytes[at] = (byte) 0xb7;
+        ClassParser p = new ClassParser();
+        p.parse(bytes, bytes.length);
+        NameSet owners = names("lib/Owner", "lib/Elem");
+        Extract.referencesLibrary(p, scratch, owners);
+        IntBuf out = new IntBuf();
+        Extract.refs(out, p, scratch, owners);
+        List<String> special = new ArrayList<>();
+        for (int i = 1; i < out.n; i += 4) {
+            if (SymbolRef.specialOf(out.a[i])) {
+                special.add(show(SymbolRef.unpack(out.a[i], out.a[i + 1], out.a[i + 2], out.a[i + 3])));
+            }
+        }
+        assertEquals(List.of("METHOD lib/Owner.call:()V static=false write=null new=null"), special);
+    }
+
+    @Test
     void aPoolNamingNoAcceptedOwnerHoldsNoReference() throws Exception {
         byte[] bytes = referencingClass();
         ClassParser p = new ClassParser();

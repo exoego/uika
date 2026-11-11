@@ -1431,4 +1431,35 @@ class IntegrationTest {
                 "expected an InstantiationError break on ValueClassBoxConverter: "
                         + describePairs(withReason(report.violations, Reason.CLASS_BECAME_ABSTRACT)));
     }
+
+    /**
+     * AbstractMethodError from a super call to a method that became abstract.
+     * ktlint-reporter-github 3.3.1 was compiled against ktlint-cli-reporter-core 1.7.1, where
+     * ReporterV2's four lifecycle methods are JVM defaults, so kotlinc bridged each one with an
+     * invokespecial to the interface. Core 1.7.2 declares them abstract again. The reporter
+     * has all four methods, so no implementation is missing. Each bridge still throws
+     * (https://github.com/musichin/ktlint-github-reporter/issues/80).
+     */
+    @Test
+    void detectsSuperCallToAMethodThatBecameAbstract() {
+        String oldJar = fixture("ktlint-cli-reporter-core-1.7.1.jar");
+        String newJar = fixture("ktlint-cli-reporter-core-1.7.2.jar");
+        String consumer = fixture("ktlint-reporter-github-3.3.1.jar");
+
+        Check.Report report = Check.check(List.of(consumer), index(oldJar), index(newJar), List.of(newJar));
+        List<Violation> superCalls = withReason(report.violations, Reason.SUPER_METHOD_BECAME_ABSTRACT);
+        assertEquals(
+                List.of("after", "afterAll", "before", "beforeAll"),
+                superCalls.stream()
+                        .map(v -> Intern.str(MemberKey.name(v.reference.member())))
+                        .sorted()
+                        .toList(),
+                describePairs(superCalls));
+        for (Violation v : superCalls) {
+            assertEquals("de/musichin/ktlint/reporter/github/GitHubReporter", sourceClass(v));
+            assertEquals("com/pinterest/ktlint/cli/reporter/core/api/ReporterV2", owner(v));
+        }
+        // The class implements every method, so the missing-implementation walk stays quiet.
+        assertTrue(withReason(report.violations, Reason.METHOD_BECAME_ABSTRACT).isEmpty(), describePairs(report.violations));
+    }
 }

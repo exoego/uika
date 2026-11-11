@@ -808,11 +808,19 @@ final class Check {
 
     /** {@link #verdict} for one reference given as an object rather than a packed record. */
     static Verdict verdictOf(SymbolRef r, int sourceClass, Scope oldScope, Scope runtime, ClassGraph graph) {
+        return verdictOf(r, false, sourceClass, oldScope, runtime, graph);
+    }
+
+    /** @param special whether the call site is an {@code invokespecial}, which the object form cannot say */
+    static Verdict verdictOf(SymbolRef r, boolean special, int sourceClass, Scope oldScope, Scope runtime, ClassGraph graph) {
         int meta = SymbolRef.pack(
                 r.kind(),
                 r.expectedStatic() == null ? SymbolRef.TRI_NONE : r.expectedStatic() ? SymbolRef.TRI_TRUE : SymbolRef.TRI_FALSE,
                 r.fieldWrite() == null ? SymbolRef.TRI_NONE : r.fieldWrite() ? SymbolRef.TRI_TRUE : SymbolRef.TRI_FALSE,
                 Boolean.TRUE.equals(r.instantiated()));
+        if (special) {
+            meta = SymbolRef.special(meta);
+        }
         int code = verdict(meta, r.owner(), r.member(), sourceClass, oldScope, runtime, graph, new NestHosts(graph, Map.of()));
         if (code == OK) {
             return new Verdict(Verdict.Kind.OK, r, null);
@@ -938,7 +946,37 @@ final class Check {
             }
             return OK;
         }
+        // invokespecial calls the method it selects without virtual dispatch, so an abstract
+        // one throws AbstractMethodError even when the caller overrides it. An abstract
+        // resolution is necessary for an abstract selection, which keeps the walk off every
+        // other super call.
+        if (kind == Scope.MemberKind.METHOD && SymbolRef.specialOf(meta) && (foundAccess & Acc.ABSTRACT) != 0) {
+            int start = specialSelectionStart(refKind, owner, sourceClass, graph);
+            return switch (implementationStatus(start, member, runtime)) {
+                case ABSTRACT_ONLY -> switch (implementationStatus(start, member, oldScope)) {
+                    case CONCRETE -> Reason.SUPER_METHOD_BECAME_ABSTRACT.ordinal();
+                    case UNKNOWN -> UNKNOWN;
+                    case ABSTRACT_ONLY, ABSENT, CONFLICT -> OK;
+                };
+                case UNKNOWN -> UNKNOWN;
+                case CONCRETE, ABSENT, CONFLICT -> OK;
+            };
+        }
         return OK;
+    }
+
+    /**
+     * Where invokespecial starts its method selection (JVMS 6.5): the caller's direct
+     * superclass when the reference names a class, and the named interface itself for
+     * {@code X.super.m()}. javac names the direct superclass, so the two only differ for
+     * bytecode that names a class further up.
+     */
+    private static int specialSelectionStart(RefKind refKind, int owner, int sourceClass, ClassGraph graph) {
+        if (refKind == RefKind.INTERFACE_METHOD) {
+            return owner;
+        }
+        int node = graph.node(sourceClass);
+        return node < 0 ? owner : graph.superOf(node);
     }
 
     // ---- graph walks: breaks that need no constant-pool reference ----
