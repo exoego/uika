@@ -52,7 +52,7 @@ jobs:
 
       # Also restored by the clojure, lein and bazel jobs, which build the CLI jar.
       - name: Cache Gradle
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: 25
@@ -98,7 +98,7 @@ jobs:
           cache: false
 
       - name: Cache Gradle
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: 25
@@ -153,7 +153,7 @@ jobs:
           cache: false
 
       - name: Cache Gradle
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: 25
@@ -185,7 +185,7 @@ jobs:
       # The invoker ITs resolve into target/it-repo, which ~/.m2 never covered, and
       # refetching it cold every run is what tripped a 429 once a third IT was added.
       - name: Cache Maven
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: 25
@@ -233,7 +233,7 @@ jobs:
       # The Makefile redirects every sbt directory to /tmp/uika-sbt, so the default sbt
       # paths would cache nothing.
       - name: Cache sbt and coursier
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: 25
@@ -323,7 +323,7 @@ jobs:
           cache: false
 
       - name: Cache Gradle
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: 25
@@ -336,7 +336,7 @@ jobs:
 
       # ~/.gitlibs holds the Clojure CLI's git deps.
       - name: Cache Maven and gitlibs
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: 25
@@ -374,7 +374,7 @@ jobs:
           cache: false
 
       - name: Cache Gradle
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: 25
@@ -386,7 +386,7 @@ jobs:
             .mise.toml
 
       - name: Cache Maven
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: 25
@@ -441,7 +441,7 @@ jobs:
           cache: false
 
       - name: Cache Gradle
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: 25
@@ -483,7 +483,7 @@ jobs:
           cache: false
 
       - name: Cache Gradle
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: 25
@@ -516,7 +516,7 @@ jobs:
           cache: false
 
       - name: Cache Gradle
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: 25
