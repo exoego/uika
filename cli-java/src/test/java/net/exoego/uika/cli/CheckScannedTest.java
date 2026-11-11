@@ -30,6 +30,8 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import org.junit.jupiter.api.AfterEach;
@@ -625,6 +627,242 @@ final class CheckScannedTest {
     /** app/Sub extends lib/Mid and overrides m. */
     private String subOverridingM() throws Exception {
         return jar("app.jar", "app/Sub.class", new ClassWriter("app/Sub", "lib/Mid").method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
+    }
+
+    // ---- references whose owner is a class outside the library ----
+
+    private static final int INVOKESTATIC = 0xb8;
+    private static final int INVOKESPECIAL = 0xb7;
+
+    /** {@code name extends superName} whose {@code call()} runs one instruction on a member of {@code owner}. */
+    private static byte[] referencing(String name, String superName, int opcode, int tag, String owner, String member, String descriptor) {
+        ClassWriter w = new ClassWriter(name, superName);
+        int ref = w.memberRef(tag, owner, member, descriptor);
+        return w.method(Acc.PUBLIC, "call", "()V", opcode, ref >>> 8, ref & 0xff, RETURN).bytes();
+    }
+
+    private static byte[] subclass(String name, String superName) {
+        return new ClassWriter(name, superName).bytes();
+    }
+
+    private static SymbolRef onlyReference(Check.Report report, Reason reason, String sourceClass) {
+        assertEquals(List.of(), report.warnings);
+        assertEquals(1, report.violations.size());
+        Violation v = report.violations.get(0);
+        assertEquals(reason, v.reason);
+        assertEquals(sourceClass, Intern.str(v.sourceClass));
+        return v.reference;
+    }
+
+    /**
+     * javac names the receiver's static type as the owner, so an inherited library method
+     * called without a qualifier names the subclass. The report names the class that declared it.
+     */
+    @Test
+    void anInheritedMethodCalledOnTheSubclassIsReportedAgainstItsDeclaringClass() throws Exception {
+        String app = jar("app.jar", "app/Sub.class", referencing("app/Sub", "lib/C", INVOKEVIRTUAL, 10, "app/Sub", "m", "()V"));
+        ApiIndex oldLib = index(classWithMethodAccess("lib/C", m("m", "()V", Acc.PUBLIC)));
+        ApiIndex newLib = index(classWithMethodAccess("lib/C"));
+
+        Check.Report report = Check.check(List.of(app), oldLib, newLib, List.of());
+
+        assertEquals(
+                new SymbolRef(RefKind.METHOD, intern("lib/C"), MemberKey.of("m", "()V"), Boolean.FALSE, null, null),
+                onlyReference(report, Reason.METHOD_REMOVED, "app/Sub"));
+        assertEquals(0, report.unknownRefs);
+    }
+
+    @Test
+    void anInheritedFieldReadOnTheSubclassIsReported() throws Exception {
+        String app = jar("app.jar", "app/Sub.class", referencing("app/Sub", "lib/C", GETFIELD, 9, "app/Sub", "f", "I"));
+        ApiIndex oldLib = index(classWithFields("lib/C", m("f", "I", Acc.PROTECTED)));
+        ApiIndex newLib = index(classWithFields("lib/C"));
+
+        Check.Report report = Check.check(List.of(app), oldLib, newLib, List.of());
+
+        assertEquals(
+                new SymbolRef(RefKind.FIELD, intern("lib/C"), MemberKey.of("f", "I"), Boolean.FALSE, Boolean.FALSE, null),
+                onlyReference(report, Reason.FIELD_REMOVED, "app/Sub"));
+    }
+
+    /** The opcode still qualifies the reference when the caller names the library. */
+    @Test
+    void anInheritedStaticMethodThatBecameInstanceIsReported() throws Exception {
+        String app = jar("app.jar", "app/Sub.class", referencing("app/Sub", "lib/C", INVOKESTATIC, 10, "app/Sub", "s", "()V"));
+        ApiIndex oldLib = index(classWithMethodAccess("lib/C", m("s", "()V", Acc.PUBLIC | Acc.STATIC)));
+        ApiIndex newLib = index(classWithMethodAccess("lib/C", m("s", "()V", Acc.PUBLIC)));
+
+        Check.Report report = Check.check(List.of(app), oldLib, newLib, List.of());
+
+        assertEquals(intern("lib/C"), onlyReference(report, Reason.METHOD_BECAME_INSTANCE, "app/Sub").owner());
+    }
+
+    /**
+     * The caller names no library class at all, so pass 1 reads only its pool. It still
+     * reaches lib/C.m through app/Sub, with no opcode to qualify the reference.
+     */
+    @Test
+    void aCallerThatNeverNamesTheLibraryIsJudgedFromItsPool() throws Exception {
+        String app = jar(
+                "app.jar",
+                "app/Sub.class", subclass("app/Sub", "lib/C"),
+                "app/User.class", referencing("app/User", JAVA_LANG_OBJECT, INVOKEVIRTUAL, 10, "app/Sub", "m", "()V"));
+        ApiIndex oldLib = index(classWithMethodAccess("lib/C", m("m", "()V", Acc.PUBLIC)));
+        ApiIndex newLib = index(classWithMethodAccess("lib/C"));
+
+        Check.Report report = Check.check(List.of(app), oldLib, newLib, List.of());
+
+        assertEquals(
+                new SymbolRef(RefKind.METHOD, intern("lib/C"), MemberKey.of("m", "()V"), null, null, null),
+                onlyReference(report, Reason.METHOD_REMOVED, "app/User"));
+    }
+
+    @Test
+    void everyCallerOfOneInheritedMemberIsReported() throws Exception {
+        String app = jar(
+                "app.jar",
+                "app/Sub.class", subclass("app/Sub", "lib/C"),
+                "app/First.class", referencing("app/First", JAVA_LANG_OBJECT, INVOKEVIRTUAL, 10, "app/Sub", "m", "()V"),
+                "app/Second.class", referencing("app/Second", JAVA_LANG_OBJECT, INVOKEVIRTUAL, 10, "app/Sub", "m", "()V"));
+        ApiIndex oldLib = index(classWithMethodAccess("lib/C", m("m", "()V", Acc.PUBLIC)));
+        ApiIndex newLib = index(classWithMethodAccess("lib/C"));
+
+        Check.Report report = Check.check(List.of(app), oldLib, newLib, List.of());
+
+        assertEquals(
+                List.of("app/First", "app/Second"),
+                report.violations.stream().map(v -> Intern.str(v.sourceClass)).sorted().toList());
+        for (Violation v : report.violations) {
+            assertEquals(Reason.METHOD_REMOVED, v.reason);
+            assertEquals(intern("lib/C"), v.reference.owner());
+        }
+    }
+
+    /**
+     * The match is by name and descriptor alone, so most owners it catches have nothing to do
+     * with the library. They are neither broken nor unverified. app/Sub is in the jar so the
+     * probe is not empty for want of a reason.
+     */
+    @ParameterizedTest(name = "owner {0}")
+    @ValueSource(strings = {"app/Unrelated", "ext/NotScanned", "java/util/ArrayList", "javax/Thing", "a/B"})
+    void aSameNamedMemberOfAnUnrelatedOwnerIsDropped(String owner) throws Exception {
+        String app = jar(
+                "app.jar",
+                "app/Unrelated.class", subclass("app/Unrelated", JAVA_LANG_OBJECT),
+                "app/User.class", referencing("app/User", JAVA_LANG_OBJECT, INVOKEVIRTUAL, 10, owner, "m", "()V"),
+                "app/Named.class", referencing("app/Named", "lib/C", INVOKEVIRTUAL, 10, owner, "m", "()V"));
+        ApiIndex oldLib = index(classWithMethodAccess("lib/C", m("m", "()V", Acc.PUBLIC)));
+        ApiIndex newLib = index(classWithMethodAccess("lib/C"));
+
+        Check.Report report = Check.check(List.of(app), oldLib, newLib, List.of());
+
+        assertEquals(List.of(), report.violations);
+        assertEquals(0, report.unknownRefs);
+    }
+
+    /** An inheriting owner whose own chain leaves the scan cannot be proven either way. */
+    @Test
+    void anInheritingOwnerWhoseChainEscapesIsUnverified() throws Exception {
+        String app = jar("app.jar", "app/Sub.class", referencing("app/Sub", "lib/C", INVOKEVIRTUAL, 10, "app/Sub", "m", "()V"));
+        ClassApi oldC = classWithMethodAccess("lib/C", m("m", "()V", Acc.PUBLIC));
+        ClassApi newC = classWithMethodAccess("lib/C");
+        newC.superName = intern("ext/Base");
+
+        Check.Report report = Check.check(List.of(app), index(oldC), index(newC), List.of());
+
+        assertEquals(List.of(), report.violations);
+        assertEquals(1, report.unknownRefs);
+    }
+
+    /**
+     * A super call names the direct superclass, which here is the consumer's own class. This
+     * caller also names a library class, so its body is read and the opcode is known. One
+     * that names none is read from its pool alone and is not reported.
+     */
+    @Test
+    void aSuperCallThroughAConsumerSuperclassIsReported() throws Exception {
+        ClassWriter sub = new ClassWriter("app/Sub", "app/Mid");
+        sub.classRef("lib/C");
+        int ref = sub.memberRef(10, "app/Mid", "m", "()V");
+        String app = jar(
+                "app.jar",
+                "app/Mid.class", subclass("app/Mid", "lib/C"),
+                "app/Sub.class", sub.method(Acc.PUBLIC, "m", "()V", INVOKESPECIAL, ref >>> 8, ref & 0xff, RETURN).bytes());
+        ClassApi oldC = classWithMethodAccess("lib/C", m("m", "()V", Acc.PUBLIC));
+        oldC.access = Acc.PUBLIC | Acc.ABSTRACT;
+        ClassApi newC = classWithMethodAccess("lib/C", m("m", "()V", Acc.PUBLIC | Acc.ABSTRACT));
+        newC.access = Acc.PUBLIC | Acc.ABSTRACT;
+
+        Check.Report report = Check.check(List.of(app), index(oldC), index(newC), List.of());
+
+        // app/Mid is concrete here and inherits the abstract m, which is the other violation.
+        List<Violation> superCalls = report.violations.stream()
+                .filter(v -> v.reason == Reason.SUPER_METHOD_BECAME_ABSTRACT)
+                .toList();
+        assertEquals(1, superCalls.size());
+        assertEquals("app/Sub", Intern.str(superCalls.get(0).sourceClass));
+        assertEquals(intern("lib/C"), superCalls.get(0).reference.owner());
+    }
+
+    /** No reason reaches this today, since every broken member verdict resolved against old. */
+    @Test
+    void aReferenceThatOldDoesNotResolveKeepsItsOwner() {
+        SymbolRef raw = new SymbolRef(RefKind.METHOD, intern("app/Sub"), MemberKey.of("m", "()V"), null, null, null);
+        assertEquals(raw, Check.declaredInOld(raw, new Scope(index(classWithMethodAccess("app/Sub")))));
+    }
+
+    @Test
+    void changedMembersAreTheOnesAReferenceCanNoLongerUseTheSameWay() {
+        int sync = 0x0020;
+        ClassApi oldBase = classWithMethodAccess("lib/Base", m("inherited", "()V", Acc.PUBLIC));
+        ClassApi oldC = classWithMethodAccess(
+                "lib/C",
+                m("<init>", "(I)V", Acc.PUBLIC),
+                m("", "()V", Acc.PUBLIC),
+                m("gone", "()V", Acc.PUBLIC),
+                m("narrowed", "()V", Acc.PUBLIC),
+                m("widened", "()V", Acc.PROTECTED),
+                m("staticNow", "()V", Acc.PUBLIC),
+                m("abstractNow", "()V", Acc.PUBLIC),
+                m("concreteNow", "()V", Acc.PUBLIC | Acc.ABSTRACT),
+                m("finalNow", "()V", Acc.PUBLIC),
+                m("unsynchronized", "()V", Acc.PUBLIC | sync),
+                m("kept", "()V", Acc.PUBLIC),
+                m("pulledUp", "()V", Acc.PUBLIC),
+                m("toString", "()Ljava/lang/String;", Acc.PUBLIC));
+        oldC.superName = intern("lib/Base");
+        ClassApi oldFields = classWithFields(
+                "lib/F", m("dropped", "I", Acc.PUBLIC), m("same", "I", Acc.PUBLIC), m("finalField", "I", Acc.PUBLIC));
+        ClassApi oldRemoved = classWithMethodAccess("lib/Removed", m("any", "()V", Acc.PUBLIC));
+        ClassApi newBase = classWithMethodAccess("lib/Base", m("inherited", "()V", Acc.PUBLIC), m("pulledUp", "()V", Acc.PUBLIC));
+        ClassApi newC = classWithMethodAccess(
+                "lib/C",
+                m("narrowed", "()V", Acc.PROTECTED),
+                m("widened", "()V", Acc.PUBLIC),
+                m("staticNow", "()V", Acc.PUBLIC | Acc.STATIC),
+                m("abstractNow", "()V", Acc.PUBLIC | Acc.ABSTRACT),
+                m("concreteNow", "()V", Acc.PUBLIC),
+                m("finalNow", "()V", Acc.PUBLIC | Acc.FINAL),
+                m("unsynchronized", "()V", Acc.PUBLIC),
+                m("kept", "()V", Acc.PUBLIC));
+        newC.superName = intern("lib/Base");
+        ClassApi newFields = classWithFields("lib/F", m("same", "I", Acc.PUBLIC), m("finalField", "I", Acc.PUBLIC | Acc.FINAL));
+
+        LongSet changed = Check.changedMembers(index(oldBase, oldC, oldFields, oldRemoved), index(newBase, newC, newFields));
+
+        // Not the constructor, not the method moved to a superclass, not the override whose
+        // removal leaves Object's toString, nothing of a class that is gone altogether, and
+        // no flag change a reference cannot feel. A final method only matters to an overrider.
+        assertEquals(
+                Set.of(
+                        MemberKey.of("", "()V"),
+                        MemberKey.of("gone", "()V"),
+                        MemberKey.of("narrowed", "()V"),
+                        MemberKey.of("staticNow", "()V"),
+                        MemberKey.of("abstractNow", "()V"),
+                        MemberKey.of("dropped", "I"),
+                        MemberKey.of("finalField", "I")),
+                Arrays.stream(changed.toArray()).boxed().collect(Collectors.toSet()));
     }
 
     private static Check.Report runCheck(String oldLib, String newLib, String... targets) {

@@ -58,6 +58,7 @@ final class Check {
         IntQueue queue = new IntQueue();
         IntSet seen = new IntSet();
         IntArena records = scan.records;
+        Inheritors inheritors = new Inheritors(oldIndex, newIndex, scan.graph);
         int at = 0;
         int end = records.size();
         while (at < end) {
@@ -65,7 +66,15 @@ final class Check {
             int refsAt = at + 3;
             for (int r = 0; r < refCount; r++) {
                 int owner = records.get(refsAt + r * 4 + 1);
-                boolean hasMember = records.get(refsAt + r * 4 + 2) != Intern.NONE;
+                int name = records.get(refsAt + r * 4 + 2);
+                boolean hasMember = name != Intern.NONE;
+                if (hasMember
+                        && inheritors.isUnrelated(
+                                owner,
+                                MemberKey.of(name, records.get(refsAt + r * 4 + 3)),
+                                memberKind(SymbolRef.kindOf(records.get(refsAt + r * 4))))) {
+                    continue;
+                }
                 if (!hasMember) {
                     // Class references only need existence, not members. The owner must still
                     // seed the JDK escape roots, or a class verdict would depend on whether an
@@ -106,6 +115,81 @@ final class Check {
             at = refsAt + refCount * 4;
         }
         return wanted;
+    }
+
+    /**
+     * Which reference owners outside the library inherit the member they name from it. Pass 1
+     * records such an owner on a name+descriptor match alone, before the graph can say
+     * whether the class has anything to do with the library, so most of them do not and are
+     * dropped here. Inheriting from the library at all is not the test: in a JDK-pair check
+     * every class does, and pass 2 would fetch the hierarchy of each one.
+     */
+    static final class Inheritors {
+        private final ApiIndex oldIndex;
+        private final Scope newScope;
+        private final ClassGraph graph;
+        private final Map<Long, IntSet> related = new HashMap<>();
+        private final Map<Long, IntSet> unrelated = new HashMap<>();
+        private final IntQueue queue = new IntQueue();
+        private final IntSet seen = new IntSet();
+
+        Inheritors(ApiIndex oldIndex, ApiIndex newIndex, ClassGraph graph) {
+            this.oldIndex = oldIndex;
+            this.newScope = new Scope(newIndex);
+            this.graph = graph;
+        }
+
+        /** Whether {@code owner} is outside the old library, a state only pass 1's signature match produces. */
+        boolean isInherited(int owner) {
+            return !oldIndex.containsClass(owner);
+        }
+
+        /**
+         * True for an owner outside the library whose supertypes hold no library class that
+         * declared {@code member} in old and breaks references to it in new.
+         */
+        boolean isUnrelated(int owner, long member, Scope.MemberKind kind) {
+            if (!isInherited(owner)) {
+                return false;
+            }
+            IntSet yes = related.computeIfAbsent(member, k -> new IntSet());
+            if (yes.contains(owner)) {
+                return false;
+            }
+            IntSet no = unrelated.computeIfAbsent(member, k -> new IntSet());
+            if (no.contains(owner)) {
+                return true;
+            }
+            boolean reaches = reachesChange(owner, member, kind);
+            (reaches ? yes : no).add(owner);
+            return !reaches;
+        }
+
+        private boolean reachesChange(int owner, long member, Scope.MemberKind kind) {
+            queue.clear();
+            seen.clear();
+            queue.add(owner);
+            while (!queue.isEmpty()) {
+                int c = queue.poll();
+                if (!seen.add(c)) {
+                    continue;
+                }
+                int entry = oldIndex.entry(c);
+                if (entry >= 0) {
+                    int oldAccess = kind == Scope.MemberKind.FIELD ? oldIndex.findField(entry, member) : oldIndex.findMethod(entry, member);
+                    if (oldAccess >= 0 && breaksReferences(newScope, c, member, kind, oldAccess)) {
+                        return true;
+                    }
+                    pushSupertypes(queue, oldIndex, entry);
+                    continue;
+                }
+                int node = graph.node(c);
+                if (node >= 0) {
+                    pushSupertypes(queue, graph, node);
+                }
+            }
+            return false;
+        }
     }
 
     private static void pushSupertypes(IntQueue queue, ApiIndex index, int entry) {
@@ -675,6 +759,7 @@ final class Check {
         Scope runtimeScope = jdk == null ? new Scope(newIndex, fetched) : new Scope(newIndex, fetched, jdkIndex);
 
         NestHosts hosts = new NestHosts(graph, scan.entryOverrides);
+        Inheritors inheritors = new Inheritors(oldIndex, newIndex, graph);
         List<Violation> violations = new ArrayList<>();
         Set<ViolationKey> seen = new HashSet<>();
         int unknownRefs = 0;
@@ -693,6 +778,9 @@ final class Check {
                 int name = records.get(base + 2);
                 int descriptor = records.get(base + 3);
                 long member = name == Intern.NONE ? MemberKey.NONE : MemberKey.of(name, descriptor);
+                if (member != MemberKey.NONE && inheritors.isUnrelated(owner, member, memberKind(SymbolRef.kindOf(meta)))) {
+                    continue;
+                }
                 int verdict = verdict(meta, owner, member, className, oldScope, runtimeScope, graph, hosts);
                 if (verdicts != null) {
                     // The raw reference, not the collapsed one a broken verdict may carry.
@@ -716,6 +804,9 @@ final class Check {
                 // Class reference, so a class and its members do not each report.
                 SymbolRef reference =
                         reason == Reason.CLASS_REMOVED ? SymbolRef.ofClass(owner) : SymbolRef.unpack(meta, owner, name, descriptor);
+                if (reference.hasMember() && inheritors.isInherited(owner)) {
+                    reference = declaredInOld(reference, oldScope);
+                }
                 pushViolation(violations, seen, source, className, reference, reason);
             }
             at = refsAt + refCount * 4;
@@ -767,6 +858,25 @@ final class Check {
         return report;
     }
 
+
+    /**
+     * The reference re-owned by the library class that declared the member in old. The raw
+     * owner is a consumer class that only inherits it, and a report naming that class says
+     * nothing about what changed, nor can a suggestion or an exclude rule find the library by it.
+     */
+    static SymbolRef declaredInOld(SymbolRef reference, Scope oldScope) {
+        long found = oldScope.resolveMember(reference.owner(), reference.member(), memberKind(reference.kind()));
+        if (!Scope.isFound(found)) {
+            return reference;
+        }
+        return new SymbolRef(
+                reference.kind(),
+                Scope.foundOwner(found),
+                reference.member(),
+                reference.expectedStatic(),
+                reference.fieldWrite(),
+                reference.instantiated());
+    }
 
     private static Violation pushViolation(
             List<Violation> violations, Set<ViolationKey> seen, int source, int sourceClass, SymbolRef reference, Reason reason) {
@@ -1693,7 +1803,69 @@ final class Check {
                 keys.add(key);
             }
         }
-        return new MemberProbe(keys.toArray());
+        return new MemberProbe(keys.toArray(), changedMembers(oldIndex, newIndex).toArray());
+    }
+
+    /**
+     * Members of an old library class that a reference can no longer use the way it did (see
+     * {@link #breaksReferences}). A reference inheriting one through a class outside the
+     * library may break, and pass 1 keeps such a reference by this name and descriptor.
+     * Constructors and the class initializer are not inherited.
+     */
+    static LongSet changedMembers(ApiIndex oldIndex, ApiIndex newIndex) {
+        LongSet keys = new LongSet();
+        Scope newScope = new Scope(newIndex);
+        for (int e = 0; e < oldIndex.classCount(); e++) {
+            int className = oldIndex.nameOf(e);
+            if (!newIndex.containsClass(className)) {
+                continue;
+            }
+            for (int k = 0, n = oldIndex.methodCount(e); k < n; k++) {
+                long key = oldIndex.methodKeyAt(e, k);
+                if (!isInitializer(key)
+                        && breaksReferences(newScope, className, key, Scope.MemberKind.METHOD, oldIndex.methodAccessAt(e, k))) {
+                    keys.add(key);
+                }
+            }
+            for (int k = 0, n = oldIndex.fieldCount(e); k < n; k++) {
+                long key = oldIndex.fieldKeyAt(e, k);
+                if (breaksReferences(newScope, className, key, Scope.MemberKind.FIELD, oldIndex.fieldAccessAt(e, k))) {
+                    keys.add(key);
+                }
+            }
+        }
+        return keys;
+    }
+
+    private static Scope.MemberKind memberKind(RefKind kind) {
+        return kind == RefKind.FIELD ? Scope.MemberKind.FIELD : Scope.MemberKind.METHOD;
+    }
+
+    private static boolean isInitializer(long key) {
+        byte[] name = Intern.bytes(MemberKey.name(key));
+        return name.length > 0 && name[0] == '<';
+    }
+
+    /**
+     * Whether resolving the member from its old class in new can turn a reference verdict:
+     * gone (or no longer provable), static flipped, access narrowed, a method now abstract
+     * for a super call, a field now final for a write. Exactly these, because the match in
+     * pass 1 is by name and descriptor over the whole scan. Any other flag difference would
+     * keep every call of that signature for nothing: JDK 17 dropped {@code native} from
+     * Object.hashCode and JDK 11 -> 17 alone flips {@code synchronized} or {@code final} on
+     * dozens of methods. Resolution rather than a per-class compare for the same reason,
+     * so an override the new version merely dropped (its toString, say) is not a change.
+     */
+    private static boolean breaksReferences(Scope newScope, int className, long key, Scope.MemberKind kind, int oldAccess) {
+        long found = newScope.resolveMember(className, key, kind);
+        if (!Scope.isFound(found)) {
+            return true;
+        }
+        int newAccess = Scope.foundAccess(found);
+        int turnedOn = newAccess & ~oldAccess;
+        return ((oldAccess ^ newAccess) & Acc.STATIC) != 0
+                || Visibility.of(newAccess).compareTo(Visibility.of(oldAccess)) < 0
+                || (turnedOn & (kind == Scope.MemberKind.FIELD ? Acc.FINAL : Acc.ABSTRACT)) != 0;
     }
 
     /**

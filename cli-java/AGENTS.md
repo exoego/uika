@@ -26,7 +26,8 @@ pass 1: stream --classpath / --app / --classpath-file targets through a window o
   (old JARs found among targets are excluded as stale; new JARs stay in — they
   are runtime code, and their classes feed the version-lag check)
   -> ClassGraph: class name -> superclass, interfaces, origin
-  -> reference records, only where the owner exists in the old index
+  -> reference records, only where the owner exists in the old index, or where the
+     name and descriptor match a member the library removed or reshaped
   (member tables discarded; member names not interned)
 
 Check.collectWanted: walk the hierarchy from referenced owners; keep only classes
@@ -376,8 +377,55 @@ pass-2 classes are typically below 0.1% of the scan.
   fixture: ktlint-reporter-github 3.3.1 on ktlint-cli-reporter-core 1.7.1 -> 1.7.2
   (`IntegrationTest.detectsSuperCallToAMethodThatBecameAbstract`). Known
   miss: javac names the DIRECT superclass, so a caller whose direct superclass is its
-  own (a consumer class between it and the library) produces a reference whose owner
-  is not in the old index, and pass 1 drops it like every such reference.
+  own (a consumer class between it and the library) names that class as owner. Such a
+  reference is kept (next entry), but with the opcode only when the caller's pool
+  also names a library class. A subclass of a consumer class usually names none, so
+  this miss mostly stands (JVM-confirmed: `Main extends Mid extends lib.Api` throws
+  and is not reported).
+- References whose owner is outside the library: javac names the receiver's static
+  type as owner (JLS 13.1), so `helper()` inside `class Sub extends lib.C`, `f` read
+  there, `new Sub().m()` anywhere and `Sub.staticHelper()` all compile to an owner of
+  `Sub`. When the library drops or reshapes the member, the JVM error names `Sub` too.
+  Pass 1 used to keep only owners in the old index, so the whole shape was silent, not
+  even unverified. Now `Check.changedMembers` lists the name+descriptor of every old
+  member a reference can no longer use the way it did (`Check.breaksReferences`), and
+  pass 1 keeps a reference to any non-`java/` owner that matches one (`MemberProbe`
+  kind `CHANGED`, `Extract.inheritedRef`). Four choices there, each paid for by a
+  measurement on the stress classpath:
+  - Only changes a reference verdict can report count: gone, static flipped, access
+    narrowed, a method now abstract, a field now final. Comparing all access flags
+    listed `Object.hashCode` for a JDK 11 -> 17 run, because 17 dropped its `native`
+    bit, along with dozens of `synchronized` and `final` flips. That kept every
+    `hashCode()` call in the scan and cost 15% of wall time and 40MB.
+  - Resolution, not a per-class compare. A class that merely drops an override
+    (`toString`, `close`) still resolves it from a superclass, and listing it would
+    keep every call of that signature too.
+  - The graph is not complete in pass 1, so relatedness is decided later.
+    `Check.Inheritors` walks the owner's supertypes and drops it, silently, unless
+    they reach a library class that declared THAT member in old and breaks it in
+    new. Silently matters: these are unrelated classes that share a method name,
+    and counting them unverified would bury the real number. Reaching the library
+    at all is not the test, because in a JDK-pair run every class does.
+    `collectWanted` applies the same filter, or pass 2 would fetch the hierarchy of
+    every such owner.
+  - A caller whose pool names no library class is judged from its pool alone
+    (`Extract.probePool`, the same walk invocation evidence uses), so its reference
+    has no opcode: removal and narrowing are judged, a static flip or a super call is
+    not. Reading the body of every class that calls a method named like a changed
+    one cost 18%.
+  What is left is the price of looking at every member reference: 3% of wall and user
+  time on a library pair, 8% on a JDK pair (where every class names the library, so
+  every body is read and every reference probed), RSS unchanged. One new report on
+  the stress classpath, a copy of coroutines 1.6.4 calling `isEmpty()` through its own
+  subclass of `LockFreeLinkedListHead`.
+  The verdict is the ordinary one, since pass 2 fetches the owner and its chain. A
+  broken reference is then re-owned by the class that declared the member in old
+  (`Check.declaredInOld`), so the report, the suggestion's coordinate lookup and an
+  exclude rule all see the library class. The verdicts stream keeps the raw owner,
+  which is what the probe links. Real fixture: spring-cloud-tencent's
+  `PolarisFeignCircuitBreaker$Builder` on feign-core 12.4 -> 12.5
+  (`IntegrationTest.detectsARemovedMethodReachedThroughAConsumerSubclass`). Its
+  chain passes `Cloneable`, so it needs `--jdk-release` and is unverified without.
 - Conflicting default methods: two unrelated superinterfaces supply a default for the
   same signature and the concrete class overrides neither, so selection has no winner.
   Same walk (`addSelectionViolations`), driven by `methodsNewlyDefault` alongside
@@ -405,8 +453,8 @@ pass-2 classes are typically below 0.1% of the scan.
     stress workload, wall time and RSS unchanged. Collecting it inside pass 1's
     existing pass is load-bearing: reparsing the batch in a second pass cost
     ~21%, and a per-class record cost ~35MB RSS.
-  - Matching is by name+descriptor for ANY owner, since `Extract.extractRefs` keeps only
-    owners in the old index and the call may go through the subclass. The whole
+  - Matching is by name+descriptor for ANY owner, since the reference records keep an
+    outside owner only for a changed member, and the call may go through the subclass. The whole
     constant pool is scanned, not just `codeRefs`: a method reference names the
     member only via a MethodHandle constant, which the parser's entry model does not
     follow.

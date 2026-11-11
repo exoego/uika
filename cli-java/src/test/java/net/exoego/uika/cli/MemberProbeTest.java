@@ -61,4 +61,45 @@ class MemberProbeTest {
         assertEquals(MemberKey.NONE, find(byDescriptor, "call", b));
         assertEquals(MemberKey.of("call", a), find(byDescriptor, "call", a));
     }
+
+    /** One table holds both kinds, and a key answers only for the kinds it was given. */
+    @Test
+    void evidenceAndChangedKeysShareTheTableWithoutLeaking() {
+        long both = MemberKey.of("both", "()V");
+        long evidenceOnly = MemberKey.of("evidence", "()V");
+        long changedOnly = MemberKey.of("changed", "()V");
+        MemberProbe probe = new MemberProbe(new long[] {both, evidenceOnly}, new long[] {both, changedOnly});
+        assertFalse(probe.isEmpty());
+        assertTrue(probe.hasChanged());
+
+        int changedSlot = slotOf(probe, "changed");
+        assertTrue(probe.isChanged(changedSlot));
+        assertFalse(probe.isEvidence(changedSlot));
+        assertEquals(changedOnly, probe.keyAt(changedSlot));
+        assertEquals(MemberKey.NONE, find(probe, "changed"));
+
+        int evidenceSlot = slotOf(probe, "evidence");
+        assertTrue(probe.isEvidence(evidenceSlot));
+        assertFalse(probe.isChanged(evidenceSlot));
+        assertEquals(evidenceOnly, find(probe, "evidence"));
+
+        int bothSlot = slotOf(probe, "both");
+        assertTrue(probe.isEvidence(bothSlot) && probe.isChanged(bothSlot));
+        assertEquals(-1, slotOf(probe, "absent"));
+
+        MemberProbe changedAlone = new MemberProbe(new long[0], new long[] {changedOnly});
+        assertTrue(changedAlone.isEmpty());
+        assertTrue(changedAlone.hasChanged());
+        assertFalse(new MemberProbe(new long[] {evidenceOnly}).hasChanged());
+    }
+
+    private static int slotOf(MemberProbe probe, String name) {
+        byte[] bytes = (name + "()V").getBytes(StandardCharsets.UTF_8);
+        return probe.slot(bytes, 0, name.length(), name.length(), 3);
+    }
+
+    private static long find(MemberProbe probe, String name) {
+        byte[] bytes = (name + "()V").getBytes(StandardCharsets.UTF_8);
+        return probe.find(bytes, 0, name.length(), name.length(), 3);
+    }
 }
