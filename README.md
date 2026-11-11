@@ -356,7 +356,10 @@ around triaging `⚠️  not proven reachable` violations wholesale; use
 
 1. Parse the old/new JARs into full API indexes with class hierarchy.
 2. Pass 1 streams the consumer classpath, keeping only a class-hierarchy graph
-   and the references whose owner exists in the old index.
+   and the references that can reach the old index. Those are the ones whose
+   owner is in it, plus the ones naming a removed or reshaped member through
+   some other class, since a subclass that calls an inherited method names
+   itself as the owner.
 3. Pass 2 re-reads just the classes resolution could actually visit (typically
    under 0.1% of the total) for their member tables.
 4. Resolve each reference against "new JARs + re-read classes", walking the

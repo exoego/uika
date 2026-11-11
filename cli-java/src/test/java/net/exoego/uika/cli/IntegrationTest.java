@@ -1270,6 +1270,18 @@ class IntegrationTest {
         return Jdk.ctSymIn(Path.of(System.getProperty("java.home")));
     }
 
+    /** The JDK layer for the first of {@code releases} that {@code ctSym} serves, or null. */
+    private static Jdk.Indexer openFirstRelease(Path ctSym, int... releases) {
+        for (int release : releases) {
+            try {
+                return Jdk.Indexer.open(ctSym, release);
+            } catch (UikaException e) {
+                // next rung
+            }
+        }
+        return null;
+    }
+
     private static String verdictKey(Violation v) {
         boolean hasMember = v.reference.hasMember();
         return String.join(
@@ -1324,15 +1336,7 @@ class IntegrationTest {
         // down a ladder instead of failing. The guava escapes are java.util/java.lang types
         // present since release 8, so the assertions hold on every rung (verified for 8, 11,
         // and 17).
-        Jdk.Indexer indexer = null;
-        for (int release : new int[] {17, 11, 8}) {
-            try {
-                indexer = Jdk.Indexer.open(ctSym, release);
-                break;
-            } catch (UikaException e) {
-                // next rung
-            }
-        }
+        Jdk.Indexer indexer = openFirstRelease(ctSym, 17, 11, 8);
         assumeTrue(indexer != null, "no usable release in " + ctSym);
         try (Jdk.Indexer jdk = indexer) {
             Check.Report withJdk = Check.checkScanned(
@@ -1461,5 +1465,42 @@ class IntegrationTest {
         }
         // The class implements every method, so the missing-implementation walk stays quiet.
         assertTrue(withReason(report.violations, Reason.METHOD_BECAME_ABSTRACT).isEmpty(), describePairs(report.violations));
+    }
+
+    /**
+     * NoSuchMethodError through an owner outside the library.
+     * spring-cloud-tencent's PolarisFeignCircuitBreaker$Builder extends feign.Feign$Builder and
+     * calls the inherited build() unqualified, so the reference names the subclass as owner.
+     * feign-core 12.5 replaced build()Lfeign/Feign; with BaseBuilder.build()Ljava/lang/Object;
+     * and no bridge (https://github.com/Tencent/spring-cloud-tencent/issues/1231). The report
+     * names the library class that declared the method, not the subclass the bytecode names.
+     */
+    @Test
+    void detectsARemovedMethodReachedThroughAConsumerSubclass() {
+        String oldJar = fixture("feign-core-12.4.jar");
+        String newJar = fixture("feign-core-12.5.jar");
+        String consumer = fixture("spring-cloud-starter-tencent-polaris-circuitbreaker-1.13.0-2022.0.4.jar");
+        String builder = "com/tencent/cloud/polaris/circuitbreaker/feign/PolarisFeignCircuitBreaker$Builder";
+
+        // BaseBuilder implements Cloneable, so without the JDK layer the chain escapes.
+        Check.Report bare = Commands.runCheck(List.of(oldJar), List.of(newJar), List.of(consumer), List.of(), List.of(), null, null);
+        assertTrue(bare.violations.isEmpty(), describePairs(bare.violations));
+        assertEquals(1, bare.unknownRefs);
+
+        Path ctSym = findCtSymForTest();
+        assumeTrue(ctSym != null, "no JDK with ct.sym found");
+        Jdk.Indexer indexer = openFirstRelease(ctSym, 17, 11);
+        assumeTrue(indexer != null, "no usable release in " + ctSym);
+        try (Jdk.Indexer jdk = indexer) {
+            Check.Report report =
+                    Commands.runCheck(List.of(oldJar), List.of(newJar), List.of(consumer), List.of(), List.of(), jdk, null);
+            assertEquals(1, report.violations.size(), describePairs(report.violations));
+            Violation v = report.violations.get(0);
+            assertEquals(Reason.METHOD_REMOVED, v.reason);
+            assertEquals(builder, sourceClass(v));
+            assertEquals("feign/Feign$Builder", owner(v));
+            assertEquals(MemberKey.of("build", "()Lfeign/Feign;"), v.reference.member());
+            assertEquals(0, report.unknownRefs);
+        }
     }
 }

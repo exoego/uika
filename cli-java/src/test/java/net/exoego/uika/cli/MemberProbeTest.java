@@ -13,10 +13,12 @@ class MemberProbeTest {
         return (name + descriptor).getBytes(StandardCharsets.UTF_8);
     }
 
+    /** The evidence member a raw pair matches, looked up the way the pass-1 sweep does. */
     private static long find(MemberProbe probe, String name, String descriptor) {
         int nameLength = name.getBytes(StandardCharsets.UTF_8).length;
         int descriptorLength = descriptor.getBytes(StandardCharsets.UTF_8).length;
-        return probe.find(joined(name, descriptor), 0, nameLength, nameLength, descriptorLength);
+        int slot = probe.slot(joined(name, descriptor), 0, nameLength, nameLength, descriptorLength);
+        return slot >= 0 && probe.isEvidence(slot) ? probe.keyAt(slot) : MemberKey.NONE;
     }
 
     /** JVMS 4.2.2 forbids an empty method name, so a zero-length pool name can match nothing. */
@@ -60,5 +62,40 @@ class MemberProbeTest {
         MemberProbe byDescriptor = new MemberProbe(new long[] {MemberKey.of("call", a)});
         assertEquals(MemberKey.NONE, find(byDescriptor, "call", b));
         assertEquals(MemberKey.of("call", a), find(byDescriptor, "call", a));
+    }
+
+    /** One table holds both kinds, and a key answers only for the kinds it was given. */
+    @Test
+    void evidenceAndChangedKeysShareTheTableWithoutLeaking() {
+        long both = MemberKey.of("both", "()V");
+        long evidenceOnly = MemberKey.of("evidence", "()V");
+        long changedOnly = MemberKey.of("changed", "()V");
+        MemberProbe probe = new MemberProbe(new long[] {both, evidenceOnly}, new long[] {both, changedOnly});
+        assertFalse(probe.isEmpty());
+        assertTrue(probe.hasChanged());
+
+        int changedSlot = slotOf(probe, "changed");
+        assertTrue(probe.isChanged(changedSlot));
+        assertFalse(probe.isEvidence(changedSlot));
+        assertEquals(changedOnly, probe.keyAt(changedSlot));
+
+        int evidenceSlot = slotOf(probe, "evidence");
+        assertTrue(probe.isEvidence(evidenceSlot));
+        assertFalse(probe.isChanged(evidenceSlot));
+        assertEquals(evidenceOnly, probe.keyAt(evidenceSlot));
+
+        int bothSlot = slotOf(probe, "both");
+        assertTrue(probe.isEvidence(bothSlot) && probe.isChanged(bothSlot));
+        assertEquals(-1, slotOf(probe, "absent"));
+
+        MemberProbe changedAlone = new MemberProbe(new long[0], new long[] {changedOnly});
+        assertTrue(changedAlone.isEmpty());
+        assertTrue(changedAlone.hasChanged());
+        assertFalse(new MemberProbe(new long[] {evidenceOnly}).hasChanged());
+    }
+
+    private static int slotOf(MemberProbe probe, String name) {
+        byte[] bytes = (name + "()V").getBytes(StandardCharsets.UTF_8);
+        return probe.slot(bytes, 0, name.length(), name.length(), 3);
     }
 }

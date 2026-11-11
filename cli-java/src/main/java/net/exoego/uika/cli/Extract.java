@@ -139,6 +139,7 @@ final class Extract {
             leaf.scanned++;
             int recordMark = leaf.records.n;
             int invocationMark = leaf.invocations.n;
+            int inheritedCountAt = -1;
             try {
                 ClassParser p = scratch.parser;
                 parseHeader(p, bytes);
@@ -161,13 +162,21 @@ final class Extract {
                     hierarchy(leaf, p, scratch, source, className, entry, body);
                     edges(leaf.records, p, scratch, className, collectEdges);
                     if (body) {
-                        refs(leaf.records, p, scratch, oldNames);
+                        refs(leaf.records, p, scratch, oldNames, probe);
                     } else {
+                        // Such a class can still reach a library member through another
+                        // class that inherits it. The sweep below fills the count in.
+                        inheritedCountAt = leaf.records.n;
                         leaf.records.add(0);
                     }
                 }
-                if (!probe.isEmpty()) {
-                    invocationEvidence(leaf.invocations, p, scratch, probe);
+                boolean inherited = inheritedCountAt >= 0 && probe.hasChanged();
+                if (!probe.isEmpty() || inherited) {
+                    int count = probePool(
+                            probe.isEmpty() ? null : leaf.invocations, inherited ? leaf.records : null, p, scratch, probe);
+                    if (inherited) {
+                        leaf.records.a[inheritedCountAt] = count;
+                    }
                 }
             } catch (ClassParser.FormatException e) {
                 leaf.records.n = recordMark;
@@ -367,11 +376,12 @@ final class Extract {
 
     /**
      * Symbol references whose owner is in {@code oldNames}, which scopes them to the checked
-     * library. Owners are tested by raw bytes first, so the vast majority is rejected without
-     * touching the intern pool. MethodHandle constants point at Methodref-like entries, so the
-     * plain pool walk covers them; InvokeDynamic names are bootstrap synthetics and out of scope.
+     * library, plus the ones {@link #inheritedRef} keeps for an owner outside it. Owners are
+     * tested by raw bytes first, so the vast majority is rejected without touching the intern
+     * pool. MethodHandle constants point at Methodref-like entries, so the plain pool walk
+     * covers them; InvokeDynamic names are bootstrap synthetics and out of scope.
      */
-    static void refs(IntBuf out, ClassParser p, Scratch scratch, NameSet oldNames)
+    static void refs(IntBuf out, ClassParser p, Scratch scratch, NameSet oldNames, MemberProbe probe)
             throws ClassParser.FormatException {
         int countAt = out.n;
         out.add(0);
@@ -407,7 +417,7 @@ final class Extract {
             if (tag == ClassParser.TAG_STRING || (flags[index] & CP_CODE_REF) != 0) {
                 continue;
             }
-            count += memberRef(out, p, scratch, oldNames, index, tag, 0, 0, false);
+            count += memberRef(out, p, scratch, oldNames, probe, index, tag, 0, 0, false);
         }
         for (int i = 0; i < codeRefCount; i++) {
             int ref = codeRefs[i];
@@ -431,7 +441,7 @@ final class Extract {
                         case 0xb3, 0xb5 -> SymbolRef.TRI_TRUE;
                         default -> SymbolRef.TRI_NONE;
                     };
-            count += memberRef(out, p, scratch, oldNames, index, tag, expectedStatic, fieldWrite, opcode == 0xb7);
+            count += memberRef(out, p, scratch, oldNames, probe, index, tag, expectedStatic, fieldWrite, opcode == 0xb7);
         }
         out.a[countAt] = count;
     }
@@ -441,7 +451,7 @@ final class Extract {
         // refs() reads the owner cache that referencesLibrary primes for this pool.
         referencesLibrary(p, scratch, oldNames);
         IntBuf out = new IntBuf();
-        refs(out, p, scratch, oldNames);
+        refs(out, p, scratch, oldNames, new MemberProbe(new long[0]));
         List<SymbolRef> decoded = new ArrayList<>(out.a[0]);
         for (int at = 1; at < out.n; at += 4) {
             decoded.add(SymbolRef.unpack(out.a[at], out.a[at + 1], out.a[at + 2], out.a[at + 3]));
@@ -498,12 +508,16 @@ final class Extract {
         return oldNames.find(b, off, len, Intern.hash(b, off, len));
     }
 
-    /** Appends the member reference when its owner is accepted; returns how many were appended. */
+    /**
+     * Appends the member reference when its owner is accepted or {@link #inheritedRef} keeps
+     * it. Returns how many were appended.
+     */
     private static int memberRef(
             IntBuf out,
             ClassParser p,
             Scratch scratch,
             NameSet oldNames,
+            MemberProbe probe,
             int index,
             int tag,
             int expectedStatic,
@@ -519,20 +533,57 @@ final class Extract {
         }
         int owner = classRefOwner(p, scratch, oldNames, classIndex);
         if (owner == Intern.NONE) {
-            return 0;
+            if (!probe.hasChanged()) {
+                return 0;
+            }
+            int meta = SymbolRef.pack(kindOf(tag), expectedStatic, fieldWrite, false);
+            return inheritedRef(out, p, scratch, probe, index, special ? SymbolRef.special(meta) : meta);
         }
         int nameAndType = p.operand2(index);
         p.requireNameAndType(nameAndType);
         int name = p.internUtf8(scratch, p.operand1(nameAndType));
         int descriptor = p.internUtf8(scratch, p.operand2(nameAndType));
-        RefKind kind = tag == ClassParser.TAG_FIELDREF
-                ? RefKind.FIELD
-                : tag == ClassParser.TAG_METHODREF ? RefKind.METHOD : RefKind.INTERFACE_METHOD;
-        int meta = SymbolRef.pack(kind, expectedStatic, fieldWrite, false);
+        int meta = SymbolRef.pack(kindOf(tag), expectedStatic, fieldWrite, false);
         out.add(special ? SymbolRef.special(meta) : meta);
         out.add(owner);
         out.add(name);
         out.add(descriptor);
+        return 1;
+    }
+
+    private static final byte[] JAVA_PACKAGE = {'j', 'a', 'v', 'a', '/'};
+
+    private static boolean isJavaPackage(byte[] b, int off, int len) {
+        return len > JAVA_PACKAGE.length && Arrays.equals(b, off, off + JAVA_PACKAGE.length, JAVA_PACKAGE, 0, JAVA_PACKAGE.length);
+    }
+
+    private static RefKind kindOf(int tag) {
+        return tag == ClassParser.TAG_FIELDREF
+                ? RefKind.FIELD
+                : tag == ClassParser.TAG_METHODREF ? RefKind.METHOD : RefKind.INTERFACE_METHOD;
+    }
+
+    /**
+     * A reference whose owner is outside the library but whose name and descriptor match a
+     * member the library removed or reshaped. javac names the receiver's static type as the
+     * owner, so a call to an inherited library member through a subclass looks like this.
+     * Whether the owner really inherits from the library is the check's question, since the
+     * graph is not complete here. A malformed entry is skipped. This class was never judged
+     * on these entries before, so they must not start costing it its record.
+     */
+    private static int inheritedRef(IntBuf out, ClassParser p, Scratch scratch, MemberProbe probe, int index, int meta) {
+        int slot = probedSlot(p, probe, index);
+        if (slot < 0 || !probe.isChanged(slot)) {
+            return 0;
+        }
+        int owner = probedOwner(p, scratch, index, true);
+        if (owner == Intern.NONE) {
+            return 0;
+        }
+        out.add(meta);
+        out.add(owner);
+        out.add(MemberKey.name(probe.keyAt(slot)));
+        out.add(MemberKey.descriptor(probe.keyAt(slot)));
         return 1;
     }
 
@@ -544,71 +595,128 @@ final class Extract {
      * skipped; such a class already warned at parse.
      */
     static void invocationEvidence(IntBuf out, ClassParser p, Scratch scratch, MemberProbe probe) {
-        byte[] b = p.bytes;
+        probePool(out, null, p, scratch, probe);
+    }
+
+    /**
+     * One walk of the pool's member references for both things matched by name and
+     * descriptor alone, so neither purpose pays for a walk of its own.
+     *
+     * @param invocations receives {@link #invocationEvidence}, or null
+     * @param inherited receives an {@link #inheritedRef} record per match, or null. Only the
+     *     pool is read for these, so no opcode qualifies them. Inflating the body of every
+     *     class that calls a method named like a changed one cost 18%.
+     * @return how many records {@code inherited} received
+     */
+    static int probePool(IntBuf invocations, IntBuf inherited, ClassParser p, Scratch scratch, MemberProbe probe) {
+        int count = 0;
         int[] tagged = p.tagged;
         for (int t = 0, n = p.taggedCount; t < n; t++) {
             int tag = tagged[t] >>> 16;
             int index = tagged[t] & 0xffff;
-            if (tag != ClassParser.TAG_METHODREF && tag != ClassParser.TAG_INTERFACE_METHODREF) {
+            // The parser tags Class, String and the three member-reference kinds, in tag order.
+            if (tag < ClassParser.TAG_FIELDREF) {
                 continue;
             }
-            int nameAndType = p.operand2(index);
-            if (p.tag(nameAndType) != ClassParser.TAG_NAME_AND_TYPE) {
+            boolean method = tag != ClassParser.TAG_FIELDREF;
+            if (!method && inherited == null) {
                 continue;
             }
-            int name = p.operand1(nameAndType);
-            int descriptor = p.operand2(nameAndType);
-            if (p.tag(name) != ClassParser.TAG_UTF8 || p.tag(descriptor) != ClassParser.TAG_UTF8) {
+            int slot = probedSlot(p, probe, index);
+            if (slot < 0) {
                 continue;
             }
-            long key = findProbed(probe, b, p.cpPos[name] + 3, p.utf8Length(name), p.cpPos[descriptor] + 3, p.utf8Length(descriptor));
-            if (key == MemberKey.NONE) {
+            boolean evidence = invocations != null && method && probe.isEvidence(slot);
+            boolean changed = inherited != null && probe.isChanged(slot);
+            if (!evidence && !changed) {
                 continue;
             }
-            int classIndex = p.operand1(index);
-            if (p.tag(classIndex) != ClassParser.TAG_CLASS) {
-                continue;
+            long key = probe.keyAt(slot);
+            if (evidence) {
+                int owner = probedOwner(p, scratch, index, false);
+                if (owner != Intern.NONE) {
+                    invocations.add(owner);
+                    invocations.add(MemberKey.name(key));
+                    invocations.add(MemberKey.descriptor(key));
+                }
             }
-            int ownerName = p.operand1(classIndex);
-            if (p.tag(ownerName) != ClassParser.TAG_UTF8) {
-                continue;
+            if (changed) {
+                int owner = probedOwner(p, scratch, index, true);
+                if (owner != Intern.NONE) {
+                    inherited.add(SymbolRef.pack(kindOf(tag), 0, 0, false));
+                    inherited.add(owner);
+                    inherited.add(MemberKey.name(key));
+                    inherited.add(MemberKey.descriptor(key));
+                    count++;
+                }
             }
-            int off = p.cpPos[ownerName] + 3;
-            int len = p.utf8Length(ownerName);
-            if (len > 0 && b[off] == '[') {
-                continue;
-            }
-            int owner;
-            try {
-                owner = ModifiedUtf8.intern(scratch, b, off, len);
-            } catch (ClassParser.FormatException e) {
-                continue;
-            }
-            out.add(owner);
-            out.add(MemberKey.name(key));
-            out.add(MemberKey.descriptor(key));
+        }
+        return count;
+    }
+
+    /** The probe slot of the member a reference names, or -1. */
+    private static int probedSlot(ClassParser p, MemberProbe probe, int index) {
+        int nameAndType = p.operand2(index);
+        if (p.tag(nameAndType) != ClassParser.TAG_NAME_AND_TYPE) {
+            return -1;
+        }
+        int name = p.operand1(nameAndType);
+        int descriptor = p.operand2(nameAndType);
+        if (p.tag(name) != ClassParser.TAG_UTF8 || p.tag(descriptor) != ClassParser.TAG_UTF8) {
+            return -1;
+        }
+        return findProbed(probe, p.bytes, p.cpPos[name] + 3, p.utf8Length(name), p.cpPos[descriptor] + 3, p.utf8Length(descriptor));
+    }
+
+    /**
+     * The interned owner of a member reference, or {@link Intern#NONE} for an array owner or
+     * a malformed entry.
+     *
+     * @param outsideJava also reject a {@code java/} owner. Such a class never extends a
+     *     library class, and the JVM reserves the package, so no library class hides there.
+     */
+    private static int probedOwner(ClassParser p, Scratch scratch, int index, boolean outsideJava) {
+        int classIndex = p.operand1(index);
+        if (p.tag(classIndex) != ClassParser.TAG_CLASS) {
+            return Intern.NONE;
+        }
+        int ownerName = p.operand1(classIndex);
+        if (p.tag(ownerName) != ClassParser.TAG_UTF8) {
+            return Intern.NONE;
+        }
+        byte[] b = p.bytes;
+        int off = p.cpPos[ownerName] + 3;
+        int len = p.utf8Length(ownerName);
+        if ((len > 0 && b[off] == '[') || (outsideJava && isJavaPackage(b, off, len))) {
+            return Intern.NONE;
+        }
+        try {
+            return ModifiedUtf8.intern(scratch, b, off, len);
+        } catch (ClassParser.FormatException e) {
+            return Intern.NONE;
         }
     }
 
-    private static long findProbed(MemberProbe probe, byte[] b, int nameOff, int nameLen, int descriptorOff, int descriptorLen) {
+    /** The probe slot matching a raw constant-pool name and descriptor, or -1. */
+    private static int findProbed(MemberProbe probe, byte[] b, int nameOff, int nameLen, int descriptorOff, int descriptorLen) {
         // A non-ASCII name skips the filter: its raw bytes need not match its UTF-8 form.
         if (!probe.mayContainName(b, nameOff, nameLen) && ModifiedUtf8.isAscii(b, nameOff, nameLen)) {
-            return MemberKey.NONE;
+            return -1;
         }
         boolean plain = (ModifiedUtf8.isAscii(b, nameOff, nameLen) || ModifiedUtf8.isValidUtf8(b, nameOff, nameLen))
                 && (ModifiedUtf8.isAscii(b, descriptorOff, descriptorLen)
                         || ModifiedUtf8.isValidUtf8(b, descriptorOff, descriptorLen));
         if (plain) {
-            return probe.find(b, nameOff, nameLen, descriptorOff, descriptorLen);
+            return probe.slot(b, nameOff, nameLen, descriptorOff, descriptorLen);
         }
         try {
             byte[] name = ModifiedUtf8.toUtf8(b, nameOff, nameLen);
             byte[] descriptor = ModifiedUtf8.toUtf8(b, descriptorOff, descriptorLen);
             byte[] joined = Arrays.copyOf(name, name.length + descriptor.length);
             System.arraycopy(descriptor, 0, joined, name.length, descriptor.length);
-            return probe.find(joined, 0, name.length, name.length, descriptor.length);
+            return probe.slot(joined, 0, name.length, name.length, descriptor.length);
         } catch (ClassParser.FormatException e) {
-            return MemberKey.NONE;
+            return -1;
         }
     }
 }

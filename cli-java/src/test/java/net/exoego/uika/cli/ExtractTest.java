@@ -190,7 +190,7 @@ class ExtractTest {
         NameSet owners = names("lib/Owner", "lib/Elem");
         Extract.referencesLibrary(p, scratch, owners);
         IntBuf out = new IntBuf();
-        Extract.refs(out, p, scratch, owners);
+        Extract.refs(out, p, scratch, owners, new MemberProbe(new long[0]));
         List<String> special = new ArrayList<>();
         for (int i = 1; i < out.n; i += 4) {
             if (SymbolRef.specialOf(out.a[i])) {

@@ -278,6 +278,16 @@ user time, and a per-class record cost ~35MB RSS.
 
 ## Deliberate Costs
 
+- References whose owner is outside the library (a subclass calling an inherited
+  member names itself as owner) are matched in pass 1 by the name and descriptor of
+  the members the library broke. Every member reference of every surviving class is
+  looked at, which nothing did before for a class naming no library class. Seven
+  alternating pairs on a pinned classpath list (2,251 jars, 1.27M classes), medians:
+  coroutines 1.7.1 -> 1.11.0 1.21s -> 1.25s wall, 11.5s -> 11.8s user; JDK 11 -> 17
+  1.82s -> 1.96s, 15.4s -> 16.5s; JDK 17 -> 21 1.98s -> 2.14s, 15.2s -> 16.9s. RSS
+  within noise. The rejected variants and their costs are in `cli-java/AGENTS.md`
+  under "References whose owner is outside the library".
+
 - Per-module runs, dependency and JDK alike, each check a module's whole classpath. Until
   2026-09-27 each also scanned it, so a jar shared by N modules was inflated and parsed N
   times; the next bullet is how that went away. The table below is from then, measured on a

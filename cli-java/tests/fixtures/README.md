@@ -69,6 +69,16 @@ reproduced from the third-party binaries:
   (https://github.com/musichin/ktlint-github-reporter/issues/80, hit on ktlint
   1.8.0, whose `ReporterV2` has the same shape as 1.7.2). The
   `super method became abstract` check
+- spring-cloud-tencent's `PolarisFeignCircuitBreaker$Builder` extends
+  `feign.Feign$Builder` and calls the inherited `build()` without a qualifier,
+  so javac named the subclass as the owner, `PolarisFeignCircuitBreaker$Builder.build:()Lfeign/Feign;`.
+  feign-core 12.5 moved `build()` up to `BaseBuilder` with the erased return type
+  `Object` and left no bridge, so the descriptor is gone from the whole chain
+  (`NoSuchMethodError` naming the subclass;
+  https://github.com/Tencent/spring-cloud-tencent/issues/1231). No constant in
+  the consumer names a feign class as the owner of that call, which is the shape
+  the inherited-reference sweep exists for. `BaseBuilder` implements `Cloneable`,
+  so the report needs `--jdk-release`, and without it the reference is unverified
 - kotest 6 turned `kotest-runner-junit5-jvm` into a relocation shim: the 6.2.3
   jar holds nothing but `META-INF/services/org.junit.platform.engine.TestEngine`,
   still naming `KotestJunitPlatformTestEngine`, whose class moved to the new
@@ -395,6 +405,9 @@ No golden scenario — only the path-based entry points read `META-INF/services`
 | `io.kotest:kotest-runner-junit5-jvm:5.9.1` | `76957400399f55a24164581419f2a3d07f727c48b03dc3972e2576e18747ea22` |
 | `io.kotest:kotest-runner-junit5-jvm:6.2.3` | `7d0a6cb0dee0c8186860154240911fcde3a1d00158ab0dea9a7c14570f7e5c64` |
 | `org.junit.platform:junit-platform-engine:1.9.3` | `0c39553d9a03510757227f5a1c6cc6530287b1a321ed6258450664874aa2a16a` |
+| `io.github.openfeign:feign-core:12.4` | `527f858c4ff9bd7125ff26d55c5b7997e1112c776ebfda1c7fd9e896b762a868` |
+| `io.github.openfeign:feign-core:12.5` | `b8fbce76fa21af144e9d9d29b713526075af2cee093848cb915b688ad9a3d4ad` |
+| `com.tencent.cloud:spring-cloud-starter-tencent-polaris-circuitbreaker:1.13.0-2022.0.4` | `44ae0381a6d66ab23e7f79a3973a7ec421c5b770e3a5cfd58711c4c672229f0b` |
 | `com.pinterest.ktlint:ktlint-cli-reporter-core:1.7.1` | `9a124608f6e6891f1af1852299ba4f206fde99202edd98ec94a11e987fbd45a4` |
 | `com.pinterest.ktlint:ktlint-cli-reporter-core:1.7.2` | `fb095a60ddc057f7870bde958fb41f6a3cd4ae158dd2d006f4b6e6f0eec81fd8` |
 | `de.musichin.ktlint.reporter:ktlint-reporter-github:3.3.1` | `9e9d41e7e9d3363ed4bbb44f481c15594227e63b44e89365c2c3a0952c7765b8` |
@@ -422,6 +435,7 @@ Under the Apache License, Version 2.0 (`LICENSE-APACHE-2.0.txt`):
 - Pact JVM — Copyright DiUS Computing Pty Ltd
 - Kotest — Copyright the Kotest contributors
 - Apache MINA SSHD — Copyright the Apache Software Foundation
+- OpenFeign — Copyright The Feign Authors
 - Eclipse Jetty — Copyright Mort Bay Consulting Pty Ltd and others
   (dual-licensed EPL-2.0 / Apache-2.0; redistributed here under Apache-2.0)
 
@@ -432,9 +446,12 @@ Under the MIT License:
 - ktlint-github-reporter — Copyright Anton Musichin
   (`LICENSE-MIT-KTLINT-GITHUB-REPORTER.txt`)
 
-Under the BSD 3-Clause License (`LICENSE-BSD-3-CLAUSE-ASM.txt`):
+Under the BSD 3-Clause License:
 
 - ASM — Copyright INRIA, France Telecom
+  (`LICENSE-BSD-3-CLAUSE-ASM.txt`)
+- spring-cloud-tencent — Copyright THL A29 Limited, a Tencent company
+  (`LICENSE-BSD-3-CLAUSE-SPRING-CLOUD-TENCENT.txt`)
 
 Under the Eclipse Public License:
 
