@@ -352,6 +352,7 @@ final class Report {
             case METHOD_ACCESS_NARROWED -> ctor ? "IllegalAccessError at first `new`" : "IllegalAccessError at first call";
             case FIELD_ACCESS_NARROWED -> "IllegalAccessError at first access";
             case FIELD_BECAME_FINAL -> "IllegalAccessError at first write";
+            case SUPER_METHOD_BECAME_ABSTRACT -> "AbstractMethodError at first call";
             case METHOD_BECAME_STATIC, METHOD_BECAME_INSTANCE -> "IncompatibleClassChangeError at first call";
             case FIELD_BECAME_STATIC, FIELD_BECAME_INSTANCE -> "IncompatibleClassChangeError at first access";
             case CLASS_BECAME_FINAL,
@@ -404,7 +405,8 @@ final class Report {
                     METHOD_BECAME_STATIC,
                     METHOD_BECAME_INSTANCE,
                     FIELD_BECAME_STATIC,
-                    FIELD_BECAME_INSTANCE -> false;
+                    FIELD_BECAME_INSTANCE,
+                    SUPER_METHOD_BECAME_ABSTRACT -> false;
         };
     }
 
@@ -502,7 +504,8 @@ final class Report {
                     METHOD_BECAME_STATIC,
                     METHOD_BECAME_INSTANCE,
                     FIELD_BECAME_STATIC,
-                    FIELD_BECAME_INSTANCE -> degraded;
+                    FIELD_BECAME_INSTANCE,
+                    SUPER_METHOD_BECAME_ABSTRACT -> degraded;
         };
     }
 
@@ -811,6 +814,7 @@ final class Report {
                     case METHOD_BECAME_FINAL -> target + " became final, but " + cls + " still overrides it";
                     case EXTENDS_FINAL_CLASS -> cls + " extends " + owner + ", which is final on the runtime classpath";
                     case METHOD_BECAME_ABSTRACT -> target + " became abstract, but " + cls + " does not implement it";
+                    case SUPER_METHOD_BECAME_ABSTRACT -> target + " became abstract, but " + cls + " still calls it through super";
                     case CONFLICTING_DEFAULT_METHODS -> target
                             + " is now a default that "
                             + cls

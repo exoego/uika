@@ -264,6 +264,114 @@ final class CheckTest {
         assertOk(v);
     }
 
+    private static ClassApi abstractClassWith(String name, String superName, Member... methods) {
+        ClassApi c = classWithMethodAccess(name, methods);
+        c.access = Acc.PUBLIC | Acc.ABSTRACT;
+        c.superName = intern(superName);
+        return c;
+    }
+
+    private static final Member CONCRETE_M = m("m", "()V", Acc.PUBLIC);
+    private static final Member ABSTRACT_M = m("m", "()V", Acc.PUBLIC | Acc.ABSTRACT);
+
+    private static ClassGraph subclassGraph(String sub, String superName) {
+        ClassGraph graph = new ClassGraph();
+        insert(graph, sub, intern(superName), new int[0], Intern.NONE, "app.jar");
+        return graph;
+    }
+
+    private static Check.Verdict superCall(SymbolRef r, String sourceClass, ApiIndex oldLib, ApiIndex newLib, ClassGraph graph) {
+        return Check.verdictOf(r, true, intern(sourceClass), new Scope(oldLib), new Scope(newLib), graph);
+    }
+
+    @Test
+    void superCallToAMethodThatBecameAbstractIsBroken() {
+        ApiIndex oldLib = index(abstractClassWith("lib/C", JAVA_LANG_OBJECT, CONCRETE_M));
+        ApiIndex newLib = index(abstractClassWith("lib/C", JAVA_LANG_OBJECT, ABSTRACT_M));
+        SymbolRef call = methodRefExpectingInstance("lib/C", "m", "()V");
+        ClassGraph graph = subclassGraph("app/Sub", "lib/C");
+        assertEquals(Reason.SUPER_METHOD_BECAME_ABSTRACT, broken(superCall(call, "app/Sub", oldLib, newLib, graph)).reason());
+        // The same reference through invokevirtual dispatches to the caller's own override.
+        assertOk(verdict(call, "app/Sub", new Scope(oldLib), new Scope(newLib), graph));
+    }
+
+    /** A caller the graph does not hold is judged from the class its reference names. */
+    @Test
+    void superCallFromAClassOutsideTheGraphStartsAtTheNamedOwner() {
+        ApiIndex oldLib = index(abstractClassWith("lib/C", JAVA_LANG_OBJECT, CONCRETE_M));
+        ApiIndex newLib = index(abstractClassWith("lib/C", JAVA_LANG_OBJECT, ABSTRACT_M));
+        SymbolRef call = methodRefExpectingInstance("lib/C", "m", "()V");
+        assertEquals(
+                Reason.SUPER_METHOD_BECAME_ABSTRACT, broken(superCall(call, "app/Sub", oldLib, newLib, new ClassGraph())).reason());
+    }
+
+    @Test
+    void superCallToAMethodAbstractOnBothSidesIsNotReported() {
+        ApiIndex lib = index(abstractClassWith("lib/C", JAVA_LANG_OBJECT, ABSTRACT_M));
+        SymbolRef call = methodRefExpectingInstance("lib/C", "m", "()V");
+        assertOk(superCall(call, "app/Sub", lib, lib, subclassGraph("app/Sub", "lib/C")));
+    }
+
+    @Test
+    void interfaceSuperCallToADefaultThatBecameAbstractIsBroken() {
+        ClassApi oldI = iface("lib/I");
+        setMembers(oldI, true, CONCRETE_M);
+        ClassApi newI = iface("lib/I");
+        setMembers(newI, true, ABSTRACT_M);
+        ClassGraph graph = new ClassGraph();
+        insert(graph, "app/Impl", Scope.objectSym(), syms("lib/I"), Intern.NONE, "app.jar");
+        Check.Verdict v = superCall(interfaceMethodRef("lib/I", "m", "()V"), "app/Impl", index(oldI), index(newI), graph);
+        assertEquals(Reason.SUPER_METHOD_BECAME_ABSTRACT, broken(v).reason());
+    }
+
+    /** A non-Object superclass re-abstracting equals, the shape Lucene 6.0 gave Query. */
+    @Test
+    void superCallToAnObjectMethodTheSuperclassReabstractedIsBroken() {
+        Member concrete = m("equals", "(Ljava/lang/Object;)Z", Acc.PUBLIC);
+        Member reabstracted = m("equals", "(Ljava/lang/Object;)Z", Acc.PUBLIC | Acc.ABSTRACT);
+        ApiIndex oldLib = index(abstractClassWith("lib/C", JAVA_LANG_OBJECT, concrete));
+        ApiIndex newLib = index(abstractClassWith("lib/C", JAVA_LANG_OBJECT, reabstracted));
+        SymbolRef call = methodRefExpectingInstance("lib/C", "equals", "(Ljava/lang/Object;)Z");
+        Check.Verdict v = superCall(call, "app/Sub", oldLib, newLib, subclassGraph("app/Sub", "lib/C"));
+        assertEquals(Reason.SUPER_METHOD_BECAME_ABSTRACT, broken(v).reason());
+    }
+
+    /**
+     * Selection starts at the caller's direct superclass, not at the class the reference
+     * names. A concrete override between the two is what runs.
+     */
+    @Test
+    void superCallSelectsFromTheDirectSuperclass() {
+        ClassApi oldMid = classWithMethodAccess("lib/Mid");
+        oldMid.superName = intern("lib/C");
+        ClassApi newMid = classWithMethodAccess("lib/Mid", CONCRETE_M);
+        newMid.superName = intern("lib/C");
+        ApiIndex oldLib = index(abstractClassWith("lib/C", JAVA_LANG_OBJECT, CONCRETE_M), oldMid);
+        ApiIndex newLib = index(abstractClassWith("lib/C", JAVA_LANG_OBJECT, ABSTRACT_M), newMid);
+        SymbolRef call = methodRefExpectingInstance("lib/C", "m", "()V");
+        assertOk(superCall(call, "app/Sub", oldLib, newLib, subclassGraph("app/Sub", "lib/Mid")));
+    }
+
+    @Test
+    void superCallThroughADirectSuperclassOutsideScopeIsUnknown() {
+        ApiIndex oldLib = index(abstractClassWith("lib/C", JAVA_LANG_OBJECT, CONCRETE_M));
+        ApiIndex newLib = index(abstractClassWith("lib/C", JAVA_LANG_OBJECT, ABSTRACT_M));
+        SymbolRef call = methodRefExpectingInstance("lib/C", "m", "()V");
+        assertUnknown(superCall(call, "app/Sub", oldLib, newLib, subclassGraph("app/Sub", "app/Mid")));
+    }
+
+    /** The old chain leaves scope above the method, so whether it was concrete is not provable. */
+    @Test
+    void superCallWhoseOldSelectionEscapesIsUnknown() {
+        ClassApi oldC = abstractClassWith("lib/C", "ext/Base");
+        ClassApi oldProbe = abstractClassWith("lib/C", JAVA_LANG_OBJECT, CONCRETE_M);
+        ApiIndex newLib = index(abstractClassWith("lib/C", JAVA_LANG_OBJECT, ABSTRACT_M));
+        SymbolRef call = methodRefExpectingInstance("lib/C", "m", "()V");
+        ClassGraph graph = subclassGraph("app/Sub", "lib/C");
+        assertUnknown(superCall(call, "app/Sub", index(oldC), newLib, graph));
+        assertEquals(Reason.SUPER_METHOD_BECAME_ABSTRACT, broken(superCall(call, "app/Sub", index(oldProbe), newLib, graph)).reason());
+    }
+
     /**
      * lib/C moved to another artifact that is still on the classpath. Pass 2 fetches no flags
      * for a class-only reference, so existence passes it like any other class reference.

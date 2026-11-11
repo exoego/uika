@@ -18,6 +18,8 @@ enum Reason {
     METHOD_REMOVED("method removed"),
     METHOD_ACCESS_NARROWED("method access narrowed"),
     METHOD_BECAME_ABSTRACT("method became abstract"),
+    /** A {@code super.m()} call site whose target became abstract. The caller may well override it. */
+    SUPER_METHOD_BECAME_ABSTRACT("super method became abstract"),
     CONFLICTING_DEFAULT_METHODS("conflicting default methods"),
     METHOD_BECAME_FINAL("method became final"),
     METHOD_BECAME_STATIC("method became static"),

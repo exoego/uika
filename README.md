@@ -28,6 +28,7 @@ reference recorded in the referencing binary's constant pool. Detection covers:
   already declares, or a class still final in a lagging artifact
   `IncompatibleClassChangeError` (`VerifyError` up to JDK 15)
 - Methods that became abstract `AbstractMethodError`
+- `super` calls to a method that became abstract `AbstractMethodError`
 - `new` on a class that became abstract or an interface `InstantiationError`
 - Class <-> interface flips `IncompatibleClassChangeError`
 - Subclasses left out of a newly sealed type's `permits` clause

@@ -30,10 +30,10 @@ class ModelTest {
         assertNull(Reason.parse("not a reason"));
     }
 
-    /** The Rust list is hand-kept at 22 entries. A count that drifts means one side gained a reason. */
+    /** The Rust list is hand-kept at 23 entries. A count that drifts means one side gained a reason. */
     @Test
     void reasonSetMatchesTheRustList() {
-        assertEquals(22, Reason.ALL.length);
+        assertEquals(23, Reason.ALL.length);
         assertEquals("method_became_abstract", Reason.METHOD_BECAME_ABSTRACT.configText());
         assertEquals("service provider not instantiable", Reason.SERVICE_PROVIDER_NOT_INSTANTIABLE.text);
     }
@@ -120,6 +120,13 @@ class ModelTest {
                 }
             }
         }
+        // The invokespecial bit rides in the packed word only, so both call sites decode to
+        // one reference and a broken symbol reports once.
+        int virtual = SymbolRef.pack(RefKind.METHOD, SymbolRef.TRI_FALSE, SymbolRef.TRI_NONE, false);
+        int special = SymbolRef.special(virtual);
+        assertFalse(SymbolRef.specialOf(virtual));
+        assertTrue(SymbolRef.specialOf(special));
+        assertEquals(SymbolRef.unpack(virtual, owner, name, descriptor), SymbolRef.unpack(special, owner, name, descriptor));
         SymbolRef classRef = SymbolRef.unpack(SymbolRef.pack(RefKind.CLASS, 0, 0, false), owner, Intern.NONE, Intern.NONE);
         assertEquals(SymbolRef.ofClass(owner), classRef);
         assertFalse(classRef.hasMember());

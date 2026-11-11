@@ -359,6 +359,25 @@ pass-2 classes are typically below 0.1% of the scan.
   shapes), and the koin fixture (koin 3.3.0 renamed the abstract `Logger.log` to
   `display`, so `SLF4JLogger` inherits an unimplemented abstract method — a real
   shape-2 break the golden pins alongside the log-became-final one).
+- AbstractMethodError at a `super` call: `invokespecial` runs the method it selects with
+  no virtual dispatch, so `super.m()` throws once `m` is abstract even though the caller
+  overrides it, which is why `addSelectionViolations` (`CONCRETE` for that class) cannot
+  see it. This one is a reference verdict (`Check.verdict`), old-relative like the
+  rest: `implementationStatus` from the selection start must be `ABSTRACT_ONLY` in new
+  and `CONCRETE` in old. The start is the caller's direct superclass for a Methodref
+  and the named interface for `X.super.m()` (JVMS 6.5). javac names the direct
+  superclass, so the two differ only for bytecode naming a class further up, and a
+  direct superclass outside every scope answers Unknown. The opcode rides in the packed
+  word only (`SymbolRef.special`), never in the record: as a component it would make a
+  virtual and a special call to one removed method two violations. The arm runs only
+  when plain resolution already landed on an abstract method, which is necessary for an
+  abstract selection and keeps the walk off every other super call. Reason
+  `super method became abstract`, never latent: the call site is the evidence. Real
+  fixture: ktlint-reporter-github 3.3.1 on ktlint-cli-reporter-core 1.7.1 -> 1.7.2
+  (`IntegrationTest.detectsSuperCallToAMethodThatBecameAbstract`). Known
+  miss: javac names the DIRECT superclass, so a caller whose direct superclass is its
+  own (a consumer class between it and the library) produces a reference whose owner
+  is not in the old index, and pass 1 drops it like every such reference.
 - Conflicting default methods: two unrelated superinterfaces supply a default for the
   same signature and the concrete class overrides neither, so selection has no winner.
   Same walk (`addSelectionViolations`), driven by `methodsNewlyDefault` alongside

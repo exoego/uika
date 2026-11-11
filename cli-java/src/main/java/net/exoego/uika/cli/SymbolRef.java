@@ -21,7 +21,8 @@ record SymbolRef(RefKind kind, int owner, long member, Boolean expectedStatic, B
     }
 
     // Packed meta word: kind in bits 0-1, then two bits each for expectedStatic and
-    // fieldWrite (0 none, 1 false, 2 true), then one bit for instantiated.
+    // fieldWrite (0 none, 1 false, 2 true), then one bit for instantiated and one for
+    // an invokespecial call site.
 
     static int pack(RefKind kind, int expectedStatic, int fieldWrite, boolean instantiated) {
         return kind.ordinal() | expectedStatic << 2 | fieldWrite << 4 | (instantiated ? 1 << 6 : 0);
@@ -45,6 +46,19 @@ record SymbolRef(RefKind kind, int owner, long member, Boolean expectedStatic, B
 
     static boolean instantiatedOf(int meta) {
         return (meta & (1 << 6)) != 0;
+    }
+
+    /**
+     * Marks a method reference made by {@code invokespecial}. Only the packed word carries
+     * it: as a record component it would split one broken symbol into two violations
+     * wherever a class reaches it through both a virtual and a special call.
+     */
+    static int special(int meta) {
+        return meta | 1 << 7;
+    }
+
+    static boolean specialOf(int meta) {
+        return (meta & (1 << 7)) != 0;
     }
 
     private static Boolean tri(int value) {

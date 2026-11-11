@@ -52,9 +52,10 @@ relearned by experiment.
   the integration tests. The class-shape breaks are not probeable either:
   `MethodHandles.Lookup` models neither the Methodref/InterfaceMethodref
   owner-kind requirement nor InstantiationError, so it would link a kind-flip
-  or `class became abstract` verdict the JVM actually rejects. scenarios.tsv is
-  chosen so no fixture produces a class-shape verdict, so `make probe` never
-  answer-checks one. The probe is evidence, not truth: findVirtual does not
+  or `class became abstract` verdict the JVM actually rejects. Nor is
+  `super method became abstract`: `findVirtual` links an abstract method, and the
+  probe would call the verdict a false positive. scenarios.tsv is chosen so no
+  fixture produces one of these verdicts, so `make probe` never answer-checks one. The probe is evidence, not truth: findVirtual does not
   model invokespecial, final-field writes are probed as reads when the writer
   is the declaring class, and an unloadable referencing class downgrades to a
   caller-context-free public lookup. The Kotlin fixtures need kotlin-stdlib on

@@ -407,7 +407,7 @@ final class Extract {
             if (tag == ClassParser.TAG_STRING || (flags[index] & CP_CODE_REF) != 0) {
                 continue;
             }
-            count += memberRef(out, p, scratch, oldNames, index, tag, 0, 0);
+            count += memberRef(out, p, scratch, oldNames, index, tag, 0, 0, false);
         }
         for (int i = 0; i < codeRefCount; i++) {
             int ref = codeRefs[i];
@@ -431,7 +431,7 @@ final class Extract {
                         case 0xb3, 0xb5 -> SymbolRef.TRI_TRUE;
                         default -> SymbolRef.TRI_NONE;
                     };
-            count += memberRef(out, p, scratch, oldNames, index, tag, expectedStatic, fieldWrite);
+            count += memberRef(out, p, scratch, oldNames, index, tag, expectedStatic, fieldWrite, opcode == 0xb7);
         }
         out.a[countAt] = count;
     }
@@ -500,7 +500,15 @@ final class Extract {
 
     /** Appends the member reference when its owner is accepted; returns how many were appended. */
     private static int memberRef(
-            IntBuf out, ClassParser p, Scratch scratch, NameSet oldNames, int index, int tag, int expectedStatic, int fieldWrite)
+            IntBuf out,
+            ClassParser p,
+            Scratch scratch,
+            NameSet oldNames,
+            int index,
+            int tag,
+            int expectedStatic,
+            int fieldWrite,
+            boolean special)
             throws ClassParser.FormatException {
         int classIndex = p.operand1(index);
         int nameIndex = p.classNameIndex(classIndex);
@@ -520,7 +528,8 @@ final class Extract {
         RefKind kind = tag == ClassParser.TAG_FIELDREF
                 ? RefKind.FIELD
                 : tag == ClassParser.TAG_METHODREF ? RefKind.METHOD : RefKind.INTERFACE_METHOD;
-        out.add(SymbolRef.pack(kind, expectedStatic, fieldWrite, false));
+        int meta = SymbolRef.pack(kind, expectedStatic, fieldWrite, false);
+        out.add(special ? SymbolRef.special(meta) : meta);
         out.add(owner);
         out.add(name);
         out.add(descriptor);

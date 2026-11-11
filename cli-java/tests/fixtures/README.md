@@ -60,6 +60,15 @@ reproduced from the third-party binaries:
   `new`. Bytecode compiled against 2.18.2, where it was a concrete final class,
   throws `InstantiationError` under 2.20.1 (the `new`-on-abstract check). The
   2.18.2 jar is both the old side and the consumer here
+- ktlint-reporter-github 3.3.1 implements ktlint's `ReporterV2` and was compiled
+  against ktlint-cli-reporter-core 1.7.1, where `beforeAll`, `before`, `after`
+  and `afterAll` are JVM default methods. kotlinc gave the reporter a bridge for
+  each one that calls the default with `invokespecial`. Core 1.7.2 declares the
+  four abstract again, so the bridge throws `AbstractMethodError` although the
+  reporter class has all four methods
+  (https://github.com/musichin/ktlint-github-reporter/issues/80, hit on ktlint
+  1.8.0, whose `ReporterV2` has the same shape as 1.7.2). The
+  `super method became abstract` check
 - kotest 6 turned `kotest-runner-junit5-jvm` into a relocation shim: the 6.2.3
   jar holds nothing but `META-INF/services/org.junit.platform.engine.TestEngine`,
   still naming `KotestJunitPlatformTestEngine`, whose class moved to the new
@@ -386,6 +395,9 @@ No golden scenario — only the path-based entry points read `META-INF/services`
 | `io.kotest:kotest-runner-junit5-jvm:5.9.1` | `76957400399f55a24164581419f2a3d07f727c48b03dc3972e2576e18747ea22` |
 | `io.kotest:kotest-runner-junit5-jvm:6.2.3` | `7d0a6cb0dee0c8186860154240911fcde3a1d00158ab0dea9a7c14570f7e5c64` |
 | `org.junit.platform:junit-platform-engine:1.9.3` | `0c39553d9a03510757227f5a1c6cc6530287b1a321ed6258450664874aa2a16a` |
+| `com.pinterest.ktlint:ktlint-cli-reporter-core:1.7.1` | `9a124608f6e6891f1af1852299ba4f206fde99202edd98ec94a11e987fbd45a4` |
+| `com.pinterest.ktlint:ktlint-cli-reporter-core:1.7.2` | `fb095a60ddc057f7870bde958fb41f6a3cd4ae158dd2d006f4b6e6f0eec81fd8` |
+| `de.musichin.ktlint.reporter:ktlint-reporter-github:3.3.1` | `9e9d41e7e9d3363ed4bbb44f481c15594227e63b44e89365c2c3a0952c7765b8` |
 | `org.apache.sshd:sshd-core:2.1.0` | `e2378b388e3f234aeb9ad03d7fa7b84977eab94b862449dcbf859d096428d7ef` |
 | `org.apache.sshd:sshd-core:2.2.0` | `c0cd5ae21f427788afa3e17afe6588957207ccdffeb0f5ce446fcad9913eed27` |
 
@@ -412,6 +424,13 @@ Under the Apache License, Version 2.0 (`LICENSE-APACHE-2.0.txt`):
 - Apache MINA SSHD — Copyright the Apache Software Foundation
 - Eclipse Jetty — Copyright Mort Bay Consulting Pty Ltd and others
   (dual-licensed EPL-2.0 / Apache-2.0; redistributed here under Apache-2.0)
+
+Under the MIT License:
+
+- ktlint — Copyright Pinterest, Inc. and Stanley Shyiko
+  (`LICENSE-MIT-KTLINT.txt`)
+- ktlint-github-reporter — Copyright Anton Musichin
+  (`LICENSE-MIT-KTLINT-GITHUB-REPORTER.txt`)
 
 Under the BSD 3-Clause License (`LICENSE-BSD-3-CLAUSE-ASM.txt`):
 
