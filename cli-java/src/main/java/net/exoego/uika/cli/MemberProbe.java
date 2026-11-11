@@ -6,9 +6,9 @@ package net.exoego.uika.cli;
  * built, so workers share it without locking.
  */
 final class MemberProbe {
-    /** A member the selection walk may report: any call to it is invocation evidence. */
+    /** A member the selection walk may report. Any call to it is invocation evidence. */
     private static final byte EVIDENCE = 1;
-    /** A member the library removed or reshaped: a reference inheriting it must be judged. */
+    /** A member the library removed or reshaped. A reference inheriting it must be judged. */
     private static final byte CHANGED = 2;
 
     private final long[] slots;
@@ -26,7 +26,7 @@ final class MemberProbe {
         return (((length * 31 + first) * 31 + middle) * 31 + last) & 0xffff;
     }
 
-    /** False means no probed member has this name; true means {@link #find} must decide. */
+    /** False means no probed member has this name; true means {@link #slot} must decide. */
     boolean mayContainName(byte[] buf, int off, int len) {
         if (len == 0) {
             return false;
@@ -84,12 +84,6 @@ final class MemberProbe {
 
     private static int combine(int nameHash, int descriptorHash) {
         return nameHash * 31 + descriptorHash;
-    }
-
-    /** The evidence member whose name and descriptor equal the given UTF-8 bytes, or {@link MemberKey#NONE}. */
-    long find(byte[] buf, int nameOff, int nameLen, int descriptorOff, int descriptorLen) {
-        int slot = slot(buf, nameOff, nameLen, descriptorOff, descriptorLen);
-        return slot >= 0 && isEvidence(slot) ? slots[slot] : MemberKey.NONE;
     }
 
     long keyAt(int slot) {

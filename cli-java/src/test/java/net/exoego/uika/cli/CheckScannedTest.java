@@ -804,6 +804,60 @@ final class CheckScannedTest {
         assertEquals(intern("lib/C"), superCalls.get(0).reference.owner());
     }
 
+    /**
+     * A class only the new version has was not there to link through before the upgrade, so a
+     * call through it was broken already. Minimized from jetty-util 9.3.26 -> 10.0.26 under
+     * micrometer-core 1.9.17. Its TimedHandler calls shutdown()Future on Graceful$Shutdown, a
+     * class jetty-util 9.4 added, and the call was reported as a method removed from Graceful.
+     */
+    @Test
+    void aCallThroughAClassTheUpgradeAddedIsNotReported() throws Exception {
+        String oldLib = jar("lib-old.jar", "lib/C.class", new ClassWriter("lib/C", JAVA_LANG_OBJECT).method(Acc.PUBLIC, "m", "()V", RETURN).bytes());
+        String newLib = jar(
+                "lib-new.jar",
+                "lib/C.class", subclass("lib/C", JAVA_LANG_OBJECT),
+                "lib/Added.class", subclass("lib/Added", "lib/C"));
+        String app = jar(
+                "app.jar",
+                "app/Sub.class", subclass("app/Sub", "lib/Added"),
+                "app/User.class", referencing("app/User", JAVA_LANG_OBJECT, INVOKEVIRTUAL, 10, "lib/Added", "m", "()V"),
+                "app/Caller.class", referencing("app/Caller", JAVA_LANG_OBJECT, INVOKEVIRTUAL, 10, "app/Sub", "m", "()V"));
+
+        Check.Report report = runCheck(oldLib, newLib, newLib, app);
+
+        assertEquals(List.of(), report.violations);
+        assertEquals(0, report.unknownRefs);
+    }
+
+    /**
+     * The old index loses a class whose winning copy pass 2 cannot read. A reference to that
+     * class still names the library, so it is unverified like any other that cannot resolve.
+     */
+    @Test
+    void aReferenceToAnOldClassWhoseWinningCopyIsUnreadableStaysUnverified() {
+        String uber = dir.resolve("uber.jar").toString();
+        String oldJar = dir.resolve("lib-old.jar").toString();
+        String newJar = dir.resolve("lib-new.jar").toString();
+        ClassApi oldC = classWithMethodAccess("lib/C", m("m", "()V", Acc.PUBLIC));
+        oldC.source = intern(oldJar);
+        ClassApi newC = classWithMethodAccess("lib/C");
+        newC.source = intern(newJar);
+        SymbolRef call = new SymbolRef(RefKind.METHOD, intern("lib/C"), MemberKey.of("m", "()V"), Boolean.FALSE, null, null);
+        // uber.jar is not on disk, so pass 2 fails to read the copy that pass 1 saw win.
+        Scan.Result scan = scanOf(
+                scanned(uber, "lib/C", JAVA_LANG_OBJECT), scanned("app", "app/User", JAVA_LANG_OBJECT, new String[0], List.of(call)));
+        IntSet upgraded = new IntSet();
+        upgraded.add(intern(newJar));
+        Check.BeforeClasspath before = new Check.BeforeClasspath(List.of(uber, oldJar), List.of(uber, newJar, "app"));
+
+        Check.Report report =
+                Check.checkScanned(scan, index(oldC), index(newC), upgraded, before, null, null, Check.SpiServices.NONE, null);
+
+        assertEquals(List.of(), report.violations);
+        assertEquals(1, report.unknownRefs);
+        assertTrue(!report.warnings.isEmpty() && report.warnings.stream().allMatch(w -> w.startsWith(uber)), report.warnings.toString());
+    }
+
     /** No reason reaches this today, since every broken member verdict resolved against old. */
     @Test
     void aReferenceThatOldDoesNotResolveKeepsItsOwner() {
@@ -818,7 +872,7 @@ final class CheckScannedTest {
         ClassApi oldC = classWithMethodAccess(
                 "lib/C",
                 m("<init>", "(I)V", Acc.PUBLIC),
-                m("", "()V", Acc.PUBLIC),
+                m("secret", "()V", Acc.PRIVATE),
                 m("gone", "()V", Acc.PUBLIC),
                 m("narrowed", "()V", Acc.PUBLIC),
                 m("widened", "()V", Acc.PROTECTED),
@@ -834,6 +888,10 @@ final class CheckScannedTest {
         ClassApi oldFields = classWithFields(
                 "lib/F", m("dropped", "I", Acc.PUBLIC), m("same", "I", Acc.PUBLIC), m("finalField", "I", Acc.PUBLIC));
         ClassApi oldRemoved = classWithMethodAccess("lib/Removed", m("any", "()V", Acc.PUBLIC));
+        ClassApi oldEscaping = classWithMethodAccess("lib/Escaping", m("hashCode", "()I", Acc.PUBLIC), m("close", "()V", Acc.PUBLIC));
+        oldEscaping.superName = intern("ext/Base");
+        ClassApi newEscaping = classWithMethodAccess("lib/Escaping");
+        newEscaping.superName = intern("ext/Base");
         ClassApi newBase = classWithMethodAccess("lib/Base", m("inherited", "()V", Acc.PUBLIC), m("pulledUp", "()V", Acc.PUBLIC));
         ClassApi newC = classWithMethodAccess(
                 "lib/C",
@@ -848,14 +906,17 @@ final class CheckScannedTest {
         newC.superName = intern("lib/Base");
         ClassApi newFields = classWithFields("lib/F", m("same", "I", Acc.PUBLIC), m("finalField", "I", Acc.PUBLIC | Acc.FINAL));
 
-        LongSet changed = Check.changedMembers(index(oldBase, oldC, oldFields, oldRemoved), index(newBase, newC, newFields));
+        LongSet changed = Check.changedMembers(
+                index(oldBase, oldC, oldFields, oldRemoved, oldEscaping), index(newBase, newC, newFields, newEscaping));
 
-        // Not the constructor, not the method moved to a superclass, not the override whose
-        // removal leaves Object's toString, nothing of a class that is gone altogether, and
-        // no flag change a reference cannot feel. A final method only matters to an overrider.
+        // Not the constructor, not the private method no outside class could call, not the
+        // method moved to a superclass, not the override whose removal leaves Object's
+        // toString, nothing of a class that is gone altogether, and no flag change a reference
+        // cannot feel. A final method only matters to an overrider. Past a superclass outside
+        // the library close() can no longer be proven, while hashCode() still ends at Object.
         assertEquals(
                 Set.of(
-                        MemberKey.of("", "()V"),
+                        MemberKey.of("close", "()V"),
                         MemberKey.of("gone", "()V"),
                         MemberKey.of("narrowed", "()V"),
                         MemberKey.of("staticNow", "()V"),

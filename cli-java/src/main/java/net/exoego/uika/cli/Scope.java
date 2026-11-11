@@ -148,7 +148,7 @@ final class Scope {
         return resolveMethod(owner, key, Acc.NON_VIRTUAL);
     }
 
-    private static boolean isConstructor(long key) {
+    static boolean isConstructor(long key) {
         int name = MemberKey.name(key);
         return name == INIT || name == CLINIT;
     }

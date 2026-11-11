@@ -376,9 +376,10 @@ final class Extract {
 
     /**
      * Symbol references whose owner is in {@code oldNames}, which scopes them to the checked
-     * library. Owners are tested by raw bytes first, so the vast majority is rejected without
-     * touching the intern pool. MethodHandle constants point at Methodref-like entries, so the
-     * plain pool walk covers them; InvokeDynamic names are bootstrap synthetics and out of scope.
+     * library, plus the ones {@link #inheritedRef} keeps for an owner outside it. Owners are
+     * tested by raw bytes first, so the vast majority is rejected without touching the intern
+     * pool. MethodHandle constants point at Methodref-like entries, so the plain pool walk
+     * covers them; InvokeDynamic names are bootstrap synthetics and out of scope.
      */
     static void refs(IntBuf out, ClassParser p, Scratch scratch, NameSet oldNames, MemberProbe probe)
             throws ClassParser.FormatException {
@@ -507,7 +508,10 @@ final class Extract {
         return oldNames.find(b, off, len, Intern.hash(b, off, len));
     }
 
-    /** Appends the member reference when its owner is accepted; returns how many were appended. */
+    /**
+     * Appends the member reference when its owner is accepted or {@link #inheritedRef} keeps
+     * it. Returns how many were appended.
+     */
     private static int memberRef(
             IntBuf out,
             ClassParser p,
@@ -564,7 +568,7 @@ final class Extract {
      * member the library removed or reshaped. javac names the receiver's static type as the
      * owner, so a call to an inherited library member through a subclass looks like this.
      * Whether the owner really inherits from the library is the check's question, since the
-     * graph is not complete here. A malformed entry is skipped: this class was never judged
+     * graph is not complete here. A malformed entry is skipped. This class was never judged
      * on these entries before, so they must not start costing it its record.
      */
     private static int inheritedRef(IntBuf out, ClassParser p, Scratch scratch, MemberProbe probe, int index, int meta) {
@@ -600,7 +604,7 @@ final class Extract {
      *
      * @param invocations receives {@link #invocationEvidence}, or null
      * @param inherited receives an {@link #inheritedRef} record per match, or null. Only the
-     *     pool is read for these, so no opcode qualifies them: inflating the body of every
+     *     pool is read for these, so no opcode qualifies them. Inflating the body of every
      *     class that calls a method named like a changed one cost 18%.
      * @return how many records {@code inherited} received
      */

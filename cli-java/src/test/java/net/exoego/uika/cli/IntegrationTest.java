@@ -1270,6 +1270,18 @@ class IntegrationTest {
         return Jdk.ctSymIn(Path.of(System.getProperty("java.home")));
     }
 
+    /** The JDK layer for the first of {@code releases} that {@code ctSym} serves, or null. */
+    private static Jdk.Indexer openFirstRelease(Path ctSym, int... releases) {
+        for (int release : releases) {
+            try {
+                return Jdk.Indexer.open(ctSym, release);
+            } catch (UikaException e) {
+                // next rung
+            }
+        }
+        return null;
+    }
+
     private static String verdictKey(Violation v) {
         boolean hasMember = v.reference.hasMember();
         return String.join(
@@ -1324,15 +1336,7 @@ class IntegrationTest {
         // down a ladder instead of failing. The guava escapes are java.util/java.lang types
         // present since release 8, so the assertions hold on every rung (verified for 8, 11,
         // and 17).
-        Jdk.Indexer indexer = null;
-        for (int release : new int[] {17, 11, 8}) {
-            try {
-                indexer = Jdk.Indexer.open(ctSym, release);
-                break;
-            } catch (UikaException e) {
-                // next rung
-            }
-        }
+        Jdk.Indexer indexer = openFirstRelease(ctSym, 17, 11, 8);
         assumeTrue(indexer != null, "no usable release in " + ctSym);
         try (Jdk.Indexer jdk = indexer) {
             Check.Report withJdk = Check.checkScanned(
@@ -1485,15 +1489,7 @@ class IntegrationTest {
 
         Path ctSym = findCtSymForTest();
         assumeTrue(ctSym != null, "no JDK with ct.sym found");
-        Jdk.Indexer indexer = null;
-        for (int release : new int[] {17, 11}) {
-            try {
-                indexer = Jdk.Indexer.open(ctSym, release);
-                break;
-            } catch (UikaException e) {
-                // next rung
-            }
-        }
+        Jdk.Indexer indexer = openFirstRelease(ctSym, 17, 11);
         assumeTrue(indexer != null, "no usable release in " + ctSym);
         try (Jdk.Indexer jdk = indexer) {
             Check.Report report =

@@ -13,10 +13,12 @@ class MemberProbeTest {
         return (name + descriptor).getBytes(StandardCharsets.UTF_8);
     }
 
+    /** The evidence member a raw pair matches, looked up the way the pass-1 sweep does. */
     private static long find(MemberProbe probe, String name, String descriptor) {
         int nameLength = name.getBytes(StandardCharsets.UTF_8).length;
         int descriptorLength = descriptor.getBytes(StandardCharsets.UTF_8).length;
-        return probe.find(joined(name, descriptor), 0, nameLength, nameLength, descriptorLength);
+        int slot = probe.slot(joined(name, descriptor), 0, nameLength, nameLength, descriptorLength);
+        return slot >= 0 && probe.isEvidence(slot) ? probe.keyAt(slot) : MemberKey.NONE;
     }
 
     /** JVMS 4.2.2 forbids an empty method name, so a zero-length pool name can match nothing. */
@@ -76,12 +78,11 @@ class MemberProbeTest {
         assertTrue(probe.isChanged(changedSlot));
         assertFalse(probe.isEvidence(changedSlot));
         assertEquals(changedOnly, probe.keyAt(changedSlot));
-        assertEquals(MemberKey.NONE, find(probe, "changed"));
 
         int evidenceSlot = slotOf(probe, "evidence");
         assertTrue(probe.isEvidence(evidenceSlot));
         assertFalse(probe.isChanged(evidenceSlot));
-        assertEquals(evidenceOnly, find(probe, "evidence"));
+        assertEquals(evidenceOnly, probe.keyAt(evidenceSlot));
 
         int bothSlot = slotOf(probe, "both");
         assertTrue(probe.isEvidence(bothSlot) && probe.isChanged(bothSlot));
@@ -96,10 +97,5 @@ class MemberProbeTest {
     private static int slotOf(MemberProbe probe, String name) {
         byte[] bytes = (name + "()V").getBytes(StandardCharsets.UTF_8);
         return probe.slot(bytes, 0, name.length(), name.length(), 3);
-    }
-
-    private static long find(MemberProbe probe, String name) {
-        byte[] bytes = (name + "()V").getBytes(StandardCharsets.UTF_8);
-        return probe.find(bytes, 0, name.length(), name.length(), 3);
     }
 }

@@ -396,10 +396,13 @@ pass-2 classes are typically below 0.1% of the scan.
     narrowed, a method now abstract, a field now final. Comparing all access flags
     listed `Object.hashCode` for a JDK 11 -> 17 run, because 17 dropped its `native`
     bit, along with dozens of `synchronized` and `final` flips. That kept every
-    `hashCode()` call in the scan and cost 15% of wall time and 40MB.
+    `hashCode()` call in the scan and cost 15% of wall time and 40MB. A member that
+    was private in old never counts, since no class outside the library could use it.
   - Resolution, not a per-class compare. A class that merely drops an override
     (`toString`, `close`) still resolves it from a superclass, and listing it would
-    keep every call of that signature too.
+    keep every call of that signature too. A chain that leaves the library cannot
+    prove that, so the member is listed, except for the 11 `java/lang/Object`
+    methods, which every chain ends at.
   - The graph is not complete in pass 1, so relatedness is decided later.
     `Check.Inheritors` walks the owner's supertypes and drops it, silently, unless
     they reach a library class that declared THAT member in old and breaks it in
@@ -407,17 +410,25 @@ pass-2 classes are typically below 0.1% of the scan.
     and counting them unverified would bury the real number. Reaching the library
     at all is not the test, because in a JDK-pair run every class does.
     `collectWanted` applies the same filter, or pass 2 would fetch the hierarchy of
-    every such owner.
+    every such owner. The walk does not pass through a class that only an upgraded
+    jar defines. That class was not there before the upgrade, so the reference was
+    broken already, and the old side would otherwise resolve through the new copy.
+    jetty-util 9.3.26 -> 10.0.26 under micrometer-core 1.9.17 reported
+    `Graceful.shutdown()` as removed that way. `TimedHandler` calls it on
+    `Graceful$Shutdown`, which jetty-util 9.4 added
+    (`CheckScannedTest.aCallThroughAClassTheUpgradeAddedIsNotReported`). An owner is
+    told apart by the old index pass 1 used, not the one a shadowing copy may have
+    replaced since.
   - A caller whose pool names no library class is judged from its pool alone
     (`Extract.probePool`, the same walk invocation evidence uses), so its reference
     has no opcode: removal and narrowing are judged, a static flip or a super call is
     not. Reading the body of every class that calls a method named like a changed
     one cost 18%.
   What is left is the price of looking at every member reference: 3% of wall and user
-  time on a library pair, 8% on a JDK pair (where every class names the library, so
-  every body is read and every reference probed), RSS unchanged. One new report on
-  the stress classpath, a copy of coroutines 1.6.4 calling `isEmpty()` through its own
-  subclass of `LockFreeLinkedListHead`.
+  time on a library pair, 8% of wall and 7% to 11% of user time on a JDK pair (where
+  every class names the library, so every body is read and every reference probed),
+  RSS unchanged. One new report on the stress classpath, a copy of coroutines 1.6.4
+  calling `isEmpty()` through its own subclass of `LockFreeLinkedListHead`.
   The verdict is the ordinary one, since pass 2 fetches the owner and its chain. A
   broken reference is then re-owned by the class that declared the member in old
   (`Check.declaredInOld`), so the report, the suggestion's coordinate lookup and an
@@ -426,6 +437,11 @@ pass-2 classes are typically below 0.1% of the scan.
   `PolarisFeignCircuitBreaker$Builder` on feign-core 12.4 -> 12.5
   (`IntegrationTest.detectsARemovedMethodReachedThroughAConsumerSubclass`). Its
   chain passes `Cloneable`, so it needs `--jdk-release` and is unverified without.
+  Known misses, both waiting for a real witness. `changedMembers` judges a member from
+  the class that declared it, so a library class that stops extending the supertype
+  whose member it inherited lists nothing, and `Sub.m()` stays silent while a direct
+  `lib.C.m()` reports `method removed`. A class that left the library lists nothing
+  either, even when another scanned artifact still defines it.
 - Conflicting default methods: two unrelated superinterfaces supply a default for the
   same signature and the concrete class overrides neither, so selection has no winner.
   Same walk (`addSelectionViolations`), driven by `methodsNewlyDefault` alongside
