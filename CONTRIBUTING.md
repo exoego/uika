@@ -34,13 +34,11 @@ fetches, because none of them has a JaCoCo binding of its own. Coverage stays op
 runs uninstrumented. CI runs the instrumented targets instead, one job per build
 tool, so each suite runs once there.
 
-Three numbers are over less than the whole component.
+Two numbers are over less than the whole component.
 
 - The Leiningen plugin is measured by `lein-plugin/test/` alone. Cloverage
   instruments namespaces in the JVM it reports from, and `it/run.sh` forks `lein
   uika`. `make lein-test` runs both halves.
-- The Bazel rules are measured by `//java:manifest_test` alone. The shell ITs
-  drive `bazel run` in a temp workspace, so the three mains read as untested.
 - The Mill plugin is JaCoCo over Scala 3, which reached 74 of the entry point's 125
   executable lines. The rest sit in synthetic methods JaCoCo skips. scoverage
   reaches fewer still, 25, because Mill's task bodies are inline macros and Scala

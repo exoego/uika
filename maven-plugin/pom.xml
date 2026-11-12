@@ -106,9 +106,8 @@
     <plugins>
       <plugin>
         <!-- Pinned for reproducibility across Maven versions (3.9.16's own binding is
-             already 3.5.4). failIfNoTests, because this module's only test is the
-             class-file floor guard and a provider mismatch silently running zero tests
-             would green a build the guard exists to fail. -->
+             already 3.5.4). failIfNoTests, because a provider mismatch silently running zero
+             tests would green a build the class-file floor guard exists to fail. -->
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.6.1</version>

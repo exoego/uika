@@ -130,7 +130,7 @@ object UikaPlugin extends AutoPlugin {
       }
       val jdkRelease = UikaCli.effectiveJdkRelease(wantedRelease, jdk, (line: String) => log.info(line))
       // LocalRootProject scope, not bare: this task lives in buildSettings, and a bare
-      // read resolves ThisBuild only — the README's plain `uikaJfr := Some(...)` in
+      // read resolves ThisBuild only — the docs' plain `uikaJfr := Some(...)` in
       // build.sbt is root-project-scoped, and missing it here silently ran the check
       // without --class-load-log while forked tests kept recording. Root-project scope
       // still delegates to ThisBuild, so both spellings work. Absolutized like the

@@ -101,7 +101,8 @@ pass-2 classes are typically below 0.1% of the scan.
 - `scannedClasses`/`unknownRefs` in the aggregate are per-run sums (a jar on
   several checked modules' classpaths is counted once per run, although runs of
   one pair share its pass-1 scan through `Scan.Shared`; old/new library indexes
-  are built once per distinct pair via the run loop's index cache in `Commands`). The per-run
+  are built once per distinct jar list on each side via the run loop's index caches in
+  `Commands`). The per-run
   broken counts in `Report.ModuleRunSummary` come from the merged post-exclusion set
   so they agree with the listing.
 - Dump artifact entries may carry a `"project"` key (additive in v2; written
@@ -242,9 +243,9 @@ pass-2 classes are typically below 0.1% of the scan.
   subclass walk only sees scanned classes and would demote real
   protected->private narrowing to pre-existing.
 - `Check.isSubclass` (the protected-access subclass check) is three-valued
-  (`YES`/`NO`/`UNKNOWN`). YES = the target was found on the walk; NO = the full chain
-  was walked to Object without it (a provable non-subclass); UNKNOWN = the chain
-  reached a class visible in no scope. `isAccessible` propagates UNKNOWN, and
+  (`YES`/`NO`/`MAYBE`). YES = the target was found on the walk; NO = the full chain
+  was walked to Object without it (a provable non-subclass); MAYBE = the chain
+  reached a class visible in no scope. `isAccessible` propagates MAYBE, and
   the verdict then treats the reference as unverified, never broken. Without
   this a caller whose super chain escapes scope was assumed a non-subclass and a
   protected narrowing was falsely reported. NO only when the relationship is
@@ -542,8 +543,9 @@ pass-2 classes are typically below 0.1% of the scan.
   bytecode rather than from app roots. Pinned by
   `CommandsTest.gateThresholdMatchesTheReportedTier`. Exclude rules, not `--fail-on`,
   are where a kind-level policy lives, so the gate stays a pure tier threshold.
-- On automatically, gated by app roots, not a flag: `Commands.runCheck` computes
-  reachability as "app roots given" (single policy site). `upgrade-check`
+- On automatically, gated by app roots, not a flag: `Commands.runCheckWithIndexes` computes
+  reachability as "app roots given" (single policy site, since JDK and per-module runs
+  never pass through `runCheck`). `upgrade-check`
   dumps and `check --app` have roots (on); a bare `check --classpath` has none
   (off, flat list, `reachable = null`). This also keeps the 2M-class
   classpath-only stress run from paying the cost. If roots are supplied but none
@@ -720,7 +722,7 @@ pass-2 classes are typically below 0.1% of the scan.
 - `referencedBy` comes from a dump `file-display-string -> "g:n:v"` map (both
   before and after sides). `removedBy` comes from mapping the violation's owner
   class to a changed coordinate by reading the before-side JARs' class names
-  (`Input.load`, first-wins) — a small, best-effort scan that never blocks the
+  (`Input.classEntryNames`, first-wins) — a small, best-effort scan that never blocks the
   report on read failure.
 - The same-group / cross-group advice split (README describes it) mirrors the
   real fixes found for the OpenTelemetry case: BOM-align the 41 skew breaks,
@@ -814,7 +816,8 @@ pass-2 classes are typically below 0.1% of the scan.
 - Loose class files go through `Input.DirectoryScan` lanes, 4 on macOS. Opening small files
   from 12 threads took 3.2s and 26s of system time there, against 1.7s and 4.5s on 4.
 - `Launcher` re-runs the command in a child JVM with `-XX:+UseSerialGC -Xmn32m`, plus
-  `-XX:TieredStopAtLevel=1` below about 800 scan targets. A caller that passes flags itself
+  `-XX:TieredStopAtLevel=1` below about 800 scan targets, or below about 150 when the JDK
+  is the compared pair. A caller that passes flags itself
   sets `-Duika.child=true`. Measure with that property set, or you measure two JVMs.
 
 ## Measured (M4 Pro, 12 cores, JDK 21, launcher flags)

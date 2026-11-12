@@ -19,7 +19,7 @@ UIKA=(java -XX:+UseSerialGC -Xmn32m -XX:-UsePerfData -Xshare:auto -Duika.child=t
 ```
 
 Below about 800 scan targets the launcher adds `-XX:TieredStopAtLevel=1`, so add it
-when measuring a small run.
+when measuring a small run. With `--jdk-release-old` the line is about 150 targets.
 
 ## Benchmark Expectations
 

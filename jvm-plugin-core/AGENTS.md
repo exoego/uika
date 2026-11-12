@@ -34,8 +34,8 @@ Rules every integration shares. Each tool's own notes live in its directory's
 
 ## Every Plugin
 
-- `DumpFormat` changes propagate to all four plugins via source inclusion from
-  `jvm-plugin-core/` — no core artifact to publish.
+- `DumpFormat` changes propagate to every integration that compiles it via source
+  inclusion from `jvm-plugin-core/` — no core artifact to publish.
 - The upgrade-check tasks (`uikaUpgradeCheck`, Maven `uika:upgrade-check`)
   resolve the pure-Java CLI jar `net.exoego.uika:uika-cli:<version>:jvm@jar` through the
   build's own repositories and run it from the tool's cache (`UikaCli` in core). Nothing
@@ -183,7 +183,8 @@ Rules every integration shares. Each tool's own notes live in its directory's
   stream on untouched. Each merges the CLI's stderr into it and adds its own `uika:` lines,
   and the Gradle, sbt, Maven and Mill plugins print through a logger that may prefix every
   line (`[INFO]` in Maven). A report DESTINATION the plugins could point at a file is the
-  missing piece, and this flag is not it. `--verdicts-json` is an evaluation
+  missing piece, and this flag is not it. `--markdown` is that destination, and no
+  plugin forwards it yet. `--verdicts-json` is an evaluation
   stream for `tools/jvm-probe` -- written before exclude filtering, without graph-walk
   violations, call-site duplicates not deduped -- so it is not a report a build acts on.
 - Runtime load evidence is ONE knob per tool pointed at one directory, serving
@@ -206,8 +207,8 @@ Rules every integration shares. Each tool's own notes live in its directory's
   the known trade-offs are bounded (maxsize rotation defaults to 250MB, far
   above class-load volume; a SIGKILLed fork loses its recording, which
   promote-only absorbs; stackdepth 64 truncates the OUTER frames only — pinned
-  by `deepCallerStacksKeepTheTriggerFrames`). Gradle and sbt compose the
-  test-JVM argument via `UikaCli.jfrClassLoadJvmArg` in core, and both decide
+  by `deepCallerStacksKeepTheTriggerFrames`). Gradle, sbt and Mill compose the
+  test-JVM argument via `UikaCli.jfrClassLoadJvmArg` in core, and all three decide
   the consumption-only skip via `JfrEvidence.valueNamesRecording` (also core,
   and announced with a log line — the skip is otherwise a symptomless empty
   collect run); the test JVMs
@@ -248,7 +249,7 @@ Rules every integration shares. Each tool's own notes live in its directory's
   name or magic), and any text logs in the directory still reach the CLI
   as-is (bring-your-own -Xlog). Conversion dedups per batch to exactly what
   the CLI keeps (first bare line per class, first framed stack block —
-  evidence.rs is or_insert / first-framed-wins, so every test fork repeating
+  `Evidence` keeps the first of each, so every test fork repeating
   the JDK load set would otherwise write hundreds of MB the CLI drops), a
   truncated or unreadable recording is logged and skipped, never fatal (a fork
   killed mid-dump must not cost the intact recordings' evidence), and stale
@@ -319,7 +320,7 @@ Rules every integration shares. Each tool's own notes live in its directory's
 - A project that compiles NOTHING is not a module, in every tool that can have
   one. It is not a cosmetic filter: upgrade-check makes each module its own
   check RUN, and a run whose module has no classesDirs has no application roots,
-  so `reachable_axis_valid` degrades and `--fail-on reachable` fails on breaks
+  so `Tier.reachableAxisValid` degrades and `--fail-on reachable` fails on breaks
   the real modules proved unreachable. Measured on guava 22 -> 23 with
   selenium-remote-driver as the consumer: adding one classesDirs-empty module
   carrying the same two artifacts turned `⚠️ 2 not proven reachable` / exit 0
