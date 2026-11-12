@@ -31,7 +31,7 @@ Options:
 
           Possible values:
           - never:     Always exit 0; just print the violations as warnings
-          - reachable: Exit 1 only when a violation is in the 💥 tier (likely to break). A violation that is not proven reachable (⚠️) or latent (💤: the class is reachable but no scanned bytecode invokes the newly-abstract member, so it cannot throw yet) does not fail the run. The reachable axis falls back to `any` when reachability was not computed (no application roots) or no application root matched a scanned class; the latent axis is scan-derived and never falls back
+          - reachable: Exit 1 only when a violation is in the 💥 tier (likely to break). A violation that is not proven reachable (⚠️) or latent (💤: the class is reachable but no scanned bytecode invokes the newly-abstract or doubly-inherited default member, so it cannot throw yet) does not fail the run. The reachable axis falls back to `any` when reachability was not computed (no application roots) or no application root matched a scanned class; the latent axis is scan-derived and never falls back
           - any:       Exit 1 when any violation is found, regardless of reachability (default, strictest)
           
           [default: any]
