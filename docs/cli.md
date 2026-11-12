@@ -33,7 +33,9 @@ in the JVM you started.
 
 ## Commands
 
-`uika <command> --help` lists every flag. The recipes below cover the ones
+`uika <command> --help` lists every flag, and `uika help <command>` prints the
+same text. `-h` is the short form, without the longer explanations. `uika
+--version`, or `-V`, prints the version. The recipes below cover the flags
 worth explaining.
 
 ### `uika diff`
