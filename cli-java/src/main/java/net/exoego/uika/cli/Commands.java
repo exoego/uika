@@ -607,8 +607,8 @@ final class Commands {
     /**
      * One run per module whose release moved, over that module's own classpath. Per module
      * because a build may mix releases, and because a run is the unit the report counts and
-     * the gate decides on. The cost, a jar on several modules' classpaths scanned once per
-     * module, was measured and accepted.
+     * the gate decides on. Runs of one pair share the pass-1 scan of a jar several modules
+     * carry.
      */
     private static void planJdkRuns(Dump.Universe before, Dump.Universe after, ModulePlan plan, TargetNotes notes) {
         Set<String> seenNames = new HashSet<>();

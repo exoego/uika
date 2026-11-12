@@ -91,15 +91,15 @@ The shared plugin rules are in `jvm-plugin-core/AGENTS.md`. Claude Code imports 
   (`aDisabledLayerResolvesNoToolchain`).
   `aToolchainTheBuildJvmCanStandInForIsNeverResolved` pins the no-lookup half with
   detection off and no installation registered, so a lookup there fails the build.
-- The module dump task depends on its configuration and the main source-set
-  output by default (`-PuikaBuildOutputs=false` opts out), so project jars and
-  module classes exist when the CLI scans. The dependsOn wiring uses lazy
+- The module dump task depends on its configuration's two artifact views and the main
+  source-set output by default (`-PuikaBuildOutputs=false` opts out), so project
+  dependencies' class directories and module classes exist when the CLI scans. The dependsOn wiring uses lazy
   providers because the java plugin may not be applied at registration time.
   Project-dependency artifacts are written with a `"project"` key
   (ProjectComponentIdentifier path); external ones keep coordinates only.
 - `make gradle-e2e` (`tools/gradle-e2e/run.sh`) is the one place the PUBLISHED plugin, the
   published CLI and a real build meet. Both go to mavenLocal under one version, which is
-  how the plugin finds its CLI, and a two-module project moves koin-core 3.2.2 -> 3.3.0
+  how the plugin finds its CLI, and a two-project build with one module moves koin-core 3.2.2 -> 3.3.0
   out of the CLI's fixtures (a Maven layout without POMs) through the documented three
   steps. It asserts what the unit tests cannot: the resolution-only dump compiles nothing,
   the PR dump does, the check fails on `which became final` marked reachable from the

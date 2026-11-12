@@ -69,8 +69,8 @@ Same rule as `mill-plugin/AGENTS.md`: point-of-use comments and the tests in
   Leiningen's `option-keys`. Without it a flag added to `UikaCli` reached five
   integrations for free and neither Clojure front end at all, with every suite green.
 - jvm-plugin-core is mostly NOT shared here: tools.deps does not compile Java sources
-  in a git or :local/root install, so the small ports (classifier, ct.sym clamp,
-  extract) live in the ns with "keep in sync" markers. The ONE compiled exception is
+  in a git or :local/root install, so the small ports (classifier, ct.sym clamp)
+  live in the ns with "keep in sync" markers. The ONE compiled exception is
   JfrEvidence, because binary JFR parsing is the JDK reader's job and not
   hand-portable: build.clj copies the single source out of jvm-plugin-core and javacs
   it (--release 17) into the published jar, and lein-plugin compiles the same file

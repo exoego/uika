@@ -1,6 +1,6 @@
 # Golden/probe scenario table: name, old jar, new jar, consumer jar, probe-only
 # extra classpath jar ("-" for none). Tab-separated. Single source of truth,
-# consumed by cli/tests/golden.rs and tools/jvm-probe/run-fixtures.sh; the extra
+# consumed by GoldenTest and tools/jvm-probe/run-fixtures.sh; the extra
 # column is probe support (kotlin-stdlib for Kotlin-built fixtures) and has no
 # golden-side meaning.
 coroutines-ktor-io	kotlinx-coroutines-core-jvm-1.7.1.jar	kotlinx-coroutines-core-jvm-1.11.0.jar	ktor-io-jvm-2.3.13.jar	kotlin-stdlib-2.2.20.jar

@@ -166,8 +166,6 @@ java-cli-clean:
 java-cli-coverage:
 	$(GRADLE) -p $(JAVA_CLI_DIR) jacocoTestReport -PuikaCoverage=true
 
-# Runs both CLIs over every jar in the local Gradle cache and compares stdout and exit
-# codes. Not hermetic, so not part of check. MODE is dump, diff or check.
 gradle-build:
 	$(GRADLE) -p $(GRADLE_PLUGIN_DIR) build
 
@@ -381,7 +379,7 @@ bazel-coverage: jacoco-tools java-cli-build
 		$(CURDIR)/$(COVERAGE_DIR)/bazel-it.xml
 
 # Real-CLI round trip, same reason as clojure-test and lein-it: the dump is written by
-# a tool the Rust side never sees, so only a run against the real binary catches drift.
+# a tool the CLI never sees, so only a run against the real binary catches drift.
 bazel-test: java-cli-build bazel-unit-test
 	UIKA_BIN=$(JAVA_CLI_JAR) mise exec -- sh $(BAZEL_RULES_DIR)/it/run.sh
 

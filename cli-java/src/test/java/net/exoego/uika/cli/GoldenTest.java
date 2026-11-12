@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
  * field) fails here first. {@code make java-cli-bless} rewrites them once a shift is verified
  * as intended.
  *
- * <p>Inputs are loaded via crate-relative paths, because the path string is interned as the
+ * <p>Inputs are loaded via paths relative to cli-java/, because the path string is interned as the
  * violation source and the golden JSON pins it.
  */
 class GoldenTest {
