@@ -377,8 +377,10 @@ EXECROOT=$("$BAZEL" info execution_root)
 python3 "$RULES/it/assert_sweep.py" "$OUT/sweep.json" "$OUT/before.json"
 
 # The merge takes the same -o, --materialize and --jdkRelease the rule-based dump does.
+# The relative --fragments is the workspace's bazel-bin symlink, which the runfiles
+# directory a `bazel run` starts in does not have.
 "$BAZEL" run @uika//:merge -- -o "$OUT/sweep-materialized.json" \
-  --execroot "$EXECROOT" --fragments "$BIN" \
+  --execroot "$EXECROOT" --fragments bazel-bin \
   --materialize "$OUT/sweep-jars" --jdkRelease 17
 python3 - "$OUT/sweep-materialized.json" "$OUT/sweep-jars" <<'EOF'
 import json, os, sys

@@ -44,8 +44,9 @@ public final class MergeMain {
 
         for (var i = 0; i < args.length; i++) {
             switch (args[i]) {
-                case "--execroot" -> execroot = Path.of(Manifest.flagValue(args, ++i));
-                case "--fragments" -> fragmentDirs.add(Path.of(Manifest.flagValue(args, ++i)));
+                case "--execroot" -> execroot = Manifest.workspacePath(Manifest.flagValue(args, ++i));
+                case "--fragments" ->
+                        fragmentDirs.add(Manifest.workspacePath(Manifest.flagValue(args, ++i)));
                 case "--output", "-o" -> output = Manifest.flagValue(args, ++i);
                 case "--materialize" -> materialize = Manifest.flagValue(args, ++i);
                 case "--jdkRelease" ->
