@@ -201,20 +201,23 @@ the cause).
 
 #### Invocation evidence (💤 latent)
 
-`AbstractMethodError` is the one break that does not fire when the class loads.
-A concrete class inheriting an unimplemented abstract method loads, verifies,
-and instantiates without complaint, and throws only when the missing method is
-actually called.
+Two breaks do not fire when the class loads. A concrete class inheriting an
+unimplemented abstract method loads, verifies, and instantiates without
+complaint, and throws `AbstractMethodError` only when the missing method is
+actually called. A class inheriting the same default method from two unrelated
+interfaces behaves the same way, and the call throws
+`IncompatibleClassChangeError` or `AbstractMethodError`.
 
-So for `method became abstract`, uika looks for an invocation of the affected
-member in the scanned bytecode, and calls the violation latent when there is
-none. That evidence comes from bytecode rather than from application roots,
+So for `method became abstract` and `conflicting default methods`, uika looks
+for an invocation of the affected member in the scanned bytecode, and calls the
+violation latent when there is none. That evidence comes from bytecode rather than from application roots,
 so 💤 survives both degraded cases above.
 
 Like ⚠️, it is a confidence tier and not a proof, since a call through
 reflection or JNI, or from code outside the scan, stays invisible. An
-[exclude file](#excluding-known-false-positives) can drop the whole category
-with `kind = "method_became_abstract"`.
+[exclude file](#excluding-known-false-positives) can drop either kind whole
+with `kind = "method_became_abstract"` or
+`kind = "conflicting_default_methods"`.
 
 #### Runtime load evidence (JFR)
 
