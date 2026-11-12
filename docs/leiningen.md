@@ -134,7 +134,9 @@ $ lein update-in :uika assoc :fail-on '"never"' -- uika upgrade-check /tmp/befor
   `:javac-options` pins (`--release`, or `-target`); a project declaring neither
   falls back to the JVM the project's own code runs on (`:java-cmd`, else
   `JAVA_CMD`, probed; a probe that fails warns and falls back to lein's own
-  JVM). 0 disables the API layer.
+  JVM). 0 disables the API layer. `dump-classpath` uses it too, to record the
+  release the application runs on, and a value set there wins over
+  `:javac-options`. There 0 keeps the derived value.
 - `:merged-classpath true` checks the union of every module's classpath once
   instead of [each module against its own
   resolution](../README.md#per-module-checking). A lein project is one module, so
