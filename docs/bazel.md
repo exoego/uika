@@ -178,6 +178,10 @@ and never against the runfiles tree.
   behind another target's version of the same jar. `--mergedClasspath` and
   `--noMergedClasspath` override it in either direction, since a boolean needs
   both for a run-time flag to win over the attribute.
+- `--output <path>`, or `-o`, is where a dump is written, on both dump targets
+  and on `@uika//:merge`. The default is `uika/classpath.json` under the
+  workspace root. `--before` and `--after` on the check name the two dumps to
+  compare and have no default.
 - `--classLoadLog` (repeatable) and `--jfr` supply
   [runtime load evidence](#runtime-load-evidence-jfr). `--draftExcludeFile` is
   where rules drafted from it are written. None of the three has an attribute,
@@ -187,11 +191,14 @@ and never against the runfiles tree.
   machine. It hard-links where the filesystem allows it, so the common case
   costs no space, and copies where it does not, such as a destination on
   another filesystem. See [What a dump names](#what-a-dump-names).
+- Any other keyword argument of the macro, such as `visibility` or `tags`, is
+  passed to every target it declares.
 
 ## Runtime load evidence (JFR)
 
 Collect with `bazel test`, check with `--jfr <dir>`. The check target prints
-the `--jvmopt` flag and creates the directory:
+the `--jvmopt` flag and creates the directory, which is `uika/jfr` under the
+workspace root when you name none:
 
 ```console
 $ jvmopt=$(bazel run //:uika_check -- jfr-jvmopt /tmp/uika-jfr)
