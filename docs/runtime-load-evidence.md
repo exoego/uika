@@ -140,4 +140,8 @@ evidence names no class at all, because an artifact that never downloaded or a
 test JVM that never forked would otherwise draft every unproven violation with
 a reason indistinguishable from a well-evidenced run. Drafting into a file that
 is also an exclude file is refused for the same reason it looks tempting: it
-would rewrite that file with only the drafted rules.
+would rewrite that file with only the drafted rules. The same goes for any
+other file uika did not draft. A file at the draft path is replaced only when
+it is blank or its first line carries the `uika --draft-exclude-file` marker
+every draft opens with. Anything else stops the run with exit 2 before the
+scan, so draft to a new path and merge by hand.
