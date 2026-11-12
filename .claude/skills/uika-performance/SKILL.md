@@ -28,14 +28,14 @@ when measuring a small run.
 ```zsh
 JAR171=$(echo ~/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm/1.7.1/*/kotlinx-coroutines-core-jvm-1.7.1.jar)
 JAR1110=$(echo ~/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm/1.11.0/*/kotlinx-coroutines-core-jvm-1.11.0.jar)
-BIG_CP=$(find ~/.gradle/caches/modules-2/files-2.1 -name '*.jar' ! -name '*-sources*' ! -name '*-javadoc*' ! -name 'profiler_java_agent*' | tr '\n' ':' | sed 's/:$//')
+BIG_CP=$(find ~/.gradle/caches/modules-2/files-2.1 -name '*.jar' ! -name '*-sources*' ! -name '*-javadoc*' ! -name 'profiler_java_agent*' | LC_ALL=C sort | tr '\n' ':' | sed 's/:$//')
 /usr/bin/time -l $UIKA check --old "$JAR171" --new "$JAR1110" --classpath "$BIG_CP"
 ```
 
 ### Real project scale
 
 ```zsh
-KTOR_ALL=$(find ~/.gradle/caches/modules-2/files-2.1/io.ktor -path '*2.3.13*' -name '*.jar' ! -name '*sources*' | tr '\n' ':' | sed 's/:$//')
+KTOR_ALL=$(find ~/.gradle/caches/modules-2/files-2.1/io.ktor -path '*2.3.13*' -name '*.jar' ! -name '*sources*' | LC_ALL=C sort | tr '\n' ':' | sed 's/:$//')
 APP_DIRS=("${(@f)$(find /path/to/large-jvm-project -type d -path '*build/classes')}")
 ARGS=(); for d in $APP_DIRS; do ARGS+=(--app "$d"); done
 /usr/bin/time -l $UIKA check --old "$JAR171" --new "$JAR1110" --classpath "$KTOR_ALL" "${ARGS[@]}"
@@ -85,6 +85,13 @@ reported scanned-class count still counts the skipped duplicates, so it stays th
 of the whole classpath. Absolute broken/unverified counts are classpath-order
 sensitive (duplicate-class first-wins), so compare same-input diffs, not the table's
 approximate counts.
+
+The recipes sort the `find` output because `find` does not return the Gradle cache in
+a stable order on this machine. Unsorted lists gave 0, 10, 40 and 41 broken for the
+same coroutines pair on the same cache. The tool itself is deterministic on a fixed
+list. Sorted, seven runs on 2026-11-12 (2,330 jars, 1.28M classes) all printed the same
+report, 10 broken and 64 unverified, at a median of 1.35s and 206MB. The counts still
+move when the cache gains a jar, so save the list to a file when two sessions must agree.
 
 Knobs: `UIKA_THREADS` (worker count), `UIKA_CHUNK` (paths in flight in pass 1, from
 central-directory read to merge, default 8x threads, rationale in `Scan.window`),
