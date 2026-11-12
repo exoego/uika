@@ -59,9 +59,9 @@ def uika(
       code and still records your Maven dependencies, rules_jvm_external's included.
     - `:uika_check` runs `uika upgrade-check` over `--before` and `--after`.
 
-    Both dumps take `--output <path>`, and `--materialize <dir>`, which copies every jar
-    the dump names into `<dir>` and points the dump there. That keeps a baseline usable
-    after a lockfile change has taken the originals away.
+    Both dumps take `--output <path>`, and `--materialize <dir>`, which links or copies
+    every jar the dump names into `<dir>` and points the dump there. That keeps a baseline
+    usable after a `bazel clean` or on another machine.
 
     Args:
       name: prefix of the declared targets.
