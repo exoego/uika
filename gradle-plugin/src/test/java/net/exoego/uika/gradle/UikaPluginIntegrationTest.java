@@ -351,6 +351,28 @@ final class UikaPluginIntegrationTest {
         }
     }
 
+    /// A build-script set on the task used to beat -PuikaOutput without a word, so a PR
+    /// gate wrote its before and after dumps to one file and compared it with itself.
+    @Test
+    void theDumpPathCannotBeSetFromABuildScript() throws Exception {
+        writeMixedReleaseProject();
+        appendToRootBuildScript("""
+
+                tasks.named<net.exoego.uika.gradle.MergeClasspathTask>("uikaDumpClasspath") {
+                    outputFile.set(layout.buildDirectory.file("pinned.json"))
+                }
+                """);
+
+        var result = GradleRunner.create()
+                .withProjectDir(projectDir.toFile())
+                .withArguments("uikaDumpClasspath", "-PuikaOutput=" + projectDir.resolve("out.json"))
+                .withPluginClasspath()
+                .buildAndFail();
+        assertTrue(result.getOutput().contains("property 'outputFile'"),
+                () -> "expected the build to stop on the script's set:\n" + result.getOutput());
+        assertFalse(Files.exists(projectDir.resolve("build/pinned.json")));
+    }
+
     /// -PuikaConfiguration naming something a module cannot resolve used to leave that
     /// module in the dump with its classesDirs and ZERO artifacts, silently: the emptyDump
     /// guard only covers projects with no Java at all, so the check then reported nothing

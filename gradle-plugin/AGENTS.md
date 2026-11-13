@@ -74,7 +74,10 @@ The shared plugin rules are in `jvm-plugin-core/AGENTS.md`. Claude Code imports 
   (`DumpModuleClasspathTask`'s initializer block, `getInputs().property`). The upgrade-check
   task needs none: it has no outputs, so it always runs. No task setting stays public,
   not even a per-module `configurationName`: the user chose one way to configure over a
-  per-module override, so `configuration` is build-wide.
+  per-module override, so `configuration` is build-wide. The run-to-run paths
+  (`outputFile` of the dump, `inputFile` and `outputFile` of the resolve) are still public
+  annotated properties, so `disallowChanges()` at registration is what keeps a build
+  script from setting one and beating its `-P` property.
 - Do not add an explicit toolchain: the plugin intentionally compiles with the
   JVM running Gradle plus `options.release = 17`, because toolchain
   auto-resolution is not available in every target environment.

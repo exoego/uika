@@ -208,6 +208,9 @@ public class UikaPlugin implements Plugin<Project> {
                         task.getOutputFile().convention(
                                 root.getLayout().getBuildDirectory().file("uika/classpath.json"));
                     }
+                    // A build-script set would silently beat -PuikaOutput, and a PR gate
+                    // would then write both of its dumps to one file.
+                    task.getOutputFile().disallowChanges();
                     task.getRootDirPath().set(root.getProjectDir().getAbsolutePath());
                 });
 
@@ -226,13 +229,15 @@ public class UikaPlugin implements Plugin<Project> {
                         task.getOutputFile().convention(
                                 root.getLayout().getBuildDirectory().file("uika/classpath-local.json"));
                     }
+                    task.getInputFile().disallowChanges();
+                    task.getOutputFile().disallowChanges();
                     task.getRootDirPath().set(root.getProjectDir().getAbsolutePath());
                     task.getWiredAtConfiguration().convention(false);
                 });
         // The missing notations come from the input dump's content, so resolution must be
         // set up at configuration time (a detached configuration per notation) for the task
-        // action to stay configuration-cache compatible. After evaluation so a build-script
-        // inputFile.set() is visible; the input therefore must exist before the build starts.
+        // action to stay configuration-cache compatible. It is wired after evaluation, so the
+        // input must exist before the build starts.
         // The content is read through providers.fileContents, which registers it as a
         // configuration input: a cached entry is never reused for a changed dump.
         root.afterEvaluate(r -> resolve.configure(task -> {

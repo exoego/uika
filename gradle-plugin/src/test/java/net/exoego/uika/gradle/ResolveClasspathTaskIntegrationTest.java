@@ -143,6 +143,26 @@ final class ResolveClasspathTaskIntegrationTest {
                 () -> "expected the explicit mid-build error:\n" + result.getOutput());
     }
 
+    /// Same rule as the dump path: a script-side set would beat -PuikaInput silently and
+    /// rehydrate a dump other than the one the workflow fetched.
+    @Test
+    void theInputAndOutputPathsCannotBeSetFromABuildScript() throws Exception {
+        for (String property : List.of("inputFile", "outputFile")) {
+            writeProject();
+            Files.writeString(projectDir.resolve("build.gradle.kts"), """
+
+                    tasks.named<net.exoego.uika.gradle.ResolveClasspathTask>("uikaResolveClasspath") {
+                        %s.set(layout.projectDirectory.file("pinned.json"))
+                    }
+                    """.formatted(property), java.nio.file.StandardOpenOption.APPEND);
+            var input = write(projectDir.resolve("before.json"), dumpReferencing("stub-lib"));
+
+            var result = run(input, projectDir.resolve("before-local.json")).buildAndFail();
+            assertTrue(result.getOutput().contains("property '" + property + "'"),
+                    () -> "expected the build to stop on the script's set:\n" + result.getOutput());
+        }
+    }
+
     /// An artifact absent from every repository (an expired snapshot, say) must fail the
     /// task rather than write a dump naming another machine's path: rehydration success is
     /// what makes the workflow skip its checkout-based fallback, and the check exits 2 on
